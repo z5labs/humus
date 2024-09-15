@@ -1,0 +1,53 @@
+name: "CodeQL"
+
+on:
+  push:
+    branches:
+      - "main"
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+
+  pull_request:
+    branches:
+      - "main"
+    paths:
+      - '**.go'
+
+  schedule:
+    - cron: '34 11 * * 3'
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ${{ (matrix.language == 'swift' && 'macos-latest') || 'ubuntu-latest' }}
+    timeout-minutes: ${{ (matrix.language == 'swift' && 120) || 360 }}
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ 'go' ]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # Custom Go version because of: https://github.com/github/codeql/issues/13992#issuecomment-1711721716
+    - uses: actions/setup-go@v5
+      with:
+        go-version: '1.22.0'
+
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v3
+      with:
+        languages: ${{ matrix.language }}
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v3
+      with:
+        category: "/language:${{matrix.language}}"
