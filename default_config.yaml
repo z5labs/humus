@@ -1,0 +1,20 @@
+# Copyright (c) 2024 Z5Labs and Contributors
+# 
+# This software is released under the MIT License.
+# https://opensource.org/licenses/MIT
+
+logging:
+  level: {{env "LOGGING_LEVEL" | default "INFO"}}
+
+otel:
+  service_name: {{env "OTEL_SERVICE_NAME" | default ""}}
+  service_version: {{env "OTEL_SERVICE_VERSION" | default ""}}
+  trace:
+    sampling: {{env "OTEL_SAMPLING" | default 0.1}}
+    batch_timeout: {{env "OTEL_TRACE_BATCH_TIMEOUT" | default "10s"}}
+  metric:
+    export_period: {{env "OTEL_METRIC_EXPORT_PERIOD" | default "60s"}}
+  log:
+    batch_timeout: {{env "OTEL_LOG_BATCH_TIMEOUT" | default "1s"}}
+  otlp:
+    target: {{env "OTEL_OTLP_TARGET" | default ""}}
