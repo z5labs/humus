@@ -24,6 +24,7 @@ import (
 	"github.com/z5labs/bedrock/pkg/appbuilder"
 	"github.com/z5labs/bedrock/pkg/config"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -92,7 +93,37 @@ func Run[T any](r io.Reader, build func(context.Context, T) (App, error)) {
 	cfgSrcs := global.ConfigSources
 	cfgSrcs = append(cfgSrcs, internal.ConfigSource(r))
 
-	err := run(build, cfgSrcs...)
+	runner := runner{
+		srcs:           cfgSrcs,
+		detectResource: detectResource,
+		newTraceExporter: func(ctx context.Context, oc OTelConfig) (sdktrace.SpanExporter, error) {
+			return otlptracegrpc.New(
+				ctx,
+				otlptracegrpc.WithEndpoint(oc.OTLP.Target),
+				otlptracegrpc.WithCompressor("gzip"),
+			)
+		},
+		newMetricExporter: func(ctx context.Context, oc OTelConfig) (sdkmetric.Exporter, error) {
+			return otlpmetricgrpc.New(
+				ctx,
+				otlpmetricgrpc.WithEndpoint(oc.OTLP.Target),
+				otlpmetricgrpc.WithCompressor("gzip"),
+			)
+		},
+		newLogExporter: func(ctx context.Context, oc OTelConfig) (sdklog.Exporter, error) {
+			if oc.OTLP.Target == "" {
+				return stdoutlog.New(stdoutlog.WithWriter(os.Stdout))
+			}
+
+			return otlploggrpc.New(
+				ctx,
+				otlploggrpc.WithEndpoint(oc.OTLP.Target),
+				otlploggrpc.WithCompressor("gzip"),
+			)
+		},
+	}
+
+	err := run(runner, build)
 	if err == nil {
 		return
 	}
@@ -109,8 +140,18 @@ func Run[T any](r io.Reader, build func(context.Context, T) (App, error)) {
 	fallbackLogger.Error("failed while running application", slog.String("error", err.Error()))
 }
 
-func run[T any](build func(context.Context, T) (App, error), srcs ...config.Source) error {
-	m, err := config.Read(srcs...)
+type runner struct {
+	srcs    []config.Source
+	postRun postRun
+
+	detectResource    func(context.Context, OTelConfig) (*resource.Resource, error)
+	newTraceExporter  func(context.Context, OTelConfig) (sdktrace.SpanExporter, error)
+	newMetricExporter func(context.Context, OTelConfig) (sdkmetric.Exporter, error)
+	newLogExporter    func(context.Context, OTelConfig) (sdklog.Exporter, error)
+}
+
+func run[T any](r runner, build func(context.Context, T) (App, error)) error {
+	m, err := config.Read(r.srcs...)
 	if err != nil {
 		return err
 	}
@@ -121,15 +162,16 @@ func run[T any](build func(context.Context, T) (App, error), srcs ...config.Sour
 		return err
 	}
 
-	postRun := &postRun{}
 	return bedrock.Run(
 		context.Background(),
 		appbuilder.WithOTel(
-			buildApp(build, postRun),
+			appbuilder.Recover(
+				buildApp(build, &r.postRun),
+			),
 			appbuilder.OTelTextMapPropogator(initTextMapPropogator(cfg.OTel)),
-			appbuilder.OTelTracerProvider(initTracerProvider(cfg.OTel, postRun)),
-			appbuilder.OTelMeterProvider(initMeterProvider(cfg.OTel, postRun)),
-			appbuilder.OTelLoggerProvider(initLogProvider(cfg.OTel, postRun)),
+			appbuilder.OTelTracerProvider(r.initTracerProvider(cfg.OTel, &r.postRun)),
+			appbuilder.OTelMeterProvider(r.initMeterProvider(cfg.OTel, &r.postRun)),
+			appbuilder.OTelLoggerProvider(r.initLoggerProvider(cfg.OTel, &r.postRun)),
 		),
 		m,
 	)
@@ -141,7 +183,10 @@ type postRun struct {
 
 func buildApp[T any](f func(context.Context, T) (App, error), postRun *postRun) bedrock.AppBuilder[T] {
 	return bedrock.AppBuilderFunc[T](func(ctx context.Context, cfg T) (bedrock.App, error) {
-		ba, err := f(ctx, cfg)
+		spanCtx, span := otel.Tracer("humus").Start(ctx, "buildApp.Build")
+		defer span.End()
+
+		ba, err := f(spanCtx, cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -182,22 +227,18 @@ func initTextMapPropogator(_ OTelConfig) func(context.Context) (propagation.Text
 	}
 }
 
-func initTracerProvider(cfg OTelConfig, postRun *postRun) func(context.Context) (trace.TracerProvider, error) {
+func (r runner) initTracerProvider(cfg OTelConfig, postRun *postRun) func(context.Context) (trace.TracerProvider, error) {
 	return func(ctx context.Context) (trace.TracerProvider, error) {
 		if cfg.OTLP.Target == "" {
 			return tracenoop.NewTracerProvider(), nil
 		}
 
-		r, err := detectResource(ctx, cfg)
+		rsc, err := r.detectResource(ctx, cfg)
 		if err != nil {
 			return nil, err
 		}
 
-		exp, err := otlptracegrpc.New(
-			ctx,
-			otlptracegrpc.WithEndpoint(cfg.OTLP.Target),
-			otlptracegrpc.WithCompressor("gzip"),
-		)
+		exp, err := r.newTraceExporter(ctx, cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -210,7 +251,7 @@ func initTracerProvider(cfg OTelConfig, postRun *postRun) func(context.Context) 
 		)
 
 		tp := sdktrace.NewTracerProvider(
-			sdktrace.WithResource(r),
+			sdktrace.WithResource(rsc),
 			sdktrace.WithSampler(sampler),
 			sdktrace.WithSpanProcessor(bsp),
 		)
@@ -219,22 +260,18 @@ func initTracerProvider(cfg OTelConfig, postRun *postRun) func(context.Context) 
 	}
 }
 
-func initMeterProvider(cfg OTelConfig, postRun *postRun) func(context.Context) (metric.MeterProvider, error) {
+func (r runner) initMeterProvider(cfg OTelConfig, postRun *postRun) func(context.Context) (metric.MeterProvider, error) {
 	return func(ctx context.Context) (metric.MeterProvider, error) {
 		if cfg.OTLP.Target == "" {
 			return metricnoop.NewMeterProvider(), nil
 		}
 
-		r, err := detectResource(ctx, cfg)
+		rsc, err := r.detectResource(ctx, cfg)
 		if err != nil {
 			return nil, err
 		}
 
-		exp, err := otlpmetricgrpc.New(
-			ctx,
-			otlpmetricgrpc.WithEndpoint(cfg.OTLP.Target),
-			otlpmetricgrpc.WithCompressor("gzip"),
-		)
+		exp, err := r.newMetricExporter(ctx, cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -245,7 +282,7 @@ func initMeterProvider(cfg OTelConfig, postRun *postRun) func(context.Context) (
 		)
 
 		mp := sdkmetric.NewMeterProvider(
-			sdkmetric.WithResource(r),
+			sdkmetric.WithResource(rsc),
 			sdkmetric.WithReader(reader),
 		)
 		postRun.hooks = append(postRun.hooks, shutdownHook(mp))
@@ -253,51 +290,30 @@ func initMeterProvider(cfg OTelConfig, postRun *postRun) func(context.Context) (
 	}
 }
 
-func initLogProvider(cfg OTelConfig, postRun *postRun) func(context.Context) (log.LoggerProvider, error) {
+func (r runner) initLoggerProvider(cfg OTelConfig, postRun *postRun) func(context.Context) (log.LoggerProvider, error) {
 	return func(ctx context.Context) (log.LoggerProvider, error) {
-		r, err := detectResource(ctx, cfg)
+		rsc, err := r.detectResource(ctx, cfg)
 		if err != nil {
 			return nil, err
 		}
 
-		p, err := initLogProcessor(ctx, cfg)
+		exp, err := r.newLogExporter(ctx, cfg)
 		if err != nil {
 			return nil, err
 		}
+
+		p := sdklog.NewBatchProcessor(
+			exp,
+			sdklog.WithExportInterval(cfg.Log.BatchTimeout),
+		)
 
 		lp := sdklog.NewLoggerProvider(
-			sdklog.WithResource(r),
+			sdklog.WithResource(rsc),
 			sdklog.WithProcessor(p),
 		)
 		postRun.hooks = append(postRun.hooks, shutdownHook(lp))
 		return lp, nil
 	}
-}
-
-func initLogProcessor(ctx context.Context, cfg OTelConfig) (sdklog.Processor, error) {
-	if cfg.OTLP.Target == "" {
-		exp, err := stdoutlog.New()
-		if err != nil {
-			return nil, err
-		}
-
-		return sdklog.NewSimpleProcessor(exp), nil
-	}
-
-	exp, err := otlploggrpc.New(
-		ctx,
-		otlploggrpc.WithEndpoint(cfg.OTLP.Target),
-		otlploggrpc.WithCompressor("gzip"),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	bp := sdklog.NewBatchProcessor(
-		exp,
-		sdklog.WithExportInterval(cfg.Log.BatchTimeout),
-	)
-	return bp, nil
 }
 
 type resourceDetectorFunc func(context.Context) (*resource.Resource, error)
