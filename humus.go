@@ -92,28 +92,37 @@ func Run[T any](r io.Reader, build func(context.Context, T) (App, error)) {
 	cfgSrcs := global.ConfigSources
 	cfgSrcs = append(cfgSrcs, internal.ConfigSource(r))
 
+	err := run(build, cfgSrcs...)
+	if err == nil {
+		return
+	}
+
+	// there's a chance Run failed on config parsing/unmarshalling
+	// thus the logging config is most likely unusable and we should
+	// instead create our own logger here for logging this error
 	// there's a chance Run failed on config parsing/unmarshalling
 	// thus the logging config is most likely unusable and we should
 	// instead create our own logger here for logging this error
 	fallbackLogger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		AddSource: true,
 	}))
+	fallbackLogger.Error("failed while running application", slog.String("error", err.Error()))
+}
 
-	m, err := config.Read(cfgSrcs...)
+func run[T any](build func(context.Context, T) (App, error), srcs ...config.Source) error {
+	m, err := config.Read(srcs...)
 	if err != nil {
-		fallbackLogger.Error("failed to read config sources", slog.String("error", err.Error()))
-		return
+		return err
 	}
 
 	var cfg Config
 	err = m.Unmarshal(&cfg)
 	if err != nil {
-		fallbackLogger.Error("failed to unmarshal config", slog.String("error", err.Error()))
-		return
+		return err
 	}
 
 	postRun := &postRun{}
-	err = bedrock.Run(
+	return bedrock.Run(
 		context.Background(),
 		appbuilder.WithOTel(
 			buildApp(build, postRun),
@@ -122,12 +131,8 @@ func Run[T any](r io.Reader, build func(context.Context, T) (App, error)) {
 			appbuilder.OTelMeterProvider(initMeterProvider(cfg.OTel, postRun)),
 			appbuilder.OTelLoggerProvider(initLogProvider(cfg.OTel, postRun)),
 		),
-		cfgSrcs...,
+		m,
 	)
-	if err == nil {
-		return
-	}
-	fallbackLogger.Error("failed while running application", slog.String("error", err.Error()))
 }
 
 type postRun struct {
@@ -142,6 +147,7 @@ func buildApp[T any](f func(context.Context, T) (App, error), postRun *postRun) 
 		}
 
 		var base bedrock.App = ba
+		base = app.Recover(base)
 		base = app.WithLifecycleHooks(base, app.Lifecycle{
 			PostRun: composeLifecycleHooks(postRun.hooks...),
 		})
