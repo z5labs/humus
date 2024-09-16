@@ -10,11 +10,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/z5labs/bedrock/pkg/config"
@@ -26,25 +26,7 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
-
-func TestRunProcess(t *testing.T) {
-	if os.Getenv("TEST_WANT_RUN_PROCESS") != "1" {
-		return
-	}
-
-	app := appFunc(func(ctx context.Context) error {
-		log := Logger("app")
-		log.InfoContext(ctx, "hello")
-		return nil
-	})
-
-	Run(strings.NewReader(""), func(ctx context.Context, cfg Config) (App, error) {
-		return app, nil
-	})
-	os.Exit(0)
-}
 
 type configSourceFunc func(config.Store) error
 
@@ -61,37 +43,53 @@ func (f appFunc) Run(ctx context.Context) error {
 func TestRun(t *testing.T) {
 	t.Run("will log a record to stdout", func(t *testing.T) {
 		t.Run("if no otlp target is set", func(t *testing.T) {
-			serviceName := "test"
-			serviceVersion := "v0.0.0"
-
-			cs := []string{"-test.run=TestRunProcess"}
-			cmd := exec.Command(os.Args[0], cs...)
-			cmd.Env = []string{
-				"TEST_WANT_RUN_PROCESS=1",
-				"OTEL_SERVICE_NAME=" + serviceName,
-				"OTEL_SERVICE_VERSION=" + serviceVersion,
-			}
-
-			var buf bytes.Buffer
-			cmd.Stdout = &buf
-
-			err := cmd.Run()
+			filename := filepath.Join(t.TempDir(), "log.json")
+			f, err := os.Create(filename)
 			if !assert.Nil(t, err) {
 				return
 			}
 
-			b, err := io.ReadAll(&buf)
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+
+				stdout := os.Stdout
+				defer func() {
+					os.Stdout = stdout
+				}()
+
+				os.Stdout = f
+
+				app := appFunc(func(ctx context.Context) error {
+					log := Logger("app")
+					log.InfoContext(ctx, "hello")
+					return nil
+				})
+
+				Run(strings.NewReader(""), func(ctx context.Context, cfg Config) (App, error) {
+					return app, nil
+				})
+			}()
+
+			select {
+			case <-time.After(30 * time.Second):
+				t.Fail()
+				return
+			case <-done:
+			}
+
+			err = f.Close()
 			if !assert.Nil(t, err) {
 				return
 			}
 
-			var m struct {
-				Resource []struct {
-					Key   string `json:"Key"`
-					Value struct {
-						Value string `json:"Value"`
-					} `json:"Value"`
-				} `json:"Resource"`
+			f, err = os.Open(filename)
+			if !assert.Nil(t, err) {
+				return
+			}
+			defer f.Close()
+
+			type log struct {
 				Body struct {
 					Value string `json:"Value"`
 				} `json:"Body"`
@@ -99,32 +97,17 @@ func TestRun(t *testing.T) {
 					Name string `json:"Name"`
 				} `json:"Scope"`
 			}
-			err = json.Unmarshal(b, &m)
+
+			var l log
+			dec := json.NewDecoder(f)
+			err = dec.Decode(&l)
 			if !assert.Nil(t, err) {
 				return
 			}
-
-			var serviceNameKeyValue string
-			var serviceVersionKeyValue string
-			for _, r := range m.Resource {
-				switch r.Key {
-				case string(semconv.ServiceNameKey):
-					serviceNameKeyValue = r.Value.Value
-				case string(semconv.ServiceVersionKey):
-					serviceVersionKeyValue = r.Value.Value
-				}
-			}
-
-			if !assert.Equal(t, serviceName, serviceNameKeyValue) {
+			if !assert.Equal(t, "app", l.Scope.Name) {
 				return
 			}
-			if !assert.Equal(t, serviceVersion, serviceVersionKeyValue) {
-				return
-			}
-			if !assert.Equal(t, "app", m.Scope.Name) {
-				return
-			}
-			if !assert.Equal(t, "hello", m.Body.Value) {
+			if !assert.Equal(t, "hello", l.Body.Value) {
 				return
 			}
 		})
@@ -372,6 +355,123 @@ func TestBuildApp(t *testing.T) {
 
 			_, err := buildApp(build, nil).Build(context.Background(), Config{})
 			if !assert.Equal(t, buildErr, err) {
+				return
+			}
+		})
+	})
+}
+
+func TestRunner_InitTracerProvider(t *testing.T) {
+	t.Run("will return an error", func(t *testing.T) {
+		t.Run("if it fails to detect the resource", func(t *testing.T) {
+			detectErr := errors.New("failed to detect resource")
+			r := runner{
+				detectResource: func(ctx context.Context, oc OTelConfig) (*resource.Resource, error) {
+					return nil, detectErr
+				},
+			}
+
+			var cfg OTelConfig
+			cfg.OTLP.Target = "localhost"
+
+			_, err := r.initTracerProvider(cfg, nil)(context.Background())
+			if !assert.Equal(t, detectErr, err) {
+				return
+			}
+		})
+
+		t.Run("if it fails to create a new exporter", func(t *testing.T) {
+			exporterErr := errors.New("failed to create new exporter")
+			r := runner{
+				detectResource: detectResource,
+				newTraceExporter: func(ctx context.Context, oc OTelConfig) (sdktrace.SpanExporter, error) {
+					return nil, exporterErr
+				},
+			}
+
+			var cfg OTelConfig
+			cfg.OTLP.Target = "localhost"
+
+			_, err := r.initTracerProvider(cfg, nil)(context.Background())
+			if !assert.Equal(t, exporterErr, err) {
+				return
+			}
+		})
+	})
+}
+
+func TestRunner_InitMeterProvider(t *testing.T) {
+	t.Run("will return an error", func(t *testing.T) {
+		t.Run("if it fails to detect the resource", func(t *testing.T) {
+			detectErr := errors.New("failed to detect resource")
+			r := runner{
+				detectResource: func(ctx context.Context, oc OTelConfig) (*resource.Resource, error) {
+					return nil, detectErr
+				},
+			}
+
+			var cfg OTelConfig
+			cfg.OTLP.Target = "localhost"
+
+			_, err := r.initMeterProvider(cfg, nil)(context.Background())
+			if !assert.Equal(t, detectErr, err) {
+				return
+			}
+		})
+
+		t.Run("if it fails to create a new exporter", func(t *testing.T) {
+			exporterErr := errors.New("failed to create new exporter")
+			r := runner{
+				detectResource: detectResource,
+				newMetricExporter: func(ctx context.Context, oc OTelConfig) (sdkmetric.Exporter, error) {
+					return nil, exporterErr
+				},
+			}
+
+			var cfg OTelConfig
+			cfg.OTLP.Target = "localhost"
+
+			_, err := r.initMeterProvider(cfg, nil)(context.Background())
+			if !assert.Equal(t, exporterErr, err) {
+				return
+			}
+		})
+	})
+}
+
+func TestRunner_InitLoggerProvider(t *testing.T) {
+	t.Run("will return an error", func(t *testing.T) {
+		t.Run("if it fails to detect the resource", func(t *testing.T) {
+			detectErr := errors.New("failed to detect resource")
+			r := runner{
+				detectResource: func(ctx context.Context, oc OTelConfig) (*resource.Resource, error) {
+					return nil, detectErr
+				},
+			}
+
+			var cfg OTelConfig
+			cfg.OTLP.Target = "localhost"
+
+			_, err := r.initLoggerProvider(cfg, nil)(context.Background())
+			if !assert.Equal(t, detectErr, err) {
+				return
+			}
+		})
+
+		t.Run("if it fails to create a new exporter", func(t *testing.T) {
+			exporterErr := errors.New("failed to create new exporter")
+			r := runner{
+				detectResource: detectResource,
+				newLogExporter: func(ctx context.Context, oc OTelConfig) (sdklog.Exporter, error) {
+					return nil, exporterErr
+				},
+			}
+
+			var cfg OTelConfig
+			cfg.OTLP.Target = "localhost"
+
+			_, err := r.initLoggerProvider(cfg, nil)(context.Background())
+			if !assert.Equal(t, exporterErr, err) {
 				return
 			}
 		})
