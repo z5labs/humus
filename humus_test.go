@@ -18,8 +18,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/z5labs/bedrock/pkg/config"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/stdout/stdoutlog"
+	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
+	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
 
@@ -192,6 +198,164 @@ func TestRun(t *testing.T) {
 
 			if !assert.ErrorIs(t, err, appErr) {
 				t.Log(err)
+				return
+			}
+		})
+	})
+
+	t.Run("will export signals", func(t *testing.T) {
+		t.Run("if the otlp target is set", func(t *testing.T) {
+			app := appFunc(func(ctx context.Context) error {
+				spanCtx, span := otel.Tracer("app").Start(ctx, "Run")
+				defer span.End()
+
+				log := Logger("app")
+				log.InfoContext(spanCtx, "hello")
+
+				counter, err := otel.Meter("app").Int64Counter("Run")
+				if err != nil {
+					return err
+				}
+				counter.Add(spanCtx, 1)
+
+				return nil
+			})
+
+			build := func(ctx context.Context, cfg Config) (App, error) {
+				return app, nil
+			}
+
+			var tracesBuf bytes.Buffer
+			var metricsBuf bytes.Buffer
+			var logsBuf bytes.Buffer
+			r := runner{
+				srcs: []config.Source{
+					config.FromJson(strings.NewReader(`{
+						"otel": {
+							"trace": {
+								"sampling": 1.0
+							},
+							"otlp": {
+								"target": "localhost:8080"
+							}
+						}
+					}`)),
+				},
+				detectResource: func(ctx context.Context, oc OTelConfig) (*resource.Resource, error) {
+					return resource.NewSchemaless(), nil
+				},
+				newTraceExporter: func(ctx context.Context, oc OTelConfig) (sdktrace.SpanExporter, error) {
+					return stdouttrace.New(
+						stdouttrace.WithWriter(&tracesBuf),
+					)
+				},
+				newMetricExporter: func(ctx context.Context, oc OTelConfig) (sdkmetric.Exporter, error) {
+					return stdoutmetric.New(
+						stdoutmetric.WithWriter(&metricsBuf),
+					)
+				},
+				newLogExporter: func(ctx context.Context, oc OTelConfig) (sdklog.Exporter, error) {
+					return stdoutlog.New(
+						stdoutlog.WithWriter(&logsBuf),
+					)
+				},
+			}
+
+			err := run(r, build)
+			if !assert.Nil(t, err) {
+				return
+			}
+
+			type span struct {
+				Name string `json:"Name"`
+			}
+
+			var spans []span
+			dec := json.NewDecoder(&tracesBuf)
+			for {
+				var span span
+				err = dec.Decode(&span)
+				if err != nil {
+					t.Log(err)
+					break
+				}
+				spans = append(spans, span)
+			}
+			if !assert.Len(t, spans, 2) {
+				return
+			}
+			if !assert.Equal(t, "buildApp.Build", spans[0].Name) {
+				return
+			}
+			if !assert.Equal(t, "Run", spans[1].Name) {
+				return
+			}
+
+			type metric struct {
+				ScopeMetrics []struct {
+					Metrics []struct {
+						Name string `json:"Name"`
+						Data struct {
+							DataPoints []struct {
+								Value int `json:"Value"`
+							} `json:"DataPoints"`
+						} `json:"Data"`
+					} `json:"Metrics"`
+				} `json:"ScopeMetrics"`
+			}
+
+			var metrics []metric
+			dec = json.NewDecoder(&metricsBuf)
+			for {
+				var m metric
+				err = dec.Decode(&m)
+				if err != nil {
+					t.Log(err)
+					break
+				}
+				metrics = append(metrics, m)
+			}
+			if !assert.Len(t, metrics, 1) {
+				return
+			}
+
+			m := metrics[0].ScopeMetrics[0].Metrics[0]
+			if !assert.Equal(t, "Run", m.Name) {
+				return
+			}
+			if !assert.Equal(t, 1, m.Data.DataPoints[0].Value) {
+				return
+			}
+
+			type log struct {
+				Body struct {
+					Value string `json:"Value"`
+				} `json:"Body"`
+				Scope struct {
+					Name string `json:"Name"`
+				} `json:"Scope"`
+			}
+
+			var logs []log
+			dec = json.NewDecoder(&logsBuf)
+			for {
+				var l log
+				err = dec.Decode(&l)
+				if err != nil {
+					t.Log(err)
+					break
+				}
+				logs = append(logs, l)
+			}
+			if !assert.Len(t, logs, 1) {
+				return
+			}
+
+			l := logs[0]
+			if !assert.Equal(t, "hello", l.Body.Value) {
+				return
+			}
+			if !assert.Equal(t, "app", l.Scope.Name) {
 				return
 			}
 		})
