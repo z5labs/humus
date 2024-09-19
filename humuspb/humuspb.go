@@ -16,7 +16,16 @@ func (s *Status) Error() string {
 	return fmt.Sprintf("status: %s: %s", s.Code, s.Message)
 }
 
-var httpToStatusCode = map[int]Code{}
+var httpToStatusCode = map[int]Code{
+	http.StatusOK:                  Code_OK,
+	http.StatusInternalServerError: Code_INTERNAL,
+	http.StatusBadRequest:          Code_INVALID_ARGUMENT,
+	http.StatusNotFound:            Code_NOT_FOUND,
+	http.StatusConflict:            Code_ALREADY_EXISTS,
+	http.StatusForbidden:           Code_PERMISSION_DENIED,
+	http.StatusUnauthorized:        Code_UNAUTHENTICATED,
+	http.StatusServiceUnavailable:  Code_UNAVAILABLE,
+}
 
 func HttpCodeToStatusCode(status int) Code {
 	code, ok := httpToStatusCode[status]
