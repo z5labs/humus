@@ -45,6 +45,7 @@ func (h errHandler) HandleError(ctx context.Context, w http.ResponseWriter, err 
 		return
 	}
 
+	w.Header().Add("Content-Type", "application/x-protobuf")
 	w.WriteHeader(httpCode)
 	_, err = io.Copy(w, bytes.NewReader(b))
 	if err == nil {
