@@ -11,6 +11,8 @@ import (
 	"context"
 	_ "embed"
 	"errors"
+	"fmt"
+	"net"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/internal"
@@ -63,7 +65,7 @@ func Version(s string) Option {
 // ListenOn
 func ListenOn(port uint) Option {
 	return func(a *App) {
-		a.restOpts = append(a.restOpts, rest.ListenOn(port))
+		a.port = port
 	}
 }
 
@@ -98,8 +100,10 @@ func Liveness(m Metric) Option {
 type App struct {
 	readiness health.Metric
 	liveness  health.Metric
-	restOpts  []rest.Option
-	postRun   []app.LifecycleHook
+
+	port     uint
+	restOpts []rest.Option
+	postRun  []app.LifecycleHook
 }
 
 // New returns an initialized [App].
@@ -107,6 +111,7 @@ func New(opts ...Option) *App {
 	a := &App{
 		readiness: &health.Binary{},
 		liveness:  &health.Binary{},
+		port:      80,
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -124,6 +129,12 @@ func (a *App) Run(ctx context.Context) error {
 		a.restOpts = append(a.restOpts, rest.Endpoint(e.method, e.path, e.operation))
 	}
 
+	ls, err := net.Listen("tcp", fmt.Sprintf(":%d", a.port))
+	if err != nil {
+		return err
+	}
+	a.restOpts = append(a.restOpts, rest.Listener(ls))
+
 	var base bedrock.App = rest.NewApp(a.restOpts...)
 
 	base = app.WithLifecycleHooks(base, app.Lifecycle{
@@ -137,7 +148,7 @@ func composeLifecycleHooks(hooks ...app.LifecycleHook) app.LifecycleHook {
 	return app.LifecycleHookFunc(func(ctx context.Context) error {
 		var errs []error
 		for _, hook := range hooks {
-			err := hook.Run(ctx)
+			err := runHook(ctx, hook)
 			if err != nil {
 				errs = append(errs, err)
 			}
@@ -147,4 +158,10 @@ func composeLifecycleHooks(hooks ...app.LifecycleHook) app.LifecycleHook {
 		}
 		return errors.Join(errs...)
 	})
+}
+
+func runHook(ctx context.Context, hook app.LifecycleHook) (err error) {
+	defer internal.Recover(&err)
+
+	return hook.Run(ctx)
 }
