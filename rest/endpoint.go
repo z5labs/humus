@@ -74,6 +74,20 @@ func Headers(hs ...Header) EndpointOption {
 	}
 }
 
+// PathParam
+type PathParam endpoint.PathParam
+
+// PathParams
+func PathParams(ps ...PathParam) EndpointOption {
+	return func(eo *endpointOptions) {
+		params := make([]endpoint.PathParam, len(ps))
+		for i, p := range ps {
+			params[i] = (endpoint.PathParam)(p)
+		}
+		eo.eopts = append(eo.eopts, endpoint.PathParams(params...))
+	}
+}
+
 // QueryParam
 type QueryParam endpoint.QueryParam
 
