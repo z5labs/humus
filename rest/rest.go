@@ -105,7 +105,9 @@ type App struct {
 	readiness health.Metric
 	liveness  health.Metric
 
-	port     uint
+	port   uint
+	listen func(network, addr string) (net.Listener, error)
+
 	restOpts []rest.Option
 	postRun  []app.LifecycleHook
 }
@@ -116,6 +118,7 @@ func New(opts ...Option) *App {
 		readiness: &health.Binary{},
 		liveness:  &health.Binary{},
 		port:      80,
+		listen:    net.Listen,
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -133,7 +136,7 @@ func (a *App) Run(ctx context.Context) error {
 		a.restOpts = append(a.restOpts, rest.Endpoint(e.method, e.path, e.operation))
 	}
 
-	ls, err := net.Listen("tcp", fmt.Sprintf(":%d", a.port))
+	ls, err := a.listen("tcp", fmt.Sprintf(":%d", a.port))
 	if err != nil {
 		return err
 	}
