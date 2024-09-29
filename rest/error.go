@@ -67,6 +67,11 @@ func mapErrorToStatus(err error) *humuspb.Status {
 			Code:    humuspb.Code_INVALID_ARGUMENT,
 			Message: fmt.Sprintf("invalid header: %s", e.Header),
 		}
+	case endpoint.InvalidPathParamError:
+		return &humuspb.Status{
+			Code:    humuspb.Code_INVALID_ARGUMENT,
+			Message: fmt.Sprintf("invalid path param: %s", e.Param),
+		}
 	case endpoint.InvalidQueryParamError:
 		return &humuspb.Status{
 			Code:    humuspb.Code_INVALID_ARGUMENT,

@@ -7,6 +7,7 @@ package rest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,8 +16,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/z5labs/humus/humuspb"
+
+	"github.com/stretchr/testify/assert"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -355,6 +357,117 @@ func TestErrHandler_HandleError(t *testing.T) {
 			}
 
 			b, err := io.ReadAll(resp.Body)
+			if !assert.Nil(t, err) {
+				return
+			}
+
+			var status humuspb.Status
+			err = proto.Unmarshal(b, &status)
+			if !assert.Nil(t, err) {
+				return
+			}
+			if !assert.Equal(t, humuspb.Code_INVALID_ARGUMENT, status.Code) {
+				return
+			}
+		})
+
+		t.Run("if a InvalidPathParamError is returned", func(t *testing.T) {
+			h := noopHandler{}
+
+			e := NewEndpoint(
+				http.MethodGet,
+				"/{id}",
+				h,
+				PathParams(
+					PathParam{
+						Name:    "id",
+						Pattern: "^[a-zA-Z]$",
+					},
+				),
+			)
+
+			op := e.operation.OpenApi()
+			b, _ := json.Marshal(op)
+			fmt.Println(string(b))
+
+			app := New(
+				ListenOn(0),
+				RegisterEndpoint(e),
+			)
+
+			addrCh := make(chan net.Addr)
+			app.listen = func(network, addr string) (net.Listener, error) {
+				defer close(addrCh)
+				ls, err := net.Listen(network, addr)
+				if err != nil {
+					return nil, err
+				}
+				addrCh <- ls.Addr()
+				return ls, nil
+			}
+
+			ctx, cancel := context.WithCancel(context.Background())
+			eg, egctx := errgroup.WithContext(ctx)
+			eg.Go(func() error {
+				return app.Run(egctx)
+			})
+
+			respCh := make(chan *http.Response, 1)
+			eg.Go(func() error {
+				defer cancel()
+				defer close(respCh)
+
+				addr := <-addrCh
+				if addr == nil {
+					return errors.New("received nil net.Addr")
+				}
+
+				req, err := http.NewRequestWithContext(
+					egctx,
+					http.MethodGet,
+					fmt.Sprintf("http://%s/123", addr),
+					nil,
+				)
+				if err != nil {
+					return err
+				}
+
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					return err
+				}
+
+				select {
+				case <-egctx.Done():
+				case respCh <- resp:
+				}
+				return nil
+			})
+
+			err := eg.Wait()
+			if !assert.Nil(t, err) {
+				return
+			}
+
+			resp := <-respCh
+			if !assert.NotNil(t, resp) {
+				return
+			}
+			defer resp.Body.Close()
+
+			if !assert.Equal(t, http.StatusBadRequest, resp.StatusCode) {
+				return
+			}
+
+			headers := resp.Header
+			if !assert.Contains(t, headers, "Content-Type") {
+				return
+			}
+			if !assert.Equal(t, ProtobufContentType, headers.Get("Content-Type")) {
+				return
+			}
+
+			b, err = io.ReadAll(resp.Body)
 			if !assert.Nil(t, err) {
 				return
 			}
