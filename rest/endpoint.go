@@ -16,6 +16,9 @@ import (
 // ContentTyper
 type ContentTyper endpoint.ContentTyper
 
+// ProtobufContentType
+var ProtobufContentType = "application/x-protobuf"
+
 // ProtoMessage embeds [proto.Message] but adds *T support.
 type ProtoMessage[T any] interface {
 	*T
@@ -57,13 +60,42 @@ func Returns(status int) EndpointOption {
 	}
 }
 
+// Header
+type Header endpoint.Header
+
+// Headers
+func Headers(hs ...Header) EndpointOption {
+	return func(eo *endpointOptions) {
+		headers := make([]endpoint.Header, len(hs))
+		for i, h := range hs {
+			headers[i] = (endpoint.Header)(h)
+		}
+		eo.eopts = append(eo.eopts, endpoint.Headers(headers...))
+	}
+}
+
+// QueryParam
+type QueryParam endpoint.QueryParam
+
+// QueryParams
+func QueryParams(qps ...QueryParam) EndpointOption {
+	return func(eo *endpointOptions) {
+		params := make([]endpoint.QueryParam, len(qps))
+		for i, param := range qps {
+			params[i] = (endpoint.QueryParam)(param)
+		}
+
+		eo.eopts = append(eo.eopts, endpoint.QueryParams(params...))
+	}
+}
+
 // NewEndpoint
 func NewEndpoint[I, O any, Req ProtoMessage[I], Resp ProtoMessage[O]](method string, path string, h Handler[I, O, Req, Resp], opts ...EndpointOption) Endpoint {
 	eo := &endpointOptions{}
 	for _, opt := range opts {
 		opt(eo)
 	}
-	eo.eopts = append(eo.eopts, endpoint.OnError(errHandler{}))
+	eo.eopts = append(eo.eopts, endpoint.OnError(&errHandler{marshal: proto.Marshal}))
 
 	op := endpoint.NewOperation(h, eo.eopts...)
 

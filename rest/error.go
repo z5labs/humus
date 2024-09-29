@@ -29,15 +29,17 @@ func Error(status int, message string, details ...*anypb.Any) *humuspb.Status {
 	}
 }
 
-type errHandler struct{}
+type errHandler struct {
+	marshal func(proto.Message) ([]byte, error)
+}
 
-func (h errHandler) HandleError(ctx context.Context, w http.ResponseWriter, err error) {
+func (h *errHandler) HandleError(ctx context.Context, w http.ResponseWriter, err error) {
 	_, span := otel.Tracer("rest").Start(ctx, "errHandler.HandleErr")
 	defer span.End()
 
 	status := mapErrorToStatus(err)
 	httpCode := humuspb.StatusCodeToHttpCode(status.Code)
-	b, err := proto.Marshal(status)
+	b, err := h.marshal(status)
 	if err != nil {
 		span.RecordError(err)
 		// TODO: should add a log here
@@ -45,7 +47,7 @@ func (h errHandler) HandleError(ctx context.Context, w http.ResponseWriter, err 
 		return
 	}
 
-	w.Header().Add("Content-Type", "application/x-protobuf")
+	w.Header().Add("Content-Type", ProtobufContentType)
 	w.WriteHeader(httpCode)
 	_, err = io.Copy(w, bytes.NewReader(b))
 	if err == nil {
