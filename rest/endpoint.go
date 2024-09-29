@@ -11,23 +11,19 @@ import (
 	"github.com/z5labs/bedrock/rest"
 	"github.com/z5labs/bedrock/rest/endpoint"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/reflect/protoreflect"
 )
-
-// Empty is a helper type to be used when your API accepts
-// or returns an empty request or response, respectively.
-type Empty struct{}
-
-// ProtoReflect implements the [protoreflect.ProtoMessage] interface.
-func (Empty) ProtoReflect() protoreflect.Message {
-	return nil
-}
 
 // ContentTyper
 type ContentTyper endpoint.ContentTyper
 
+// ProtoMessage embeds [proto.Message] but adds *T support.
+type ProtoMessage[T any] interface {
+	*T
+	proto.Message
+}
+
 // Handler
-type Handler[Req, Resp proto.Message] endpoint.Handler[Req, Resp]
+type Handler[I, O any, Req ProtoMessage[I], Resp ProtoMessage[O]] endpoint.Handler[I, O]
 
 // Endpoint
 type Endpoint struct {
@@ -62,7 +58,7 @@ func Returns(status int) EndpointOption {
 }
 
 // NewEndpoint
-func NewEndpoint[Req, Resp proto.Message](method string, path string, h Handler[Req, Resp], opts ...EndpointOption) Endpoint {
+func NewEndpoint[I, O any, Req ProtoMessage[I], Resp ProtoMessage[O]](method string, path string, h Handler[I, O, Req, Resp], opts ...EndpointOption) Endpoint {
 	eo := &endpointOptions{}
 	for _, opt := range opts {
 		opt(eo)

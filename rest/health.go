@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/z5labs/bedrock/pkg/health"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 type readinessHandler struct {
@@ -28,10 +29,10 @@ func readinessEndpoint(m health.Metric) Endpoint {
 	)
 }
 
-func (h *readinessHandler) Handle(ctx context.Context, req *Empty) (*Empty, error) {
+func (h *readinessHandler) Handle(ctx context.Context, req *emptypb.Empty) (*emptypb.Empty, error) {
 	healthy := h.Healthy(ctx)
 	if healthy {
-		return &Empty{}, nil
+		return &emptypb.Empty{}, nil
 	}
 	return nil, Error(http.StatusServiceUnavailable, "not ready")
 }
@@ -52,10 +53,10 @@ func livenessEndpoint(m health.Metric) Endpoint {
 	)
 }
 
-func (h *livenessHandler) Handle(ctx context.Context, req *Empty) (*Empty, error) {
+func (h *livenessHandler) Handle(ctx context.Context, req *emptypb.Empty) (*emptypb.Empty, error) {
 	healthy := h.Healthy(ctx)
 	if healthy {
-		return &Empty{}, nil
+		return &emptypb.Empty{}, nil
 	}
 	return nil, Error(http.StatusServiceUnavailable, "not alive")
 }
