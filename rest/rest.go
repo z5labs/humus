@@ -75,7 +75,11 @@ type LifecycleHook app.LifecycleHook
 // PostRun
 func PostRun(hook LifecycleHook) Option {
 	return func(a *App) {
-		a.postRun = append(a.postRun, hook)
+		a.postRun = append(a.postRun, app.LifecycleHookFunc(func(ctx context.Context) (err error) {
+			defer bedrock.Recover(&err)
+
+			return hook.Run(ctx)
+		}))
 	}
 }
 
@@ -148,7 +152,7 @@ func composeLifecycleHooks(hooks ...app.LifecycleHook) app.LifecycleHook {
 	return app.LifecycleHookFunc(func(ctx context.Context) error {
 		var errs []error
 		for _, hook := range hooks {
-			err := runHook(ctx, hook)
+			err := hook.Run(ctx)
 			if err != nil {
 				errs = append(errs, err)
 			}
@@ -158,10 +162,4 @@ func composeLifecycleHooks(hooks ...app.LifecycleHook) app.LifecycleHook {
 		}
 		return errors.Join(errs...)
 	})
-}
-
-func runHook(ctx context.Context, hook app.LifecycleHook) (err error) {
-	defer internal.Recover(&err)
-
-	return hook.Run(ctx)
 }
