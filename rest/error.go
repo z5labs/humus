@@ -82,6 +82,11 @@ func mapErrorToStatus(err error) *humuspb.Status {
 			Code:    humuspb.Code_FAILED_PRECONDITION,
 			Message: fmt.Sprintf("missing required header: %s", e.Header),
 		}
+	case endpoint.MissingRequiredPathParamError:
+		return &humuspb.Status{
+			Code:    humuspb.Code_FAILED_PRECONDITION,
+			Message: fmt.Sprintf("missing required path param: %s", e.Param),
+		}
 	case endpoint.MissingRequiredQueryParamError:
 		return &humuspb.Status{
 			Code:    humuspb.Code_FAILED_PRECONDITION,
