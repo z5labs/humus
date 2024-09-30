@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/internal"
@@ -117,7 +118,7 @@ func New(opts ...Option) *App {
 	a := &App{
 		readiness: &health.Binary{},
 		liveness:  &health.Binary{},
-		port:      80,
+		port:      8080,
 		listen:    net.Listen,
 	}
 	for _, opt := range opts {
@@ -135,6 +136,8 @@ func (a *App) Run(ctx context.Context) error {
 	for _, e := range healthEndpoints {
 		a.restOpts = append(a.restOpts, rest.Endpoint(e.method, e.path, e.operation))
 	}
+
+	a.restOpts = append(a.restOpts, rest.OpenApiEndpoint(http.MethodGet, "/openapi.json", rest.OpenApiJsonHandler))
 
 	ls, err := a.listen("tcp", fmt.Sprintf(":%d", a.port))
 	if err != nil {
