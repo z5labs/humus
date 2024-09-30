@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package petstore;
+
+option go_package = "github.com/z5labs/example/petstore/petstorepb";
+
+message Pet {
+    int64 id = 1;
+    string name = 2;
+}
+
+message AddPetRequest {
+    Pet pet = 1;
+}
+
+message AddPetResponse {
+    Pet pet = 1;
+}
+
+message FindPetByIdResponse {
+    Pet pet = 1;
+}
+
+message ListPetsResponse {
+    repeated Pet pet = 1;
+}
