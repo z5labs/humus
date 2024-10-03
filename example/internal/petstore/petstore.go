@@ -63,7 +63,7 @@ func (s *InMemory) Pets(ctx context.Context) []*petstorepb.Pet {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	pets := make([]*petstorepb.Pet, len(s.pets))
+	pets := make([]*petstorepb.Pet, 0, len(s.pets))
 	for _, pet := range s.pets {
 		pets = append(pets, pet)
 	}
