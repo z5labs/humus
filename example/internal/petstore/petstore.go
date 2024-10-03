@@ -3,29 +3,29 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-package pet
+package petstore
 
 import (
 	"context"
 	"sync"
 
-	"github.com/z5labs/humus/example/petstore/petstorepb"
+	"github.com/z5labs/humus/example/internal/petstorepb"
 
 	"go.opentelemetry.io/otel"
 )
 
-type Store struct {
+type InMemory struct {
 	mu   sync.Mutex
 	pets map[int64]*petstorepb.Pet
 }
 
-func NewStore() *Store {
-	return &Store{
+func NewInMemory() *InMemory {
+	return &InMemory{
 		pets: make(map[int64]*petstorepb.Pet),
 	}
 }
 
-func (s *Store) Add(ctx context.Context, pet *petstorepb.Pet) {
+func (s *InMemory) Add(ctx context.Context, pet *petstorepb.Pet) {
 	_, span := otel.Tracer("pet").Start(ctx, "Store.Add")
 	defer span.End()
 
@@ -35,7 +35,7 @@ func (s *Store) Add(ctx context.Context, pet *petstorepb.Pet) {
 	s.pets[pet.Id] = pet
 }
 
-func (s *Store) Get(ctx context.Context, id int64) (*petstorepb.Pet, bool) {
+func (s *InMemory) Get(ctx context.Context, id int64) (*petstorepb.Pet, bool) {
 	_, span := otel.Tracer("pet").Start(ctx, "Store.Get")
 	defer span.End()
 
@@ -46,7 +46,7 @@ func (s *Store) Get(ctx context.Context, id int64) (*petstorepb.Pet, bool) {
 	return pet, exists
 }
 
-func (s *Store) Delete(ctx context.Context, id int64) {
+func (s *InMemory) Delete(ctx context.Context, id int64) {
 	_, span := otel.Tracer("pet").Start(ctx, "Store.Delete")
 	defer span.End()
 
@@ -56,7 +56,7 @@ func (s *Store) Delete(ctx context.Context, id int64) {
 	delete(s.pets, id)
 }
 
-func (s *Store) Pets(ctx context.Context) []*petstorepb.Pet {
+func (s *InMemory) Pets(ctx context.Context) []*petstorepb.Pet {
 	_, span := otel.Tracer("pet").Start(ctx, "Store.Pets")
 	defer span.End()
 

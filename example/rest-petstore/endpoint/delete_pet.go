@@ -13,8 +13,18 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-func DeletePet() rest.Endpoint {
-	h := &deletePetHandler{}
+type DeleteStore interface {
+	Delete(context.Context, int64)
+}
+
+type deletePetHandler struct {
+	store DeleteStore
+}
+
+func DeletePet(store DeleteStore) rest.Endpoint {
+	h := &deletePetHandler{
+		store: store,
+	}
 
 	return rest.NewEndpoint(
 		http.MethodDelete,
@@ -28,8 +38,6 @@ func DeletePet() rest.Endpoint {
 		),
 	)
 }
-
-type deletePetHandler struct{}
 
 func (h *deletePetHandler) Handle(ctx context.Context, req *emptypb.Empty) (*emptypb.Empty, error) {
 	return nil, nil
