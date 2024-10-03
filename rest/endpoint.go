@@ -6,6 +6,7 @@
 package rest
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/z5labs/bedrock/rest"
@@ -74,6 +75,11 @@ func Headers(hs ...Header) EndpointOption {
 	}
 }
 
+// HeaderValue
+func HeaderValue(ctx context.Context, name string) string {
+	return endpoint.HeaderValue(ctx, name)
+}
+
 // PathParam
 type PathParam endpoint.PathParam
 
@@ -86,6 +92,11 @@ func PathParams(ps ...PathParam) EndpointOption {
 		}
 		eo.eopts = append(eo.eopts, endpoint.PathParams(params...))
 	}
+}
+
+// PathValue
+func PathValue(ctx context.Context, name string) string {
+	return endpoint.PathValue(ctx, name)
 }
 
 // QueryParam
@@ -101,6 +112,11 @@ func QueryParams(qps ...QueryParam) EndpointOption {
 
 		eo.eopts = append(eo.eopts, endpoint.QueryParams(params...))
 	}
+}
+
+// QueryValue
+func QueryValue(ctx context.Context, name string) string {
+	return endpoint.QueryValue(ctx, name)
 }
 
 // NewEndpoint
