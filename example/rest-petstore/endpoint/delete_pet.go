@@ -8,8 +8,11 @@ package endpoint
 import (
 	"context"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/z5labs/humus/rest"
+	"go.opentelemetry.io/otel"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -36,9 +39,27 @@ func DeletePet(store DeleteStore) rest.Endpoint {
 				Required: true,
 			},
 		),
+		rest.Returns(http.StatusBadRequest),
 	)
 }
 
 func (h *deletePetHandler) Handle(ctx context.Context, req *emptypb.Empty) (*emptypb.Empty, error) {
-	return nil, nil
+	spanCtx, span := otel.Tracer("endpoint").Start(ctx, "deletePetHandler.Handle")
+	defer span.End()
+
+	pathId := rest.PathValue(ctx, "id")
+	pathId = strings.TrimSpace(pathId)
+	if len(pathId) == 0 {
+		return nil, rest.Error(http.StatusBadRequest, "missing pet id")
+	}
+
+	id, err := strconv.ParseInt(pathId, 10, 64)
+	if err != nil {
+		span.RecordError(err)
+		return nil, rest.Error(http.StatusBadRequest, "pet id must be an integer")
+	}
+
+	h.store.Delete(spanCtx, id)
+
+	return &emptypb.Empty{}, nil
 }
