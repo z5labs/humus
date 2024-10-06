@@ -23,6 +23,9 @@ func Init(ctx context.Context, cfg Config) (humus.App, error) {
 	store := petstore.NewInMemory()
 
 	app := rest.New(
+		rest.ListenOn(cfg.Http.Port),
+		rest.Title("Pet Store API"),
+		rest.Version("v0.0.0"),
 		rest.RegisterEndpoint(endpoint.AddPet(store)),
 		rest.RegisterEndpoint(endpoint.DeletePet(store)),
 		rest.RegisterEndpoint(endpoint.FindPetByID(store)),

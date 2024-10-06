@@ -23,6 +23,7 @@ import (
 	"github.com/z5labs/bedrock/pkg/app"
 	"github.com/z5labs/bedrock/pkg/health"
 	"github.com/z5labs/bedrock/rest"
+	"github.com/z5labs/bedrock/rest/mux"
 )
 
 //go:embed default_config.yaml
@@ -134,7 +135,7 @@ func (a *App) Run(ctx context.Context) error {
 		livenessEndpoint(a.liveness),
 	}
 	for _, e := range healthEndpoints {
-		a.restOpts = append(a.restOpts, rest.Endpoint(e.method, e.path, e.operation))
+		a.restOpts = append(a.restOpts, rest.Endpoint(mux.Method(e.method), e.path, e.operation))
 	}
 
 	a.restOpts = append(a.restOpts, rest.OpenApiEndpoint(http.MethodGet, "/openapi.json", rest.OpenApiJsonHandler))

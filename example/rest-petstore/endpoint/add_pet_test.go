@@ -16,6 +16,7 @@ import (
 	"github.com/z5labs/humus/example/internal/petstorepb"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/z5labs/humus/rest"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -48,6 +49,7 @@ func TestAddPet(t *testing.T) {
 
 			w := httptest.NewRecorder()
 			r := httptest.NewRequest(http.MethodPost, "/pet", bytes.NewReader(b))
+			r.Header.Set("Content-Type", rest.ProtobufContentType)
 
 			e.ServeHTTP(w, r)
 
@@ -101,6 +103,7 @@ func TestAddPet(t *testing.T) {
 
 			w := httptest.NewRecorder()
 			r := httptest.NewRequest(http.MethodPost, "/pet", bytes.NewReader(b))
+			r.Header.Set("Content-Type", rest.ProtobufContentType)
 
 			e.ServeHTTP(w, r)
 
