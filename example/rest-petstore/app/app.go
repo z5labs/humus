@@ -30,6 +30,8 @@ func Init(ctx context.Context, cfg Config) (humus.App, error) {
 		rest.RegisterEndpoint(endpoint.DeletePet(store)),
 		rest.RegisterEndpoint(endpoint.FindPetByID(store)),
 		rest.RegisterEndpoint(endpoint.ListPets(store)),
+		rest.RegisterEndpoint(endpoint.Upload(store, store)),
+		rest.RegisterEndpoint(endpoint.Download(store, store)),
 	)
 
 	return app, nil
