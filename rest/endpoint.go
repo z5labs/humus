@@ -8,8 +8,11 @@ package rest
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 
 	"github.com/swaggest/jsonschema-go"
 	"github.com/swaggest/openapi-go/openapi3"
@@ -36,17 +39,11 @@ type ProtoMessage[T any] interface {
 	proto.Message
 }
 
-// ProtoHandler
-type ProtoHandler[I, O any, Req ProtoMessage[I], Resp ProtoMessage[O]] Handler[I, O]
-
 // ContentTyper
 type ContentTyper[T any] interface {
 	*T
 	endpoint.ContentTyper
 }
-
-// RawContentHandler
-type RawContentHandler[I, O any, Req ContentTyper[I], Resp ContentTyper[O]] Handler[I, O]
 
 // Endpoint
 type Endpoint struct {
@@ -208,15 +205,30 @@ func (req ProtoRequest[I, T]) OpenApiV3Schema() (*openapi3.Schema, error) {
 	return schemaOrRef.Schema, nil
 }
 
-func (req *ProtoRequest[I, T]) ReadFrom(r io.Reader) (int64, error) {
-	b, err := io.ReadAll(r)
+func (req *ProtoRequest[I, T]) ReadRequest(r *http.Request) (err error) {
+	defer closeError(&err, r.Body)
+
+	var b []byte
+	b, err = io.ReadAll(r.Body)
 	if err != nil {
-		return 0, err
+		return
 	}
 
 	var msg T = &req.msg
 	err = proto.Unmarshal(b, msg)
-	return int64(len(b)), err
+	return
+}
+
+func closeError(err *error, c io.Closer) {
+	closeErr := c.Close()
+	if closeErr == nil {
+		return
+	}
+	if *err == nil {
+		*err = closeErr
+		return
+	}
+	*err = errors.Join(*err, closeErr)
 }
 
 // ProduceProtoHandler
@@ -239,6 +251,9 @@ func (h ProduceProtoHandler[I, O, Resp]) Handle(ctx context.Context, req *I) (*P
 	resp, err := h.inner.Handle(ctx, req)
 	if err != nil {
 		return nil, err
+	}
+	if resp == nil {
+		return nil, nil
 	}
 	return &ProtoResponse[O, Resp]{msg: resp}, nil
 }
@@ -335,51 +350,105 @@ func reflectJsonSchema(desc protoreflect.MessageDescriptor) (schema jsonschema.S
 	return
 }
 
-type rawContentHandler[I, O any, Req ContentTyper[I], Resp ContentTyper[O]] struct {
-	inner RawContentHandler[I, O, Req, Resp]
+// ConsumeMultipartFormDataHandler
+type ConsumeMultipartFormDataHandler[I endpoint.OpenApiV3Schemaer, O any] struct {
+	inner Handler[multipart.Reader, O]
 }
 
-func (h *rawContentHandler[I, O, Req, Resp]) Handle(ctx context.Context, req *rawContentRequest[I, Req]) (*rawContentResponse[O, Resp], error) {
-	resp, err := h.inner.Handle(ctx, &req.inner)
-	if err != nil {
-		return nil, err
-	}
-	return &rawContentResponse[O, Resp]{inner: resp}, nil
+// ConsumesMultipartFormData
+func ConsumesMultipartFormData[I endpoint.OpenApiV3Schemaer, O any](h Handler[multipart.Reader, O]) ConsumeMultipartFormDataHandler[I, O] {
+	return ConsumeMultipartFormDataHandler[I, O]{inner: h}
 }
 
-type rawContentRequest[I any, T ContentTyper[I]] struct {
-	inner I
+// MultipartFormDataRequest
+type MultipartFormDataRequest[I endpoint.OpenApiV3Schemaer] struct {
+	r *multipart.Reader
+	c io.Closer
 }
 
-func (req rawContentRequest[I, T]) ContentType() string {
+// Handle implements the [Handler] interface.
+func (h ConsumeMultipartFormDataHandler[I, O]) Handle(ctx context.Context, req *MultipartFormDataRequest[I]) (resp *O, err error) {
+	defer closeError(&err, req.c)
+
+	resp, err = h.inner.Handle(ctx, req.r)
+	return
+}
+
+// ContentType implements the [endpoint.ContentTyper] interface.
+func (req MultipartFormDataRequest[I]) ContentType() string {
+	return "multipart/form-data"
+}
+
+// Validate implements the [endpoint.Validator] interface.
+func (req MultipartFormDataRequest[I]) Validate() error {
+	return nil
+}
+
+// OpenApiV3Schema implements the [endpoint.OpenApiV3Schemaer] interface.
+func (MultipartFormDataRequest[I]) OpenApiV3Schema() (*openapi3.Schema, error) {
 	var i I
-	var t T = &i
-	return t.ContentType()
+	return i.OpenApiV3Schema()
 }
 
-func (req rawContentRequest[I, T]) Validate() error {
-	var t T = &req.inner
-	vt, ok := any(t).(endpoint.Validator)
-	if !ok {
-		return nil
+// ReadRequest implements the [endpoint.RequestReader] interface.
+func (req *MultipartFormDataRequest[I]) ReadRequest(r *http.Request) error {
+	mr, err := r.MultipartReader()
+	if err != nil {
+		return err
 	}
-	return vt.Validate()
+
+	req.r = mr
+	req.c = r.Body
+	return nil
 }
 
-func (rawContentRequest[I, T]) OpenApiV3Schema() (*openapi3.Schema, error) {
-	return &openapi3.Schema{}, nil
+type MultipartWriter interface {
+	CreatePart(header textproto.MIMEHeader) (io.Writer, error)
 }
 
-type rawContentResponse[I any, T ContentTyper[I]] struct {
+type MultipartResponseWriter[T any] interface {
+	*T
+
+	endpoint.OpenApiV3Schemaer
+
+	WriteParts(w MultipartWriter) error
+}
+
+type ProduceMultipartFormDataHandler[I, O any, Resp MultipartResponseWriter[O]] struct {
+	inner Handler[I, O]
+}
+
+func ProducesMultipartFormData[I, O any, Resp MultipartResponseWriter[O]](h Handler[I, O]) ProduceMultipartFormDataHandler[I, O, Resp] {
+	return ProduceMultipartFormDataHandler[I, O, Resp]{inner: h}
+}
+
+type MultipartFormDataResponse[I any, T MultipartResponseWriter[I]] struct {
 	inner T
 }
 
-func (resp rawContentResponse[I, T]) ContentType() string {
-	var i I
-	var t T = &i
-	return t.ContentType()
+func (MultipartFormDataResponse[I, T]) ContentType() string {
+	return "multipart/form-data"
 }
 
-func (rawContentResponse[I, T]) OpenApiV3Schema() (*openapi3.Schema, error) {
-	return &openapi3.Schema{}, nil
+func (MultipartFormDataResponse[I, T]) OpenApiV3Schema() (*openapi3.Schema, error) {
+	var i I
+	var t T = &i
+	return t.OpenApiV3Schema()
+}
+
+func (resp *MultipartFormDataResponse[I, T]) WriteTo(w io.Writer) (int64, error) {
+	mw := multipart.NewWriter(w)
+	err := resp.inner.WriteParts(mw)
+	return 0, err
+}
+
+func (h ProduceMultipartFormDataHandler[I, O, Resp]) Handle(ctx context.Context, req *I) (*MultipartFormDataResponse[O, Resp], error) {
+	resp, err := h.inner.Handle(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, nil
+	}
+	return &MultipartFormDataResponse[O, Resp]{inner: resp}, nil
 }
