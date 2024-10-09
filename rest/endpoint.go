@@ -21,8 +21,11 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
-// ContentTyper
-type ContentTyper endpoint.ContentTyper
+// Handler
+type Handler[I, O any] endpoint.Handler[I, O]
+
+// OperationHandler
+type OperationHandler[I, O any, Req endpoint.Request[I], Resp endpoint.Response[O]] Handler[I, O]
 
 // ProtobufContentType
 var ProtobufContentType = "application/x-protobuf"
@@ -33,8 +36,17 @@ type ProtoMessage[T any] interface {
 	proto.Message
 }
 
-// Handler
-type Handler[I, O any, Req ProtoMessage[I], Resp ProtoMessage[O]] endpoint.Handler[I, O]
+// ProtoHandler
+type ProtoHandler[I, O any, Req ProtoMessage[I], Resp ProtoMessage[O]] Handler[I, O]
+
+// ContentTyper
+type ContentTyper[T any] interface {
+	*T
+	endpoint.ContentTyper
+}
+
+// RawContentHandler
+type RawContentHandler[I, O any, Req ContentTyper[I], Resp ContentTyper[O]] Handler[I, O]
 
 // Endpoint
 type Endpoint struct {
@@ -126,19 +138,15 @@ func QueryValue(ctx context.Context, name string) string {
 	return endpoint.QueryValue(ctx, name)
 }
 
-// NewProtoEndpoint
-func NewProtoEndpoint[I, O any, Req ProtoMessage[I], Resp ProtoMessage[O]](method string, path string, h Handler[I, O, Req, Resp], opts ...EndpointOption) Endpoint {
+// NewEndpoint
+func NewEndpoint[I, O any, Req endpoint.Request[I], Resp endpoint.Response[O]](method, path string, h OperationHandler[I, O, Req, Resp], opts ...EndpointOption) Endpoint {
 	eo := &endpointOptions{}
 	for _, opt := range opts {
 		opt(eo)
 	}
 	eo.eopts = append(eo.eopts, endpoint.OnError(&errHandler{marshal: proto.Marshal}))
 
-	protoHandler := protoHandler[I, O, Req, Resp]{
-		inner: h,
-	}
-
-	op := endpoint.NewOperation(protoHandler, eo.eopts...)
+	op := endpoint.NewOperation[I, O, Req, Resp](h, eo.eopts...)
 
 	return Endpoint{
 		method:    method,
@@ -152,23 +160,26 @@ func (e Endpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	e.operation.ServeHTTP(w, r)
 }
 
-type protoHandler[I, O any, Req ProtoMessage[I], Resp ProtoMessage[O]] struct {
-	inner Handler[I, O, Req, Resp]
+type ConsumeProtoHandler[I, O any, Req ProtoMessage[I]] struct {
+	inner Handler[I, O]
 }
 
-func (h protoHandler[I, O, Req, Resp]) Handle(ctx context.Context, req *protoRequest[I, Req]) (*protoResponse[O, Resp], error) {
-	resp, err := h.inner.Handle(ctx, &req.msg)
-	if err != nil {
-		return nil, err
-	}
-	return &protoResponse[O, Resp]{msg: resp}, nil
+// ConsumesProto
+func ConsumesProto[I, O any, Req ProtoMessage[I]](h Handler[I, O]) ConsumeProtoHandler[I, O, Req] {
+	return ConsumeProtoHandler[I, O, Req]{inner: h}
 }
 
-type protoRequest[I any, T ProtoMessage[I]] struct {
+// ProtoRequest
+type ProtoRequest[I any, T ProtoMessage[I]] struct {
 	msg I
 }
 
-func (req protoRequest[I, T]) ContentType() string {
+// Handle implements the [Handler] interface.
+func (h ConsumeProtoHandler[I, O, Req]) Handle(ctx context.Context, req *ProtoRequest[I, Req]) (*O, error) {
+	return h.inner.Handle(ctx, &req.msg)
+}
+
+func (req ProtoRequest[I, T]) ContentType() string {
 	var msg T = &req.msg
 	desc := msg.ProtoReflect().Descriptor()
 	if desc.Fields().Len() == 0 {
@@ -177,7 +188,7 @@ func (req protoRequest[I, T]) ContentType() string {
 	return ProtobufContentType
 }
 
-func (req protoRequest[I, T]) Validate() error {
+func (req ProtoRequest[I, T]) Validate() error {
 	var msg T = &req.msg
 	vt, ok := any(msg).(endpoint.Validator)
 	if !ok {
@@ -186,7 +197,7 @@ func (req protoRequest[I, T]) Validate() error {
 	return vt.Validate()
 }
 
-func (req protoRequest[I, T]) OpenApiV3Schema() (*openapi3.Schema, error) {
+func (req ProtoRequest[I, T]) OpenApiV3Schema() (*openapi3.Schema, error) {
 	var msg T = &req.msg
 	jsonSchema, err := reflectJsonSchema(msg.ProtoReflect().Descriptor())
 	if err != nil {
@@ -197,7 +208,7 @@ func (req protoRequest[I, T]) OpenApiV3Schema() (*openapi3.Schema, error) {
 	return schemaOrRef.Schema, nil
 }
 
-func (req *protoRequest[I, T]) ReadFrom(r io.Reader) (int64, error) {
+func (req *ProtoRequest[I, T]) ReadFrom(r io.Reader) (int64, error) {
 	b, err := io.ReadAll(r)
 	if err != nil {
 		return 0, err
@@ -208,11 +219,31 @@ func (req *protoRequest[I, T]) ReadFrom(r io.Reader) (int64, error) {
 	return int64(len(b)), err
 }
 
-type protoResponse[I any, T ProtoMessage[I]] struct {
+// ProduceProtoHandler
+type ProduceProtoHandler[I, O any, Resp ProtoMessage[O]] struct {
+	inner Handler[I, O]
+}
+
+// ProducesProto
+func ProducesProto[I, O any, Resp ProtoMessage[O]](h Handler[I, O]) ProduceProtoHandler[I, O, Resp] {
+	return ProduceProtoHandler[I, O, Resp]{inner: h}
+}
+
+// ProtoResponse
+type ProtoResponse[I any, T ProtoMessage[I]] struct {
 	msg T
 }
 
-func (resp protoResponse[I, T]) ContentType() string {
+// Handle implements the [Handler] interface.
+func (h ProduceProtoHandler[I, O, Resp]) Handle(ctx context.Context, req *I) (*ProtoResponse[O, Resp], error) {
+	resp, err := h.inner.Handle(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return &ProtoResponse[O, Resp]{msg: resp}, nil
+}
+
+func (resp ProtoResponse[I, T]) ContentType() string {
 	var i I
 	var msg T = &i
 	desc := msg.ProtoReflect().Descriptor()
@@ -222,7 +253,7 @@ func (resp protoResponse[I, T]) ContentType() string {
 	return ProtobufContentType
 }
 
-func (resp protoResponse[I, T]) OpenApiV3Schema() (*openapi3.Schema, error) {
+func (resp ProtoResponse[I, T]) OpenApiV3Schema() (*openapi3.Schema, error) {
 	var i I
 	var msg T = &i
 	jsonSchema, err := reflectJsonSchema(msg.ProtoReflect().Descriptor())
@@ -234,7 +265,7 @@ func (resp protoResponse[I, T]) OpenApiV3Schema() (*openapi3.Schema, error) {
 	return schemaOrRef.Schema, nil
 }
 
-func (resp *protoResponse[I, T]) WriteTo(w io.Writer) (int64, error) {
+func (resp *ProtoResponse[I, T]) WriteTo(w io.Writer) (int64, error) {
 	b, err := proto.Marshal(resp.msg)
 	if err != nil {
 		return 0, err
@@ -302,4 +333,53 @@ func reflectJsonSchema(desc protoreflect.MessageDescriptor) (schema jsonschema.S
 		schema.WithPropertiesItem(field.JSONName(), val)
 	}
 	return
+}
+
+type rawContentHandler[I, O any, Req ContentTyper[I], Resp ContentTyper[O]] struct {
+	inner RawContentHandler[I, O, Req, Resp]
+}
+
+func (h *rawContentHandler[I, O, Req, Resp]) Handle(ctx context.Context, req *rawContentRequest[I, Req]) (*rawContentResponse[O, Resp], error) {
+	resp, err := h.inner.Handle(ctx, &req.inner)
+	if err != nil {
+		return nil, err
+	}
+	return &rawContentResponse[O, Resp]{inner: resp}, nil
+}
+
+type rawContentRequest[I any, T ContentTyper[I]] struct {
+	inner I
+}
+
+func (req rawContentRequest[I, T]) ContentType() string {
+	var i I
+	var t T = &i
+	return t.ContentType()
+}
+
+func (req rawContentRequest[I, T]) Validate() error {
+	var t T = &req.inner
+	vt, ok := any(t).(endpoint.Validator)
+	if !ok {
+		return nil
+	}
+	return vt.Validate()
+}
+
+func (rawContentRequest[I, T]) OpenApiV3Schema() (*openapi3.Schema, error) {
+	return &openapi3.Schema{}, nil
+}
+
+type rawContentResponse[I any, T ContentTyper[I]] struct {
+	inner T
+}
+
+func (resp rawContentResponse[I, T]) ContentType() string {
+	var i I
+	var t T = &i
+	return t.ContentType()
+}
+
+func (rawContentResponse[I, T]) OpenApiV3Schema() (*openapi3.Schema, error) {
+	return &openapi3.Schema{}, nil
 }

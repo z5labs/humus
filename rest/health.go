@@ -21,10 +21,12 @@ func readinessEndpoint(m health.Metric) Endpoint {
 	h := &readinessHandler{
 		Metric: m,
 	}
-	return NewProtoEndpoint(
+	return NewEndpoint(
 		http.MethodGet,
 		"/health/readiness",
-		h,
+		ConsumesProto(
+			ProducesProto(h),
+		),
 		Returns(http.StatusServiceUnavailable),
 	)
 }
@@ -45,10 +47,12 @@ func livenessEndpoint(m health.Metric) Endpoint {
 	h := &livenessHandler{
 		Metric: m,
 	}
-	return NewProtoEndpoint(
+	return NewEndpoint(
 		http.MethodGet,
 		"/health/liveness",
-		h,
+		ConsumesProto(
+			ProducesProto(h),
+		),
 		Returns(http.StatusServiceUnavailable),
 	)
 }

@@ -29,10 +29,12 @@ func DeletePet(store DeleteStore) rest.Endpoint {
 		store: store,
 	}
 
-	return rest.NewProtoEndpoint(
+	return rest.NewEndpoint(
 		http.MethodDelete,
 		"/pet/{id}",
-		h,
+		rest.ConsumesProto(
+			rest.ProducesProto(h),
+		),
 		rest.PathParams(
 			rest.PathParam{
 				Name:     "id",

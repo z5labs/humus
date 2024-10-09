@@ -66,10 +66,12 @@ func TestErrHandler_HandleError(t *testing.T) {
 
 			app := New(
 				ListenOn(0),
-				RegisterEndpoint(NewProtoEndpoint(
+				RegisterEndpoint(NewEndpoint(
 					http.MethodGet,
 					"/",
-					h,
+					ConsumesProto(
+						ProducesProto(h),
+					),
 				)),
 			)
 
@@ -167,10 +169,12 @@ func TestErrHandler_HandleError(t *testing.T) {
 
 			app := New(
 				ListenOn(0),
-				RegisterEndpoint(NewProtoEndpoint(
+				RegisterEndpoint(NewEndpoint(
 					http.MethodGet,
 					"/",
-					h,
+					ConsumesProto(
+						ProducesProto(h),
+					),
 				)),
 			)
 
@@ -268,10 +272,12 @@ func TestErrHandler_HandleError(t *testing.T) {
 
 			app := New(
 				ListenOn(0),
-				RegisterEndpoint(NewProtoEndpoint(
+				RegisterEndpoint(NewEndpoint(
 					http.MethodGet,
 					"/",
-					h,
+					ConsumesProto(
+						ProducesProto(h),
+					),
 					Headers(
 						Header{
 							Name:    "id",
@@ -375,10 +381,12 @@ func TestErrHandler_HandleError(t *testing.T) {
 
 			app := New(
 				ListenOn(0),
-				RegisterEndpoint(NewProtoEndpoint(
+				RegisterEndpoint(NewEndpoint(
 					http.MethodGet,
 					"/",
-					h,
+					ConsumesProto(
+						ProducesProto(h),
+					),
 					Headers(
 						Header{
 							Name:     "id",
@@ -478,10 +486,12 @@ func TestErrHandler_HandleError(t *testing.T) {
 		t.Run("if a InvalidPathParamError is returned", func(t *testing.T) {
 			h := noopHandler{}
 
-			e := NewProtoEndpoint(
+			e := NewEndpoint(
 				http.MethodGet,
 				"/{id}",
-				h,
+				ConsumesProto(
+					ProducesProto(h),
+				),
 				PathParams(
 					PathParam{
 						Name:    "id",
@@ -585,10 +595,12 @@ func TestErrHandler_HandleError(t *testing.T) {
 		t.Run("if a MissingRequiredPathParamError is returned", func(t *testing.T) {
 			h := noopHandler{}
 
-			e := NewProtoEndpoint(
+			e := NewEndpoint(
 				http.MethodGet,
 				"/hello/{id...}",
-				h,
+				ConsumesProto(
+					ProducesProto(h),
+				),
 				PathParams(
 					PathParam{
 						Name:     "id",
@@ -694,10 +706,12 @@ func TestErrHandler_HandleError(t *testing.T) {
 
 			app := New(
 				ListenOn(0),
-				RegisterEndpoint(NewProtoEndpoint(
+				RegisterEndpoint(NewEndpoint(
 					http.MethodGet,
 					"/",
-					h,
+					ConsumesProto(
+						ProducesProto(h),
+					),
 					QueryParams(
 						QueryParam{
 							Name:    "id",
@@ -799,10 +813,12 @@ func TestErrHandler_HandleError(t *testing.T) {
 
 			app := New(
 				ListenOn(0),
-				RegisterEndpoint(NewProtoEndpoint(
+				RegisterEndpoint(NewEndpoint(
 					http.MethodGet,
 					"/",
-					h,
+					ConsumesProto(
+						ProducesProto(h),
+					),
 					QueryParams(
 						QueryParam{
 							Name:     "id",

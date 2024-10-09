@@ -291,14 +291,18 @@ func TestApp_Run(t *testing.T) {
 		t.Run("if the context.Context is cancelled while handling requests", func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 
+			h := contextCancelHandler{
+				cancel: cancel,
+			}
+
 			app := New(
 				ListenOn(0),
-				RegisterEndpoint(NewProtoEndpoint(
+				RegisterEndpoint(NewEndpoint(
 					http.MethodGet,
 					"/",
-					contextCancelHandler{
-						cancel: cancel,
-					},
+					ConsumesProto(
+						ProducesProto(h),
+					),
 				)),
 			)
 
