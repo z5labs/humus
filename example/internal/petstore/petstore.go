@@ -7,6 +7,7 @@ package petstore
 
 import (
 	"context"
+	"io"
 	"sync"
 
 	"github.com/z5labs/humus/example/internal/petstorepb"
@@ -15,18 +16,20 @@ import (
 )
 
 type InMemory struct {
-	mu   sync.Mutex
-	pets map[int64]*petstorepb.Pet
+	mu     sync.Mutex
+	pets   map[int64]*petstorepb.Pet
+	images map[int64][]byte
 }
 
 func NewInMemory() *InMemory {
 	return &InMemory{
-		pets: make(map[int64]*petstorepb.Pet),
+		pets:   make(map[int64]*petstorepb.Pet),
+		images: make(map[int64][]byte),
 	}
 }
 
 func (s *InMemory) Add(ctx context.Context, pet *petstorepb.Pet) {
-	_, span := otel.Tracer("pet").Start(ctx, "Store.Add")
+	_, span := otel.Tracer("petstore").Start(ctx, "InMemory.Add")
 	defer span.End()
 
 	s.mu.Lock()
@@ -36,7 +39,7 @@ func (s *InMemory) Add(ctx context.Context, pet *petstorepb.Pet) {
 }
 
 func (s *InMemory) Get(ctx context.Context, id int64) (*petstorepb.Pet, bool) {
-	_, span := otel.Tracer("pet").Start(ctx, "Store.Get")
+	_, span := otel.Tracer("petstore").Start(ctx, "InMemory.Get")
 	defer span.End()
 
 	s.mu.Lock()
@@ -47,7 +50,7 @@ func (s *InMemory) Get(ctx context.Context, id int64) (*petstorepb.Pet, bool) {
 }
 
 func (s *InMemory) Delete(ctx context.Context, id int64) {
-	_, span := otel.Tracer("pet").Start(ctx, "Store.Delete")
+	_, span := otel.Tracer("petstore").Start(ctx, "InMemory.Delete")
 	defer span.End()
 
 	s.mu.Lock()
@@ -57,7 +60,7 @@ func (s *InMemory) Delete(ctx context.Context, id int64) {
 }
 
 func (s *InMemory) Pets(ctx context.Context) []*petstorepb.Pet {
-	_, span := otel.Tracer("pet").Start(ctx, "Store.Pets")
+	_, span := otel.Tracer("petstore").Start(ctx, "InMemory.Pets")
 	defer span.End()
 
 	s.mu.Lock()
@@ -68,4 +71,31 @@ func (s *InMemory) Pets(ctx context.Context) []*petstorepb.Pet {
 		pets = append(pets, pet)
 	}
 	return pets
+}
+
+func (s *InMemory) IndexImage(ctx context.Context, pet *petstorepb.Pet, r io.Reader) error {
+	_, span := otel.Tracer("petstore").Start(ctx, "InMemory.IndexImage")
+	defer span.End()
+
+	b, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.images[pet.Id] = b
+	return nil
+}
+
+func (s *InMemory) GetImage(ctx context.Context, id int64) ([]byte, bool) {
+	_, span := otel.Tracer("petstore").Start(ctx, "InMemory.GetImage")
+	defer span.End()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	img, exists := s.images[id]
+	return img, exists
 }
