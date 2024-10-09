@@ -29,7 +29,7 @@ func DeletePet(store DeleteStore) rest.Endpoint {
 		store: store,
 	}
 
-	return rest.NewEndpoint(
+	return rest.NewProtoEndpoint(
 		http.MethodDelete,
 		"/pet/{id}",
 		h,

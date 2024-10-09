@@ -29,7 +29,7 @@ func AddPet(store AddStore) rest.Endpoint {
 		store: store,
 	}
 
-	return rest.NewEndpoint(
+	return rest.NewProtoEndpoint(
 		http.MethodPost,
 		"/pet",
 		h,

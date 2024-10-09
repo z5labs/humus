@@ -126,8 +126,8 @@ func QueryValue(ctx context.Context, name string) string {
 	return endpoint.QueryValue(ctx, name)
 }
 
-// NewEndpoint
-func NewEndpoint[I, O any, Req ProtoMessage[I], Resp ProtoMessage[O]](method string, path string, h Handler[I, O, Req, Resp], opts ...EndpointOption) Endpoint {
+// NewProtoEndpoint
+func NewProtoEndpoint[I, O any, Req ProtoMessage[I], Resp ProtoMessage[O]](method string, path string, h Handler[I, O, Req, Resp], opts ...EndpointOption) Endpoint {
 	eo := &endpointOptions{}
 	for _, opt := range opts {
 		opt(eo)

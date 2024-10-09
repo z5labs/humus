@@ -31,7 +31,7 @@ func FindPetByID(store PetByIdStore) rest.Endpoint {
 		store: store,
 	}
 
-	return rest.NewEndpoint(
+	return rest.NewProtoEndpoint(
 		http.MethodGet,
 		"/pet/{id}",
 		h,

@@ -29,7 +29,7 @@ func ListPets(store ListStore) rest.Endpoint {
 		store: store,
 	}
 
-	return rest.NewEndpoint(
+	return rest.NewProtoEndpoint(
 		http.MethodGet,
 		"/pets",
 		h,

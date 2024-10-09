@@ -66,7 +66,7 @@ func TestErrHandler_HandleError(t *testing.T) {
 
 			app := New(
 				ListenOn(0),
-				RegisterEndpoint(NewEndpoint(
+				RegisterEndpoint(NewProtoEndpoint(
 					http.MethodGet,
 					"/",
 					h,
@@ -167,7 +167,7 @@ func TestErrHandler_HandleError(t *testing.T) {
 
 			app := New(
 				ListenOn(0),
-				RegisterEndpoint(NewEndpoint(
+				RegisterEndpoint(NewProtoEndpoint(
 					http.MethodGet,
 					"/",
 					h,
@@ -268,7 +268,7 @@ func TestErrHandler_HandleError(t *testing.T) {
 
 			app := New(
 				ListenOn(0),
-				RegisterEndpoint(NewEndpoint(
+				RegisterEndpoint(NewProtoEndpoint(
 					http.MethodGet,
 					"/",
 					h,
@@ -375,7 +375,7 @@ func TestErrHandler_HandleError(t *testing.T) {
 
 			app := New(
 				ListenOn(0),
-				RegisterEndpoint(NewEndpoint(
+				RegisterEndpoint(NewProtoEndpoint(
 					http.MethodGet,
 					"/",
 					h,
@@ -478,7 +478,7 @@ func TestErrHandler_HandleError(t *testing.T) {
 		t.Run("if a InvalidPathParamError is returned", func(t *testing.T) {
 			h := noopHandler{}
 
-			e := NewEndpoint(
+			e := NewProtoEndpoint(
 				http.MethodGet,
 				"/{id}",
 				h,
@@ -585,7 +585,7 @@ func TestErrHandler_HandleError(t *testing.T) {
 		t.Run("if a MissingRequiredPathParamError is returned", func(t *testing.T) {
 			h := noopHandler{}
 
-			e := NewEndpoint(
+			e := NewProtoEndpoint(
 				http.MethodGet,
 				"/hello/{id...}",
 				h,
@@ -694,7 +694,7 @@ func TestErrHandler_HandleError(t *testing.T) {
 
 			app := New(
 				ListenOn(0),
-				RegisterEndpoint(NewEndpoint(
+				RegisterEndpoint(NewProtoEndpoint(
 					http.MethodGet,
 					"/",
 					h,
@@ -799,7 +799,7 @@ func TestErrHandler_HandleError(t *testing.T) {
 
 			app := New(
 				ListenOn(0),
-				RegisterEndpoint(NewEndpoint(
+				RegisterEndpoint(NewProtoEndpoint(
 					http.MethodGet,
 					"/",
 					h,

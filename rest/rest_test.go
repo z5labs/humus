@@ -293,7 +293,7 @@ func TestApp_Run(t *testing.T) {
 
 			app := New(
 				ListenOn(0),
-				RegisterEndpoint(NewEndpoint(
+				RegisterEndpoint(NewProtoEndpoint(
 					http.MethodGet,
 					"/",
 					contextCancelHandler{
