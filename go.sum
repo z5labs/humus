@@ -49,6 +49,8 @@ github.com/yudai/golcs v0.0.0-20170316035057-ecda9a501e82 h1:BHyfKlQyqbsFN5p3Ifn
 github.com/yudai/golcs v0.0.0-20170316035057-ecda9a501e82/go.mod h1:lgjkn3NuSvDfVJdfcVVdX+jpBxNmX4rDAzaS45IcYoM=
 github.com/z5labs/bedrock v0.12.0 h1:mv5EQfYXfInlO++IRqsxcPcGCbKPcWKC6oTDP9VMm4E=
 github.com/z5labs/bedrock v0.12.0/go.mod h1:IdEKPA+TgqDFsSVD6L+elp9eJGmSL3xQ61bC7UjNmQA=
+github.com/z5labs/bedrock v0.12.1 h1:jYrt96i7y6hObqFcYWxVxHgsW7zdYOchDUeARxKLoT8=
+github.com/z5labs/bedrock v0.12.1/go.mod h1:YEfT5MWAaVacZGsHC/WOB9nUfgBXIX3Cs2rJ0G2QRHs=
 go.opentelemetry.io/contrib/bridges/otelslog v0.5.0 h1:lU3F57OSLK5mQ1PDBVAfDDaKCPv37MrEbCfTzsF4bz0=
 go.opentelemetry.io/contrib/bridges/otelslog v0.5.0/go.mod h1:I84u06zJFr8T5D73fslEUbnRBimVVSBhuVw8L8I92AU=
 go.opentelemetry.io/contrib/bridges/otelslog v0.6.0 h1:V/XtFJ8mMisAO2E0tXcgwi40wJUxbiz8I2/RtgaZ8AU=
