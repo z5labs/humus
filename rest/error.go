@@ -14,6 +14,7 @@ import (
 
 	"github.com/z5labs/humus/humuspb"
 
+	"github.com/z5labs/bedrock/pkg/ptr"
 	"github.com/z5labs/bedrock/rest/endpoint"
 	"go.opentelemetry.io/otel"
 	"google.golang.org/protobuf/proto"
@@ -23,8 +24,8 @@ import (
 // Error
 func Error(status int, message string, details ...*anypb.Any) *humuspb.Status {
 	return &humuspb.Status{
-		Code:    humuspb.HttpCodeToStatusCode(status),
-		Message: message,
+		Code:    humuspb.HttpCodeToStatusCode(status).Enum(),
+		Message: &message,
 		Details: details,
 	}
 }
@@ -38,7 +39,7 @@ func (h *errHandler) HandleError(ctx context.Context, w http.ResponseWriter, err
 	defer span.End()
 
 	status := mapErrorToStatus(err)
-	httpCode := humuspb.StatusCodeToHttpCode(status.Code)
+	httpCode := humuspb.StatusCodeToHttpCode(status.GetCode())
 	b, err := h.marshal(status)
 	if err != nil {
 		span.RecordError(err)
@@ -64,38 +65,38 @@ func mapErrorToStatus(err error) *humuspb.Status {
 		return e
 	case endpoint.InvalidHeaderError:
 		return &humuspb.Status{
-			Code:    humuspb.Code_INVALID_ARGUMENT,
-			Message: fmt.Sprintf("invalid header: %s", e.Header),
+			Code:    humuspb.Code_INVALID_ARGUMENT.Enum(),
+			Message: ptr.Ref(fmt.Sprintf("invalid header: %s", e.Header)),
 		}
 	case endpoint.InvalidPathParamError:
 		return &humuspb.Status{
-			Code:    humuspb.Code_INVALID_ARGUMENT,
-			Message: fmt.Sprintf("invalid path param: %s", e.Param),
+			Code:    humuspb.Code_INVALID_ARGUMENT.Enum(),
+			Message: ptr.Ref(fmt.Sprintf("invalid path param: %s", e.Param)),
 		}
 	case endpoint.InvalidQueryParamError:
 		return &humuspb.Status{
-			Code:    humuspb.Code_INVALID_ARGUMENT,
-			Message: fmt.Sprintf("invalid query param: %s", e.Param),
+			Code:    humuspb.Code_INVALID_ARGUMENT.Enum(),
+			Message: ptr.Ref(fmt.Sprintf("invalid query param: %s", e.Param)),
 		}
 	case endpoint.MissingRequiredHeaderError:
 		return &humuspb.Status{
-			Code:    humuspb.Code_FAILED_PRECONDITION,
-			Message: fmt.Sprintf("missing required header: %s", e.Header),
+			Code:    humuspb.Code_FAILED_PRECONDITION.Enum(),
+			Message: ptr.Ref(fmt.Sprintf("missing required header: %s", e.Header)),
 		}
 	case endpoint.MissingRequiredPathParamError:
 		return &humuspb.Status{
-			Code:    humuspb.Code_FAILED_PRECONDITION,
-			Message: fmt.Sprintf("missing required path param: %s", e.Param),
+			Code:    humuspb.Code_FAILED_PRECONDITION.Enum(),
+			Message: ptr.Ref(fmt.Sprintf("missing required path param: %s", e.Param)),
 		}
 	case endpoint.MissingRequiredQueryParamError:
 		return &humuspb.Status{
-			Code:    humuspb.Code_FAILED_PRECONDITION,
-			Message: fmt.Sprintf("missing required query param: %s", e.Param),
+			Code:    humuspb.Code_FAILED_PRECONDITION.Enum(),
+			Message: ptr.Ref(fmt.Sprintf("missing required query param: %s", e.Param)),
 		}
 	default:
 		return &humuspb.Status{
-			Code:    humuspb.Code_INTERNAL,
-			Message: "internal error",
+			Code:    humuspb.Code_INTERNAL.Enum(),
+			Message: ptr.Ref("internal error"),
 		}
 	}
 }
