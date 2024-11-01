@@ -54,7 +54,7 @@ func TestDeletePet(t *testing.T) {
 			if !assert.Nil(t, err) {
 				return
 			}
-			if !assert.Equal(t, humuspb.Code_FAILED_PRECONDITION, status.Code) {
+			if !assert.Equal(t, humuspb.Code_FAILED_PRECONDITION, status.GetCode()) {
 				return
 			}
 		})
@@ -89,7 +89,7 @@ func TestDeletePet(t *testing.T) {
 			if !assert.Nil(t, err) {
 				return
 			}
-			if !assert.Equal(t, humuspb.Code_INVALID_ARGUMENT, status.Code) {
+			if !assert.Equal(t, humuspb.Code_INVALID_ARGUMENT, status.GetCode()) {
 				return
 			}
 		})

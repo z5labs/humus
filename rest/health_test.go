@@ -81,7 +81,7 @@ func TestReadinessEndpoint(t *testing.T) {
 			if !assert.Nil(t, err) {
 				return
 			}
-			if !assert.Equal(t, humuspb.Code_UNAVAILABLE, status.Code) {
+			if !assert.Equal(t, humuspb.Code_UNAVAILABLE, status.GetCode()) {
 				return
 			}
 			if !assert.NotEmpty(t, status.Message) {
@@ -157,7 +157,7 @@ func TestLivenessEndpoint(t *testing.T) {
 			if !assert.Nil(t, err) {
 				return
 			}
-			if !assert.Equal(t, humuspb.Code_UNAVAILABLE, status.Code) {
+			if !assert.Equal(t, humuspb.Code_UNAVAILABLE, status.GetCode()) {
 				return
 			}
 			if !assert.NotEmpty(t, status.Message) {

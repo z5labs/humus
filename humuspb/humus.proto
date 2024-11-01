@@ -3,7 +3,7 @@
 // 
 // protoc -I . -I $PATH_TO_PROTOBUF_SRC --go_out . --go_opt=module=github.com/z5labs/humus humus.proto
 
-syntax = "proto3";
+edition = "2023";
 
 package humus;
 
