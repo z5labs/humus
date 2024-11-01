@@ -13,7 +13,7 @@ import (
 
 // Error implements the [error] interface.
 func (s *Status) Error() string {
-	return fmt.Sprintf("status: %s: %s", s.Code, s.Message)
+	return fmt.Sprintf("status: %s: %s", s.GetCode(), s.GetMessage())
 }
 
 var httpToStatusCode = map[int]Code{

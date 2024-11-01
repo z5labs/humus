@@ -157,14 +157,15 @@ func TestErrHandler_HandleError(t *testing.T) {
 			if !assert.Nil(t, err) {
 				return
 			}
-			if !assert.Equal(t, humuspb.Code_INTERNAL, status.Code) {
+			if !assert.Equal(t, humuspb.Code_INTERNAL, status.GetCode()) {
 				return
 			}
 		})
 
 		t.Run("if the status code is not recognized by humuspb", func(t *testing.T) {
+			statusCode := humuspb.Code(-1)
 			h := errorEndpointHandler{
-				err: &humuspb.Status{Code: -1},
+				err: &humuspb.Status{Code: &statusCode},
 			}
 
 			app := New(
@@ -260,7 +261,7 @@ func TestErrHandler_HandleError(t *testing.T) {
 			if !assert.Nil(t, err) {
 				return
 			}
-			if !assert.Equal(t, humuspb.Code(-1), status.Code) {
+			if !assert.Equal(t, statusCode, status.GetCode()) {
 				return
 			}
 		})
@@ -371,7 +372,7 @@ func TestErrHandler_HandleError(t *testing.T) {
 			if !assert.Nil(t, err) {
 				return
 			}
-			if !assert.Equal(t, humuspb.Code_INVALID_ARGUMENT, status.Code) {
+			if !assert.Equal(t, humuspb.Code_INVALID_ARGUMENT, status.GetCode()) {
 				return
 			}
 		})
@@ -478,7 +479,7 @@ func TestErrHandler_HandleError(t *testing.T) {
 			if !assert.Nil(t, err) {
 				return
 			}
-			if !assert.Equal(t, humuspb.Code_FAILED_PRECONDITION, status.Code) {
+			if !assert.Equal(t, humuspb.Code_FAILED_PRECONDITION, status.GetCode()) {
 				return
 			}
 		})
@@ -587,7 +588,7 @@ func TestErrHandler_HandleError(t *testing.T) {
 			if !assert.Nil(t, err) {
 				return
 			}
-			if !assert.Equal(t, humuspb.Code_INVALID_ARGUMENT, status.Code) {
+			if !assert.Equal(t, humuspb.Code_INVALID_ARGUMENT, status.GetCode()) {
 				return
 			}
 		})
@@ -696,7 +697,7 @@ func TestErrHandler_HandleError(t *testing.T) {
 			if !assert.Nil(t, err) {
 				return
 			}
-			if !assert.Equal(t, humuspb.Code_FAILED_PRECONDITION, status.Code) {
+			if !assert.Equal(t, humuspb.Code_FAILED_PRECONDITION, status.GetCode()) {
 				return
 			}
 		})
@@ -803,7 +804,7 @@ func TestErrHandler_HandleError(t *testing.T) {
 			if !assert.Nil(t, err) {
 				return
 			}
-			if !assert.Equal(t, humuspb.Code_INVALID_ARGUMENT, status.Code) {
+			if !assert.Equal(t, humuspb.Code_INVALID_ARGUMENT, status.GetCode()) {
 				return
 			}
 		})
@@ -910,7 +911,7 @@ func TestErrHandler_HandleError(t *testing.T) {
 			if !assert.Nil(t, err) {
 				return
 			}
-			if !assert.Equal(t, humuspb.Code_FAILED_PRECONDITION, status.Code) {
+			if !assert.Equal(t, humuspb.Code_FAILED_PRECONDITION, status.GetCode()) {
 				return
 			}
 		})
