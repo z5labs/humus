@@ -10,13 +10,12 @@ import (
 	_ "embed"
 
 	"github.com/z5labs/humus/example/rest-petstore/app"
-
-	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/rest"
 )
 
 //go:embed config.yaml
 var configBytes []byte
 
 func main() {
-	humus.Run(bytes.NewReader(configBytes), app.Init)
+	rest.Run(bytes.NewReader(configBytes), app.Init)
 }

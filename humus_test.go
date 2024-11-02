@@ -10,14 +10,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/z5labs/bedrock/pkg/config"
+	"github.com/z5labs/humus/internal"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutlog"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
@@ -41,79 +39,25 @@ func (f appFunc) Run(ctx context.Context) error {
 }
 
 func TestRun(t *testing.T) {
-	t.Run("will log a record to stdout", func(t *testing.T) {
+	t.Run("will return an error", func(t *testing.T) {
 		t.Run("if no otlp target is set", func(t *testing.T) {
-			filename := filepath.Join(t.TempDir(), "log.json")
-			f, err := os.Create(filename)
-			if !assert.Nil(t, err) {
-				return
-			}
+			app := appFunc(func(ctx context.Context) error {
+				log := Logger("app")
+				log.InfoContext(ctx, "hello")
+				return nil
+			})
 
-			done := make(chan struct{})
-			go func() {
-				defer close(done)
-
-				stdout := os.Stdout
-				defer func() {
-					os.Stdout = stdout
-				}()
-
-				os.Stdout = f
-
-				app := appFunc(func(ctx context.Context) error {
-					log := Logger("app")
-					log.InfoContext(ctx, "hello")
-					return nil
-				})
-
-				Run(strings.NewReader(""), func(ctx context.Context, cfg Config) (App, error) {
+			err := Run(
+				func(ctx context.Context, cfg Config) (App, error) {
 					return app, nil
-				})
-			}()
-
-			select {
-			case <-time.After(30 * time.Second):
-				t.Fail()
-				return
-			case <-done:
-			}
-
-			err = f.Close()
+				},
+				internal.ConfigSource(strings.NewReader("")),
+			)
 			if !assert.Nil(t, err) {
-				return
-			}
-
-			f, err = os.Open(filename)
-			if !assert.Nil(t, err) {
-				return
-			}
-			defer f.Close()
-
-			type log struct {
-				Body struct {
-					Value string `json:"Value"`
-				} `json:"Body"`
-				Scope struct {
-					Name string `json:"Name"`
-				} `json:"Scope"`
-			}
-
-			var l log
-			dec := json.NewDecoder(f)
-			err = dec.Decode(&l)
-			if !assert.Nil(t, err) {
-				return
-			}
-			if !assert.Equal(t, "app", l.Scope.Name) {
-				return
-			}
-			if !assert.Equal(t, "hello", l.Body.Value) {
 				return
 			}
 		})
-	})
 
-	t.Run("will return an error", func(t *testing.T) {
 		t.Run("if it fails to read one of the config sources", func(t *testing.T) {
 			build := func(ctx context.Context, cfg Config) (App, error) {
 				return nil, nil

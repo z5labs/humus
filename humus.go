@@ -7,17 +7,12 @@
 package humus
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
 	"errors"
-	"io"
 	"log/slog"
 	"os"
 	"time"
-
-	"github.com/z5labs/humus/internal"
-	"github.com/z5labs/humus/internal/global"
 
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/pkg/app"
@@ -43,11 +38,7 @@ import (
 )
 
 //go:embed default_config.yaml
-var configBytes []byte
-
-func init() {
-	global.RegisterConfigSource(internal.ConfigSource(bytes.NewReader(configBytes)))
-}
+var DefaultConfig []byte
 
 type OTelConfig struct {
 	ServiceName    string `config:"service_name"`
@@ -89,12 +80,9 @@ func Logger(name string) *slog.Logger {
 type App bedrock.App
 
 // Run
-func Run[T any](r io.Reader, build func(context.Context, T) (App, error)) {
-	cfgSrcs := global.ConfigSources
-	cfgSrcs = append(cfgSrcs, internal.ConfigSource(r))
-
+func Run[T any](build func(context.Context, T) (App, error), srcs ...config.Source) error {
 	runner := runner{
-		srcs:           cfgSrcs,
+		srcs:           srcs,
 		detectResource: detectResource,
 		newTraceExporter: func(ctx context.Context, oc OTelConfig) (sdktrace.SpanExporter, error) {
 			return otlptracegrpc.New(
@@ -123,21 +111,7 @@ func Run[T any](r io.Reader, build func(context.Context, T) (App, error)) {
 		},
 	}
 
-	err := run(runner, build)
-	if err == nil {
-		return
-	}
-
-	// there's a chance Run failed on config parsing/unmarshalling
-	// thus the logging config is most likely unusable and we should
-	// instead create our own logger here for logging this error
-	// there's a chance Run failed on config parsing/unmarshalling
-	// thus the logging config is most likely unusable and we should
-	// instead create our own logger here for logging this error
-	fallbackLogger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		AddSource: true,
-	}))
-	fallbackLogger.Error("failed while running application", slog.String("error", err.Error()))
+	return run(runner, build)
 }
 
 type runner struct {

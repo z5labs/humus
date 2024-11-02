@@ -12,12 +12,14 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
+	"os"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/internal"
-	"github.com/z5labs/humus/internal/global"
 
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/pkg/app"
@@ -27,11 +29,7 @@ import (
 )
 
 //go:embed default_config.yaml
-var configBytes []byte
-
-func init() {
-	global.RegisterConfigSource(internal.ConfigSource(bytes.NewReader(configBytes)))
-}
+var DefaultConfig []byte
 
 // Config
 type Config struct {
@@ -45,6 +43,32 @@ type Config struct {
 		Title   string `config:"title"`
 		Version string `config:"version"`
 	} `config:"openapi"`
+}
+
+// Run
+func Run[T any](r io.Reader, f func(context.Context, T) (*App, error)) {
+	err := humus.Run(
+		func(ctx context.Context, cfg T) (humus.App, error) {
+			return f(ctx, cfg)
+		},
+		internal.ConfigSource(bytes.NewReader(humus.DefaultConfig)),
+		internal.ConfigSource(bytes.NewReader(DefaultConfig)),
+		internal.ConfigSource(r),
+	)
+	if err == nil {
+		return
+	}
+
+	// there's a chance Run failed on config parsing/unmarshalling
+	// thus the logging config is most likely unusable and we should
+	// instead create our own logger here for logging this error
+	// there's a chance Run failed on config parsing/unmarshalling
+	// thus the logging config is most likely unusable and we should
+	// instead create our own logger here for logging this error
+	fallbackLogger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		AddSource: true,
+	}))
+	fallbackLogger.Error("failed while running application", slog.String("error", err.Error()))
 }
 
 // Option
