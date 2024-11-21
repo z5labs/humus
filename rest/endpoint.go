@@ -55,11 +55,11 @@ type Endpoint struct {
 // RegisterEndpoint
 func RegisterEndpoint(e Endpoint) Option {
 	return func(a *App) {
-		a.restOpts = append(a.restOpts, rest.Endpoint(
-			mux.Method(e.method),
-			e.path,
-			e.operation,
-		))
+		a.restOpts = append(a.restOpts, rest.Register(rest.Endpoint{
+			Method:    mux.Method(e.method),
+			Pattern:   e.path,
+			Operation: e.operation,
+		}))
 	}
 }
 
