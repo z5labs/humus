@@ -26,6 +26,7 @@ import (
 	"github.com/z5labs/bedrock/pkg/health"
 	"github.com/z5labs/bedrock/rest"
 	"github.com/z5labs/bedrock/rest/mux"
+	"google.golang.org/protobuf/proto"
 )
 
 //go:embed default_config.yaml
@@ -159,10 +160,14 @@ func (a *App) Run(ctx context.Context) error {
 		livenessEndpoint(a.liveness),
 	}
 	for _, e := range healthEndpoints {
-		a.restOpts = append(a.restOpts, rest.Endpoint(mux.Method(e.method), e.path, e.operation))
+		a.restOpts = append(a.restOpts, rest.Register(rest.Endpoint{
+			Method:    mux.Method(e.method),
+			Pattern:   e.path,
+			Operation: e.operation,
+		}))
 	}
 
-	a.restOpts = append(a.restOpts, rest.OpenApiEndpoint(http.MethodGet, "/openapi.json", rest.OpenApiJsonHandler))
+	a.restOpts = append(a.restOpts, rest.OpenApiEndpoint(http.MethodGet, "/openapi.json", rest.OpenApiJsonHandler(&errHandler{marshal: proto.Marshal})))
 
 	ls, err := a.listen("tcp", fmt.Sprintf(":%d", a.port))
 	if err != nil {
