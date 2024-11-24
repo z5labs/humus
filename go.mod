@@ -3,7 +3,7 @@ module github.com/z5labs/humus
 go 1.22.0
 
 require (
-	github.com/stretchr/testify v1.9.0
+	github.com/stretchr/testify v1.10.0
 	github.com/swaggest/jsonschema-go v0.3.72
 	github.com/swaggest/openapi-go v0.2.54
 	github.com/z5labs/bedrock v0.13.0
