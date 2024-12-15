@@ -4,7 +4,7 @@ go 1.23.0
 
 require (
 	github.com/stretchr/testify v1.10.0
-	github.com/z5labs/bedrock v0.15.0
+	github.com/z5labs/bedrock v0.16.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.8.0
 	google.golang.org/protobuf v1.35.2
 )
