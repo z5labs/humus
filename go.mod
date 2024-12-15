@@ -8,7 +8,7 @@ require (
 	github.com/stretchr/testify v1.10.0
 	github.com/swaggest/jsonschema-go v0.3.72
 	github.com/swaggest/openapi-go v0.2.54
-	github.com/z5labs/bedrock v0.13.0
+	github.com/z5labs/bedrock v0.15.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.8.0
 	go.opentelemetry.io/otel v1.33.0
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.9.0
