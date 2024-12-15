@@ -9,7 +9,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/z5labs/bedrock/pkg/config"
+	"github.com/z5labs/bedrock/config"
 )
 
 func ConfigSource(r io.Reader) config.Source {
