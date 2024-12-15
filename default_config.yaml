@@ -10,11 +10,14 @@ otel:
   service_name: {{env "OTEL_SERVICE_NAME" | default ""}}
   service_version: {{env "OTEL_SERVICE_VERSION" | default ""}}
   trace:
+    enabled: {{env "OTEL_TRACE_ENABLED" | default false}}
     sampling: {{env "OTEL_SAMPLING" | default 0.1}}
     batch_timeout: {{env "OTEL_TRACE_BATCH_TIMEOUT" | default "10s"}}
   metric:
+    enabled: {{env "OTEL_METRIC_ENABLED" | default false}}
     export_period: {{env "OTEL_METRIC_EXPORT_PERIOD" | default "60s"}}
   log:
+    enabled: {{env "OTEL_LOG_ENABLED" | default true}}
     batch_timeout: {{env "OTEL_LOG_BATCH_TIMEOUT" | default "1s"}}
   otlp:
     target: {{env "OTEL_OTLP_TARGET" | default ""}}
