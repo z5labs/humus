@@ -1,8 +1,6 @@
 module github.com/z5labs/humus
 
-go 1.22.7
-
-toolchain go1.23.4
+go 1.23.0
 
 require (
 	github.com/stretchr/testify v1.10.0
