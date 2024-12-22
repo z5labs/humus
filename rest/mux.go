@@ -74,6 +74,7 @@ type router interface {
 var _ Api = (*Mux)(nil)
 
 // Mux is a HTTP request multiplexer which implements the [Api] interface.
+//
 // Mux provides a set of standard features:
 // - OpenAPI schema as JSON at "/openapi.json"
 // - Liveness endpoint at "/health/liveness"
