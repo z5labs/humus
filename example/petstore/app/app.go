@@ -19,11 +19,7 @@ func Init(ctx context.Context, cfg Config) (rest.Api, error) {
 	m := rest.NewMux(
 		cfg.OpenApi.Title,
 		cfg.OpenApi.Version,
-		rest.Readiness(nil),
-		rest.Liveness(nil),
 	)
-
-	m.Handle("", "", nil)
 
 	return m, nil
 }

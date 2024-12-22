@@ -3,7 +3,7 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-// Package rest
+// Package rest supports creating RESTful applications.
 package rest
 
 import (
@@ -33,7 +33,8 @@ import (
 //go:embed default_config.yaml
 var DefaultConfig []byte
 
-// Configer
+// Configer is leveraged to constrain the custom config type into
+// supporting specific initialization behaviour required by [Run].
 type Configer interface {
 	appbuilder.OTelInitializer
 
@@ -41,7 +42,8 @@ type Configer interface {
 	HttpServer(context.Context, http.Handler) (*http.Server, error)
 }
 
-// Config
+// Config is the default config which can be easily embedded into a
+// more custom app specific config.
 type Config struct {
 	humus.Config `config:",squash"`
 
@@ -55,10 +57,12 @@ type Config struct {
 	} `config:"http"`
 }
 
+// Listener implements the [Configer] interface.
 func (c Config) Listener(ctx context.Context) (net.Listener, error) {
 	return net.Listen("tcp", fmt.Sprintf(":%d", c.HTTP.Port))
 }
 
+// HttpServer implements the [Configer] interface.
 func (c Config) HttpServer(ctx context.Context, h http.Handler) (*http.Server, error) {
 	s := &http.Server{
 		Handler:  h,
@@ -67,35 +71,43 @@ func (c Config) HttpServer(ctx context.Context, h http.Handler) (*http.Server, e
 	return s, nil
 }
 
-// Api
+// Api represents a HTTP handler which implements a RESTful API.
 type Api interface {
 	embedded.Api
 
 	http.Handler
 }
 
-// BuildContext
+// BuildContext represents more dynamic properties of the app building
+// process such as lifecycle hooks and OS signal interrupts.
 type BuildContext struct {
 	postRunHooks []app.LifecycleHook
 	signals      []os.Signal
 }
 
-// BuildContextFrom
+// BuildContextFrom extracts the [BuildContext] from a [context.Context].
 func BuildContextFrom(ctx context.Context) (*BuildContext, bool) {
 	return buildcontext.From[*BuildContext](ctx)
 }
 
-// OnPostRun
+// OnPostRun registers the provided [github.com/z5labs/bedrock/app.LifecycleHook]
+// to always run after the underlying HTTP server has been shutdown.
 func (bc *BuildContext) OnPostRun(hook app.LifecycleHook) {
 	bc.postRunHooks = append(bc.postRunHooks, hook)
 }
 
-// InterruptOn
+// InterruptOn will override the default signals which [Run] listens
+// for to trigger a shutdown.
 func (bc *BuildContext) InterruptOn(signals ...os.Signal) {
 	bc.signals = signals
 }
 
-// Run
+// Run begins by reading, parsing and unmarshaling your custom config into
+// the type T. Then it calls the providing function to initialize your [Api]
+// implementation. Once it has the [Api] implementation, it begins serving
+// the [Api] over HTTP. Various middlewares are applied at different stages
+// for your convenience. Some middlewares include, automattic panic recovery,
+// OTel SDK initialization and shutdown, and OS signal based shutdown.
 func Run[T Configer](r io.Reader, f func(context.Context, T) (Api, error)) {
 	err := bedrock.Run(
 		context.Background(),
