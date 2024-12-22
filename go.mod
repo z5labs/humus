@@ -8,7 +8,6 @@ require (
 	github.com/swaggest/openapi-go v0.2.54
 	github.com/z5labs/bedrock v0.16.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.8.0
-	google.golang.org/protobuf v1.36.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.58.0
 	go.opentelemetry.io/contrib/instrumentation/runtime v0.58.0
 	go.opentelemetry.io/otel v1.33.0
@@ -22,7 +21,7 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.33.0
 	golang.org/x/sync v0.10.0
 	google.golang.org/grpc v1.69.2
-	google.golang.org/protobuf v1.35.2
+	google.golang.org/protobuf v1.36.0
 )
 
 require (
