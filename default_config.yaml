@@ -15,9 +15,10 @@ otel:
     batch_timeout: {{env "OTEL_TRACE_BATCH_TIMEOUT" | default "10s"}}
   metric:
     enabled: {{env "OTEL_METRIC_ENABLED" | default false}}
-    export_period: {{env "OTEL_METRIC_EXPORT_PERIOD" | default "60s"}}
+    export_interval: {{env "OTEL_METRIC_EXPORT_INTERVAL" | default "60s"}}
   log:
     enabled: {{env "OTEL_LOG_ENABLED" | default true}}
     batch_timeout: {{env "OTEL_LOG_BATCH_TIMEOUT" | default "1s"}}
   otlp:
+    enabled: {{env "OTEL_OTLP_ENABLED" | default false}}
     target: {{env "OTEL_OTLP_TARGET" | default ""}}
