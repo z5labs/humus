@@ -3,7 +3,7 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-// Package mux
+// Package mux provides a [rest.Api] implementation which provides client access to an OpenAPI schema.
 package mux
 
 import (
@@ -161,28 +161,28 @@ func healthHandler(m health.Monitor) http.HandlerFunc {
 type Operation interface {
 	http.Handler
 
-	Operation() (openapi3.Operation, error)
+	Definition() (openapi3.Operation, error)
 }
 
 // Muxer
 type Muxer interface {
-	Handle(method, pattern string, op Operation) error
+	Route(method, pattern string, op Operation) error
 }
 
-// MustHandle
-func MustHandle(m Muxer, method, pattern string, op Operation) {
-	err := m.Handle(method, pattern, op)
+// MustRoute
+func MustRoute(m Muxer, method, pattern string, op Operation) {
+	err := m.Route(method, pattern, op)
 	if err == nil {
 		return
 	}
 	panic(err)
 }
 
-// Handle will configure any request matching method and pattern to be
+// Route will configure any request matching method and pattern to be
 // handled by the provided [Operation]. It will also register the [Operation]
 // with an underlying OpenAPI 3.0 schema.
-func (r *Router) Handle(method, pattern string, op Operation) error {
-	opDef, err := op.Operation()
+func (r *Router) Route(method, pattern string, op Operation) error {
+	opDef, err := op.Definition()
 	if err != nil {
 		return err
 	}

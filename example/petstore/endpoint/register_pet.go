@@ -29,7 +29,7 @@ func RegisterPet(m mux.Muxer, store RegisterPetStore) {
 		store: store,
 	}
 
-	mux.MustHandle(
+	mux.MustRoute(
 		m,
 		http.MethodPost,
 		"/pet/register",
