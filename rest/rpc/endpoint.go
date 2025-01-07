@@ -87,8 +87,8 @@ func NewOperation[I, O any, Req TypedRequest[I], Resp TypedResponse[O]](h Handle
 	}
 }
 
-// Operation implements the [rest.Operation] interface.
-func (op *Operation[I, O, Req, Resp]) Operation() (openapi3.Operation, error) {
+// Definition implements the [rest.Operation] interface.
+func (op *Operation[I, O, Req, Resp]) Definition() (openapi3.Operation, error) {
 	openpapiDef := op.openapiDef
 
 	var i I
