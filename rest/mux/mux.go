@@ -167,7 +167,7 @@ func healthHandler(m health.Monitor) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		healthy, err := m.Healthy(r.Context())
 		if !healthy || err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
