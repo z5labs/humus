@@ -81,7 +81,7 @@ func TestRouter_ServeHTTP(t *testing.T) {
 				})),
 			)
 
-			r.Route(http.MethodGet, "/", noopDefinition{
+			MustRoute(r, http.MethodGet, "/", noopDefinition{
 				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.WriteHeader(http.StatusOK)
 				}),
@@ -109,7 +109,7 @@ func TestRouter_ServeHTTP(t *testing.T) {
 				})),
 			)
 
-			r.Route(http.MethodGet, "/", noopDefinition{
+			MustRoute(r, http.MethodGet, "/", noopDefinition{
 				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.WriteHeader(http.StatusOK)
 				}),
