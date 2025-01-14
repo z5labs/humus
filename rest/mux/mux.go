@@ -22,8 +22,10 @@ import (
 
 // RouterOptions represents configurable values for a [Mux].
 type RouterOptions struct {
-	readiness health.Monitor
-	liveness  health.Monitor
+	readiness               health.Monitor
+	liveness                health.Monitor
+	notFoundHandler         http.Handler
+	methodNotAllowedHandler http.Handler
 }
 
 // RouterOption sets values on [MuxOptions].
@@ -65,6 +67,20 @@ func Liveness(m health.Monitor) RouterOption {
 	})
 }
 
+// NotFound
+func NotFound(h http.Handler) RouterOption {
+	return routerOptionFunc(func(ro *RouterOptions) {
+		ro.notFoundHandler = h
+	})
+}
+
+// MethodNotAllowed
+func MethodNotAllowed(h http.Handler) RouterOption {
+	return routerOptionFunc(func(ro *RouterOptions) {
+		ro.methodNotAllowedHandler = h
+	})
+}
+
 type router interface {
 	http.Handler
 
@@ -98,6 +114,14 @@ func New(title, version string, opts ...RouterOption) *Router {
 	ro := &RouterOptions{
 		readiness: &defaultHealth,
 		liveness:  &defaultHealth,
+		notFoundHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			// TODO
+		}),
+		methodNotAllowedHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			// TODO
+		}),
 	}
 	for _, opt := range opts {
 		opt.ApplyRouterOption(ro)
@@ -130,13 +154,8 @@ func New(title, version string, opts ...RouterOption) *Router {
 	m.Get("/health/readiness", healthHandler(ro.readiness))
 	m.Get("/health/liveness", healthHandler(ro.liveness))
 
-	m.NotFound(func(w http.ResponseWriter, r *http.Request) {
-		// TODO
-	})
-
-	m.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
-		// TODO
-	})
+	m.NotFound(ro.notFoundHandler.ServeHTTP)
+	m.MethodNotAllowed(ro.methodNotAllowedHandler.ServeHTTP)
 
 	return &Router{
 		router: m,
