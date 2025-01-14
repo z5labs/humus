@@ -8,7 +8,11 @@ package app
 import (
 	"context"
 
+	"github.com/z5labs/humus/example/petstore/endpoint"
+	"github.com/z5labs/humus/example/petstore/pet"
+
 	"github.com/z5labs/humus/rest"
+	"github.com/z5labs/humus/rest/mux"
 )
 
 type Config struct {
@@ -16,10 +20,14 @@ type Config struct {
 }
 
 func Init(ctx context.Context, cfg Config) (rest.Api, error) {
-	m := rest.NewMux(
+	m := mux.New(
 		cfg.OpenApi.Title,
 		cfg.OpenApi.Version,
 	)
+
+	store := pet.NewStore()
+
+	endpoint.RegisterPet(m, store)
 
 	return m, nil
 }
