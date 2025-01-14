@@ -3,7 +3,8 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-package rest
+// Package mux provides a [rest.Api] implementation which provides client access to an OpenAPI schema.
+package mux
 
 import (
 	"encoding/json"
@@ -12,26 +13,29 @@ import (
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/health"
+	"github.com/z5labs/humus/rest"
 	"github.com/z5labs/humus/rest/embedded"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/swaggest/openapi-go/openapi3"
 )
 
-// MuxOptions represents configurable values for a [Mux].
-type MuxOptions struct {
-	readiness health.Monitor
-	liveness  health.Monitor
+// RouterOptions represents configurable values for a [Mux].
+type RouterOptions struct {
+	readiness               health.Monitor
+	liveness                health.Monitor
+	notFoundHandler         http.Handler
+	methodNotAllowedHandler http.Handler
 }
 
-// MuxOption sets values on [MuxOptions].
-type MuxOption interface {
-	ApplyMuxOption(*MuxOptions)
+// RouterOption sets values on [MuxOptions].
+type RouterOption interface {
+	ApplyRouterOption(*RouterOptions)
 }
 
-type muxOptionFunc func(*MuxOptions)
+type routerOptionFunc func(*RouterOptions)
 
-func (f muxOptionFunc) ApplyMuxOption(mo *MuxOptions) {
+func (f routerOptionFunc) ApplyRouterOption(mo *RouterOptions) {
 	f(mo)
 }
 
@@ -46,9 +50,9 @@ func (f muxOptionFunc) ApplyMuxOption(mo *MuxOptions) {
 //
 // See [Liveness, Readiness, and Startup Probes](https://kubernetes.io/docs/concepts/configuration/liveness-readiness-startup-probes/)
 // for more details.
-func Readiness(m health.Monitor) MuxOption {
-	return muxOptionFunc(func(mo *MuxOptions) {
-		mo.readiness = m
+func Readiness(m health.Monitor) RouterOption {
+	return routerOptionFunc(func(ro *RouterOptions) {
+		ro.readiness = m
 	})
 }
 
@@ -57,9 +61,23 @@ func Readiness(m health.Monitor) MuxOption {
 //
 // See [Liveness, Readiness, and Startup Probes](https://kubernetes.io/docs/concepts/configuration/liveness-readiness-startup-probes/)
 // for more details.
-func Liveness(m health.Monitor) MuxOption {
-	return muxOptionFunc(func(mo *MuxOptions) {
-		mo.liveness = m
+func Liveness(m health.Monitor) RouterOption {
+	return routerOptionFunc(func(ro *RouterOptions) {
+		ro.liveness = m
+	})
+}
+
+// NotFound
+func NotFound(h http.Handler) RouterOption {
+	return routerOptionFunc(func(ro *RouterOptions) {
+		ro.notFoundHandler = h
+	})
+}
+
+// MethodNotAllowed
+func MethodNotAllowed(h http.Handler) RouterOption {
+	return routerOptionFunc(func(ro *RouterOptions) {
+		ro.methodNotAllowedHandler = h
 	})
 }
 
@@ -69,36 +87,44 @@ type router interface {
 	Method(string, string, http.Handler)
 }
 
-// always ensure [Mux] implements the [Api] interface.
+// always ensure [Router] implements the [rest.Api] interface.
 // if [Api] is ever changed this will lead to compilation error here.
-var _ Api = (*Mux)(nil)
+var _ rest.Api = (*Router)(nil)
 
-// Mux is a HTTP request multiplexer which implements the [Api] interface.
+// Router is a HTTP request multiplexer which implements the [rest.Api] interface.
 //
-// Mux provides a set of standard features:
+// Router provides a set of standard features:
 // - OpenAPI schema as JSON at "/openapi.json"
 // - Liveness endpoint at "/health/liveness"
 // - Readiness endpoint at "/health/readiness"
 // - Standardized NotFound behaviour
 // - Standardized MethodNotAllowed behaviour
-type Mux struct {
+type Router struct {
 	embedded.Api
 
 	router router
 	spec   *openapi3.Spec
 }
 
-// NewMux initializes a [Mux].
-func NewMux(title, version string, opts ...MuxOption) *Mux {
+// New initializes a [Router].
+func New(title, version string, opts ...RouterOption) *Router {
 	var defaultHealth health.Binary
 	defaultHealth.MarkHealthy()
 
-	mo := &MuxOptions{
+	ro := &RouterOptions{
 		readiness: &defaultHealth,
 		liveness:  &defaultHealth,
+		notFoundHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			// TODO
+		}),
+		methodNotAllowedHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			// TODO
+		}),
 	}
 	for _, opt := range opts {
-		opt.ApplyMuxOption(mo)
+		opt.ApplyRouterOption(ro)
 	}
 
 	spec := &openapi3.Spec{
@@ -125,18 +151,13 @@ func NewMux(title, version string, opts ...MuxOption) *Mux {
 		)
 	})
 
-	m.Get("/health/readiness", healthHandler(mo.readiness))
-	m.Get("/health/liveness", healthHandler(mo.liveness))
+	m.Get("/health/readiness", healthHandler(ro.readiness))
+	m.Get("/health/liveness", healthHandler(ro.liveness))
 
-	m.NotFound(func(w http.ResponseWriter, r *http.Request) {
-		// TODO
-	})
+	m.NotFound(ro.notFoundHandler.ServeHTTP)
+	m.MethodNotAllowed(ro.methodNotAllowedHandler.ServeHTTP)
 
-	m.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
-		// TODO
-	})
-
-	return &Mux{
+	return &Router{
 		router: m,
 		spec:   spec,
 	}
@@ -146,7 +167,7 @@ func healthHandler(m health.Monitor) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		healthy, err := m.Healthy(r.Context())
 		if !healthy || err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -159,22 +180,42 @@ func healthHandler(m health.Monitor) http.HandlerFunc {
 type Operation interface {
 	http.Handler
 
-	Operation() openapi3.Operation
+	Definition() (openapi3.Operation, error)
 }
 
-// Handle will configure any request matching method and pattern to be
+// Muxer
+type Muxer interface {
+	Route(method, pattern string, op Operation) error
+}
+
+// MustRoute
+func MustRoute(m Muxer, method, pattern string, op Operation) {
+	err := m.Route(method, pattern, op)
+	if err == nil {
+		return
+	}
+	panic(err)
+}
+
+// Route will configure any request matching method and pattern to be
 // handled by the provided [Operation]. It will also register the [Operation]
 // with an underlying OpenAPI 3.0 schema.
-func (m *Mux) Handle(method, pattern string, op Operation) {
-	err := m.spec.AddOperation(method, pattern, op.Operation())
+func (r *Router) Route(method, pattern string, op Operation) error {
+	opDef, err := op.Definition()
 	if err != nil {
-		panic(err)
+		return err
 	}
 
-	m.router.Method(method, pattern, op)
+	err = r.spec.AddOperation(method, pattern, opDef)
+	if err != nil {
+		return err
+	}
+
+	r.router.Method(method, pattern, op)
+	return nil
 }
 
 // ServeHTTP implements the [http.Handler] interface.
-func (m *Mux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	m.router.ServeHTTP(w, r)
+func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	r.router.ServeHTTP(w, req)
 }
