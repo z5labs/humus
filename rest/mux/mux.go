@@ -13,7 +13,6 @@ import (
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/health"
-	"github.com/z5labs/humus/rest/embedded"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/swaggest/openapi-go/openapi3"
@@ -95,8 +94,6 @@ type router interface {
 // - Standardized NotFound behaviour
 // - Standardized MethodNotAllowed behaviour
 type Router struct {
-	embedded.Api
-
 	router router
 	spec   *openapi3.Spec
 }
