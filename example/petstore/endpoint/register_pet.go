@@ -12,7 +12,6 @@ import (
 	"github.com/z5labs/humus/example/petstore/pet"
 	"go.opentelemetry.io/otel"
 
-	"github.com/z5labs/humus/rest/mux"
 	"github.com/z5labs/humus/rest/rpc"
 )
 
@@ -24,19 +23,25 @@ type registerPetHandler struct {
 	store RegisterPetStore
 }
 
-func RegisterPet(m mux.Muxer, store RegisterPetStore) {
+func RegisterPet(r Router, store RegisterPetStore) {
 	h := &registerPetHandler{
 		store: store,
 	}
 
-	mux.MustRoute(
-		m,
+	mustRoute(
+		r,
 		http.MethodPost,
 		"/pet/register",
 		rpc.NewOperation(
 			rpc.ConsumesJson(
 				rpc.ProducesJson(h),
 			),
+			rpc.Header(
+				"Authorization",
+				rpc.ValidateHeader(nil),
+			),
+			rpc.QueryParam("start"),
+			rpc.PathParam("id"),
 		),
 	)
 }

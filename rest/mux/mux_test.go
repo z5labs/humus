@@ -81,11 +81,14 @@ func TestRouter_ServeHTTP(t *testing.T) {
 				})),
 			)
 
-			MustRoute(r, http.MethodGet, "/", noopDefinition{
+			err := r.Route(http.MethodGet, "/", noopDefinition{
 				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.WriteHeader(http.StatusOK)
 				}),
 			})
+			if !assert.Nil(t, err) {
+				return
+			}
 
 			w := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodGet, "/hello", nil)
@@ -109,11 +112,14 @@ func TestRouter_ServeHTTP(t *testing.T) {
 				})),
 			)
 
-			MustRoute(r, http.MethodGet, "/", noopDefinition{
+			err := r.Route(http.MethodGet, "/", noopDefinition{
 				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.WriteHeader(http.StatusOK)
 				}),
 			})
+			if !assert.Nil(t, err) {
+				return
+			}
 
 			w := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(``))

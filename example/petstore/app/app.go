@@ -19,7 +19,7 @@ type Config struct {
 	rest.Config `config:",squash"`
 }
 
-func Init(ctx context.Context, cfg Config) (rest.Api, error) {
+func Init(ctx context.Context, cfg Config) (*mux.Router, error) {
 	m := mux.New(
 		cfg.OpenApi.Title,
 		cfg.OpenApi.Version,

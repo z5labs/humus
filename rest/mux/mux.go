@@ -13,7 +13,6 @@ import (
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/health"
-	"github.com/z5labs/humus/rest"
 	"github.com/z5labs/humus/rest/embedded"
 
 	"github.com/go-chi/chi/v5"
@@ -86,10 +85,6 @@ type router interface {
 
 	Method(string, string, http.Handler)
 }
-
-// always ensure [Router] implements the [rest.Api] interface.
-// if [Api] is ever changed this will lead to compilation error here.
-var _ rest.Api = (*Router)(nil)
 
 // Router is a HTTP request multiplexer which implements the [rest.Api] interface.
 //
@@ -181,20 +176,6 @@ type Operation interface {
 	http.Handler
 
 	Definition() (openapi3.Operation, error)
-}
-
-// Muxer
-type Muxer interface {
-	Route(method, pattern string, op Operation) error
-}
-
-// MustRoute
-func MustRoute(m Muxer, method, pattern string, op Operation) {
-	err := m.Route(method, pattern, op)
-	if err == nil {
-		return
-	}
-	panic(err)
 }
 
 // Route will configure any request matching method and pattern to be
