@@ -7,9 +7,9 @@ require (
 	github.com/stretchr/testify v1.10.0
 	github.com/swaggest/openapi-go v0.2.54
 	github.com/z5labs/bedrock v0.16.0
-	go.opentelemetry.io/contrib/bridges/otelslog v0.8.0
-	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.58.0
-	go.opentelemetry.io/contrib/instrumentation/runtime v0.58.0
+	go.opentelemetry.io/contrib/bridges/otelslog v0.9.0
+	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.59.0
+	go.opentelemetry.io/contrib/instrumentation/runtime v0.59.0
 	go.opentelemetry.io/otel v1.34.0
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.10.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.34.0
