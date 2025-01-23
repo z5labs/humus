@@ -6,7 +6,7 @@ require (
 	github.com/go-chi/chi/v5 v5.2.0
 	github.com/stretchr/testify v1.10.0
 	github.com/swaggest/openapi-go v0.2.54
-	github.com/z5labs/bedrock v0.16.0
+	github.com/z5labs/bedrock v0.16.1
 	go.opentelemetry.io/contrib/bridges/otelslog v0.9.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.59.0
 	go.opentelemetry.io/contrib/instrumentation/runtime v0.59.0
