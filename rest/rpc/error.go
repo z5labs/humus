@@ -15,9 +15,11 @@ type ErrorHandler interface {
 	Handle(http.ResponseWriter, error)
 }
 
-type errorHandlerFunc func(http.ResponseWriter, error)
+// ErrorHandlerFunc
+type ErrorHandlerFunc func(http.ResponseWriter, error)
 
-func (f errorHandlerFunc) Handle(w http.ResponseWriter, err error) {
+// Handle implements the [ErrorHandler] interface.
+func (f ErrorHandlerFunc) Handle(w http.ResponseWriter, err error) {
 	f(w, err)
 }
 

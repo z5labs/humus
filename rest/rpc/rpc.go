@@ -86,6 +86,9 @@ func NewOperation[I, O any, Req TypedRequest[I], Resp TypedResponse[O]](h Handle
 				MapOfResponseOrRefValues: make(map[string]openapi3.ResponseOrRef),
 			},
 		},
+		errHandler: ErrorHandlerFunc(func(w http.ResponseWriter, err error) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}),
 	}
 	for _, opt := range opts {
 		opt.ApplyOperationOption(oo)
