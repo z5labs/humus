@@ -104,7 +104,7 @@ func (oc OTelConfig) InitializeOTel(ctx context.Context) (err error) {
 
 func initTracing(otc OTelTraceConfig) func(context.Context, *grpc.ClientConn, *resource.Resource) error {
 	return func(ctx context.Context, cc *grpc.ClientConn, r *resource.Resource) error {
-		if !otc.Enabled && cc != nil {
+		if !otc.Enabled || cc == nil {
 			return nil
 		}
 
@@ -130,7 +130,7 @@ func initTracing(otc OTelTraceConfig) func(context.Context, *grpc.ClientConn, *r
 
 func initMetering(omc OTelMetricConfig) func(context.Context, *grpc.ClientConn, *resource.Resource) error {
 	return func(ctx context.Context, cc *grpc.ClientConn, r *resource.Resource) error {
-		if !omc.Enabled && cc != nil {
+		if !omc.Enabled || cc == nil {
 			return nil
 		}
 

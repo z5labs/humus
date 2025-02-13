@@ -22,7 +22,6 @@ import (
 	"github.com/z5labs/humus/buildcontext"
 	"github.com/z5labs/humus/internal"
 	"github.com/z5labs/humus/internal/httpserver"
-	"github.com/z5labs/humus/rest/embedded"
 
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/app"
@@ -71,13 +70,6 @@ func (c Config) HttpServer(ctx context.Context, h http.Handler) (*http.Server, e
 	return s, nil
 }
 
-// Api represents a HTTP handler which implements a RESTful API.
-type Api interface {
-	embedded.Api
-
-	http.Handler
-}
-
 // BuildContext represents more dynamic properties of the app building
 // process such as lifecycle hooks and OS signal interrupts.
 type BuildContext struct {
@@ -108,7 +100,7 @@ func (bc *BuildContext) InterruptOn(signals ...os.Signal) {
 // the [Api] over HTTP. Various middlewares are applied at different stages
 // for your convenience. Some middlewares include, automattic panic recovery,
 // OTel SDK initialization and shutdown, and OS signal based shutdown.
-func Run[T Configer](r io.Reader, f func(context.Context, T) (Api, error)) {
+func Run[T Configer](r io.Reader, f func(context.Context, T) (*Api, error)) {
 	err := bedrock.Run(
 		context.Background(),
 		// OTel middleware will handle shutting down OTel SDK components on PostRun
