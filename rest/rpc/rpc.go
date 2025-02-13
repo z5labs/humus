@@ -22,35 +22,13 @@ type Handler[Req, Resp any] interface {
 	Handle(context.Context, *Req) (*Resp, error)
 }
 
-type requestInjector interface {
-	Inject(context.Context, *http.Request) context.Context
-}
-
-type requestInjectorFunc func(context.Context, *http.Request) context.Context
-
-func (f requestInjectorFunc) Inject(ctx context.Context, r *http.Request) context.Context {
-	return f(ctx, r)
-}
-
-type requestValidator interface {
-	ValidateRequest(context.Context, *http.Request) error
-}
-
-type requestValidatorFunc func(context.Context, *http.Request) error
-
-func (f requestValidatorFunc) ValidateRequest(ctx context.Context, r *http.Request) error {
-	return f(ctx, r)
-}
-
-// OperationOptions
+// OperationOptions are used for configuring a [Operation].
 type OperationOptions struct {
 	openapiDef openapi3.Operation
 	errHandler ErrorHandler
-	injectors  []requestInjector
-	validators []requestValidator
 }
 
-// OperationOption
+// OperationOption sets a value on [OperationOptions].
 type OperationOption interface {
 	ApplyOperationOption(*OperationOptions)
 }
@@ -61,138 +39,39 @@ func (f operationOptionFunc) ApplyOperationOption(oo *OperationOptions) {
 	f(oo)
 }
 
-// ParameterOptions
-type ParameterOptions struct {
-	name        string
-	description string
-	required    bool
-	validator   requestValidator
-}
-
-// ParameterOption
-type ParameterOption interface {
-	ApplyParameterOption(*ParameterOptions)
-}
-
-type parameterOptionFunc func(*ParameterOptions)
-
-func (f parameterOptionFunc) ApplyParameterOption(po *ParameterOptions) {
-	f(po)
-}
-
-// Description
-func Description(s string) ParameterOption {
-	return parameterOptionFunc(func(po *ParameterOptions) {
-		po.description = s
-	})
-}
-
-func parameter(name string, in openapi3.ParameterIn, f requestInjectorFunc, opts ...ParameterOption) operationOptionFunc {
-	po := ParameterOptions{
-		name: name,
-	}
-	for _, opt := range opts {
-		opt.ApplyParameterOption(&po)
-	}
-
-	return func(oo *OperationOptions) {
-		oo.openapiDef.Parameters = append(oo.openapiDef.Parameters, openapi3.ParameterOrRef{
-			Parameter: &openapi3.Parameter{
-				Name:        name,
-				Description: &po.description,
-				In:          in,
-				Required:    &po.required,
-			},
-		})
-
-		oo.validators = append(oo.validators, po.validator)
-		oo.injectors = append(oo.injectors, f)
-	}
-}
-
-type parameterCtxKey string
-
-// ParamFromContext
-func ParamFromContext(ctx context.Context, name string) (string, bool) {
-	v := ctx.Value(parameterCtxKey(name))
-	if v == nil {
-		return "", false
-	}
-	s, ok := v.(string)
-	return s, ok
-}
-
-// ParamValidator
-type ParamValidator interface {
-	ValidateParam(context.Context, string) error
-}
-
-// ValidateHeader
-func ValidateHeader(hv ParamValidator) ParameterOption {
-	return parameterOptionFunc(func(po *ParameterOptions) {
-		po.validator = requestValidatorFunc(func(ctx context.Context, r *http.Request) error {
-			v := r.Header.Get(po.name)
-			return hv.ValidateParam(ctx, v)
-		})
-	})
-}
-
-// Header
-func Header(name string, opts ...ParameterOption) OperationOption {
-	return parameter(name, openapi3.ParameterInHeader, func(ctx context.Context, r *http.Request) context.Context {
-		v := r.Header.Get(name)
-		ctx = context.WithValue(ctx, parameterCtxKey(name), v)
-		return ctx
-	}, opts...)
-}
-
-// QueryParam
-func QueryParam(name string, opts ...ParameterOption) OperationOption {
-	return parameter(name, openapi3.ParameterInQuery, func(ctx context.Context, r *http.Request) context.Context {
-		v := r.URL.Query().Get(name)
-		ctx = context.WithValue(ctx, parameterCtxKey(name), v)
-		return ctx
-	}, opts...)
-}
-
-// PathParam
-func PathParam(name string, opts ...ParameterOption) OperationOption {
-	return parameter(name, openapi3.ParameterInPath, func(ctx context.Context, r *http.Request) context.Context {
-		v := r.PathValue(name)
-		ctx = context.WithValue(ctx, parameterCtxKey(name), v)
-		return ctx
-	}, opts...)
-}
-
-// RequestReader
+// RequestReader is meant to be implemented by any type which knows how
+// unmarshal itself from a [http.Request].
 type RequestReader[T any] interface {
 	*T
 
 	ReadRequest(context.Context, *http.Request) error
 }
 
-// TypedRequest
+// TypedRequest is a [RequestReader] which also provides a OpenAPI 3.0
+// spec for itself.
 type TypedRequest[T any] interface {
 	RequestReader[T]
 
-	Type() (*openapi3.RequestBody, error)
+	Spec() (*openapi3.RequestBody, error)
 }
 
-// ResponseWriter
+// ResponseWriter is meant to be implemented by any type which knows how
+// to marshal itself into a HTTP response.
 type ResponseWriter[T any] interface {
 	*T
 
 	WriteResponse(context.Context, http.ResponseWriter) error
 }
 
-// TypedResponse
+// TypedResponse is a [ResponseWriter] which also provides a OpenAPI 3.0
+// spec for itself.
 type TypedResponse[T any] interface {
 	ResponseWriter[T]
 
-	Type() (int, *openapi3.Response, error)
+	Spec() (int, *openapi3.Response, error)
 }
 
-// Operation
+// Operation is a [http.Handler] which also provides a OpenAPI 3.0 spec for itself.
 type Operation[I, O any, Req TypedRequest[I], Resp TypedResponse[O]] struct {
 	openapiDef openapi3.Operation
 	handler    Handler[I, O]
@@ -218,12 +97,12 @@ func NewOperation[I, O any, Req TypedRequest[I], Resp TypedResponse[O]](h Handle
 	}
 }
 
-// Definition implements the [rest.Operation] interface.
-func (op *Operation[I, O, Req, Resp]) Definition() (openapi3.Operation, error) {
+// Spec implements the [rest.Operation] interface.
+func (op *Operation[I, O, Req, Resp]) Spec() (openapi3.Operation, error) {
 	openpapiDef := op.openapiDef
 
 	var i I
-	reqDef, err := Req(&i).Type()
+	reqDef, err := Req(&i).Spec()
 	if err != nil {
 		return openpapiDef, err
 	}
@@ -233,7 +112,7 @@ func (op *Operation[I, O, Req, Resp]) Definition() (openapi3.Operation, error) {
 	}
 
 	var o O
-	statusCode, respDef, err := Resp(&o).Type()
+	statusCode, respDef, err := Resp(&o).Spec()
 	if err != nil {
 		return openpapiDef, err
 	}
