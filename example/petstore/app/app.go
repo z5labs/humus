@@ -8,6 +8,7 @@ package app
 import (
 	"context"
 
+	"github.com/z5labs/humus/example/petstore/endpoint"
 	"github.com/z5labs/humus/rest"
 )
 
@@ -15,11 +16,13 @@ type Config struct {
 	rest.Config `config:",squash"`
 }
 
-func Init(ctx context.Context, cfg Config) (rest.Api, error) {
-	m := rest.NewMux(
+func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
+	api := rest.NewApi(
 		cfg.OpenApi.Title,
 		cfg.OpenApi.Version,
 	)
 
-	return m, nil
+	endpoint.RegisterPet(api)
+
+	return api, nil
 }
