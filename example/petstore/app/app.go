@@ -9,25 +9,20 @@ import (
 	"context"
 
 	"github.com/z5labs/humus/example/petstore/endpoint"
-	"github.com/z5labs/humus/example/petstore/pet"
-
 	"github.com/z5labs/humus/rest"
-	"github.com/z5labs/humus/rest/mux"
 )
 
 type Config struct {
 	rest.Config `config:",squash"`
 }
 
-func Init(ctx context.Context, cfg Config) (*mux.Router, error) {
-	m := mux.New(
+func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
+	api := rest.NewApi(
 		cfg.OpenApi.Title,
 		cfg.OpenApi.Version,
 	)
 
-	store := pet.NewStore()
+	endpoint.RegisterPet(api)
 
-	endpoint.RegisterPet(m, store)
-
-	return m, nil
+	return api, nil
 }
