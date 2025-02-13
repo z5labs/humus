@@ -22,7 +22,6 @@ import (
 	"github.com/z5labs/humus/buildcontext"
 	"github.com/z5labs/humus/internal"
 	"github.com/z5labs/humus/internal/httpserver"
-	"github.com/z5labs/humus/rest/mux"
 
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/app"
@@ -96,12 +95,12 @@ func (bc *BuildContext) InterruptOn(signals ...os.Signal) {
 }
 
 // Run begins by reading, parsing and unmarshaling your custom config into
-// the type T. Then it calls the providing function to initialize your [mux.Router]
-// implementation. Once it has the [mux.Router] implementation, it begins serving
-// the [mux.Router] over HTTP. Various middlewares are applied at different stages
+// the type T. Then it calls the providing function to initialize your [Api]
+// implementation. Once it has the [Api] implementation, it begins serving
+// the [Api] over HTTP. Various middlewares are applied at different stages
 // for your convenience. Some middlewares include, automattic panic recovery,
 // OTel SDK initialization and shutdown, and OS signal based shutdown.
-func Run[T Configer](r io.Reader, f func(context.Context, T) (*mux.Router, error)) {
+func Run[T Configer](r io.Reader, f func(context.Context, T) (*Api, error)) {
 	err := bedrock.Run(
 		context.Background(),
 		// OTel middleware will handle shutting down OTel SDK components on PostRun

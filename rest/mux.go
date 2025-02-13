@@ -3,8 +3,7 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-// Package mux provides a [rest.Api] implementation which provides client access to an OpenAPI schema.
-package mux
+package rest
 
 import (
 	"encoding/json"
@@ -85,21 +84,21 @@ type router interface {
 	Method(string, string, http.Handler)
 }
 
-// Router is a HTTP request multiplexer which implements the [rest.Api] interface.
+// Api is a OpenAPI compliant [http.Handler].
 //
-// Router provides a set of standard features:
+// Api provides a set of standard features:
 // - OpenAPI schema as JSON at "/openapi.json"
 // - Liveness endpoint at "/health/liveness"
 // - Readiness endpoint at "/health/readiness"
 // - Standardized NotFound behaviour
 // - Standardized MethodNotAllowed behaviour
-type Router struct {
+type Api struct {
 	router router
 	spec   *openapi3.Spec
 }
 
-// New initializes a [Router].
-func New(title, version string, opts ...RouterOption) *Router {
+// NewApi initializes a [Api].
+func NewApi(title, version string, opts ...RouterOption) *Api {
 	var defaultHealth health.Binary
 	defaultHealth.MarkHealthy()
 
@@ -149,7 +148,7 @@ func New(title, version string, opts ...RouterOption) *Router {
 	m.NotFound(ro.notFoundHandler.ServeHTTP)
 	m.MethodNotAllowed(ro.methodNotAllowedHandler.ServeHTTP)
 
-	return &Router{
+	return &Api{
 		router: m,
 		spec:   spec,
 	}
@@ -172,28 +171,28 @@ func healthHandler(m health.Monitor) http.HandlerFunc {
 type Operation interface {
 	http.Handler
 
-	Definition() (openapi3.Operation, error)
+	Spec() (openapi3.Operation, error)
 }
 
 // Route will configure any request matching method and pattern to be
 // handled by the provided [Operation]. It will also register the [Operation]
 // with an underlying OpenAPI 3.0 schema.
-func (r *Router) Route(method, pattern string, op Operation) error {
-	opDef, err := op.Definition()
+func (api *Api) Route(method, pattern string, op Operation) error {
+	opDef, err := op.Spec()
 	if err != nil {
 		return err
 	}
 
-	err = r.spec.AddOperation(method, pattern, opDef)
+	err = api.spec.AddOperation(method, pattern, opDef)
 	if err != nil {
 		return err
 	}
 
-	r.router.Method(method, pattern, op)
+	api.router.Method(method, pattern, op)
 	return nil
 }
 
 // ServeHTTP implements the [http.Handler] interface.
-func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	r.router.ServeHTTP(w, req)
+func (api *Api) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	api.router.ServeHTTP(w, req)
 }
