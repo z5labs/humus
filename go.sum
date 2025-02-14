@@ -55,6 +55,8 @@ github.com/z5labs/bedrock v0.16.1 h1:M5Zjy3+apeUpl4vCiGXDIvnK4LFYq3rc+dU/vIHYNR8
 github.com/z5labs/bedrock v0.16.1/go.mod h1:3Hx1fawqdk5lfFr+X1kmTERKKj8SB/VEUqLf6RfVKcg=
 github.com/z5labs/bedrock v0.17.0 h1:3SAECIHLUCMwvOFITDgT1oefh4eFpXljGrSqGALP13U=
 github.com/z5labs/bedrock v0.17.0/go.mod h1:3Hx1fawqdk5lfFr+X1kmTERKKj8SB/VEUqLf6RfVKcg=
+github.com/z5labs/bedrock v0.18.0 h1:OsvsL1sfgt1mt6GvnQqCRZkzeddq29iHcX6BNnCRu7Y=
+github.com/z5labs/bedrock v0.18.0/go.mod h1:3Hx1fawqdk5lfFr+X1kmTERKKj8SB/VEUqLf6RfVKcg=
 go.opentelemetry.io/auto/sdk v1.1.0 h1:cH53jehLUN6UFLY71z+NDOiNJqDdPRaXzTel0sJySYA=
 go.opentelemetry.io/auto/sdk v1.1.0/go.mod h1:3wSPjt5PWp2RhlCcmmOial7AvC4DQqZb7a7wCow3W8A=
 go.opentelemetry.io/contrib/bridges/otelslog v0.9.0 h1:N+78eXSlu09kii5nkiM+01YbtWe01oZLPPLhNlEKhus=
