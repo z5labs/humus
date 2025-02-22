@@ -21,6 +21,7 @@ import (
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/internal"
 	"github.com/z5labs/humus/internal/httpserver"
+	"github.com/z5labs/humus/internal/try"
 
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/app"
@@ -112,7 +113,7 @@ func Builder[T Configer](f func(context.Context, T) (*Api, error)) bedrock.AppBu
 						otelhttp.WithMessageEvents(otelhttp.ReadEvents, otelhttp.WriteEvents),
 					))
 					if err != nil {
-						defer ls.Close()
+						defer try.Close(&err, ls)
 						return nil, err
 					}
 					lc, _ := lifecycle.FromContext(ctx)
@@ -172,7 +173,7 @@ func Run[T Configer](r io.Reader, f func(context.Context, T) (*Api, error), opts
 	runner := humus.NewRunner(
 		appbuilder.FromConfig(Builder(f)),
 		humus.OnError(humus.ErrorHandlerFunc(func(err error) {
-			ro.logger.Error("unexpected error while running rest app", slog.String("error", err.Error()))
+			ro.logger.Error("unexpected error while running rest app", slog.Any("error", err))
 		})),
 	)
 	runner.Run(context.Background(), WithDefaultConfig(r))
