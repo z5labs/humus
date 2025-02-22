@@ -53,13 +53,22 @@ func WithDefaultConfig(r io.Reader) config.Source {
 	)
 }
 
+// ListenerProvider initializes a [net.Listener].
+type ListenerProvider interface {
+	Listener(context.Context) (net.Listener, error)
+}
+
+// HttpServerProvider initializes a [http.Server].
+type HttpServerProvider interface {
+	HttpServer(context.Context, http.Handler) (*http.Server, error)
+}
+
 // Configer is leveraged to constrain the custom config type into
 // supporting specific initialization behaviour required by [Run].
 type Configer interface {
 	appbuilder.OTelInitializer
-
-	Listener(context.Context) (net.Listener, error)
-	HttpServer(context.Context, http.Handler) (*http.Server, error)
+	ListenerProvider
+	HttpServerProvider
 }
 
 // Config is the default config which can be easily embedded into a
