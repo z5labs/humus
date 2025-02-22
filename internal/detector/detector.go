@@ -8,8 +8,8 @@ package detector
 import (
 	"context"
 	"os"
+	"path/filepath"
 
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.27.0"
@@ -34,6 +34,21 @@ func Host() resource.Detector {
 	return resource.StringDetector(semconv.SchemaURL, semconv.HostNameKey, os.Hostname)
 }
 
-func String(key attribute.Key, f func() (string, error)) resource.Detector {
-	return resource.StringDetector(semconv.SchemaURL, key, f)
+func ServiceName(name string) resource.Detector {
+	return resource.StringDetector(semconv.SchemaURL, semconv.ServiceNameKey, func() (string, error) {
+		if len(name) > 0 {
+			return name, nil
+		}
+		executable, err := os.Executable()
+		if err != nil {
+			return "unknown_service:go", nil
+		}
+		return "unknown_service:" + filepath.Base(executable), nil
+	})
+}
+
+func ServiceVersion(version string) resource.Detector {
+	return resource.StringDetector(semconv.SchemaURL, semconv.ServiceVersionKey, func() (string, error) {
+		return version, nil
+	})
 }

@@ -9,16 +9,21 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"errors"
+	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/z5labs/humus/config"
+	"github.com/z5labs/humus/internal"
+	"github.com/z5labs/humus/internal/detector"
 
 	bedrockcfg "github.com/z5labs/bedrock/config"
-	"github.com/z5labs/humus/internal"
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutlog"
 	"go.opentelemetry.io/otel/log/global"
@@ -26,8 +31,8 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.27.0"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 //go:embed default_config.yaml
@@ -44,36 +49,40 @@ type Config struct {
 }
 
 // InitializeOTel implements the [appbuilder.OTelInitializer] interface.
-func (cfg Config) InitializeOTel(ctx context.Context) (err error) {
-	var conn *grpc.ClientConn
-	if cfg.OTel.OTLP.Enabled {
-		conn, err = grpc.NewClient(cfg.OTel.OTLP.Target)
-		if err != nil {
-			return err
-		}
-	}
-
-	r, err := resource.Detect(
-		ctx,
-		resource.StringDetector(semconv.SchemaURL, semconv.ServiceNameKey, func() (string, error) {
-			return cfg.OTel.Resource.ServiceName, nil
-		}),
-		resource.StringDetector(semconv.SchemaURL, semconv.ServiceVersionKey, func() (string, error) {
-			return cfg.OTel.Resource.ServiceVersion, nil
-		}),
-	)
+func (cfg Config) InitializeOTel(ctx context.Context) error {
+	conn, err := newClientConn(cfg.OTel.OTLP)
 	if err != nil {
 		return err
 	}
 
-	fs := []func(context.Context, *grpc.ClientConn, *resource.Resource) error{
-		initTracing(cfg.OTel.Trace),
-		initMetering(cfg.OTel.Metric),
-		initLogging(cfg.OTel.Log),
+	r, err := detectResource(ctx, cfg.OTel.Resource)
+	if err != nil {
+		return err
 	}
 
-	for _, f := range fs {
-		err := f(ctx, conn, r)
+	initers := []initializer{
+		traceProviderInitializer{
+			cfg:         cfg.OTel.Trace,
+			cc:          conn,
+			r:           r,
+			newExporter: otlptracegrpc.New,
+		},
+		meterProviderInitializer{
+			cfg:         cfg.OTel.Metric,
+			cc:          conn,
+			r:           r,
+			newExporter: otlpmetricgrpc.New,
+		},
+		logProviderInitializer{
+			cfg:         cfg.OTel.Log,
+			cc:          conn,
+			r:           r,
+			newExporter: otlploggrpc.New,
+		},
+	}
+
+	for _, initer := range initers {
+		err := initer.Init(ctx)
 		if err != nil {
 			return err
 		}
@@ -81,81 +90,134 @@ func (cfg Config) InitializeOTel(ctx context.Context) (err error) {
 	return nil
 }
 
-func initTracing(otc config.Trace) func(context.Context, *grpc.ClientConn, *resource.Resource) error {
-	return func(ctx context.Context, cc *grpc.ClientConn, r *resource.Resource) error {
-		if !otc.Enabled || cc == nil {
-			return nil
-		}
+func newClientConn(cfg config.OTLP) (*grpc.ClientConn, error) {
+	if !cfg.Enabled {
+		return nil, nil
+	}
+	return grpc.NewClient(
+		cfg.Target,
+		// TODO: support secure transport credentials
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+}
 
-		exp, err := otlptracegrpc.New(ctx, otlptracegrpc.WithGRPCConn(cc))
-		if err != nil {
-			return err
-		}
+func detectResource(ctx context.Context, cfg config.Resource) (*resource.Resource, error) {
+	return resource.Detect(
+		ctx,
+		detector.TelemetrySDK(),
+		detector.Host(),
+		detector.ServiceName(cfg.ServiceName),
+		detector.ServiceVersion(cfg.ServiceVersion),
+	)
+}
 
-		bsp := trace.NewBatchSpanProcessor(
-			exp,
-			trace.WithBatchTimeout(otc.BatchTimeout),
-		)
+var ErrOTLPMustBeEnabled = errors.New("missing otlp client conn")
 
-		tp := trace.NewTracerProvider(
-			trace.WithSpanProcessor(bsp),
-			trace.WithSampler(trace.TraceIDRatioBased(otc.Sampling)),
-			trace.WithResource(r),
-		)
-		otel.SetTracerProvider(tp)
+type initializer interface {
+	Init(context.Context) error
+}
+
+type traceProviderInitializer struct {
+	cfg         config.Trace
+	cc          *grpc.ClientConn
+	r           *resource.Resource
+	newExporter func(context.Context, ...otlptracegrpc.Option) (*otlptrace.Exporter, error)
+}
+
+func (tpi traceProviderInitializer) Init(ctx context.Context) error {
+	if !tpi.cfg.Enabled {
 		return nil
 	}
-}
-
-func initMetering(omc config.Metric) func(context.Context, *grpc.ClientConn, *resource.Resource) error {
-	return func(ctx context.Context, cc *grpc.ClientConn, r *resource.Resource) error {
-		if !omc.Enabled || cc == nil {
-			return nil
-		}
-
-		exp, err := otlpmetricgrpc.New(ctx, otlpmetricgrpc.WithGRPCConn(cc))
-		if err != nil {
-			return err
-		}
-
-		pr := metric.NewPeriodicReader(
-			exp,
-			metric.WithInterval(omc.ExportInterval),
-			metric.WithProducer(runtime.NewProducer()),
-		)
-
-		mp := metric.NewMeterProvider(
-			metric.WithReader(pr),
-			metric.WithResource(r),
-		)
-		otel.SetMeterProvider(mp)
-
-		return runtime.Start(
-			runtime.WithMinimumReadMemStatsInterval(time.Second),
-		)
+	if tpi.cc == nil {
+		return fmt.Errorf("can not enable otel tracing: %w", ErrOTLPMustBeEnabled)
 	}
+
+	exp, err := tpi.newExporter(ctx, otlptracegrpc.WithGRPCConn(tpi.cc))
+	if err != nil {
+		return err
+	}
+
+	bsp := trace.NewBatchSpanProcessor(
+		exp,
+		trace.WithBatchTimeout(tpi.cfg.BatchTimeout),
+	)
+
+	tp := trace.NewTracerProvider(
+		trace.WithSpanProcessor(bsp),
+		trace.WithSampler(trace.TraceIDRatioBased(tpi.cfg.Sampling)),
+		trace.WithResource(tpi.r),
+	)
+	otel.SetTracerProvider(tp)
+	return nil
 }
 
-func initLogging(olc config.Log) func(context.Context, *grpc.ClientConn, *resource.Resource) error {
-	return func(ctx context.Context, cc *grpc.ClientConn, r *resource.Resource) error {
-		p, err := initLogProcessor(ctx, olc, cc)
-		if err != nil {
-			return err
-		}
+type meterProviderInitializer struct {
+	cfg         config.Metric
+	cc          *grpc.ClientConn
+	r           *resource.Resource
+	newExporter func(context.Context, ...otlpmetricgrpc.Option) (*otlpmetricgrpc.Exporter, error)
+}
 
-		lp := log.NewLoggerProvider(
-			log.WithProcessor(p),
-			log.WithResource(r),
-		)
-		global.SetLoggerProvider(lp)
+func (mpi meterProviderInitializer) Init(ctx context.Context) error {
+	if !mpi.cfg.Enabled {
 		return nil
 	}
+	if mpi.cc == nil {
+		return fmt.Errorf("can not enable otel metering: %w", ErrOTLPMustBeEnabled)
+	}
+
+	exp, err := mpi.newExporter(ctx, otlpmetricgrpc.WithGRPCConn(mpi.cc))
+	if err != nil {
+		return err
+	}
+
+	pr := metric.NewPeriodicReader(
+		exp,
+		metric.WithInterval(mpi.cfg.ExportInterval),
+		metric.WithProducer(runtime.NewProducer()),
+	)
+
+	mp := metric.NewMeterProvider(
+		metric.WithReader(pr),
+		metric.WithResource(mpi.r),
+	)
+	otel.SetMeterProvider(mp)
+
+	return runtime.Start(
+		runtime.WithMinimumReadMemStatsInterval(time.Second),
+	)
 }
 
-func initLogProcessor(ctx context.Context, olc config.Log, cc *grpc.ClientConn) (log.Processor, error) {
+type logProviderInitializer struct {
+	cfg         config.Log
+	cc          *grpc.ClientConn
+	r           *resource.Resource
+	newExporter func(context.Context, ...otlploggrpc.Option) (*otlploggrpc.Exporter, error)
+}
+
+func (lpi logProviderInitializer) Init(ctx context.Context) error {
+	p, err := lpi.initLogProcessor(ctx)
+	if err != nil {
+		return err
+	}
+
+	lp := log.NewLoggerProvider(
+		log.WithProcessor(p),
+		log.WithResource(lpi.r),
+	)
+	global.SetLoggerProvider(lp)
+
+	log := Logger("otel")
+	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
+		log.Error("encoutered error from otel sdk", slog.Any("error", err))
+	}))
+	return nil
+}
+
+func (lpi logProviderInitializer) initLogProcessor(ctx context.Context) (log.Processor, error) {
 	// TODO: this needs to be made more specific it should either always be OTLP or STDOUT
 	//		 the enabled config is a bit confusing to interpret
-	if !olc.Enabled || cc == nil {
+	if !lpi.cfg.Enabled {
 		exp, err := stdoutlog.New()
 		if err != nil {
 			return nil, err
@@ -164,8 +226,11 @@ func initLogProcessor(ctx context.Context, olc config.Log, cc *grpc.ClientConn) 
 		sp := log.NewSimpleProcessor(exp)
 		return sp, nil
 	}
+	if lpi.cc == nil {
+		return nil, fmt.Errorf("can not enable otel logging: %w", ErrOTLPMustBeEnabled)
+	}
 
-	exp, err := otlploggrpc.New(ctx, otlploggrpc.WithGRPCConn(cc))
+	exp, err := lpi.newExporter(ctx, otlploggrpc.WithGRPCConn(lpi.cc))
 	if err != nil {
 		return nil, err
 	}
