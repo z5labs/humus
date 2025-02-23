@@ -3,14 +3,16 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-// Package rpc helps users implement [http.Handler]s using a RPC style interface.
 package rpc
 
 import (
 	"context"
-	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
+
+	"github.com/z5labs/humus"
 
 	"github.com/swaggest/openapi-go/openapi3"
 	"go.opentelemetry.io/otel"
@@ -20,6 +22,15 @@ import (
 // logic for your [http.Handler].
 type Handler[Req, Resp any] interface {
 	Handle(context.Context, *Req) (*Resp, error)
+}
+
+// HandlerFunc is an adapter to allow the use of ordinary functions
+// as [Handler]s.
+type HandlerFunc[Req, Resp any] func(context.Context, *Req) (*Resp, error)
+
+// Handle implements the [Handler] interface.
+func (f HandlerFunc[Req, Resp]) Handle(ctx context.Context, req *Req) (*Resp, error) {
+	return f(ctx, req)
 }
 
 // OperationOptions are used for configuring a [Operation].
@@ -80,6 +91,7 @@ type Operation[I, O any, Req TypedRequest[I], Resp TypedResponse[O]] struct {
 
 // NewOperation initializes a [Operation].
 func NewOperation[I, O any, Req TypedRequest[I], Resp TypedResponse[O]](h Handler[I, O], opts ...OperationOption) *Operation[I, O, Req, Resp] {
+	log := humus.Logger("rpc")
 	oo := &OperationOptions{
 		openapiDef: openapi3.Operation{
 			Responses: openapi3.Responses{
@@ -88,6 +100,7 @@ func NewOperation[I, O any, Req TypedRequest[I], Resp TypedResponse[O]](h Handle
 		},
 		errHandler: ErrorHandlerFunc(func(w http.ResponseWriter, err error) {
 			w.WriteHeader(http.StatusInternalServerError)
+			log.Error("unexpected error while processing request", slog.Any("error", err))
 		}),
 	}
 	for _, opt := range opts {
@@ -98,6 +111,17 @@ func NewOperation[I, O any, Req TypedRequest[I], Resp TypedResponse[O]](h Handle
 		handler:    h,
 		errHandler: oo.errHandler,
 	}
+}
+
+// DuplicateStatusCodeError represents the user trying to register
+// more than one response body spec for the same HTTP status code.
+type DuplicateStatusCodeError struct {
+	StatusCode int
+}
+
+// Error implements the [error] interface.
+func (e DuplicateStatusCodeError) Error() string {
+	return fmt.Sprintf("response spec already registered for http status code: %d", e.StatusCode)
 }
 
 // Spec implements the [rest.Operation] interface.
@@ -123,7 +147,9 @@ func (op *Operation[I, O, Req, Resp]) Spec() (openapi3.Operation, error) {
 	s := strconv.Itoa(statusCode)
 	_, exists := openpapiDef.Responses.MapOfResponseOrRefValues[s]
 	if exists {
-		return openpapiDef, errors.New("response for status code is already defined")
+		return openpapiDef, DuplicateStatusCodeError{
+			StatusCode: statusCode,
+		}
 	}
 
 	openpapiDef.Responses.MapOfResponseOrRefValues[s] = openapi3.ResponseOrRef{
@@ -140,12 +166,14 @@ func (op *Operation[I, O, Req, Resp]) ServeHTTP(w http.ResponseWriter, r *http.R
 	var i I
 	err := Req(&i).ReadRequest(spanCtx, r)
 	if err != nil {
+		span.RecordError(err)
 		op.errHandler.Handle(w, err)
 		return
 	}
 
 	resp, err := op.handler.Handle(spanCtx, &i)
 	if err != nil {
+		span.RecordError(err)
 		op.errHandler.Handle(w, err)
 		return
 	}
@@ -154,5 +182,6 @@ func (op *Operation[I, O, Req, Resp]) ServeHTTP(w http.ResponseWriter, r *http.R
 	if err == nil {
 		return
 	}
+	span.RecordError(err)
 	op.errHandler.Handle(w, err)
 }
