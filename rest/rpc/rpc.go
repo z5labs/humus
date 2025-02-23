@@ -3,7 +3,6 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-// Package rpc helps users implement [http.Handler]s using a RPC style interface.
 package rpc
 
 import (
@@ -20,6 +19,15 @@ import (
 // logic for your [http.Handler].
 type Handler[Req, Resp any] interface {
 	Handle(context.Context, *Req) (*Resp, error)
+}
+
+// HandlerFunc is an adapter to allow the use of ordinary functions
+// as [Handler]s.
+type HandlerFunc[Req, Resp any] func(context.Context, *Req) (*Resp, error)
+
+// Handle implements the [Handler] interface.
+func (f HandlerFunc[Req, Resp]) Handle(ctx context.Context, req *Req) (*Resp, error) {
+	return f(ctx, req)
 }
 
 // OperationOptions are used for configuring a [Operation].
