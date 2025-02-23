@@ -7,8 +7,9 @@ logging:
   level: {{env "LOGGING_LEVEL" | default "INFO"}}
 
 otel:
-  service_name: {{env "OTEL_SERVICE_NAME" | default ""}}
-  service_version: {{env "OTEL_SERVICE_VERSION" | default ""}}
+  resource:
+    service_name: {{env "OTEL_SERVICE_NAME" | default ""}}
+    service_version: {{env "OTEL_SERVICE_VERSION" | default ""}}
   trace:
     enabled: {{env "OTEL_TRACE_ENABLED" | default false}}
     sampling: {{env "OTEL_SAMPLING" | default 0.1}}
@@ -17,8 +18,9 @@ otel:
     enabled: {{env "OTEL_METRIC_ENABLED" | default false}}
     export_interval: {{env "OTEL_METRIC_EXPORT_INTERVAL" | default "60s"}}
   log:
-    enabled: {{env "OTEL_LOG_ENABLED" | default true}}
+    enabled: {{env "OTEL_LOG_ENABLED" | default false}}
     batch_timeout: {{env "OTEL_LOG_BATCH_TIMEOUT" | default "1s"}}
+    min_level: {{env "OTEL_LOG_MIN_LEVEL" | default "info"}}
   otlp:
     enabled: {{env "OTEL_OTLP_ENABLED" | default false}}
     target: {{env "OTEL_OTLP_TARGET" | default ""}}
