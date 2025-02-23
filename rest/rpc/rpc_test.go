@@ -114,3 +114,57 @@ func TestOperation_ServeHTTP(t *testing.T) {
 		})
 	})
 }
+
+type failTypedRequest struct{}
+
+var errFailedToCreateReqSpec = errors.New("failed to create request spec")
+
+func (failTypedRequest) Spec() (*openapi3.RequestBody, error) {
+	return nil, errFailedToCreateReqSpec
+}
+
+func (failTypedRequest) ReadRequest(ctx context.Context, r *http.Request) error {
+	return nil
+}
+
+type failTypedResponse struct{}
+
+var errFailedToCreateRespSpec = errors.New("failed to create response spec")
+
+func (failTypedResponse) Spec() (int, *openapi3.Response, error) {
+	return -1, nil, errFailedToCreateRespSpec
+}
+
+func (failTypedResponse) WriteResponse(ctx context.Context, w http.ResponseWriter) error {
+	return nil
+}
+
+func TestOperation_Spec(t *testing.T) {
+	t.Run("will return an error", func(t *testing.T) {
+		t.Run("if the request spec fails to be created", func(t *testing.T) {
+			h := ReturnNothing(ConsumerFunc[failTypedRequest](func(_ context.Context, _ *failTypedRequest) error {
+				return nil
+			}))
+
+			op := NewOperation(h)
+
+			_, err := op.Spec()
+			if !assert.ErrorIs(t, err, errFailedToCreateReqSpec) {
+				return
+			}
+		})
+
+		t.Run("if the response spec fails to be created", func(t *testing.T) {
+			h := ConsumeNothing(ProducerFunc[failTypedResponse](func(_ context.Context) (*failTypedResponse, error) {
+				return nil, nil
+			}))
+
+			op := NewOperation(h)
+
+			_, err := op.Spec()
+			if !assert.ErrorIs(t, err, errFailedToCreateRespSpec) {
+				return
+			}
+		})
+	})
+}
