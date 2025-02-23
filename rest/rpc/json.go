@@ -10,8 +10,11 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/swaggest/openapi-go/openapi3"
+	"github.com/z5labs/humus/internal/ptr"
 	"github.com/z5labs/humus/internal/try"
+
+	"github.com/swaggest/jsonschema-go"
+	"github.com/swaggest/openapi-go/openapi3"
 	"go.opentelemetry.io/otel"
 )
 
@@ -34,7 +37,25 @@ type JsonResponse[T any] struct {
 
 // Spec implements the [TypedResponse] interface.
 func (*JsonResponse[T]) Spec() (int, *openapi3.Response, error) {
-	return http.StatusOK, nil, nil
+	var t T
+	var reflector jsonschema.Reflector
+
+	jsonSchema, err := reflector.Reflect(t, jsonschema.InlineRefs)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	var schemaOrRef openapi3.SchemaOrRef
+	schemaOrRef.FromJSONSchema(jsonSchema.ToSchemaOrBool())
+
+	spec := &openapi3.Response{
+		Content: map[string]openapi3.MediaType{
+			"application/json": {
+				Schema: &schemaOrRef,
+			},
+		},
+	}
+	return http.StatusOK, spec, nil
 }
 
 // WriteResponse implements the [ResponseWriter] interface.
@@ -80,7 +101,26 @@ type JsonRequest[T any] struct {
 
 // Spec implements the [TypedRequest] interface.
 func (*JsonRequest[T]) Spec() (*openapi3.RequestBody, error) {
-	return nil, nil
+	var t T
+	var reflector jsonschema.Reflector
+
+	jsonSchema, err := reflector.Reflect(t, jsonschema.InlineRefs)
+	if err != nil {
+		return nil, err
+	}
+
+	var schemaOrRef openapi3.SchemaOrRef
+	schemaOrRef.FromJSONSchema(jsonSchema.ToSchemaOrBool())
+
+	spec := &openapi3.RequestBody{
+		Required: ptr.Ref(true),
+		Content: map[string]openapi3.MediaType{
+			"application/json": {
+				Schema: &schemaOrRef,
+			},
+		},
+	}
+	return spec, nil
 }
 
 // ReadRequest implements the [RequestReader] interface.
