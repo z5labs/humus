@@ -53,6 +53,9 @@ func ExampleReturnNothing() {
 		fmt.Println("expected HTTP 200 status code but got", resp.StatusCode)
 		return
 	}
+	if resp.Header.Get("Content-Type") != "" {
+		return
+	}
 
 	// Output: hello world
 }
@@ -66,6 +69,7 @@ func (*msgResponse) Spec() (int, *openapi3.Response, error) {
 }
 
 func (mr *msgResponse) WriteResponse(ctx context.Context, w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	enc := json.NewEncoder(w)
 	return enc.Encode(mr)
@@ -92,6 +96,12 @@ func ExampleConsumeNothing() {
 
 	if resp.StatusCode != http.StatusOK {
 		fmt.Println("expected HTTP 200 status code but got", resp.StatusCode)
+		return
+	}
+
+	contentType := resp.Header.Get("Content-Type")
+	if contentType != "application/json" {
+		fmt.Println("expected Content-Type to be set to application/json instead of:", contentType)
 		return
 	}
 
