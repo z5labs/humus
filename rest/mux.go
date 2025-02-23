@@ -138,7 +138,7 @@ func NewApi(title, version string, opts ...RouterOption) *Api {
 		log.ErrorContext(
 			r.Context(),
 			"failed to encode openapi schema to json",
-			slog.String("error", err.Error()),
+			slog.Any("error", err),
 		)
 	})
 

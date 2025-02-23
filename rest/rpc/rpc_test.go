@@ -68,9 +68,9 @@ func TestOperation_ServeHTTP(t *testing.T) {
 
 		t.Run("if the underlying Handler fails", func(t *testing.T) {
 			handleErr := errors.New("failed to handle request")
-			h := HandlerFunc[EmptyRequest, EmptyResponse](func(_ context.Context, _ *EmptyRequest) (*EmptyResponse, error) {
-				return nil, handleErr
-			})
+			h := ReturnNothing(ConsumerFunc[EmptyRequest](func(_ context.Context, _ *EmptyRequest) error {
+				return handleErr
+			}))
 
 			var caughtErr error
 			op := NewOperation(
