@@ -9,7 +9,7 @@ import (
 	"bytes"
 	_ "embed"
 
-	"github.com/z5labs/humus/example/petstore/app"
+	"github.com/z5labs/humus/example/rest/petstore/app"
 	"github.com/z5labs/humus/rest"
 )
 
