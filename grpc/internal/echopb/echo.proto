@@ -1,0 +1,17 @@
+edition = "2023";
+
+package humus.grpc.internal;
+
+option go_package = "github.com/z5labs/humus/grpc/internal/echopb";
+
+service Echo {
+    rpc Echo (EchoRequest) returns (EchoResponse);
+}
+
+message EchoRequest {
+    string msg = 1;
+}
+
+message EchoResponse {
+    string msg = 1;
+}
