@@ -1,0 +1,37 @@
+edition = "2023";
+
+package humus.example.pet;
+
+option go_package = "github.com/z5labs/humus/example/grpc/petstore/petpb";
+
+service Registrar {
+    rpc RegisterPet (RegisterPetRequest) returns (RegisterPetResponse);
+}
+
+enum Kind {
+    Cat = 0;
+    Dog = 1;
+}
+
+message Fur {
+    enum Kind {
+        Short = 0;
+        Long = 1;
+    }
+
+    Kind kind = 1;
+    string color = 2;
+}
+
+message RegisterPetRequest {
+    uint64 age = 1;
+    string name = 2;
+    Kind kind = 3;
+    string breed = 4;
+    Fur fur = 5;
+}
+
+message RegisterPetResponse {
+    string id = 1;
+    string temp_name = 2;
+}
