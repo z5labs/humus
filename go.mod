@@ -6,6 +6,7 @@ require (
 	github.com/go-chi/chi/v5 v5.2.1
 	github.com/google/uuid v1.6.0
 	github.com/stretchr/testify v1.10.0
+	github.com/swaggest/jsonschema-go v0.3.73
 	github.com/swaggest/openapi-go v0.2.57
 	github.com/z5labs/bedrock v0.18.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.9.0
@@ -22,7 +23,7 @@ require (
 	go.opentelemetry.io/otel/sdk/log v0.10.0
 	go.opentelemetry.io/otel/sdk/metric v1.34.0
 	golang.org/x/sync v0.11.0
-	google.golang.org/grpc v1.70.0
+	google.golang.org/grpc v1.72.0-dev
 	google.golang.org/protobuf v1.36.5
 )
 
@@ -35,7 +36,6 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.2.1 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.25.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/swaggest/jsonschema-go v0.3.73 // indirect
 	github.com/swaggest/refl v1.3.1 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/otel/metric v1.34.0 // indirect

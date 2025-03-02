@@ -8,7 +8,7 @@ package app
 import (
 	"context"
 
-	"github.com/z5labs/humus/example/petstore/endpoint"
+	"github.com/z5labs/humus/example/rest/petstore/endpoint"
 	"github.com/z5labs/humus/rest"
 )
 
