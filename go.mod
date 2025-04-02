@@ -1,6 +1,6 @@
 module github.com/z5labs/humus
 
-go 1.23.0
+go 1.24.0
 
 require (
 	github.com/go-chi/chi/v5 v5.2.1
@@ -29,7 +29,6 @@ require (
 
 require (
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
-	github.com/cenkalti/backoff/v5 v5.0.2 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.2 // indirect
