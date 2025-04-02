@@ -11,11 +11,12 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/z5labs/humus/internal/ptr"
+	"github.com/z5labs/humus/internal/try"
 	"github.com/z5labs/humus/rest"
 	"github.com/z5labs/humus/rest/rpc"
 
+	"github.com/google/uuid"
 	"github.com/swaggest/openapi-go/openapi3"
 )
 
@@ -24,11 +25,14 @@ type registerPetHandler struct{}
 func RegisterPet(api *rest.Api) {
 	h := &registerPetHandler{}
 
-	api.Route(
+	err := api.Route(
 		http.MethodPost,
 		"/pet",
 		rpc.NewOperation(h),
 	)
+	if err != nil {
+		panic(err)
+	}
 }
 
 type RegisterPetRequest struct {
@@ -57,13 +61,13 @@ func (req *RegisterPetRequest) Spec() (*openapi3.RequestBody, error) {
 	return def, nil
 }
 
-func (req *RegisterPetRequest) ReadRequest(ctx context.Context, r *http.Request) error {
+func (req *RegisterPetRequest) ReadRequest(ctx context.Context, r *http.Request) (err error) {
 	if ct := r.Header.Get("Content-Type"); ct != "application/json" {
 		return rpc.InvalidContentTypeError{
 			ContentType: ct,
 		}
 	}
-	defer r.Body.Close()
+	defer try.Close(&err, r.Body)
 
 	dec := json.NewDecoder(r.Body)
 	return dec.Decode(req)
