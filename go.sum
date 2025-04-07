@@ -69,8 +69,8 @@ github.com/yudai/gojsondiff v1.0.0 h1:27cbfqXLVEJ1o8I6v3y9lg8Ydm53EKqHXAOMxEGlCO
 github.com/yudai/gojsondiff v1.0.0/go.mod h1:AY32+k2cwILAkW1fbgxQ5mUmMiZFgLIV+FBNExI05xg=
 github.com/yudai/golcs v0.0.0-20170316035057-ecda9a501e82 h1:BHyfKlQyqbsFN5p3IfnEUduWvb9is428/nNb5L3U01M=
 github.com/yudai/golcs v0.0.0-20170316035057-ecda9a501e82/go.mod h1:lgjkn3NuSvDfVJdfcVVdX+jpBxNmX4rDAzaS45IcYoM=
-github.com/z5labs/bedrock v0.19.0 h1:S6UqyGmwf7SlYKMLaDrHm41j98yURkVJRb9fFTU/uTw=
-github.com/z5labs/bedrock v0.19.0/go.mod h1:6d4qWdRbkTm7pIPNJ8fuzSaSUrNvecKnQJk5jg3FMbw=
+github.com/z5labs/bedrock v0.19.1 h1:ARe8AQlhfLQ/OVaGBjZh3SOVAMcqrWK25hoxOQyI/4c=
+github.com/z5labs/bedrock v0.19.1/go.mod h1:PZoz5X96gntLIYNwglBc+qiYBB3/j4BtM7XPBribNiM=
 go.opentelemetry.io/auto/sdk v1.1.0 h1:cH53jehLUN6UFLY71z+NDOiNJqDdPRaXzTel0sJySYA=
 go.opentelemetry.io/auto/sdk v1.1.0/go.mod h1:3wSPjt5PWp2RhlCcmmOial7AvC4DQqZb7a7wCow3W8A=
 go.opentelemetry.io/contrib/bridges/otelslog v0.10.0 h1:lRKWBp9nWoBe1HKXzc3ovkro7YZSb72X2+3zYNxfXiU=
