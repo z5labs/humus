@@ -17,31 +17,33 @@ import (
 	"syscall"
 
 	"github.com/z5labs/humus"
-	"github.com/z5labs/humus/internal"
 	"github.com/z5labs/humus/internal/grpcserver"
 
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/app"
 	"github.com/z5labs/bedrock/appbuilder"
-	"github.com/z5labs/bedrock/config"
+	bedrockcfg "github.com/z5labs/bedrock/config"
 	"github.com/z5labs/bedrock/lifecycle"
 )
 
 //go:embed default_config.yaml
 var defaultConfig []byte
 
-// DefaultConfig is the default [config.Source] which aligns with the [Config] type.
-func DefaultConfig() config.Source {
-	return internal.ConfigSource(bytes.NewReader(defaultConfig))
+// DefaultConfig is the default [bedrockcfg.Source] which aligns with the [Config] type.
+func DefaultConfig() bedrockcfg.Source {
+	return bedrockcfg.MultiSource(
+		humus.DefaultConfig(),
+		humus.ConfigSource(bytes.NewReader(defaultConfig)),
+	)
 }
 
-// WithDefaultConfig extends the [config.Source] returned by [DefaultConfig]
+// WithDefaultConfig extends the [bedrockcfg.Source] returned by [DefaultConfig]
 // to include values from the given [io.Reader]. The [io.Reader] can provide
 // custom values, as well as, override default values.
-func WithDefaultConfig(r io.Reader) config.Source {
-	return config.MultiSource(
+func WithDefaultConfig(r io.Reader) bedrockcfg.Source {
+	return bedrockcfg.MultiSource(
 		DefaultConfig(),
-		internal.ConfigSource(r),
+		humus.ConfigSource(r),
 	)
 }
 
