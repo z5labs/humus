@@ -18,7 +18,10 @@
                     "fmt",
                     "--stdin"
                 ]
-            }
+            },
+            "extensions": [
+                "ymotongpoo.licenser"
+            ]
         }
     },
     "containerEnv": {
