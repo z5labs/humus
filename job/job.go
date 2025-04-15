@@ -45,6 +45,14 @@ type Handler interface {
 	Handle(context.Context) error
 }
 
+// HandlerFunc is an adapter to allow the use of ordinary functions as [Handler]s.
+type HandlerFunc func(context.Context) error
+
+// Handle implements the [Handler] interface.
+func (f HandlerFunc) Handle(ctx context.Context) error {
+	return f(ctx)
+}
+
 // App is a [bedrock.App] which handles running your [Handler].
 type App struct {
 	h Handler
