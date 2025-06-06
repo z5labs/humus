@@ -73,8 +73,8 @@ github.com/yudai/gojsondiff v1.0.0 h1:27cbfqXLVEJ1o8I6v3y9lg8Ydm53EKqHXAOMxEGlCO
 github.com/yudai/gojsondiff v1.0.0/go.mod h1:AY32+k2cwILAkW1fbgxQ5mUmMiZFgLIV+FBNExI05xg=
 github.com/yudai/golcs v0.0.0-20170316035057-ecda9a501e82 h1:BHyfKlQyqbsFN5p3IfnEUduWvb9is428/nNb5L3U01M=
 github.com/yudai/golcs v0.0.0-20170316035057-ecda9a501e82/go.mod h1:lgjkn3NuSvDfVJdfcVVdX+jpBxNmX4rDAzaS45IcYoM=
-github.com/z5labs/bedrock v0.19.3 h1:ISeyqePyvTs5FX/IMX/3dauFfCDJUMq9BREpbOWwPjs=
-github.com/z5labs/bedrock v0.19.3/go.mod h1:sHx7REHNopCfHC2eNoy1Y5KClzX+j2NWHebBon6ZzVI=
+github.com/z5labs/bedrock v0.19.4 h1:rv9V/cjKh7oXVmQUxrsMFOKIfBStcvSgDKtCl15dTIU=
+github.com/z5labs/bedrock v0.19.4/go.mod h1:BSCxiNidJYXHgAWnOXSSJu7GZbyvi3T4VDsfIBFcMu8=
 github.com/zeebo/errs v1.4.0 h1:XNdoD/RRMKP7HD0UhJnIzUy74ISdGGxURlYG8HSWSfM=
 github.com/zeebo/errs v1.4.0/go.mod h1:sgbWHsvVuTPHcqJJGQ1WhI5KbWlHYz+2+2C/LSEtCw4=
 go.opentelemetry.io/auto/sdk v1.1.0 h1:cH53jehLUN6UFLY71z+NDOiNJqDdPRaXzTel0sJySYA=
