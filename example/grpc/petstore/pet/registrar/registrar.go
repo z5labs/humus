@@ -10,8 +10,8 @@ import (
 
 	"github.com/z5labs/humus/example/grpc/petstore/petpb"
 	"github.com/z5labs/humus/example/internal/pet"
-	"github.com/z5labs/humus/internal/ptr"
 
+	"github.com/z5labs/sdk-go/ptr"
 	"google.golang.org/grpc"
 )
 

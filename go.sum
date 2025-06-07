@@ -75,6 +75,8 @@ github.com/yudai/golcs v0.0.0-20170316035057-ecda9a501e82 h1:BHyfKlQyqbsFN5p3Ifn
 github.com/yudai/golcs v0.0.0-20170316035057-ecda9a501e82/go.mod h1:lgjkn3NuSvDfVJdfcVVdX+jpBxNmX4rDAzaS45IcYoM=
 github.com/z5labs/bedrock v0.19.4 h1:rv9V/cjKh7oXVmQUxrsMFOKIfBStcvSgDKtCl15dTIU=
 github.com/z5labs/bedrock v0.19.4/go.mod h1:BSCxiNidJYXHgAWnOXSSJu7GZbyvi3T4VDsfIBFcMu8=
+github.com/z5labs/sdk-go v0.1.0 h1:LgT/2B5QRcEM6aLF/c5SzAltuo3anpPL+7n1seTpe4s=
+github.com/z5labs/sdk-go v0.1.0/go.mod h1:WoxIKqKic8TeqSWUqDM4fjf6IkpBjPjF+aUhqSxWADY=
 github.com/zeebo/errs v1.4.0 h1:XNdoD/RRMKP7HD0UhJnIzUy74ISdGGxURlYG8HSWSfM=
 github.com/zeebo/errs v1.4.0/go.mod h1:sgbWHsvVuTPHcqJJGQ1WhI5KbWlHYz+2+2C/LSEtCw4=
 go.opentelemetry.io/auto/sdk v1.1.0 h1:cH53jehLUN6UFLY71z+NDOiNJqDdPRaXzTel0sJySYA=

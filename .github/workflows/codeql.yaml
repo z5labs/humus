@@ -14,6 +14,9 @@ on:
       - "main"
     paths:
       - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+
 
   schedule:
     - cron: '34 11 * * 3'

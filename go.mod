@@ -1,6 +1,6 @@
 module github.com/z5labs/humus
 
-go 1.24.0
+go 1.24.4
 
 require (
 	github.com/go-chi/chi/v5 v5.2.1
@@ -9,6 +9,7 @@ require (
 	github.com/swaggest/jsonschema-go v0.3.78
 	github.com/swaggest/openapi-go v0.2.58
 	github.com/z5labs/bedrock v0.19.4
+	github.com/z5labs/sdk-go v0.1.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.11.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.61.0
 	go.opentelemetry.io/contrib/instrumentation/runtime v0.61.0

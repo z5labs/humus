@@ -9,7 +9,8 @@ import (
 	"context"
 
 	"github.com/z5labs/humus/grpc/internal/echopb"
-	"github.com/z5labs/humus/internal/ptr"
+
+	"github.com/z5labs/sdk-go/ptr"
 )
 
 type Service struct {

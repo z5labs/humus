@@ -19,13 +19,13 @@ import (
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/internal/httpserver"
-	"github.com/z5labs/humus/internal/try"
 
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/app"
 	"github.com/z5labs/bedrock/appbuilder"
 	bedrockcfg "github.com/z5labs/bedrock/config"
 	"github.com/z5labs/bedrock/lifecycle"
+	"github.com/z5labs/sdk-go/try"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
