@@ -7,7 +7,6 @@ package config
 
 import (
 	_ "embed"
-	"log/slog"
 	"time"
 )
 
@@ -17,30 +16,131 @@ type Resource struct {
 	ServiceVersion string `config:"service_version"`
 }
 
+// Batch
+type Batch struct {
+	ExportInterval time.Duration `config:"export_interval"`
+	MaxSize        int           `config:"max_size"`
+}
+
+// OTLPConnType
+type OTLPConnType string
+
+const (
+	OTLPHTTP OTLPConnType = "http"
+	OTLPGRPC OTLPConnType = "grpc"
+)
+
+// OTLP
+type OTLP struct {
+	Type   OTLPConnType `config:"type"`
+	Target string       `config:"target"`
+}
+
+// SpanProcessorType
+type SpanProcessorType string
+
+const (
+	BatchSpanProcessorType SpanProcessorType = "batch"
+)
+
+// SpanProcessor
+type SpanProcessor struct {
+	Type  SpanProcessorType `config:"type"`
+	Batch Batch             `config:"batch"`
+}
+
+// SpanSampling
+type SpanSampling struct {
+	Ratio float64 `config:"ratio"`
+}
+
+// SpanExporterType
+type SpanExporterType string
+
+const (
+	OTLPSpanExporterType SpanExporterType = "otlp"
+)
+
+// SpanExporter
+type SpanExporter struct {
+	Type SpanExporterType `config:"type"`
+	OTLP OTLP             `config:"otlp"`
+}
+
 // Trace
 type Trace struct {
-	Enabled      bool          `config:"enabled"`
-	Sampling     float64       `config:"sampling"`
-	BatchTimeout time.Duration `config:"batch_timeout"`
+	Processor SpanProcessor `config:"processor"`
+	Sampling  SpanSampling  `config:"sampling"`
+	Exporter  SpanExporter  `config:"exporter"`
+}
+
+// MetricReaderType
+type MetricReaderType string
+
+const (
+	PeriodicReaderType MetricReaderType = "periodic"
+)
+
+type PeriodicReader struct {
+	ExportInterval time.Duration `config:"export_interval"`
+}
+
+// MetricReader
+type MetricReader struct {
+	Type     MetricReaderType `config:"type"`
+	Periodic PeriodicReader   `config:"periodic"`
+}
+
+// MetricExporterType
+type MetricExporterType string
+
+const (
+	OTLPMetricExporterType MetricExporterType = "otlp"
+)
+
+// MetricExporter
+type MetricExporter struct {
+	Type MetricExporterType `config:"type"`
+	OTLP OTLP               `config:"otlp"`
 }
 
 // Metric
 type Metric struct {
-	Enabled        bool          `config:"enabled"`
-	ExportInterval time.Duration `config:"export_interval"`
+	Reader   MetricReader   `config:"reader"`
+	Exporter MetricExporter `config:"exporter"`
+}
+
+// LogProcessorType
+type LogProcessorType string
+
+const (
+	SimpleLogProcessorType LogProcessorType = "simple"
+	BatchLogProcessorType  LogProcessorType = "batch"
+)
+
+// LogProcessor
+type LogProcessor struct {
+	Type  LogProcessorType `config:"type"`
+	Batch Batch            `config:"batch"`
+}
+
+// LogExporterType
+type LogExporterType string
+
+const (
+	OTLPLogExporterType LogExporterType = "otlp"
+)
+
+// LogExporter
+type LogExporter struct {
+	Type LogExporterType `config:"type"`
+	OTLP OTLP            `config:"otlp"`
 }
 
 // Log
 type Log struct {
-	Enabled      bool          `config:"enabled"`
-	BatchTimeout time.Duration `config:"batch_timeout"`
-	MinLevel     slog.Level    `config:"min_level"`
-}
-
-// OTLP
-type OTLP struct {
-	Enabled bool   `config:"enabled"`
-	Target  string `config:"target"`
+	Processor LogProcessor `config:"processor"`
+	Exporter  LogExporter  `config:"exporter"`
 }
 
 // OTel
@@ -49,5 +149,4 @@ type OTel struct {
 	Trace    Trace    `config:"trace"`
 	Metric   Metric   `config:"metric"`
 	Log      Log      `config:"log"`
-	OTLP     OTLP     `config:"otlp"`
 }
