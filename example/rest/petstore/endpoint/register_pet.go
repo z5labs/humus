@@ -11,13 +11,13 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/z5labs/humus/internal/ptr"
-	"github.com/z5labs/humus/internal/try"
 	"github.com/z5labs/humus/rest"
 	"github.com/z5labs/humus/rest/rpc"
 
 	"github.com/google/uuid"
 	"github.com/swaggest/openapi-go/openapi3"
+	"github.com/z5labs/sdk-go/ptr"
+	"github.com/z5labs/sdk-go/try"
 )
 
 type registerPetHandler struct{}

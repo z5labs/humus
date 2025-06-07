@@ -10,11 +10,10 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/z5labs/humus/internal/ptr"
-	"github.com/z5labs/humus/internal/try"
-
 	"github.com/swaggest/jsonschema-go"
 	"github.com/swaggest/openapi-go/openapi3"
+	"github.com/z5labs/sdk-go/ptr"
+	"github.com/z5labs/sdk-go/try"
 	"go.opentelemetry.io/otel"
 )
 
