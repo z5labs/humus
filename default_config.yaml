@@ -3,24 +3,48 @@
 # This software is released under the MIT License.
 # https://opensource.org/licenses/MIT
 
-logging:
-  level: {{env "LOGGING_LEVEL" | default "INFO"}}
-
 otel:
   resource:
     service_name: {{env "OTEL_SERVICE_NAME" | default ""}}
     service_version: {{env "OTEL_SERVICE_VERSION" | default ""}}
+
   trace:
-    enabled: {{env "OTEL_TRACE_ENABLED" | default false}}
-    sampling: {{env "OTEL_SAMPLING" | default 0.1}}
-    batch_timeout: {{env "OTEL_TRACE_BATCH_TIMEOUT" | default "10s"}}
+    processor:
+      type: {{env "OTEL_TRACE_PROCESSOR" | default "batch"}}
+      batch:
+        export_interval: {{env "OTEL_TRACE_EXPORT_BATCH_INTERVAL" | default "10s"}}
+        max_size: {{env "OTEL_TRACE_MAX_BATCH_SIZE" | default 25}}
+
+    sampling:
+      ratio: {{env "OTEL_SAMPLING" | default 0.1}}
+
+    exporter:
+      type: {{env "OTEL_TRACE_EXPORTER"}}
+      otlp:
+        type: {{env "OTEL_OTLP_CONN_TYPE" | default "grpc"}}
+        target: {{env "OTEL_OTLP_TARGET"}}
+
   metric:
-    enabled: {{env "OTEL_METRIC_ENABLED" | default false}}
-    export_interval: {{env "OTEL_METRIC_EXPORT_INTERVAL" | default "60s"}}
+    reader:
+      type: {{env "OTEL_METRIC_READER" | default "periodic"}}
+      periodic:
+        export_interval: {{env "OTEL_METRIC_EXPORT_INTERVAL" | default "30s"}}
+
+    exporter:
+      type: {{env "OTEL_METRIC_EXPORTER"}}
+      otlp:
+        type: {{env "OTEL_OTLP_CONN_TYPE" | default "grpc"}}
+        target: {{env "OTEL_OTLP_TARGET"}}
+
   log:
-    enabled: {{env "OTEL_LOG_ENABLED" | default false}}
-    batch_timeout: {{env "OTEL_LOG_BATCH_TIMEOUT" | default "1s"}}
-    min_level: {{env "OTEL_LOG_MIN_LEVEL" | default "info"}}
-  otlp:
-    enabled: {{env "OTEL_OTLP_ENABLED" | default false}}
-    target: {{env "OTEL_OTLP_TARGET" | default ""}}
+    processor:
+      type: {{env "OTEL_LOG_PROCESSOR" | default "batch"}}
+      batch:
+        export_interval: {{env "OTEL_LOG_EXPORT_BATCH_INTERVAL" | default "1s"}}
+        max_size: {{env "OTEL_LOG_MAX_BATCH_SIZE" | default 25}}
+
+    exporter:
+      type: {{env "OTEL_LOG_EXPORTER"}}
+      otlp:
+        type: {{env "OTEL_OTLP_CONN_TYPE" | default "grpc"}}
+        target: {{env "OTEL_OTLP_TARGET"}}
