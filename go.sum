@@ -73,10 +73,10 @@ github.com/yudai/gojsondiff v1.0.0 h1:27cbfqXLVEJ1o8I6v3y9lg8Ydm53EKqHXAOMxEGlCO
 github.com/yudai/gojsondiff v1.0.0/go.mod h1:AY32+k2cwILAkW1fbgxQ5mUmMiZFgLIV+FBNExI05xg=
 github.com/yudai/golcs v0.0.0-20170316035057-ecda9a501e82 h1:BHyfKlQyqbsFN5p3IfnEUduWvb9is428/nNb5L3U01M=
 github.com/yudai/golcs v0.0.0-20170316035057-ecda9a501e82/go.mod h1:lgjkn3NuSvDfVJdfcVVdX+jpBxNmX4rDAzaS45IcYoM=
-github.com/z5labs/bedrock v0.19.5 h1:JNmNu0o+2khhCqL0M6BDtT6AeyVDZOktNldl3aGTxXw=
-github.com/z5labs/bedrock v0.19.5/go.mod h1:1kv8F5GoH54JzLWkGd/uVkk1u+VrOGkYgfUJb2sGFAE=
-github.com/z5labs/sdk-go v0.1.0 h1:LgT/2B5QRcEM6aLF/c5SzAltuo3anpPL+7n1seTpe4s=
-github.com/z5labs/sdk-go v0.1.0/go.mod h1:WoxIKqKic8TeqSWUqDM4fjf6IkpBjPjF+aUhqSxWADY=
+github.com/z5labs/bedrock v0.20.0 h1:h+oNWxmHV50B40l3tEpr7DEKPgqsfxEGIHRaLxUOeSU=
+github.com/z5labs/bedrock v0.20.0/go.mod h1:DHotKjQLApCxtlr6FsylO7f8yQf05AhBXGTELVIwxcQ=
+github.com/z5labs/sdk-go v0.2.0 h1:mAkp64/6EMiu2fB4tcwd1p5lFNTLW/crI0nxWWXe53I=
+github.com/z5labs/sdk-go v0.2.0/go.mod h1:ycKynder4tJl3TkkeQHpI4yvogt0eQLwFWXlWALNptY=
 github.com/zeebo/errs v1.4.0 h1:XNdoD/RRMKP7HD0UhJnIzUy74ISdGGxURlYG8HSWSfM=
 github.com/zeebo/errs v1.4.0/go.mod h1:sgbWHsvVuTPHcqJJGQ1WhI5KbWlHYz+2+2C/LSEtCw4=
 go.opentelemetry.io/auto/sdk v1.1.0 h1:cH53jehLUN6UFLY71z+NDOiNJqDdPRaXzTel0sJySYA=
