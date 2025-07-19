@@ -7,7 +7,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/stretchr/testify v1.10.0
 	github.com/swaggest/jsonschema-go v0.3.78
-	github.com/swaggest/openapi-go v0.2.58
+	github.com/swaggest/openapi-go v0.2.59
 	github.com/z5labs/bedrock v0.20.2
 	github.com/z5labs/sdk-go v0.2.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.12.0
