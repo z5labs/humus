@@ -6,15 +6,15 @@
 package rest
 
 import (
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/swaggest/openapi-go/openapi3"
 	"github.com/z5labs/humus/health"
+	"github.com/z5labs/sdk-go/try"
 )
 
 type operationDef func() (openapi3.Operation, error)
@@ -25,23 +25,8 @@ func (f operationDef) Spec() (openapi3.Operation, error) {
 
 func (operationDef) ServeHTTP(_ http.ResponseWriter, _ *http.Request) {}
 
-func TestRouter_Handle(t *testing.T) {
+func TestApi_Operation(t *testing.T) {
 	t.Run("will return an error", func(t *testing.T) {
-		t.Run("if the Operation fails to return its OpenAPI definition", func(t *testing.T) {
-			r := NewApi("test", "v0.0.0")
-
-			defErr := errors.New("failed to create operation definition")
-			op := operationDef(func() (def openapi3.Operation, err error) {
-				err = defErr
-				return
-			})
-
-			err := r.Route(http.MethodGet, "/", op)
-			if !assert.ErrorIs(t, err, defErr) {
-				return
-			}
-		})
-
 		t.Run("if the Operation has already been registered with the OpenAPI schema", func(t *testing.T) {
 			r := NewApi("test", "v0.0.0")
 
@@ -49,15 +34,17 @@ func TestRouter_Handle(t *testing.T) {
 				return
 			})
 
-			err := r.Route(http.MethodGet, "/", op)
-			if !assert.Nil(t, err) {
-				return
+			register := func() (err error) {
+				defer try.Recover(&err)
+				r.Operation(http.MethodGet, StaticPath("/"), op)
+				return nil
 			}
 
-			err = r.Route(http.MethodGet, "/", op)
-			if !assert.Error(t, err) {
-				return
-			}
+			err := register()
+			require.Nil(t, err)
+
+			err = register()
+			require.Error(t, err)
 		})
 	})
 }
@@ -70,7 +57,7 @@ func (noopDefinition) Spec() (openapi3.Operation, error) {
 	return openapi3.Operation{}, nil
 }
 
-func TestRouter_ServeHTTP(t *testing.T) {
+func TestApi_ServeHTTP(t *testing.T) {
 	t.Run("will return Not Found response", func(t *testing.T) {
 		t.Run("if the request path does not match", func(t *testing.T) {
 			r := NewApi(
@@ -81,14 +68,11 @@ func TestRouter_ServeHTTP(t *testing.T) {
 				})),
 			)
 
-			err := r.Route(http.MethodGet, "/", noopDefinition{
+			r.Operation(http.MethodGet, StaticPath("/"), noopDefinition{
 				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.WriteHeader(http.StatusOK)
 				}),
 			})
-			if !assert.Nil(t, err) {
-				return
-			}
 
 			w := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodGet, "/hello", nil)
@@ -96,9 +80,7 @@ func TestRouter_ServeHTTP(t *testing.T) {
 			r.ServeHTTP(w, req)
 
 			resp := w.Result()
-			if !assert.Equal(t, 418, resp.StatusCode) {
-				return
-			}
+			require.Equal(t, 418, resp.StatusCode)
 		})
 	})
 
@@ -112,14 +94,11 @@ func TestRouter_ServeHTTP(t *testing.T) {
 				})),
 			)
 
-			err := r.Route(http.MethodGet, "/", noopDefinition{
+			r.Operation(http.MethodGet, StaticPath("/"), noopDefinition{
 				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.WriteHeader(http.StatusOK)
 				}),
 			})
-			if !assert.Nil(t, err) {
-				return
-			}
 
 			w := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(``))
@@ -127,9 +106,7 @@ func TestRouter_ServeHTTP(t *testing.T) {
 			r.ServeHTTP(w, req)
 
 			resp := w.Result()
-			if !assert.Equal(t, 418, resp.StatusCode) {
-				return
-			}
+			require.Equal(t, 418, resp.StatusCode)
 		})
 
 	})
@@ -151,9 +128,7 @@ func TestRouter_ServeHTTP(t *testing.T) {
 			r.ServeHTTP(w, req)
 
 			resp := w.Result()
-			if !assert.Equal(t, http.StatusOK, resp.StatusCode) {
-				return
-			}
+			require.Equal(t, http.StatusOK, resp.StatusCode)
 		})
 
 		t.Run("if the liveness health monitor returns healthy", func(t *testing.T) {
@@ -172,9 +147,7 @@ func TestRouter_ServeHTTP(t *testing.T) {
 			r.ServeHTTP(w, req)
 
 			resp := w.Result()
-			if !assert.Equal(t, http.StatusOK, resp.StatusCode) {
-				return
-			}
+			require.Equal(t, http.StatusOK, resp.StatusCode)
 		})
 	})
 
@@ -194,9 +167,7 @@ func TestRouter_ServeHTTP(t *testing.T) {
 			r.ServeHTTP(w, req)
 
 			resp := w.Result()
-			if !assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode) {
-				return
-			}
+			require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
 		})
 
 		t.Run("if the liveness health monitor returns unhealthy", func(t *testing.T) {
@@ -214,9 +185,7 @@ func TestRouter_ServeHTTP(t *testing.T) {
 			r.ServeHTTP(w, req)
 
 			resp := w.Result()
-			if !assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode) {
-				return
-			}
+			require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
 		})
 	})
 }
