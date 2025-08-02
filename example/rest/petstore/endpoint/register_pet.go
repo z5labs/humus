@@ -25,14 +25,11 @@ type registerPetHandler struct{}
 func RegisterPet(api *rest.Api) {
 	h := &registerPetHandler{}
 
-	err := api.Route(
+	api.Operation(
 		http.MethodPost,
-		"/pet",
+		rest.StaticPath("/pet"),
 		rpc.NewOperation(h),
 	)
-	if err != nil {
-		panic(err)
-	}
 }
 
 type RegisterPetRequest struct {
