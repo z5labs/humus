@@ -3,7 +3,7 @@ module github.com/z5labs/humus
 go 1.24.0
 
 require (
-	github.com/go-chi/chi/v5 v5.2.2
+	github.com/go-chi/chi/v5 v5.2.3
 	github.com/google/uuid v1.6.0
 	github.com/stretchr/testify v1.11.1
 	github.com/swaggest/jsonschema-go v0.3.78
