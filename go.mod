@@ -10,9 +10,9 @@ require (
 	github.com/swaggest/openapi-go v0.2.59
 	github.com/z5labs/bedrock v0.20.2
 	github.com/z5labs/sdk-go v0.2.0
-	go.opentelemetry.io/contrib/bridges/otelslog v0.12.0
-	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.62.0
-	go.opentelemetry.io/contrib/instrumentation/runtime v0.62.0
+	go.opentelemetry.io/contrib/bridges/otelslog v0.13.0
+	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.63.0
+	go.opentelemetry.io/contrib/instrumentation/runtime v0.63.0
 	go.opentelemetry.io/otel v1.38.0
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.14.0
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.14.0
