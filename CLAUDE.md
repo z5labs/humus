@@ -38,7 +38,7 @@ golangci-lint run
 
 # The CI uses the same linter with these settings:
 # - Timeout: 5m
-# - Skip cache: false
+# - Tests: false (configured in .golangci.yaml)
 ```
 
 ## Architecture
@@ -90,7 +90,7 @@ The `default_config.yaml` file contains framework defaults for OpenTelemetry con
 - `internal/httpserver/` - HTTP server lifecycle wrapper
 - `internal/grpcserver/` - gRPC server lifecycle wrapper
 - `internal/detector/` - Resource detection utilities
-- `internal/humuspb/` - Internal protobuf definitions
+- `internal/grpchealth/` - gRPC health service implementation
 
 ### Key Abstractions
 
@@ -99,9 +99,9 @@ The `default_config.yaml` file contains framework defaults for OpenTelemetry con
 **rest.Api** - OpenAPI-compliant HTTP handler
 - Provides `/openapi.json` endpoint with dynamic schema
 - Built-in `/health/liveness` and `/health/readiness` probes
-- Routes operations using `rest.Operation[I, O, Req, Resp]`
+- Routes operations using `rest.Handle()` with path patterns
 
-**rest.Operation Pattern:**
+**rest/rpc Pattern:**
 ```go
 rpc.Handler[Req, Resp]              // Business logic
   → TypedRequest[Req]                // Request deserialization + schema
@@ -110,8 +110,26 @@ rpc.Handler[Req, Resp]              // Business logic
 ```
 
 Pre-built serializers available:
-- `ConsumeJson[T]()` - JSON request reader with schema reflection
-- `ReturnJson[T]()` - JSON response writer with schema reflection
+- `ConsumeJson[Req, Resp](handler)` - Wraps handler to consume JSON requests
+- `ReturnJson[Req, Resp](handler)` - Wraps handler to return JSON responses
+- Chain them: `rpc.NewOperation(ConsumeJson(ReturnJson(handlerFunc)))`
+
+**Path Building:**
+```go
+rest.BasePath("/users")              // Static path: /users
+rest.BasePath("/users").Param("id")  // Path parameter: /users/{id}
+```
+
+**Parameter Validation:**
+```go
+rest.Handle(
+    http.MethodGet,
+    rest.BasePath("/users"),
+    handler,
+    rest.QueryParam("format", rest.Required()),
+    rest.Header("Authorization", rest.Required()),
+)
+```
 
 #### gRPC Services
 
@@ -119,13 +137,13 @@ Pre-built serializers available:
 - Implements `grpc.ServiceRegistrar`
 - Automatic OTel instrumentation via interceptors
 - Auto-registration of gRPC Health service
-- Health monitoring for registered services
+- Health monitoring for registered services (if service implements `health.Monitor`)
 
 #### Job Services
 
 **job.Handler** - Simple interface with single method:
 ```go
-Handle(ctx bedrock.Context) error
+Handle(ctx context.Context) error
 ```
 
 No HTTP/gRPC server, just executes once with OTel and lifecycle management.
@@ -134,7 +152,7 @@ No HTTP/gRPC server, just executes once with OTel and lifecycle management.
 
 **health.Monitor** - Interface for health checks:
 ```go
-Healthy(ctx bedrock.Context) (bool, error)
+Healthy(ctx context.Context) (bool, error)
 ```
 
 Implementations:
@@ -150,7 +168,7 @@ api := rest.NewApi("My Service", "v1.0.0")
 operation := rpc.NewOperation(
     ConsumeJson(ReturnJson(handlerFunc)),
 )
-api.Route(http.MethodPost, "/users", operation)
+rest.Handle(http.MethodPost, rest.BasePath("/users"), operation)
 ```
 
 **gRPC:**
@@ -162,7 +180,7 @@ yourpb.RegisterYourServiceServer(api, implementation)
 
 **Job:**
 ```go
-app := job.New(handlerFunc)
+app := job.NewApp(handlerFunc)
 // That's it - just implement Handler interface
 ```
 
@@ -179,19 +197,20 @@ func main() {
 
 The initializer function receives config and returns the API/App:
 ```go
-func Init(ctx bedrock.Context, cfg Config) (*rest.Api, error) {
+func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
     // Initialize your service
 }
 ```
 
 ## Important Conventions
 
-1. **Error Handling** - Use `rpc.ErrorHandler` interface for custom error responses in REST operations
+1. **Error Handling** - Use `rpc.ErrorHandler` interface for custom error responses in REST operations; set via `OnError()` operation option
 2. **OpenAPI Schemas** - Generated automatically via reflection from Go types (uses `github.com/swaggest/jsonschema-go`)
-3. **Health Checks** - REST apps should implement `health.Monitor` for readiness probes; gRPC health is automatic
+3. **Health Checks** - REST apps should implement custom health handlers via `rest.Readiness()` and `rest.Liveness()` options; gRPC health is automatic
 4. **Graceful Shutdown** - Handled automatically by Bedrock lifecycle; no explicit cleanup needed in most cases
-5. **OTel Instrumentation** - Automatic for HTTP (via otelhttp) and gRPC (via interceptors); use `otel.Tracer/Meter/Logger` directly in business logic
-6. **Option Pattern** - Used throughout for extensibility (e.g., `rest.ApiOption`, `grpc.RunOption`, `rpc.OperationOption`)
+5. **OTel Instrumentation** - Automatic for HTTP (via otelhttp) and gRPC (via interceptors); use `otel.Tracer/Meter` directly in business logic
+6. **Logging** - Use `humus.Logger(name)` to get an OpenTelemetry-integrated logger; returns `*slog.Logger`
+7. **Option Pattern** - Used throughout for extensibility (e.g., `rest.ApiOption`, `grpc.RunOption`, `rpc.OperationOption`)
 
 ## Testing Patterns
 
@@ -201,7 +220,7 @@ Tests use standard Go testing with:
 - Example tests in `*_example_test.go` files demonstrate usage patterns
 
 When writing tests:
-- Mock `bedrock.Context` for handler tests
+- Mock `context.Context` for handler tests
 - Use `httptest.NewRecorder()` for HTTP handler tests
 - Mock `grpc.ServiceRegistrar` for gRPC registration tests
 - Test health monitors in isolation before composing
@@ -215,6 +234,7 @@ When writing tests:
 **HTTP Specific:**
 - `github.com/go-chi/chi/v5` - Router (embedded in rest.Api)
 - `github.com/swaggest/openapi-go` - OpenAPI spec generation
+- `github.com/swaggest/jsonschema-go` - JSON schema reflection
 
 **gRPC Specific:**
 - `google.golang.org/grpc` - gRPC framework
@@ -222,8 +242,6 @@ When writing tests:
 ## Examples
 
 The `example/` directory contains reference implementations:
-- `example/rest/` - REST service example
-- `example/grpc/` - gRPC service example
-- `example/internal/` - Shared internal utilities
+- `example/grpc/petstore/` - gRPC service example with health monitoring
 
 Refer to these for real-world usage patterns of the framework.

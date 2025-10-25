@@ -20,9 +20,6 @@ import (
 // Implementations define how to handle HTTP requests and provide metadata
 // for generating OpenAPI specifications.
 //
-// The RequestBody and Responses methods are optional - they are accessed via
-// type assertion to allow handlers that don't need request/response schemas.
-//
 // See the rest/rpc subpackage for handler implementations.
 type Handler interface {
 	http.Handler
@@ -107,22 +104,12 @@ func Handle(method string, path Path, h Handler, opts ...OperationOption) ApiOpt
 			opt(oo)
 		}
 
+		reqBody := h.RequestBody()
+		responses := h.Responses()
+
 		var op openapi3.Operation
-
-		withRequestBody, ok := h.(interface {
-			RequestBody() openapi3.RequestBodyOrRef
-		})
-		if ok {
-			reqBody := withRequestBody.RequestBody()
-			op.RequestBody = &reqBody
-		}
-
-		withResponses, ok := h.(interface {
-			Responses() openapi3.Responses
-		})
-		if ok {
-			op.Responses = withResponses.Responses()
-		}
+		op.RequestBody = &reqBody
+		op.Responses = responses
 
 		endpoint := path.String()
 
