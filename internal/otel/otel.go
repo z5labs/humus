@@ -24,6 +24,7 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/log/global"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -39,6 +40,11 @@ func Initialize(ctx context.Context, cfg config.OTel) error {
 	}
 
 	grpcCache := newCache[string, *grpc.ClientConn]()
+
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.Baggage{},
+		propagation.TraceContext{},
+	))
 
 	initers := []initializer{
 		traceProviderInitializer{
@@ -215,9 +221,6 @@ func initMetricExporter(ctx context.Context, cfg config.MetricExporter, grpcCach
 			if err != nil {
 				return nil, err
 			}
-			if err != nil {
-				return nil, err
-			}
 
 			return otlpmetricgrpc.New(
 				ctx,
@@ -294,9 +297,6 @@ func initLogExporter(ctx context.Context, cfg config.LogExporter, grpcCache *cac
 		switch cfg.OTLP.Type {
 		case config.OTLPGRPC:
 			cc, err := getOrNewClientConn(cfg.OTLP, grpcCache)
-			if err != nil {
-				return nil, err
-			}
 			if err != nil {
 				return nil, err
 			}
