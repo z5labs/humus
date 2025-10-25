@@ -19,6 +19,10 @@ func Logger(name string) *slog.Logger {
 	return otelslog.NewLogger(name)
 }
 
+func LogHandler(name string) slog.Handler {
+	return otelslog.NewHandler(name)
+}
+
 // RunnerOptions are configurable parameters of a [Runner].
 type RunnerOptions struct {
 	errHandler ErrorHandler
