@@ -221,9 +221,6 @@ func initMetricExporter(ctx context.Context, cfg config.MetricExporter, grpcCach
 			if err != nil {
 				return nil, err
 			}
-			if err != nil {
-				return nil, err
-			}
 
 			return otlpmetricgrpc.New(
 				ctx,
@@ -300,9 +297,6 @@ func initLogExporter(ctx context.Context, cfg config.LogExporter, grpcCache *cac
 		switch cfg.OTLP.Type {
 		case config.OTLPGRPC:
 			cc, err := getOrNewClientConn(cfg.OTLP, grpcCache)
-			if err != nil {
-				return nil, err
-			}
 			if err != nil {
 				return nil, err
 			}
