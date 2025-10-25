@@ -8,6 +8,7 @@ package rpc
 import (
 	"context"
 	"net/http"
+	"strconv"
 
 	"github.com/swaggest/openapi-go/openapi3"
 	"go.opentelemetry.io/otel"
@@ -72,6 +73,57 @@ func (h *ConsumerHandler[T]) Handle(ctx context.Context, req *T) (*EmptyResponse
 	return &EmptyResponse{}, nil
 }
 
+// RequestBody implements the rest.Handler interface.
+func (h *ConsumerHandler[T]) RequestBody() openapi3.RequestBodyOrRef {
+	return openapi3.RequestBodyOrRef{}
+}
+
+// Responses implements the rest.Handler interface.
+func (h *ConsumerHandler[T]) Responses() openapi3.Responses {
+	var resp EmptyResponse
+	statusCode, responseDef, err := resp.Spec()
+	if err != nil {
+		// Return empty responses if spec generation fails
+		return openapi3.Responses{}
+	}
+
+	return openapi3.Responses{
+		MapOfResponseOrRefValues: map[string]openapi3.ResponseOrRef{
+			strconv.Itoa(statusCode): {
+				Response: responseDef,
+			},
+		},
+	}
+}
+
+// ServeHTTP implements the [http.Handler] interface.
+func (h *ConsumerHandler[T]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	spanCtx, span := otel.Tracer("rpc").Start(r.Context(), "ConsumerHandler.ServeHTTP")
+	defer span.End()
+
+	var req T
+	// If T implements RequestReader, call ReadRequest
+	if rr, ok := any(&req).(interface{ ReadRequest(context.Context, *http.Request) error }); ok {
+		err := rr.ReadRequest(spanCtx, r)
+		if err != nil {
+			span.RecordError(err)
+			panic(err)
+		}
+	}
+
+	resp, err := h.Handle(spanCtx, &req)
+	if err != nil {
+		span.RecordError(err)
+		panic(err)
+	}
+
+	err = resp.WriteResponse(spanCtx, w)
+	if err != nil {
+		span.RecordError(err)
+		panic(err)
+	}
+}
+
 // Producer returns a response value without consuming a request value.
 type Producer[T any] interface {
 	Produce(context.Context) (*T, error)
@@ -119,4 +171,52 @@ func (h *ProducerHandler[T]) Handle(ctx context.Context, req *EmptyRequest) (*T,
 	defer span.End()
 
 	return h.p.Produce(spanCtx)
+}
+
+// RequestBody implements the rest.Handler interface.
+func (h *ProducerHandler[T]) RequestBody() openapi3.RequestBodyOrRef {
+	var req EmptyRequest
+	reqBody, err := req.Spec()
+	if err != nil {
+		// Return empty request body if spec generation fails
+		return openapi3.RequestBodyOrRef{}
+	}
+
+	return openapi3.RequestBodyOrRef{
+		RequestBody: reqBody,
+	}
+}
+
+// Responses implements the rest.Handler interface.
+func (h *ProducerHandler[T]) Responses() openapi3.Responses {
+	return openapi3.Responses{}
+}
+
+// ServeHTTP implements the [http.Handler] interface.
+func (h *ProducerHandler[T]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	spanCtx, span := otel.Tracer("rpc").Start(r.Context(), "ProducerHandler.ServeHTTP")
+	defer span.End()
+
+	var req EmptyRequest
+	err := req.ReadRequest(spanCtx, r)
+	if err != nil {
+		span.RecordError(err)
+		panic(err)
+	}
+
+	resp, err := h.Handle(spanCtx, &req)
+	if err != nil {
+		span.RecordError(err)
+		panic(err)
+	}
+
+	// The response is of type *T, which could be a TypedResponse
+	// If T implements ResponseWriter, call WriteResponse
+	if rw, ok := any(resp).(interface{ WriteResponse(context.Context, http.ResponseWriter) error }); ok {
+		err = rw.WriteResponse(spanCtx, w)
+		if err != nil {
+			span.RecordError(err)
+			panic(err)
+		}
+	}
 }
