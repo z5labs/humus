@@ -97,6 +97,15 @@ type operationHandler struct {
 //	api := rest.NewApi("User API", "v1.0.0", getUser)
 func Handle(method string, path Path, h Handler, opts ...OperationOption) ApiOption {
 	return apiOptionFunc(func(ao *ApiOptions) {
+		for _, el := range path {
+			v, ok := el.(pathParam)
+			if !ok {
+				continue
+			}
+
+			opts = append(opts, param(v.name, openapi3.ParameterInPath, v.opts...))
+		}
+
 		oo := &OperationOptions{
 			errHandler: defaultErrorHandler(humus.LogHandler("rest")),
 		}
