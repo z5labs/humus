@@ -12,7 +12,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/z5labs/humus/concurrent"
 	"github.com/z5labs/humus/config"
 	"github.com/z5labs/humus/internal/detector"
 
@@ -39,7 +38,7 @@ func Initialize(ctx context.Context, cfg config.OTel) error {
 		return err
 	}
 
-	grpcCache := concurrent.NewCache[string, *grpc.ClientConn]()
+	grpcCache := newCache[string, *grpc.ClientConn]()
 
 	initers := []initializer{
 		traceProviderInitializer{
@@ -68,8 +67,8 @@ func Initialize(ctx context.Context, cfg config.OTel) error {
 	return nil
 }
 
-func getOrNewClientConn(cfg config.OTLP, cache *concurrent.Cache[string, *grpc.ClientConn]) (*grpc.ClientConn, error) {
-	return cache.GetOr(cfg.Target, func() (*grpc.ClientConn, error) {
+func getOrNewClientConn(cfg config.OTLP, cache *cache[string, *grpc.ClientConn]) (*grpc.ClientConn, error) {
+	return cache.getOr(cfg.Target, func() (*grpc.ClientConn, error) {
 		return grpc.NewClient(
 			cfg.Target,
 			// TODO: support secure transport credentials
@@ -95,7 +94,7 @@ type initializer interface {
 type traceProviderInitializer struct {
 	cfg       config.Trace
 	r         *resource.Resource
-	grpcCache *concurrent.Cache[string, *grpc.ClientConn]
+	grpcCache *cache[string, *grpc.ClientConn]
 }
 
 func (tpi traceProviderInitializer) Init(ctx context.Context) error {
@@ -126,7 +125,7 @@ func (e UnknownOTLPConnTypeError) Error() string {
 	return fmt.Sprintf("unknown otlp conn type: %q", e.Type)
 }
 
-func initSpanExporter(ctx context.Context, cfg config.SpanExporter, grpcCache *concurrent.Cache[string, *grpc.ClientConn]) (trace.SpanExporter, error) {
+func initSpanExporter(ctx context.Context, cfg config.SpanExporter, grpcCache *cache[string, *grpc.ClientConn]) (trace.SpanExporter, error) {
 	switch cfg.Type {
 	case config.OTLPSpanExporterType:
 		switch cfg.OTLP.Type {
@@ -182,7 +181,7 @@ func initSpanProcessor(ctx context.Context, cfg config.SpanProcessor, exp trace.
 type meterProviderInitializer struct {
 	cfg       config.Metric
 	r         *resource.Resource
-	grpcCache *concurrent.Cache[string, *grpc.ClientConn]
+	grpcCache *cache[string, *grpc.ClientConn]
 }
 
 func (mpi meterProviderInitializer) Init(ctx context.Context) error {
@@ -207,7 +206,7 @@ func (mpi meterProviderInitializer) Init(ctx context.Context) error {
 	)
 }
 
-func initMetricExporter(ctx context.Context, cfg config.MetricExporter, grpcCache *concurrent.Cache[string, *grpc.ClientConn]) (metric.Exporter, error) {
+func initMetricExporter(ctx context.Context, cfg config.MetricExporter, grpcCache *cache[string, *grpc.ClientConn]) (metric.Exporter, error) {
 	switch cfg.Type {
 	case config.OTLPMetricExporterType:
 		switch cfg.OTLP.Type {
@@ -266,7 +265,7 @@ func initMetricReader(ctx context.Context, cfg config.MetricReader, exp metric.E
 type logProviderInitializer struct {
 	cfg       config.Log
 	r         *resource.Resource
-	grpcCache *concurrent.Cache[string, *grpc.ClientConn]
+	grpcCache *cache[string, *grpc.ClientConn]
 }
 
 func (lpi logProviderInitializer) Init(ctx context.Context) error {
@@ -289,7 +288,7 @@ func (lpi logProviderInitializer) Init(ctx context.Context) error {
 	return nil
 }
 
-func initLogExporter(ctx context.Context, cfg config.LogExporter, grpcCache *concurrent.Cache[string, *grpc.ClientConn]) (log.Exporter, error) {
+func initLogExporter(ctx context.Context, cfg config.LogExporter, grpcCache *cache[string, *grpc.ClientConn]) (log.Exporter, error) {
 	switch cfg.Type {
 	case config.OTLPLogExporterType:
 		switch cfg.OTLP.Type {
