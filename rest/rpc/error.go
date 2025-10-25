@@ -6,31 +6,14 @@
 package rpc
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 )
 
-// ErrorHandler
-type ErrorHandler interface {
-	Handle(http.ResponseWriter, error)
-}
-
-// ErrorHandlerFunc
-type ErrorHandlerFunc func(http.ResponseWriter, error)
-
-// Handle implements the [ErrorHandler] interface.
-func (f ErrorHandlerFunc) Handle(w http.ResponseWriter, err error) {
-	f(w, err)
-}
-
-// OnError
-func OnError(eh ErrorHandler) OperationOption {
-	return operationOptionFunc(func(oo *OperationOptions) {
-		oo.errHandler = eh
-	})
-}
-
-// InvalidContentTypeError
+// InvalidContentTypeError represents an error when the request Content-Type
+// header does not match the expected value. It implements [rest.HttpResponseWriter]
+// to return a 400 Bad Request response.
 type InvalidContentTypeError struct {
 	ContentType string
 }
@@ -38,4 +21,9 @@ type InvalidContentTypeError struct {
 // Error implements the [error] interface.
 func (e InvalidContentTypeError) Error() string {
 	return fmt.Sprintf("invalid content type for request: %s", e.ContentType)
+}
+
+// WriteHttpResponse implements the [rest.HttpResponseWriter] interface.
+func (e InvalidContentTypeError) WriteHttpResponse(ctx context.Context, w http.ResponseWriter) {
+	w.WriteHeader(http.StatusBadRequest)
 }

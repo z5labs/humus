@@ -39,9 +39,7 @@ func ExampleReturnNothing() {
 
 	h := ReturnNothing(c)
 
-	op := NewOperation(h)
-
-	srv := httptest.NewServer(op)
+	srv := httptest.NewServer(h)
 	defer srv.Close()
 
 	resp, err := http.Post(srv.URL, "application/json", strings.NewReader(`{"msg":"hello world"}`))
@@ -82,9 +80,7 @@ func ExampleConsumeNothing() {
 
 	h := ConsumeNothing(p)
 
-	op := NewOperation(h)
-
-	srv := httptest.NewServer(op)
+	srv := httptest.NewServer(h)
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL)
