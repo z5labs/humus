@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/swaggest/jsonschema-go"
 	"github.com/swaggest/openapi-go/openapi3"
@@ -81,6 +82,48 @@ func (h *ReturnJsonHandler[Req, Resp]) Handle(ctx context.Context, req *Req) (*J
 	return &JsonResponse[Resp]{inner: resp}, nil
 }
 
+// RequestBody implements the rest.Handler interface.
+func (h *ReturnJsonHandler[Req, Resp]) RequestBody() openapi3.RequestBodyOrRef {
+	return openapi3.RequestBodyOrRef{}
+}
+
+// Responses implements the rest.Handler interface.
+func (h *ReturnJsonHandler[Req, Resp]) Responses() openapi3.Responses {
+	var resp JsonResponse[Resp]
+	statusCode, responseDef, err := resp.Spec()
+	if err != nil {
+		// Return empty responses if spec generation fails
+		return openapi3.Responses{}
+	}
+
+	return openapi3.Responses{
+		MapOfResponseOrRefValues: map[string]openapi3.ResponseOrRef{
+			strconv.Itoa(statusCode): {
+				Response: responseDef,
+			},
+		},
+	}
+}
+
+// ServeHTTP implements the [http.Handler] interface.
+func (h *ReturnJsonHandler[Req, Resp]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	spanCtx, span := otel.Tracer("rpc").Start(r.Context(), "ReturnJsonHandler.ServeHTTP")
+	defer span.End()
+
+	var req Req
+	resp, err := h.Handle(spanCtx, &req)
+	if err != nil {
+		span.RecordError(err)
+		panic(err)
+	}
+
+	err = resp.WriteResponse(spanCtx, w)
+	if err != nil {
+		span.RecordError(err)
+		panic(err)
+	}
+}
+
 // ConsumeJsonHandler
 type ConsumeJsonHandler[Req, Resp any] struct {
 	inner Handler[Req, Resp]
@@ -145,4 +188,42 @@ func (h *ConsumeJsonHandler[Req, Resp]) Handle(ctx context.Context, req *JsonReq
 	defer span.End()
 
 	return h.inner.Handle(spanCtx, &req.inner)
+}
+
+// RequestBody implements the rest.Handler interface.
+func (h *ConsumeJsonHandler[Req, Resp]) RequestBody() openapi3.RequestBodyOrRef {
+	var req JsonRequest[Req]
+	reqBody, err := req.Spec()
+	if err != nil {
+		// Return empty request body if spec generation fails
+		return openapi3.RequestBodyOrRef{}
+	}
+
+	return openapi3.RequestBodyOrRef{
+		RequestBody: reqBody,
+	}
+}
+
+// Responses implements the rest.Handler interface.
+func (h *ConsumeJsonHandler[Req, Resp]) Responses() openapi3.Responses {
+	return openapi3.Responses{}
+}
+
+// ServeHTTP implements the [http.Handler] interface.
+func (h *ConsumeJsonHandler[Req, Resp]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	spanCtx, span := otel.Tracer("rpc").Start(r.Context(), "ConsumeJsonHandler.ServeHTTP")
+	defer span.End()
+
+	var req JsonRequest[Req]
+	err := req.ReadRequest(spanCtx, r)
+	if err != nil {
+		span.RecordError(err)
+		panic(err)
+	}
+
+	_, err = h.Handle(spanCtx, &req)
+	if err != nil {
+		span.RecordError(err)
+		panic(err)
+	}
 }

@@ -7,15 +7,9 @@ package rpc
 
 import (
 	"context"
-	"fmt"
-	"log/slog"
 	"net/http"
-	"strconv"
-
-	"github.com/z5labs/humus"
 
 	"github.com/swaggest/openapi-go/openapi3"
-	"go.opentelemetry.io/otel"
 )
 
 // Handler represents a RPC style implementation of the core
@@ -33,22 +27,6 @@ func (f HandlerFunc[Req, Resp]) Handle(ctx context.Context, req *Req) (*Resp, er
 	return f(ctx, req)
 }
 
-// OperationOptions are used for configuring a [Operation].
-type OperationOptions struct {
-	openapiDef openapi3.Operation
-	errHandler ErrorHandler
-}
-
-// OperationOption sets a value on [OperationOptions].
-type OperationOption interface {
-	ApplyOperationOption(*OperationOptions)
-}
-
-type operationOptionFunc func(*OperationOptions)
-
-func (f operationOptionFunc) ApplyOperationOption(oo *OperationOptions) {
-	f(oo)
-}
 
 // RequestReader is meant to be implemented by any type which knows how
 // unmarshal itself from a [http.Request].
@@ -82,106 +60,3 @@ type TypedResponse[T any] interface {
 	Spec() (int, *openapi3.Response, error)
 }
 
-// Operation is a [http.Handler] which also provides a OpenAPI 3.0 spec for itself.
-type Operation[I, O any, Req TypedRequest[I], Resp TypedResponse[O]] struct {
-	openapiDef openapi3.Operation
-	handler    Handler[I, O]
-	errHandler ErrorHandler
-}
-
-// NewOperation initializes a [Operation].
-func NewOperation[I, O any, Req TypedRequest[I], Resp TypedResponse[O]](h Handler[I, O], opts ...OperationOption) *Operation[I, O, Req, Resp] {
-	log := humus.Logger("rpc")
-	oo := &OperationOptions{
-		openapiDef: openapi3.Operation{
-			Responses: openapi3.Responses{
-				MapOfResponseOrRefValues: make(map[string]openapi3.ResponseOrRef),
-			},
-		},
-		errHandler: ErrorHandlerFunc(func(w http.ResponseWriter, err error) {
-			w.WriteHeader(http.StatusInternalServerError)
-			log.Error("unexpected error while processing request", slog.Any("error", err))
-		}),
-	}
-	for _, opt := range opts {
-		opt.ApplyOperationOption(oo)
-	}
-	return &Operation[I, O, Req, Resp]{
-		openapiDef: oo.openapiDef,
-		handler:    h,
-		errHandler: oo.errHandler,
-	}
-}
-
-// DuplicateStatusCodeError represents the user trying to register
-// more than one response body spec for the same HTTP status code.
-type DuplicateStatusCodeError struct {
-	StatusCode int
-}
-
-// Error implements the [error] interface.
-func (e DuplicateStatusCodeError) Error() string {
-	return fmt.Sprintf("response spec already registered for http status code: %d", e.StatusCode)
-}
-
-// Spec implements the [rest.Operation] interface.
-func (op *Operation[I, O, Req, Resp]) Spec() (openapi3.Operation, error) {
-	openpapiDef := op.openapiDef
-
-	var i I
-	reqDef, err := Req(&i).Spec()
-	if err != nil {
-		return openpapiDef, err
-	}
-
-	openpapiDef.RequestBody = &openapi3.RequestBodyOrRef{
-		RequestBody: reqDef,
-	}
-
-	var o O
-	statusCode, respDef, err := Resp(&o).Spec()
-	if err != nil {
-		return openpapiDef, err
-	}
-
-	s := strconv.Itoa(statusCode)
-	_, exists := openpapiDef.Responses.MapOfResponseOrRefValues[s]
-	if exists {
-		return openpapiDef, DuplicateStatusCodeError{
-			StatusCode: statusCode,
-		}
-	}
-
-	openpapiDef.Responses.MapOfResponseOrRefValues[s] = openapi3.ResponseOrRef{
-		Response: respDef,
-	}
-	return openpapiDef, nil
-}
-
-// ServeHTTP implements the [http.Handler] interface.
-func (op *Operation[I, O, Req, Resp]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	spanCtx, span := otel.Tracer("endpoint").Start(r.Context(), "Operation.ServeHTTP")
-	defer span.End()
-
-	var i I
-	err := Req(&i).ReadRequest(spanCtx, r)
-	if err != nil {
-		span.RecordError(err)
-		op.errHandler.Handle(w, err)
-		return
-	}
-
-	resp, err := op.handler.Handle(spanCtx, &i)
-	if err != nil {
-		span.RecordError(err)
-		op.errHandler.Handle(w, err)
-		return
-	}
-
-	err = Resp(resp).WriteResponse(spanCtx, w)
-	if err == nil {
-		return
-	}
-	span.RecordError(err)
-	op.errHandler.Handle(w, err)
-}
