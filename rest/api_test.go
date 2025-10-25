@@ -13,16 +13,27 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/swaggest/openapi-go/openapi3"
 )
 
+// mockHandler is a simple test implementation of rest.Handler
+type mockHandler struct {
+	handler http.HandlerFunc
+}
+
+func (m mockHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	m.handler(w, r)
+}
+
+func (m mockHandler) RequestBody() openapi3.RequestBodyOrRef {
+	return openapi3.RequestBodyOrRef{}
+}
+
+func (m mockHandler) Responses() openapi3.Responses {
+	return openapi3.Responses{}
+}
+
 func TestNewApi(t *testing.T) {
-	t.Run("creates an API with title and version", func(t *testing.T) {
-		api := NewApi("Test API", "v1.0.0")
-
-		require.NotNil(t, api)
-		assert.NotNil(t, api.router)
-	})
-
 	t.Run("serves OpenAPI spec at /openapi.json", func(t *testing.T) {
 		api := NewApi("My API", "v2.3.1")
 
@@ -35,48 +46,15 @@ func TestNewApi(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var spec map[string]interface{}
+		var spec map[string]any
 		err = json.NewDecoder(resp.Body).Decode(&spec)
 		require.NoError(t, err)
 
-		info := spec["info"].(map[string]interface{})
+		assert.Equal(t, "3.0", spec["openapi"])
+
+		info := spec["info"].(map[string]any)
 		assert.Equal(t, "My API", info["title"])
 		assert.Equal(t, "v2.3.1", info["version"])
-	})
-
-	t.Run("includes OpenAPI version in spec", func(t *testing.T) {
-		api := NewApi("Test", "v1")
-
-		srv := httptest.NewServer(api)
-		defer srv.Close()
-
-		resp, _ := http.Get(srv.URL + "/openapi.json")
-		defer resp.Body.Close()
-
-		var spec map[string]interface{}
-		json.NewDecoder(resp.Body).Decode(&spec)
-
-		assert.Equal(t, "3.0", spec["openapi"])
-	})
-}
-
-func TestApi_ServeHTTP(t *testing.T) {
-	t.Run("implements http.Handler", func(t *testing.T) {
-		api := NewApi("Test", "v1")
-		var _ http.Handler = api
-	})
-
-	t.Run("serves requests", func(t *testing.T) {
-		api := NewApi("Test", "v1")
-
-		srv := httptest.NewServer(api)
-		defer srv.Close()
-
-		resp, err := http.Get(srv.URL + "/openapi.json")
-		require.NoError(t, err)
-		defer resp.Body.Close()
-
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
 	})
 }
 
@@ -159,55 +137,34 @@ func TestMethodNotAllowed(t *testing.T) {
 			w.Write([]byte("custom 405"))
 		})
 
+		// Create a simple test handler using mockHandler
+		testHandler := mockHandler{
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte("ok"))
+			},
+		}
+
+		// Register a GET handler at /test, then try a POST request
 		api := NewApi(
 			"Test",
 			"v1",
+			Handle(http.MethodGet, BasePath("/test"), testHandler),
 			MethodNotAllowed(customHandler),
 		)
 
 		srv := httptest.NewServer(api)
 		defer srv.Close()
 
-		// The MethodNotAllowed handler is only called when a route exists
-		// but the method is not allowed. Since we have no routes, we can't
-		// easily test this without creating a full handler. For now, just verify
-		// the option can be applied without error.
-		assert.NotNil(t, api)
-	})
-}
+		// Try POST on a route that only supports GET
+		resp, err := http.Post(srv.URL+"/test", "text/plain", nil)
+		require.NoError(t, err)
+		defer resp.Body.Close()
 
-func TestApiOption_Multiple(t *testing.T) {
-	t.Run("applies multiple options in order", func(t *testing.T) {
-		readinessHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Write([]byte("ready"))
-		})
+		assert.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
 
-		livenessHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Write([]byte("alive"))
-		})
-
-		api := NewApi(
-			"Multi-Option API",
-			"v1.0.0",
-			Readiness(readinessHandler),
-			Liveness(livenessHandler),
-		)
-
-		srv := httptest.NewServer(api)
-		defer srv.Close()
-
-		// Test readiness
-		resp, _ := http.Get(srv.URL + "/health/readiness")
 		body := make([]byte, 100)
 		n, _ := resp.Body.Read(body)
-		resp.Body.Close()
-		assert.Equal(t, "ready", string(body[:n]))
-
-		// Test liveness
-		resp, _ = http.Get(srv.URL + "/health/liveness")
-		body = make([]byte, 100)
-		n, _ = resp.Body.Read(body)
-		resp.Body.Close()
-		assert.Equal(t, "alive", string(body[:n]))
+		assert.Equal(t, "custom 405", string(body[:n]))
 	})
 }

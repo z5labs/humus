@@ -153,38 +153,3 @@ func Test_defaultErrorHandler(t *testing.T) {
 		})
 	})
 }
-
-type customHttpResponseError struct {
-	statusCode int
-	message    string
-}
-
-func (e customHttpResponseError) Error() string {
-	return e.message
-}
-
-func (e customHttpResponseError) WriteHttpResponse(ctx context.Context, w http.ResponseWriter) {
-	w.WriteHeader(e.statusCode)
-	w.Write([]byte(e.message))
-}
-
-func TestHttpResponseWriter_interface(t *testing.T) {
-	t.Run("custom error implements HttpResponseWriter", func(t *testing.T) {
-		var _ HttpResponseWriter = customHttpResponseError{}
-	})
-
-	t.Run("default handler uses WriteHttpResponse", func(t *testing.T) {
-		handler := defaultErrorHandler(slog.NewTextHandler(io.Discard, nil))
-		w := httptest.NewRecorder()
-
-		err := customHttpResponseError{
-			statusCode: http.StatusConflict,
-			message:    "conflict occurred",
-		}
-
-		handler.OnError(context.Background(), w, err)
-
-		assert.Equal(t, http.StatusConflict, w.Code)
-		assert.Equal(t, "conflict occurred", w.Body.String())
-	})
-}

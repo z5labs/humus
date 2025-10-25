@@ -11,13 +11,31 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/swaggest/openapi-go/openapi3"
 )
+
+// exampleHandler implements the Handler interface for testing
+type exampleHandler struct{}
+
+func (e exampleHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("book data"))
+}
+
+func (e exampleHandler) RequestBody() openapi3.RequestBodyOrRef {
+	return openapi3.RequestBodyOrRef{}
+}
+
+func (e exampleHandler) Responses() openapi3.Responses {
+	return openapi3.Responses{}
+}
 
 func TestHandle(t *testing.T) {
 	getBook := Handle(
 		http.MethodGet,
 		BasePath("/book"),
-		nil,
+		exampleHandler{},
 		Header(
 			"Authorization",
 			Required(),
@@ -34,7 +52,7 @@ func TestHandle(t *testing.T) {
 	srv := httptest.NewServer(api)
 	defer srv.Close()
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "/book?id=1", nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/book?id=1", nil)
 	if err != nil {
 		fmt.Println(err)
 		return
