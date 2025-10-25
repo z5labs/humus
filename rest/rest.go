@@ -32,8 +32,14 @@ import (
 //go:embed default_config.yaml
 var defaultConfig []byte
 
-// DefaultConfig is the default [bedrockcfg.Source] which aligns with the
-// [Config] type.
+// DefaultConfig returns the default configuration source for REST applications.
+// This provides baseline configuration values that align with the [Config] type.
+//
+// The default configuration includes:
+//   - Standard logging and telemetry settings from humus
+//   - Default HTTP server settings
+//
+// Use [WithDefaultConfig] to extend or override these defaults.
 func DefaultConfig() bedrockcfg.Source {
 	return bedrockcfg.MultiSource(
 		humus.DefaultConfig(),
@@ -41,9 +47,17 @@ func DefaultConfig() bedrockcfg.Source {
 	)
 }
 
-// WithDefaultConfig extends the [bedrockcfg.Source] returned by [DefaultConfig]
-// to include values from the given [io.Reader]. The [io.Reader] can provide
-// custom values, as well as, override default values.
+// WithDefaultConfig creates a configuration source that combines [DefaultConfig]
+// with custom values from the provided reader.
+//
+// The reader should contain YAML configuration. Values from the reader will
+// override the defaults.
+//
+// Example:
+//
+//	configFile, _ := os.Open("config.yaml")
+//	defer configFile.Close()
+//	cfg := rest.WithDefaultConfig(configFile)
 func WithDefaultConfig(r io.Reader) bedrockcfg.Source {
 	return bedrockcfg.MultiSource(
 		DefaultConfig(),
@@ -51,26 +65,43 @@ func WithDefaultConfig(r io.Reader) bedrockcfg.Source {
 	)
 }
 
-// ListenerProvider initializes a [net.Listener].
+// ListenerProvider creates a network listener for the HTTP server.
+// Custom config types can implement this to control how the server listens for connections.
 type ListenerProvider interface {
 	Listener(context.Context) (net.Listener, error)
 }
 
-// HttpServerProvider initializes a [http.Server].
+// HttpServerProvider creates an HTTP server with custom configuration.
+// Custom config types can implement this to control server settings like timeouts and TLS.
 type HttpServerProvider interface {
 	HttpServer(context.Context, http.Handler) (*http.Server, error)
 }
 
-// Configer is leveraged to constrain the custom config type into
-// supporting specific initialization behaviour required by [Run].
+// Configer represents the requirements for a configuration type used with [Run].
+// It must support OpenTelemetry initialization, network listening, and HTTP server creation.
+//
+// The [Config] type implements this interface and can be embedded in custom config types.
 type Configer interface {
 	appbuilder.OTelInitializer
 	ListenerProvider
 	HttpServerProvider
 }
 
-// Config is the default config which can be easily embedded into a
-// more custom app specific config.
+// Config is the default configuration structure for REST applications.
+// It can be embedded into custom application-specific configurations.
+//
+// Configuration fields:
+//   - OpenApi.Title: The API title in the OpenAPI specification
+//   - OpenApi.Version: The API version in the OpenAPI specification
+//   - HTTP.Port: The port number to listen on
+//
+// Example YAML configuration:
+//
+//	openapi:
+//	  title: "My API"
+//	  version: "v1.0.0"
+//	http:
+//	  port: 8080
 type Config struct {
 	humus.Config `config:",squash"`
 
@@ -84,12 +115,13 @@ type Config struct {
 	} `config:"http"`
 }
 
-// Listener implements the [Configer] interface.
+// Listener implements [ListenerProvider] by creating a TCP listener on the configured port.
 func (c Config) Listener(ctx context.Context) (net.Listener, error) {
 	return net.Listen("tcp", fmt.Sprintf(":%d", c.HTTP.Port))
 }
 
-// HttpServer implements the [Configer] interface.
+// HttpServer implements [HttpServerProvider] by creating an HTTP server with the given handler.
+// The server is configured with logging integrated with the humus logger.
 func (c Config) HttpServer(ctx context.Context, h http.Handler) (*http.Server, error) {
 	s := &http.Server{
 		Handler:  h,
@@ -98,7 +130,20 @@ func (c Config) HttpServer(ctx context.Context, h http.Handler) (*http.Server, e
 	return s, nil
 }
 
-// Builder initializes a [bedrock.AppBuilder] for your [Api].
+// Builder creates an application builder for REST APIs using the bedrock framework.
+// The builder handles application lifecycle, including:
+//   - OpenTelemetry initialization
+//   - Panic recovery
+//   - Graceful shutdown
+//   - Signal handling
+//
+// The provided function receives the parsed configuration and returns an initialized [Api].
+//
+// Example:
+//
+//	builder := rest.Builder(func(ctx context.Context, cfg rest.Config) (*rest.Api, error) {
+//	    return rest.NewApi(cfg.OpenApi.Title, cfg.OpenApi.Version), nil
+//	})
 func Builder[T Configer](f func(context.Context, T) (*Api, error)) bedrock.AppBuilder[T] {
 	return appbuilder.LifecycleContext(
 		appbuilder.OTel(
@@ -139,12 +184,14 @@ func Builder[T Configer](f func(context.Context, T) (*Api, error)) bedrock.AppBu
 	)
 }
 
-// RunOptions are used for configuring the running of a [Api].
+// RunOptions holds configuration for [Run].
+// These options control logging and other runtime behavior.
 type RunOptions struct {
 	logger *slog.Logger
 }
 
-// RunOption sets a value on [RunOptions].
+// RunOption configures [Run] behavior.
+// Use [LogHandler] to customize error logging.
 type RunOption interface {
 	ApplyRunOption(*RunOptions)
 }
@@ -155,20 +202,41 @@ func (f runOptionFunc) ApplyRunOption(ro *RunOptions) {
 	f(ro)
 }
 
-// LogHandler overrides the default [slog.Handler] used for logging
-// any error encountered while building or running the [Api].
+// LogHandler configures a custom log handler for errors during application startup and running.
+// By default, errors are logged as JSON to stdout.
+//
+// Example:
+//
+//	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+//	rest.Run(configReader, buildFunc, rest.LogHandler(handler))
 func LogHandler(h slog.Handler) RunOption {
 	return runOptionFunc(func(ro *RunOptions) {
 		ro.logger = slog.New(h)
 	})
 }
 
-// Run begins by reading, parsing and unmarshaling your custom config into
-// the type T. Then it calls the providing function to initialize your [Api]
-// implementation. Once it has the [Api] implementation, it begins serving
-// the [Api] over HTTP. Various middlewares are applied at different stages
-// for your convenience. Some middlewares include, automattic panic recovery,
-// OTel SDK initialization and shutdown, and OS signal based shutdown.
+// Run starts a REST API application with full lifecycle management.
+//
+// The function performs the following steps:
+//  1. Reads and parses configuration from the reader into type T
+//  2. Calls the provided function to build the [Api]
+//  3. Initializes the HTTP server and starts serving requests
+//  4. Sets up automatic features:
+//     - Panic recovery with logging
+//     - OpenTelemetry SDK initialization and shutdown
+//     - Graceful shutdown on OS signals (SIGINT, SIGTERM, SIGKILL)
+//
+// The application runs until it receives a shutdown signal or encounters a fatal error.
+//
+// Example:
+//
+//	configFile, _ := os.Open("config.yaml")
+//	defer configFile.Close()
+//
+//	rest.Run(configFile, func(ctx context.Context, cfg rest.Config) (*rest.Api, error) {
+//	    getUserOp := rest.Handle(http.MethodGet, rest.BasePath("/users"), handler)
+//	    return rest.NewApi(cfg.OpenApi.Title, cfg.OpenApi.Version, getUserOp), nil
+//	})
 func Run[T Configer](r io.Reader, f func(context.Context, T) (*Api, error), opts ...RunOption) {
 	ro := &RunOptions{
 		logger: slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{})),
