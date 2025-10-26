@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/swaggest/jsonschema-go"
 	"github.com/swaggest/openapi-go/openapi3"
@@ -81,6 +82,48 @@ func (h *ReturnJsonHandler[Req, Resp]) Handle(ctx context.Context, req *Req) (*J
 	return &JsonResponse[Resp]{inner: resp}, nil
 }
 
+// RequestBody implements the rest.Handler interface.
+func (h *ReturnJsonHandler[Req, Resp]) RequestBody() openapi3.RequestBodyOrRef {
+	return openapi3.RequestBodyOrRef{}
+}
+
+// Responses implements the rest.Handler interface.
+func (h *ReturnJsonHandler[Req, Resp]) Responses() openapi3.Responses {
+	var resp JsonResponse[Resp]
+	statusCode, responseDef, err := resp.Spec()
+	if err != nil {
+		// Return empty responses if spec generation fails
+		return openapi3.Responses{}
+	}
+
+	return openapi3.Responses{
+		MapOfResponseOrRefValues: map[string]openapi3.ResponseOrRef{
+			strconv.Itoa(statusCode): {
+				Response: responseDef,
+			},
+		},
+	}
+}
+
+// ServeHTTP implements the [http.Handler] interface.
+func (h *ReturnJsonHandler[Req, Resp]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	spanCtx, span := otel.Tracer("rpc").Start(r.Context(), "ReturnJsonHandler.ServeHTTP")
+	defer span.End()
+
+	var req Req
+	resp, err := h.Handle(spanCtx, &req)
+	if err != nil {
+		span.RecordError(err)
+		panic(err)
+	}
+
+	err = resp.WriteResponse(spanCtx, w)
+	if err != nil {
+		span.RecordError(err)
+		panic(err)
+	}
+}
+
 // ConsumeJsonHandler
 type ConsumeJsonHandler[Req, Resp any] struct {
 	inner Handler[Req, Resp]
@@ -145,4 +188,84 @@ func (h *ConsumeJsonHandler[Req, Resp]) Handle(ctx context.Context, req *JsonReq
 	defer span.End()
 
 	return h.inner.Handle(spanCtx, &req.inner)
+}
+
+// RequestBody implements the rest.Handler interface.
+func (h *ConsumeJsonHandler[Req, Resp]) RequestBody() openapi3.RequestBodyOrRef {
+	var req JsonRequest[Req]
+	reqBody, err := req.Spec()
+	if err != nil {
+		// Return empty request body if spec generation fails
+		return openapi3.RequestBodyOrRef{}
+	}
+
+	return openapi3.RequestBodyOrRef{
+		RequestBody: reqBody,
+	}
+}
+
+// Responses implements the rest.Handler interface.
+func (h *ConsumeJsonHandler[Req, Resp]) Responses() openapi3.Responses {
+	return openapi3.Responses{}
+}
+
+// ServeHTTP implements the [http.Handler] interface.
+func (h *ConsumeJsonHandler[Req, Resp]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	spanCtx, span := otel.Tracer("rpc").Start(r.Context(), "ConsumeJsonHandler.ServeHTTP")
+	defer span.End()
+
+	var req JsonRequest[Req]
+	err := req.ReadRequest(spanCtx, r)
+	if err != nil {
+		span.RecordError(err)
+		panic(err)
+	}
+
+	_, err = h.Handle(spanCtx, &req)
+	if err != nil {
+		span.RecordError(err)
+		panic(err)
+	}
+}
+
+// ProduceJson creates a handler that returns JSON responses without consuming a request body.
+// Use this for GET endpoints that return data.
+//
+// Example:
+//
+//	p := rpc.ProducerFunc[Response](func(ctx context.Context) (*Response, error) {
+//	    return &Response{Message: "hello"}, nil
+//	})
+//	handler := rpc.ProduceJson(p)
+func ProduceJson[T any](p Producer[T]) *ReturnJsonHandler[EmptyRequest, T] {
+	inner := &ProducerHandler[T]{p: p}
+	return ReturnJson(inner)
+}
+
+// ConsumeOnlyJson creates a handler that consumes JSON requests without returning a response body.
+// Use this for webhook-style POST/PUT endpoints that process data but don't return content.
+//
+// Example:
+//
+//	c := rpc.ConsumerFunc[Request](func(ctx context.Context, req *Request) error {
+//	    // process request
+//	    return nil
+//	})
+//	handler := rpc.ConsumeOnlyJson(c)
+func ConsumeOnlyJson[T any](c Consumer[T]) *ConsumeJsonHandler[T, EmptyResponse] {
+	inner := &ConsumerHandler[T]{c: c}
+	return ConsumeJson(inner)
+}
+
+// HandleJson creates a handler that both consumes and produces JSON.
+// Use this for POST/PUT endpoints with request and response bodies.
+//
+// Example:
+//
+//	h := rpc.HandlerFunc[Request, Response](func(ctx context.Context, req *Request) (*Response, error) {
+//	    return &Response{Message: req.Message}, nil
+//	})
+//	handler := rpc.HandleJson(h)
+func HandleJson[Req, Resp any](h Handler[Req, Resp]) *ConsumeJsonHandler[Req, JsonResponse[Resp]] {
+	return ConsumeJson(ReturnJson(h))
 }

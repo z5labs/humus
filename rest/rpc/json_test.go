@@ -23,18 +23,22 @@ func TestJsonResponse_Spec(t *testing.T) {
 			return nil, nil
 		})
 
-		h := ReturnJson(ConsumeNothing(p))
+		h := ProduceJson(p)
 
-		op := NewOperation(h)
+		responses := h.Responses()
 
-		spec, err := op.Spec()
-		if !assert.Nil(t, err) {
-			return
+		spec := struct {
+			Responses map[string]interface{} `json:"responses"`
+		}{
+			Responses: make(map[string]interface{}),
+		}
+		for k, v := range responses.MapOfResponseOrRefValues {
+			spec.Responses[k] = v
 		}
 
 		var buf bytes.Buffer
 		enc := json.NewEncoder(&buf)
-		err = enc.Encode(spec)
+		err := enc.Encode(spec)
 		if !assert.Nil(t, err) {
 			return
 		}
@@ -57,15 +61,15 @@ func TestJsonResponse_Spec(t *testing.T) {
 			return
 		}
 
-		responses := def.Responses
-		if !assert.Len(t, responses, 1) {
+		decodedResponses := def.Responses
+		if !assert.Len(t, decodedResponses, 1) {
 			return
 		}
-		if !assert.Contains(t, responses, "200") {
+		if !assert.Contains(t, decodedResponses, "200") {
 			return
 		}
 
-		content := responses["200"].Content
+		content := decodedResponses["200"].Content
 		if !assert.Len(t, content, 1) {
 			return
 		}
@@ -95,22 +99,24 @@ func TestJsonResponse_Spec(t *testing.T) {
 			Inner T `json:"inner"`
 		}
 
-		p := ProducerFunc[outerType[msgResponse]](func(_ context.Context) (*outerType[msgResponse], error) {
+		h := ReturnJson(HandlerFunc[EmptyRequest, outerType[msgResponse]](func(_ context.Context, _ *EmptyRequest) (*outerType[msgResponse], error) {
 			return nil, nil
-		})
+		}))
 
-		h := ReturnJson(ConsumeNothing(p))
+		responses := h.Responses()
 
-		op := NewOperation(h)
-
-		spec, err := op.Spec()
-		if !assert.Nil(t, err) {
-			return
+		spec := struct {
+			Responses map[string]interface{} `json:"responses"`
+		}{
+			Responses: make(map[string]interface{}),
+		}
+		for k, v := range responses.MapOfResponseOrRefValues {
+			spec.Responses[k] = v
 		}
 
 		var buf bytes.Buffer
 		enc := json.NewEncoder(&buf)
-		err = enc.Encode(spec)
+		err := enc.Encode(spec)
 		if !assert.Nil(t, err) {
 			return
 		}
@@ -133,15 +139,15 @@ func TestJsonResponse_Spec(t *testing.T) {
 			return
 		}
 
-		responses := def.Responses
-		if !assert.Len(t, responses, 1) {
+		decodedResponses := def.Responses
+		if !assert.Len(t, decodedResponses, 1) {
 			return
 		}
-		if !assert.Contains(t, responses, "200") {
+		if !assert.Contains(t, decodedResponses, "200") {
 			return
 		}
 
-		content := responses["200"].Content
+		content := decodedResponses["200"].Content
 		if !assert.Len(t, content, 1) {
 			return
 		}
@@ -209,18 +215,19 @@ func TestJsonRequest_Spec(t *testing.T) {
 			return nil
 		})
 
-		h := ConsumeJson(ReturnNothing(c))
+		h := ConsumeOnlyJson(c)
 
-		op := NewOperation(h)
+		reqBody := h.RequestBody()
 
-		spec, err := op.Spec()
-		if !assert.Nil(t, err) {
-			return
+		spec := struct {
+			RequestBody interface{} `json:"requestBody"`
+		}{
+			RequestBody: reqBody,
 		}
 
 		var buf bytes.Buffer
 		enc := json.NewEncoder(&buf)
-		err = enc.Encode(spec)
+		err := enc.Encode(spec)
 		if !assert.Nil(t, err) {
 			return
 		}
@@ -273,22 +280,21 @@ func TestJsonRequest_Spec(t *testing.T) {
 			Inner T `json:"inner"`
 		}
 
-		c := ConsumerFunc[outerType[msgRequest]](func(_ context.Context, _ *outerType[msgRequest]) error {
-			return nil
-		})
+		h := ConsumeJson(HandlerFunc[outerType[msgRequest], EmptyResponse](func(_ context.Context, _ *outerType[msgRequest]) (*EmptyResponse, error) {
+			return &EmptyResponse{}, nil
+		}))
 
-		h := ConsumeJson(ReturnNothing(c))
+		reqBody := h.RequestBody()
 
-		op := NewOperation(h)
-
-		spec, err := op.Spec()
-		if !assert.Nil(t, err) {
-			return
+		spec := struct {
+			RequestBody interface{} `json:"requestBody"`
+		}{
+			RequestBody: reqBody,
 		}
 
 		var buf bytes.Buffer
 		enc := json.NewEncoder(&buf)
-		err = enc.Encode(spec)
+		err := enc.Encode(spec)
 		if !assert.Nil(t, err) {
 			return
 		}
