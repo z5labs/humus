@@ -85,3 +85,29 @@ func (e BadRequestError) Unwrap() error {
 func (e BadRequestError) WriteHttpResponse(ctx context.Context, rw http.ResponseWriter) {
 	rw.WriteHeader(http.StatusBadRequest)
 }
+
+// UnauthorizedError represents a 401 Unauthorized error.
+// It wraps an underlying cause (typically authentication/authorization errors)
+// and implements [HttpResponseWriter] to return a 401 status code.
+//
+// This error is automatically used by authentication validators like [JWTAuth]
+// when authentication fails.
+type UnauthorizedError struct {
+	Cause error
+}
+
+func (e UnauthorizedError) Error() string {
+	return fmt.Sprintf("unauthorized error: %v", e.Cause)
+}
+
+// Unwrap returns the underlying cause of the unauthorized error.
+// This allows errors.Is and errors.As to work with the wrapped error.
+func (e UnauthorizedError) Unwrap() error {
+	return e.Cause
+}
+
+// WriteHttpResponse implements [HttpResponseWriter].
+// It writes a 401 Unauthorized status code to the response.
+func (e UnauthorizedError) WriteHttpResponse(ctx context.Context, rw http.ResponseWriter) {
+	rw.WriteHeader(http.StatusUnauthorized)
+}

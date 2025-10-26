@@ -131,6 +131,32 @@ rest.Handle(
 )
 ```
 
+**JWT Authentication:**
+```go
+// Implement a JWT verifier
+type MyJWTVerifier struct {
+    publicKey *rsa.PublicKey
+}
+
+func (v *MyJWTVerifier) Verify(ctx context.Context, token string) (context.Context, error) {
+    // Verify JWT signature and claims
+    claims, err := jwt.Parse(token, v.publicKey)
+    if err != nil {
+        return nil, err
+    }
+    // Inject claims into context for downstream handlers
+    return context.WithValue(ctx, "claims", claims), nil
+}
+
+// Use in handler registration
+rest.Handle(
+    http.MethodGet,
+    rest.BasePath("/protected"),
+    handler,
+    rest.Header("Authorization", rest.Required(), rest.JWTAuth("jwt", &MyJWTVerifier{})),
+)
+```
+
 #### gRPC Services
 
 **grpc.Api** - gRPC service registrar
@@ -205,12 +231,13 @@ func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
 ## Important Conventions
 
 1. **Error Handling** - Use `rpc.ErrorHandler` interface for custom error responses in REST operations; set via `OnError()` operation option
-2. **OpenAPI Schemas** - Generated automatically via reflection from Go types (uses `github.com/swaggest/jsonschema-go`)
-3. **Health Checks** - REST apps should implement custom health handlers via `rest.Readiness()` and `rest.Liveness()` options; gRPC health is automatic
-4. **Graceful Shutdown** - Handled automatically by Bedrock lifecycle; no explicit cleanup needed in most cases
-5. **OTel Instrumentation** - Automatic for HTTP (via otelhttp) and gRPC (via interceptors); use `otel.Tracer/Meter` directly in business logic
-6. **Logging** - Use `humus.Logger(name)` to get an OpenTelemetry-integrated logger; returns `*slog.Logger`
-7. **Option Pattern** - Used throughout for extensibility (e.g., `rest.ApiOption`, `grpc.RunOption`, `rpc.OperationOption`)
+2. **JWT Authentication** - Implement `rest.JWTVerifier` interface to verify tokens and inject claims into context; framework handles token extraction from "Bearer " header and returns 401 on failure
+3. **OpenAPI Schemas** - Generated automatically via reflection from Go types (uses `github.com/swaggest/jsonschema-go`)
+4. **Health Checks** - REST apps should implement custom health handlers via `rest.Readiness()` and `rest.Liveness()` options; gRPC health is automatic
+5. **Graceful Shutdown** - Handled automatically by Bedrock lifecycle; no explicit cleanup needed in most cases
+6. **OTel Instrumentation** - Automatic for HTTP (via otelhttp) and gRPC (via interceptors); use `otel.Tracer/Meter` directly in business logic
+7. **Logging** - Use `humus.Logger(name)` to get an OpenTelemetry-integrated logger; returns `*slog.Logger`
+8. **Option Pattern** - Used throughout for extensibility (e.g., `rest.ApiOption`, `grpc.RunOption`, `rpc.OperationOption`)
 
 ## Testing Patterns
 

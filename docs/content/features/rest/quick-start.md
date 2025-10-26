@@ -445,9 +445,97 @@ curl http://localhost:8080/openapi.json
 5. **Automatic instrumentation** traces all requests
 6. **OpenAPI generation** creates `/openapi.json` from your types
 
+## Securing Your API (Optional)
+
+Add JWT authentication to protect write operations:
+
+### 1. Create a Simple JWT Verifier
+
+```go
+import (
+    "context"
+    "fmt"
+)
+
+type SimpleJWTVerifier struct{}
+
+func (v *SimpleJWTVerifier) Verify(ctx context.Context, token string) (context.Context, error) {
+    // In production, verify the JWT signature and claims
+    // For this example, we just accept any non-empty token
+    if token == "" {
+        return nil, fmt.Errorf("empty token")
+    }
+
+    // Extract user info (in production, parse from JWT claims)
+    userID := "user-from-token"
+    return context.WithValue(ctx, "user_id", userID), nil
+}
+```
+
+### 2. Protect Create/Update/Delete Operations
+
+```go
+func registerHandlers(api *rest.Api, store *TodoStore) {
+    verifier := &SimpleJWTVerifier{}
+
+    // Public endpoint - no auth required
+    listHandler := rpc.NewOperation(
+        rpc.ReturnJson(
+            rpc.Handle(func(ctx context.Context, _ any) ([]Todo, error) {
+                return store.List(), nil
+            }),
+        ),
+    )
+    rest.Handle(http.MethodGet, rest.BasePath("/todos"), listHandler)
+
+    // Protected endpoint - JWT required
+    createHandler := rpc.NewOperation(
+        rpc.ConsumeJson(
+            rpc.ReturnJson(
+                rpc.Handle(func(ctx context.Context, req Todo) (Todo, error) {
+                    if req.ID == "" {
+                        req.ID = fmt.Sprintf("todo-%d", len(store.todos)+1)
+                    }
+                    store.Create(req)
+                    return req, nil
+                }),
+            ),
+        ),
+    )
+    rest.Handle(
+        http.MethodPost,
+        rest.BasePath("/todos"),
+        createHandler,
+        rest.Header("Authorization", rest.Required(), rest.JWTAuth("jwt", verifier)),
+    )
+
+    // Other endpoints...
+}
+```
+
+### 3. Test with Authentication
+
+```bash
+# Fails - no Authorization header
+curl -X POST http://localhost:8080/todos \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Protected todo"}'
+# Returns: 401 Unauthorized
+
+# Success - with Bearer token
+curl -X POST http://localhost:8080/todos \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer my-token" \
+  -d '{"title": "Protected todo"}'
+# Returns: 200 OK
+```
+
+For production JWT implementation with proper signature verification, see [Authentication]({{< ref "authentication" >}}).
+
 ## Next Steps
 
-- Learn about [REST API]({{< ref "rest-api" >}}) for advanced API configuration
-- Explore [RPC Pattern]({{< ref "rpc-pattern" >}}) for type-safe handlers
-- Read [Routing]({{< ref "routing" >}}) for path parameters and validation
-- See [Error Handling]({{< ref "error-handling" >}}) for custom error responses
+- Learn about [Authentication]({{< ref "authentication" >}}) for production-ready JWT verification
+- Explore [REST API]({{< ref "rest-api" >}}) for advanced API configuration
+- Read [RPC Pattern]({{< ref "rpc-pattern" >}}) for type-safe handlers
+- See [Routing]({{< ref "routing" >}}) for path parameters and validation
+- Understand [Error Handling]({{< ref "error-handling" >}}) for custom error responses

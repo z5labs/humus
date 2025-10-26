@@ -31,6 +31,15 @@ func (e exampleHandler) Responses() openapi3.Responses {
 	return openapi3.Responses{}
 }
 
+// exampleJWTVerifier is a simple JWT verifier for testing purposes
+type exampleJWTVerifier struct{}
+
+func (v exampleJWTVerifier) Verify(ctx context.Context, token string) (context.Context, error) {
+	// In a real implementation, you would verify the JWT signature and claims here
+	// For this example, we just accept any token
+	return ctx, nil
+}
+
 func TestHandle(t *testing.T) {
 	getBook := Handle(
 		http.MethodGet,
@@ -39,7 +48,7 @@ func TestHandle(t *testing.T) {
 		Header(
 			"Authorization",
 			Required(),
-			JWTAuth("jwt"),
+			JWTAuth("jwt", exampleJWTVerifier{}),
 		),
 	)
 
