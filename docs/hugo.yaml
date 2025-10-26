@@ -1,0 +1,65 @@
+title: Humus
+languageCode: en-us
+
+module:
+  imports:
+    - path: github.com/google/docsy
+      disable: false
+    - path: github.com/google/docsy/dependencies
+      disable: false
+
+# Highlighting config
+pygmentsCodeFences: true
+pygmentsUseClasses: false
+pygmentsUseClassic: false
+pygmentsStyle: tango
+
+# Image processing configuration
+imaging:
+  resampleFilter: CatmullRom
+  quality: 75
+  anchor: smart
+
+# Markup settings
+markup:
+  goldmark:
+    renderer:
+      unsafe: true
+  highlight:
+    style: tango
+
+# Site params
+params:
+  copyright: Z5Labs
+  privacy_policy: ""
+
+  # Repository
+  github_repo: https://github.com/z5labs/humus
+  github_project_repo: https://github.com/z5labs/humus
+
+  # Enable Algolia DocSearch
+  algolia_docsearch: false
+
+  # Enable Lunr.js offline search
+  offlineSearch: true
+
+  # UI
+  ui:
+    sidebar_menu_compact: true
+    breadcrumb_disable: false
+    sidebar_search_disable: false
+    navbar_logo: true
+    footer_about_disable: false
+
+  # Links
+  links:
+    user:
+      - name: GitHub Discussions
+        url: https://github.com/z5labs/humus/discussions
+        icon: fab fa-github
+        desc: Discussion and help from the community
+    developer:
+      - name: GitHub
+        url: https://github.com/z5labs/humus
+        icon: fab fa-github
+        desc: Development takes place here!

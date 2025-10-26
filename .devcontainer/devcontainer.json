@@ -18,7 +18,9 @@
                 "go.formatFlags": [
                     "fmt",
                     "--stdin"
-                ]
+                ],
+                "licenser.author": "Z5Labs and Contributors",
+                "licenser.license": "MIT"
             },
             "extensions": [
                 "ymotongpoo.licenser"
