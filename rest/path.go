@@ -86,8 +86,8 @@ func (p Path) Segment(s string) Path {
 //
 //	path := rest.BasePath("/users").Param("userId").Segment("posts").Param("postId")
 //	// Results in: /users/{userId}/posts/{postId}
-func (p Path) Param(name string) Path {
-	return append(p, PathParam(name))
+func (p Path) Param(name string, opts ...ParameterOption) Path {
+	return append(p, PathParam(name, opts...))
 }
 
 // String converts the path to its string representation.
