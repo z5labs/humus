@@ -12,18 +12,48 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+
+	"github.com/swaggest/openapi-go/openapi3"
 )
 
-func ExampleReturnJson() {
+type msgRequest struct {
+	Msg string `json:"msg"`
+}
+
+func (*msgRequest) Spec() (*openapi3.RequestBody, error) {
+	return &openapi3.RequestBody{}, nil
+}
+
+func (mr *msgRequest) ReadRequest(ctx context.Context, r *http.Request) error {
+	defer r.Body.Close()
+
+	dec := json.NewDecoder(r.Body)
+	return dec.Decode(mr)
+}
+
+type msgResponse struct {
+	Msg string `json:"msg"`
+}
+
+func (*msgResponse) Spec() (int, *openapi3.Response, error) {
+	return http.StatusOK, &openapi3.Response{}, nil
+}
+
+func (mr *msgResponse) WriteResponse(ctx context.Context, w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	enc := json.NewEncoder(w)
+	return enc.Encode(mr)
+}
+
+func ExampleProduceJson() {
 	p := ProducerFunc[msgResponse](func(_ context.Context) (*msgResponse, error) {
 		return &msgResponse{Msg: "hello world"}, nil
 	})
 
-	h := ReturnJson(ConsumeNothing(p))
+	h := ProduceJson(p)
 
-	op := NewOperation(h)
-
-	srv := httptest.NewServer(op)
+	srv := httptest.NewServer(h)
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL)
@@ -56,17 +86,15 @@ func ExampleReturnJson() {
 	// Output: hello world
 }
 
-func ExampleConsumeJson() {
+func ExampleConsumeOnlyJson() {
 	c := ConsumerFunc[msgRequest](func(_ context.Context, req *msgRequest) error {
 		fmt.Println(req.Msg)
 		return nil
 	})
 
-	h := ConsumeJson(ReturnNothing(c))
+	h := ConsumeOnlyJson(c)
 
-	op := NewOperation(h)
-
-	srv := httptest.NewServer(op)
+	srv := httptest.NewServer(h)
 	defer srv.Close()
 
 	resp, err := http.Post(srv.URL, "application/json", strings.NewReader(`{"msg":"hello world"}`))

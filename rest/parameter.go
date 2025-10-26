@@ -32,6 +32,10 @@ func Cookie(name string, opts ...ParameterOption) OperationOption {
 	return param(name, openapi3.ParameterInCookie, opts...)
 }
 
+func CookieValue(ctx context.Context, name string) []*http.Cookie {
+	return ctx.Value(paramCtxKey(name)).([]*http.Cookie)
+}
+
 // Header creates a parameter validator for an HTTP header.
 // The validator extracts and validates headers from incoming requests.
 //
@@ -46,6 +50,10 @@ func Cookie(name string, opts ...ParameterOption) OperationOption {
 //	)
 func Header(name string, opts ...ParameterOption) OperationOption {
 	return param(name, openapi3.ParameterInHeader, opts...)
+}
+
+func HeaderValue(ctx context.Context, name string) []string {
+	return ctx.Value(paramCtxKey(name)).([]string)
 }
 
 // QueryParam creates a parameter validator for a URL query parameter.
@@ -64,8 +72,37 @@ func QueryParam(name string, opts ...ParameterOption) OperationOption {
 	return param(name, openapi3.ParameterInQuery, opts...)
 }
 
+func QueryParamValue(ctx context.Context, name string) []string {
+	return ctx.Value(paramCtxKey(name)).([]string)
+}
+
+type paramCtxKey string
+
+func injectParam(name string, in openapi3.ParameterIn) func(*http.Request) (*http.Request, error) {
+	ctxKey := paramCtxKey(name)
+
+	return transformParam(
+		name,
+		in,
+		func(ctx context.Context, c []*http.Cookie) (context.Context, error) {
+			return context.WithValue(ctx, ctxKey, c), nil
+		},
+		func(ctx context.Context, s []string) (context.Context, error) {
+			return context.WithValue(ctx, ctxKey, s), nil
+		},
+		func(ctx context.Context, s string) (context.Context, error) {
+			return context.WithValue(ctx, ctxKey, s), nil
+		},
+		func(ctx context.Context, s []string) (context.Context, error) {
+			return context.WithValue(ctx, ctxKey, s), nil
+		},
+	)
+}
+
 func param(name string, in openapi3.ParameterIn, opts ...ParameterOption) OperationOption {
 	return func(oo *OperationOptions) {
+		oo.transforms = append(oo.transforms, injectParam(name, in))
+
 		po := &ParameterOptions{
 			operationOptions: oo,
 			def: &openapi3.Parameter{
