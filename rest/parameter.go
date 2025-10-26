@@ -157,6 +157,35 @@ func extractQueryParam(name string) func(*http.Request) []string {
 	}
 }
 
+// extractBearerToken extracts a JWT token from Authorization header values.
+// It expects the header value to be in the format "Bearer <token>".
+// Returns an error if no header values exist or if the "Bearer " prefix is missing.
+func extractBearerToken(headerValues []string) (string, error) {
+	if len(headerValues) == 0 {
+		return "", fmt.Errorf("missing Authorization header")
+	}
+
+	// Check the first value (standard practice is to send only one Authorization header)
+	authHeader := headerValues[0]
+	const bearerPrefix = "Bearer "
+
+	if len(authHeader) < len(bearerPrefix) {
+		return "", fmt.Errorf("malformed Authorization header: missing Bearer prefix")
+	}
+
+	// Case-sensitive check for "Bearer " prefix (RFC 6750 Section 2.1)
+	if authHeader[:len(bearerPrefix)] != bearerPrefix {
+		return "", fmt.Errorf("malformed Authorization header: expected Bearer scheme")
+	}
+
+	token := authHeader[len(bearerPrefix):]
+	if len(token) == 0 {
+		return "", fmt.Errorf("malformed Authorization header: empty token")
+	}
+
+	return token, nil
+}
+
 func transformParam(
 	name string,
 	in openapi3.ParameterIn,
@@ -297,6 +326,52 @@ func (e InvalidParameterValueError) Error() string {
 	return fmt.Sprintf("invalid parameter value in %s: %s", e.In, e.Parameter)
 }
 
+// JWTVerifier defines the interface for verifying JWT tokens and injecting claims into the request context.
+// Implementations should:
+//  1. Verify the JWT token's signature and validity
+//  2. Extract claims from the verified token
+//  3. Inject the claims into the context for use by downstream handlers
+//
+// The token parameter contains the JWT without the "Bearer " prefix.
+// Return an error if verification fails - this will result in a 401 Unauthorized response.
+//
+// Example implementation:
+//
+//	type MyVerifier struct {
+//	    publicKey *rsa.PublicKey
+//	}
+//
+//	func (v *MyVerifier) Verify(ctx context.Context, token string) (context.Context, error) {
+//	    claims, err := jwt.Parse(token, v.publicKey)
+//	    if err != nil {
+//	        return nil, err
+//	    }
+//	    return context.WithValue(ctx, "claims", claims), nil
+//	}
+type JWTVerifier interface {
+	Verify(ctx context.Context, token string) (context.Context, error)
+}
+
+// InvalidJWTError is returned when a JWT token is missing, malformed, or fails verification.
+// Token extraction errors (missing, malformed format) are wrapped in [BadRequestError] (400).
+// Token verification errors (invalid signature, expired) are wrapped in [UnauthorizedError] (401).
+type InvalidJWTError struct {
+	Parameter string
+	In        string
+	Cause     error
+}
+
+func (e InvalidJWTError) Error() string {
+	if e.Cause != nil {
+		return fmt.Sprintf("invalid JWT in %s %s: %v", e.In, e.Parameter, e.Cause)
+	}
+	return fmt.Sprintf("invalid JWT in %s: %s", e.In, e.Parameter)
+}
+
+func (e InvalidJWTError) Unwrap() error {
+	return e.Cause
+}
+
 // Regex validates that a parameter value matches the provided regular expression.
 // If the parameter value doesn't match, the operation returns a 400 Bad Request
 // with an [InvalidParameterValueError].
@@ -382,10 +457,10 @@ func Regex(re *regexp.Regexp) ParameterOption {
 // Example:
 //
 //	rest.Header("X-API-Key", rest.Required(), rest.APIKey())
-func APIKey() ParameterOption {
+func APIKey(schemeName string) ParameterOption {
 	return func(po *ParameterOptions) {
 		po.operationOptions.securityScheme = &securityScheme{
-			name: "api-key",
+			name: schemeName,
 			scheme: openapi3.SecurityScheme{
 				APIKeySecurityScheme: &openapi3.APIKeySecurityScheme{
 					Name: po.def.Name,
@@ -417,13 +492,35 @@ func BasicAuth(schemeName string) ParameterOption {
 }
 
 // JWTAuth configures JWT Bearer token authentication for a parameter.
-// The parameter (typically an Authorization header) should contain a JWT token.
+// The parameter (typically an Authorization header) should contain a JWT token in the format "Bearer <token>".
 // The schemeName identifies the security scheme in the OpenAPI specification.
+// The verifier is called to verify the JWT and inject claims into the request context.
+//
+// The verifier receives the extracted JWT token (without the "Bearer " prefix) and should:
+//  1. Verify the token's signature and validity
+//  2. Extract claims from the token
+//  3. Return a new context with the claims injected
+//  4. Return an error if verification fails
+//
+// If token extraction fails (missing, malformed), returns 400 Bad Request.
+// If token verification fails (invalid, expired), returns 401 Unauthorized.
 //
 // Example:
 //
-//	rest.Header("Authorization", rest.Required(), rest.JWTAuth("jwt"))
-func JWTAuth(schemeName string) ParameterOption {
+//	type MyVerifier struct{}
+//
+//	func (v *MyVerifier) Verify(ctx context.Context, token string) (context.Context, error) {
+//	    // Parse and verify the JWT token
+//	    claims, err := jwt.Parse(token)
+//	    if err != nil {
+//	        return nil, err
+//	    }
+//	    // Inject claims into context
+//	    return context.WithValue(ctx, "user_id", claims.UserID), nil
+//	}
+//
+//	rest.Header("Authorization", rest.Required(), rest.JWTAuth("jwt", &MyVerifier{}))
+func JWTAuth(schemeName string, verifier JWTVerifier) ParameterOption {
 	return func(po *ParameterOptions) {
 		po.operationOptions.securityScheme = &securityScheme{
 			name: schemeName,
@@ -434,6 +531,43 @@ func JWTAuth(schemeName string) ParameterOption {
 				},
 			},
 		}
+
+		// Add transformer to extract and verify JWT token
+		po.operationOptions.transforms = append(
+			po.operationOptions.transforms,
+			func(r *http.Request) (*http.Request, error) {
+				ctx := r.Context()
+
+				// Extract header values from context (injected by injectParam)
+				headerValues := HeaderValue(ctx, po.def.Name)
+
+				// Extract Bearer token from Authorization header
+				token, err := extractBearerToken(headerValues)
+				if err != nil {
+					return nil, BadRequestError{
+						Cause: InvalidJWTError{
+							Parameter: po.def.Name,
+							In:        string(po.def.In),
+							Cause:     err,
+						},
+					}
+				}
+
+				// Verify JWT and inject claims into context
+				newCtx, err := verifier.Verify(ctx, token)
+				if err != nil {
+					return nil, UnauthorizedError{
+						Cause: InvalidJWTError{
+							Parameter: po.def.Name,
+							In:        string(po.def.In),
+							Cause:     err,
+						},
+					}
+				}
+
+				return r.WithContext(newCtx), nil
+			},
+		)
 	}
 }
 

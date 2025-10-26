@@ -6,7 +6,9 @@
 package rest
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -38,6 +40,59 @@ func (h testHandler) Responses() openapi3.Responses {
 
 func newTestHandler() testHandler {
 	return testHandler{statusCode: http.StatusOK, body: "success"}
+}
+
+// testJWTVerifier is a test implementation of JWTVerifier for testing JWT authentication
+type testJWTVerifier struct {
+	// validToken is the token that will pass verification
+	validToken string
+	// claimsKey is the context key to use for storing claims
+	claimsKey string
+	// claimsValue is the value to inject into context on successful verification
+	claimsValue string
+}
+
+type jwtClaimsCtxKey string
+
+func (v *testJWTVerifier) Verify(ctx context.Context, token string) (context.Context, error) {
+	if token != v.validToken {
+		return nil, fmt.Errorf("invalid token")
+	}
+	return context.WithValue(ctx, jwtClaimsCtxKey(v.claimsKey), v.claimsValue), nil
+}
+
+func getJWTClaims(ctx context.Context, key string) (string, bool) {
+	val := ctx.Value(jwtClaimsCtxKey(key))
+	if val == nil {
+		return "", false
+	}
+	str, ok := val.(string)
+	return str, ok
+}
+
+// claimsCheckHandler is a test handler that verifies JWT claims are in the context
+type claimsCheckHandler struct {
+	expectedKey   string
+	expectedValue string
+}
+
+func (h claimsCheckHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	claims, ok := getJWTClaims(r.Context(), h.expectedKey)
+	if !ok || claims != h.expectedValue {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("claims not found in context"))
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("claims verified"))
+}
+
+func (h claimsCheckHandler) RequestBody() openapi3.RequestBodyOrRef {
+	return openapi3.RequestBodyOrRef{}
+}
+
+func (h claimsCheckHandler) Responses() openapi3.Responses {
+	return openapi3.Responses{}
 }
 
 // Category A: Parameter Location Tests
@@ -451,7 +506,7 @@ func TestAPIKey(t *testing.T) {
 				http.MethodGet,
 				BasePath("/test"),
 				handler,
-				Header("X-API-Key", APIKey()),
+				Header("X-API-Key", APIKey("api-key")),
 			),
 		)
 
@@ -490,7 +545,7 @@ func TestAPIKey(t *testing.T) {
 				http.MethodGet,
 				BasePath("/test"),
 				handler,
-				Cookie("api_key", APIKey()),
+				Cookie("api_key", APIKey("api-key")),
 			),
 		)
 
@@ -586,6 +641,7 @@ func TestJWTAuth(t *testing.T) {
 	t.Run("openapi spec includes jwt auth scheme", func(t *testing.T) {
 		t.Parallel()
 		handler := newTestHandler()
+		verifier := &testJWTVerifier{validToken: "test-token", claimsKey: "user", claimsValue: "test-user"}
 		api := NewApi(
 			"Test API",
 			"v1.0.0",
@@ -593,7 +649,7 @@ func TestJWTAuth(t *testing.T) {
 				http.MethodGet,
 				BasePath("/test"),
 				handler,
-				Header("Authorization", JWTAuth("jwt")),
+				Header("Authorization", JWTAuth("jwt", verifier)),
 			),
 		)
 
@@ -621,6 +677,7 @@ func TestJWTAuth(t *testing.T) {
 	t.Run("custom scheme name", func(t *testing.T) {
 		t.Parallel()
 		handler := newTestHandler()
+		verifier := &testJWTVerifier{validToken: "test-token", claimsKey: "user", claimsValue: "test-user"}
 		api := NewApi(
 			"Test API",
 			"v1.0.0",
@@ -628,7 +685,7 @@ func TestJWTAuth(t *testing.T) {
 				http.MethodGet,
 				BasePath("/test"),
 				handler,
-				Header("Authorization", JWTAuth("my-jwt")),
+				Header("Authorization", JWTAuth("my-jwt", verifier)),
 			),
 		)
 
@@ -647,6 +704,259 @@ func TestJWTAuth(t *testing.T) {
 		securitySchemes := components["securitySchemes"].(map[string]any)
 		_, ok := securitySchemes["my-jwt"]
 		require.True(t, ok, "my-jwt scheme should exist")
+	})
+
+	t.Run("valid jwt passes verification", func(t *testing.T) {
+		t.Parallel()
+		handler := newTestHandler()
+		verifier := &testJWTVerifier{
+			validToken:  "valid-token-123",
+			claimsKey:   "user_id",
+			claimsValue: "user-456",
+		}
+		api := NewApi(
+			"Test API",
+			"v1.0.0",
+			Handle(
+				http.MethodGet,
+				BasePath("/test"),
+				handler,
+				Header("Authorization", JWTAuth("jwt", verifier)),
+			),
+		)
+
+		srv := httptest.NewServer(api)
+		defer srv.Close()
+
+		req, err := http.NewRequest(http.MethodGet, srv.URL+"/test", nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer valid-token-123")
+
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+	})
+
+	t.Run("invalid jwt fails verification", func(t *testing.T) {
+		t.Parallel()
+		handler := newTestHandler()
+		verifier := &testJWTVerifier{
+			validToken:  "valid-token-123",
+			claimsKey:   "user_id",
+			claimsValue: "user-456",
+		}
+		api := NewApi(
+			"Test API",
+			"v1.0.0",
+			Handle(
+				http.MethodGet,
+				BasePath("/test"),
+				handler,
+				Header("Authorization", JWTAuth("jwt", verifier)),
+			),
+		)
+
+		srv := httptest.NewServer(api)
+		defer srv.Close()
+
+		req, err := http.NewRequest(http.MethodGet, srv.URL+"/test", nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer invalid-token")
+
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	})
+
+	t.Run("missing authorization header fails", func(t *testing.T) {
+		t.Parallel()
+		handler := newTestHandler()
+		verifier := &testJWTVerifier{
+			validToken:  "valid-token-123",
+			claimsKey:   "user_id",
+			claimsValue: "user-456",
+		}
+		api := NewApi(
+			"Test API",
+			"v1.0.0",
+			Handle(
+				http.MethodGet,
+				BasePath("/test"),
+				handler,
+				Header("Authorization", JWTAuth("jwt", verifier)),
+			),
+		)
+
+		srv := httptest.NewServer(api)
+		defer srv.Close()
+
+		req, err := http.NewRequest(http.MethodGet, srv.URL+"/test", nil)
+		require.NoError(t, err)
+		// No Authorization header set
+
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	})
+
+	t.Run("malformed header without bearer prefix fails", func(t *testing.T) {
+		t.Parallel()
+		handler := newTestHandler()
+		verifier := &testJWTVerifier{
+			validToken:  "valid-token-123",
+			claimsKey:   "user_id",
+			claimsValue: "user-456",
+		}
+		api := NewApi(
+			"Test API",
+			"v1.0.0",
+			Handle(
+				http.MethodGet,
+				BasePath("/test"),
+				handler,
+				Header("Authorization", JWTAuth("jwt", verifier)),
+			),
+		)
+
+		srv := httptest.NewServer(api)
+		defer srv.Close()
+
+		req, err := http.NewRequest(http.MethodGet, srv.URL+"/test", nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "valid-token-123") // Missing "Bearer " prefix
+
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	})
+
+	t.Run("empty token after bearer prefix fails", func(t *testing.T) {
+		t.Parallel()
+		handler := newTestHandler()
+		verifier := &testJWTVerifier{
+			validToken:  "valid-token-123",
+			claimsKey:   "user_id",
+			claimsValue: "user-456",
+		}
+		api := NewApi(
+			"Test API",
+			"v1.0.0",
+			Handle(
+				http.MethodGet,
+				BasePath("/test"),
+				handler,
+				Header("Authorization", JWTAuth("jwt", verifier)),
+			),
+		)
+
+		srv := httptest.NewServer(api)
+		defer srv.Close()
+
+		req, err := http.NewRequest(http.MethodGet, srv.URL+"/test", nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer ") // Empty token
+
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	})
+
+	t.Run("claims are injected into context", func(t *testing.T) {
+		t.Parallel()
+
+		verifier := &testJWTVerifier{
+			validToken:  "valid-token-123",
+			claimsKey:   "user_id",
+			claimsValue: "user-456",
+		}
+
+		handler := claimsCheckHandler{
+			expectedKey:   "user_id",
+			expectedValue: "user-456",
+		}
+
+		api := NewApi(
+			"Test API",
+			"v1.0.0",
+			Handle(
+				http.MethodGet,
+				BasePath("/test"),
+				handler,
+				Header("Authorization", JWTAuth("jwt", verifier)),
+			),
+		)
+
+		srv := httptest.NewServer(api)
+		defer srv.Close()
+
+		req, err := http.NewRequest(http.MethodGet, srv.URL+"/test", nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer valid-token-123")
+
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		require.Equal(t, "claims verified", string(body))
+	})
+
+	t.Run("jwt auth with required works together", func(t *testing.T) {
+		t.Parallel()
+		handler := newTestHandler()
+		verifier := &testJWTVerifier{
+			validToken:  "valid-token-123",
+			claimsKey:   "user_id",
+			claimsValue: "user-456",
+		}
+		api := NewApi(
+			"Test API",
+			"v1.0.0",
+			Handle(
+				http.MethodGet,
+				BasePath("/test"),
+				handler,
+				Header("Authorization", Required(), JWTAuth("jwt", verifier)),
+			),
+		)
+
+		srv := httptest.NewServer(api)
+		defer srv.Close()
+
+		t.Run("valid token passes both required and jwt validation", func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodGet, srv.URL+"/test", nil)
+			require.NoError(t, err)
+			req.Header.Set("Authorization", "Bearer valid-token-123")
+
+			resp, err := http.DefaultClient.Do(req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+		})
+
+		t.Run("missing header fails required check first", func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodGet, srv.URL+"/test", nil)
+			require.NoError(t, err)
+
+			resp, err := http.DefaultClient.Do(req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+
+			// Should get 400 from Required, not 401 from JWT
+			require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		})
 	})
 }
 
