@@ -6,9 +6,7 @@
 package rpc
 
 import (
-	"context"
 	"fmt"
-	"net/http"
 )
 
 // InvalidContentTypeError represents an error when the request Content-Type
@@ -21,9 +19,4 @@ type InvalidContentTypeError struct {
 // Error implements the [error] interface.
 func (e InvalidContentTypeError) Error() string {
 	return fmt.Sprintf("invalid content type for request: %s", e.ContentType)
-}
-
-// WriteHttpResponse implements the [rest.HttpResponseWriter] interface.
-func (e InvalidContentTypeError) WriteHttpResponse(ctx context.Context, w http.ResponseWriter) {
-	w.WriteHeader(http.StatusBadRequest)
 }

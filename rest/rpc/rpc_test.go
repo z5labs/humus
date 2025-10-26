@@ -5,10 +5,45 @@
 
 package rpc
 
-// Tests for the rpc package have been migrated to integration tests
-// that use the handlers with rest.Handle().
-//
-// The rpc package now provides handler implementations (ReturnJsonHandler,
-// ConsumeJsonHandler, ConsumerHandler, ProducerHandler) that implement
-// the rest.Handler interface, and error handling is now managed by the
-// rest package via rest.ErrorHandler and rest.HttpResponseWriter.
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
+
+func TestHandlerFunc_Handle(t *testing.T) {
+	t.Run("will call the function successfully", func(t *testing.T) {
+		called := false
+		expectedResp := "response"
+
+		f := HandlerFunc[string, string](func(ctx context.Context, req *string) (*string, error) {
+			called = true
+			assert.Equal(t, "request", *req)
+			return &expectedResp, nil
+		})
+
+		req := "request"
+		resp, err := f.Handle(context.Background(), &req)
+
+		assert.True(t, called)
+		assert.Nil(t, err)
+		assert.NotNil(t, resp)
+		assert.Equal(t, expectedResp, *resp)
+	})
+
+	t.Run("will return error from function", func(t *testing.T) {
+		expectedErr := errors.New("test error")
+
+		f := HandlerFunc[string, string](func(ctx context.Context, req *string) (*string, error) {
+			return nil, expectedErr
+		})
+
+		req := "request"
+		resp, err := f.Handle(context.Background(), &req)
+
+		assert.Nil(t, resp)
+		assert.Equal(t, expectedErr, err)
+	})
+}
