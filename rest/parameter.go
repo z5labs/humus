@@ -353,7 +353,8 @@ type JWTVerifier interface {
 }
 
 // InvalidJWTError is returned when a JWT token is missing, malformed, or fails verification.
-// This error is wrapped in an [UnauthorizedError] and results in a 401 Unauthorized response.
+// Token extraction errors (missing, malformed format) are wrapped in [BadRequestError] (400).
+// Token verification errors (invalid signature, expired) are wrapped in [UnauthorizedError] (401).
 type InvalidJWTError struct {
 	Parameter string
 	In        string
@@ -501,7 +502,8 @@ func BasicAuth(schemeName string) ParameterOption {
 //  3. Return a new context with the claims injected
 //  4. Return an error if verification fails
 //
-// If token extraction or verification fails, the operation returns a 401 Unauthorized response.
+// If token extraction fails (missing, malformed), returns 400 Bad Request.
+// If token verification fails (invalid, expired), returns 401 Unauthorized.
 //
 // Example:
 //
@@ -542,7 +544,7 @@ func JWTAuth(schemeName string, verifier JWTVerifier) ParameterOption {
 				// Extract Bearer token from Authorization header
 				token, err := extractBearerToken(headerValues)
 				if err != nil {
-					return nil, UnauthorizedError{
+					return nil, BadRequestError{
 						Cause: InvalidJWTError{
 							Parameter: po.def.Name,
 							In:        string(po.def.In),

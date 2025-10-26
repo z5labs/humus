@@ -356,27 +356,44 @@ func TestJWTAuthentication(t *testing.T) {
 
 #### Error Handling
 
-JWT authentication returns `401 Unauthorized` for:
-- Missing Authorization header (when combined with `Required()`)
+JWT authentication returns different HTTP status codes depending on the type of error:
+
+**400 Bad Request** - Token extraction failures (malformed request):
+- Missing Authorization header (when JWTAuth used without `Required()`)
 - Malformed header (not "Bearer <token>" format)
 - Empty token after "Bearer " prefix
-- Token verification failures (invalid signature, expired, etc.)
+
+**401 Unauthorized** - Token verification failures (authentication failed):
+- Invalid JWT signature
+- Expired token
+- Invalid claims (issuer, audience, etc.)
+- Any error returned by your `JWTVerifier.Verify()` method
 
 Example error scenarios:
 
 ```bash
-# Missing header
+# Missing header - 400 Bad Request
 curl http://localhost:8080/profile
-# Returns: 401 Unauthorized
+# Returns: 400 Bad Request
 
-# Malformed header (missing "Bearer")
+# Malformed header (missing "Bearer") - 400 Bad Request
 curl -H "Authorization: invalid-token" http://localhost:8080/profile
-# Returns: 401 Unauthorized
+# Returns: 400 Bad Request
 
-# Invalid token
+# Empty token - 400 Bad Request
+curl -H "Authorization: Bearer " http://localhost:8080/profile
+# Returns: 400 Bad Request
+
+# Invalid token (verification fails) - 401 Unauthorized
 curl -H "Authorization: Bearer invalid.jwt.token" http://localhost:8080/profile
 # Returns: 401 Unauthorized
+
+# Expired token (verification fails) - 401 Unauthorized
+curl -H "Authorization: Bearer expired.jwt.token" http://localhost:8080/profile
+# Returns: 401 Unauthorized
 ```
+
+**Note:** When combined with `Required()`, missing headers return `400 Bad Request` from the `Required()` validator, which runs before JWT verification.
 
 ### OAuth 2.0
 
