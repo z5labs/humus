@@ -6,11 +6,10 @@
 // Package rpc provides RPC-style handler implementations that integrate with the
 // [rest] package to build HTTP APIs.
 //
-// This package offers handler types that simplify common HTTP patterns:
-//   - [ReturnJsonHandler] - Handlers that return JSON responses
-//   - [ConsumeJsonHandler] - Handlers that consume JSON requests
-//   - [ConsumerHandler] - Handlers that consume requests without returning data
-//   - [ProducerHandler] - Handlers that produce responses without consuming requests
+// This package offers three primary functions for creating JSON handlers:
+//   - [ProduceJson] - GET endpoints that return JSON (no request body)
+//   - [ConsumeOnlyJson] - POST/PUT endpoints that accept JSON (no response body)
+//   - [HandleJson] - POST/PUT endpoints with JSON request and response
 //
 // All handlers implement the [rest.Handler] interface, providing both HTTP handling
 // and OpenAPI schema generation capabilities. Use them with [rest.Handle] to register
@@ -20,11 +19,11 @@
 //
 // Create a handler and register it with rest.Handle():
 //
-//	handler := rpc.ReturnJson(rpc.ConsumeNothing(
+//	handler := rpc.ProduceJson(
 //	    rpc.ProducerFunc[Response](func(ctx context.Context) (*Response, error) {
 //	        return &Response{Message: "hello"}, nil
 //	    }),
-//	))
+//	)
 //
 //	operation := rest.Handle(http.MethodGet, rest.BasePath("/hello"), handler)
 //	api := rest.NewApi("My API", "v1.0.0", operation)

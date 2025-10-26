@@ -23,7 +23,7 @@ func TestJsonResponse_Spec(t *testing.T) {
 			return nil, nil
 		})
 
-		h := ReturnJson(ConsumeNothing(p))
+		h := ProduceJson(p)
 
 		responses := h.Responses()
 
@@ -215,7 +215,7 @@ func TestJsonRequest_Spec(t *testing.T) {
 			return nil
 		})
 
-		h := ConsumeJson(ReturnNothing(c))
+		h := ConsumeOnlyJson(c)
 
 		reqBody := h.RequestBody()
 

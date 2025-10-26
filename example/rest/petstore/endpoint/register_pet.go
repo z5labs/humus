@@ -48,9 +48,7 @@ func RegisterPet(ctx context.Context, db StmtPreparer) rest.ApiOption {
 	return rest.Handle(
 		http.MethodPost,
 		rest.BasePath("/pets"),
-		rpc.ConsumeJson(
-			rpc.ReturnJson(h),
-		),
+		rpc.HandleJson(h),
 	)
 }
 

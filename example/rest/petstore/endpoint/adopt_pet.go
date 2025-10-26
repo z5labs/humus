@@ -54,9 +54,7 @@ func AdoptPet(ctx context.Context, db StmtPreparer) rest.ApiOption {
 	return rest.Handle(
 		http.MethodPost,
 		rest.BasePath("/pet").Param("id", rest.Required()),
-		rpc.ConsumeJson(
-			rpc.ReturnJson(h),
-		),
+		rpc.HandleJson(h),
 	)
 }
 

@@ -45,9 +45,7 @@ func ListPets(ctx context.Context, db StmtPreparer) rest.ApiOption {
 	return rest.Handle(
 		http.MethodGet,
 		rest.BasePath("/pets"),
-		rpc.ReturnJson(
-			rpc.ConsumeNothing(h),
-		),
+		rpc.ProduceJson(h),
 		rest.QueryParam(
 			"limit",
 			rest.Regex(regexp.MustCompile(`^\d+$`)),

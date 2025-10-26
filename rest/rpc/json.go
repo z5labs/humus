@@ -227,3 +227,45 @@ func (h *ConsumeJsonHandler[Req, Resp]) ServeHTTP(w http.ResponseWriter, r *http
 		panic(err)
 	}
 }
+
+// ProduceJson creates a handler that returns JSON responses without consuming a request body.
+// Use this for GET endpoints that return data.
+//
+// Example:
+//
+//	p := rpc.ProducerFunc[Response](func(ctx context.Context) (*Response, error) {
+//	    return &Response{Message: "hello"}, nil
+//	})
+//	handler := rpc.ProduceJson(p)
+func ProduceJson[T any](p Producer[T]) *ReturnJsonHandler[EmptyRequest, T] {
+	inner := &ProducerHandler[T]{p: p}
+	return ReturnJson(inner)
+}
+
+// ConsumeOnlyJson creates a handler that consumes JSON requests without returning a response body.
+// Use this for webhook-style POST/PUT endpoints that process data but don't return content.
+//
+// Example:
+//
+//	c := rpc.ConsumerFunc[Request](func(ctx context.Context, req *Request) error {
+//	    // process request
+//	    return nil
+//	})
+//	handler := rpc.ConsumeOnlyJson(c)
+func ConsumeOnlyJson[T any](c Consumer[T]) *ConsumeJsonHandler[T, EmptyResponse] {
+	inner := &ConsumerHandler[T]{c: c}
+	return ConsumeJson(inner)
+}
+
+// HandleJson creates a handler that both consumes and produces JSON.
+// Use this for POST/PUT endpoints with request and response bodies.
+//
+// Example:
+//
+//	h := rpc.HandlerFunc[Request, Response](func(ctx context.Context, req *Request) (*Response, error) {
+//	    return &Response{Message: req.Message}, nil
+//	})
+//	handler := rpc.HandleJson(h)
+func HandleJson[Req, Resp any](h Handler[Req, Resp]) *ConsumeJsonHandler[Req, JsonResponse[Resp]] {
+	return ConsumeJson(ReturnJson(h))
+}
