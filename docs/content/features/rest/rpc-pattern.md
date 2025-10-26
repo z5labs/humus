@@ -216,18 +216,31 @@ c := rpc.ConsumerFunc[Request](func(ctx context.Context, req *Request) error {
 All RPC handlers are registered using `rest.Handle()`:
 
 ```go
+// Create JWT verifier
+type SimpleJWTVerifier struct{}
+
+func (v *SimpleJWTVerifier) Verify(ctx context.Context, token string) (context.Context, error) {
+    // Verify JWT and extract claims
+    claims, err := jwt.Parse(token)
+    if err != nil {
+        return nil, err
+    }
+    return context.WithValue(ctx, "user_id", claims.UserID), nil
+}
+
+// Register operation with authentication
 operation := rest.Handle(
     http.MethodPost,
     rest.BasePath("/users"),
     rpc.HandleJson(handler),
     rest.QueryParam("format"),
-    rest.Header("Authorization", rest.Required()),
+    rest.Header("Authorization", rest.Required(), rest.JWTAuth("jwt", &SimpleJWTVerifier{})),
 )
 
 api := rest.NewApi("My Service", "v1.0.0", operation)
 ```
 
-The RPC handler automatically implements the `rest.Handler` interface, providing both HTTP handling and OpenAPI schema generation.
+The RPC handler automatically implements the `rest.Handler` interface, providing both HTTP handling and OpenAPI schema generation. Authentication options like `JWTAuth` add security schemes to the OpenAPI spec and verify credentials before the handler runs.
 
 ## Request Types
 
@@ -290,25 +303,43 @@ rest.Handle(
 
 ### Accessing Headers
 
-Headers are accessed using standard `http.Request` from context or the `rest` package:
+Headers are accessed using the `rest` package. For authentication, use `JWTAuth` to verify credentials and inject claims into context:
 
 ```go
-handler := rpc.ProducerFunc[Response](func(ctx context.Context) (*Response, error) {
-    // Access header
-    token := rest.HeaderValue(ctx, "Authorization")
-    if !validateToken(token) {
-        return nil, fmt.Errorf("unauthorized")
+// Define context key for type safety
+type contextKey string
+const userIDKey contextKey = "user_id"
+
+// JWT verifier injects user ID into context
+type MyVerifier struct{}
+
+func (v *MyVerifier) Verify(ctx context.Context, token string) (context.Context, error) {
+    claims, err := jwt.Parse(token)
+    if err != nil {
+        return nil, err
     }
-    return processRequest(ctx)
+    return context.WithValue(ctx, userIDKey, claims.UserID), nil
+}
+
+// Handler accesses verified claims from context
+handler := rpc.ProducerFunc[Response](func(ctx context.Context) (*Response, error) {
+    // Extract user ID from context (already verified by JWTAuth)
+    userID, ok := ctx.Value(userIDKey).(string)
+    if !ok {
+        return nil, fmt.Errorf("user not authenticated")
+    }
+    return processRequest(ctx, userID)
 })
 
 rest.Handle(
     http.MethodGet,
     rest.BasePath("/data"),
     rpc.ProduceJson(handler),
-    rest.Header("Authorization", rest.Required()),
+    rest.Header("Authorization", rest.Required(), rest.JWTAuth("jwt", &MyVerifier{})),
 )
 ```
+
+This pattern separates concerns: the framework verifies authentication, and your handler focuses on business logic with verified claims.
 
 ## Response Types
 
@@ -435,6 +466,9 @@ rest.Handle(
 Customize operations using `rest.Handle` options:
 
 ```go
+// Create JWT verifier
+verifier := &MyJWTVerifier{}
+
 operation := rest.Handle(
     http.MethodPost,
     rest.BasePath("/users"),
@@ -443,7 +477,7 @@ operation := rest.Handle(
     rest.WithDescription("Creates a new user"),
     rest.WithTags("users"),
     rest.QueryParam("format"),
-    rest.Header("Authorization", rest.Required()),
+    rest.Header("Authorization", rest.Required(), rest.JWTAuth("jwt", verifier)),
 )
 ```
 
@@ -454,6 +488,11 @@ Common options:
 - `rest.OnError(errorHandler)` - Custom error handling
 - `rest.QueryParam(name, opts...)` - Define query parameters
 - `rest.Header(name, opts...)` - Define required headers
+- `rest.JWTAuth(scheme, verifier)` - JWT Bearer token authentication
+- `rest.APIKey(scheme)` - API key authentication
+- `rest.BasicAuth(scheme)` - HTTP Basic authentication
+
+See [Authentication]({{< ref "authentication" >}}) for detailed authentication examples.
 
 ## Best Practices
 

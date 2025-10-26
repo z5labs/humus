@@ -100,6 +100,7 @@ This section covers:
 - [REST API]({{< ref "rest-api" >}}) - Understanding rest.Api
 - [RPC Pattern]({{< ref "rpc-pattern" >}}) - Type-safe handlers
 - [Routing]({{< ref "routing" >}}) - Paths and parameters
+- [Authentication]({{< ref "authentication" >}}) - JWT, API keys, and security
 - [Request/Response]({{< ref "request-response" >}}) - Serialization patterns
 - [Error Handling]({{< ref "error-handling" >}}) - Custom error responses
 - [OpenAPI]({{< ref "openapi" >}}) - Working with generated specs
