@@ -27,7 +27,6 @@ func (f HandlerFunc[Req, Resp]) Handle(ctx context.Context, req *Req) (*Resp, er
 	return f(ctx, req)
 }
 
-
 // RequestReader is meant to be implemented by any type which knows how
 // unmarshal itself from a [http.Request].
 type RequestReader[T any] interface {
@@ -59,4 +58,3 @@ type TypedResponse[T any] interface {
 
 	Spec() (int, *openapi3.Response, error)
 }
-

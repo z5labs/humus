@@ -99,11 +99,9 @@ func TestJsonResponse_Spec(t *testing.T) {
 			Inner T `json:"inner"`
 		}
 
-		p := ProducerFunc[outerType[msgResponse]](func(_ context.Context) (*outerType[msgResponse], error) {
+		h := ReturnJson(HandlerFunc[EmptyRequest, outerType[msgResponse]](func(_ context.Context, _ *EmptyRequest) (*outerType[msgResponse], error) {
 			return nil, nil
-		})
-
-		h := ReturnJson(ConsumeNothing(p))
+		}))
 
 		responses := h.Responses()
 
@@ -282,11 +280,9 @@ func TestJsonRequest_Spec(t *testing.T) {
 			Inner T `json:"inner"`
 		}
 
-		c := ConsumerFunc[outerType[msgRequest]](func(_ context.Context, _ *outerType[msgRequest]) error {
-			return nil
-		})
-
-		h := ConsumeJson(ReturnNothing(c))
+		h := ConsumeJson(HandlerFunc[outerType[msgRequest], EmptyResponse](func(_ context.Context, _ *outerType[msgRequest]) (*EmptyResponse, error) {
+			return &EmptyResponse{}, nil
+		}))
 
 		reqBody := h.RequestBody()
 

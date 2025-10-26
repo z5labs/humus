@@ -33,13 +33,13 @@ func (c ConsumerFunc[T]) Consume(ctx context.Context, req *T) error {
 //
 // This is a very handy helper for implementing HTTP POST or PUT webhook
 // style endpoints that just consume a payload and return a status code.
-type ConsumerHandler[T any] struct {
+type ConsumerHandler[T any, TR TypedRequest[T]] struct {
 	c Consumer[T]
 }
 
 // ReturnNothing initializes a [ConsumerHandler] given a [Consumer].
-func ReturnNothing[T any](c Consumer[T]) *ConsumerHandler[T] {
-	return &ConsumerHandler[T]{
+func ReturnNothing[T any, TR TypedRequest[T]](c Consumer[T]) *ConsumerHandler[T, TR] {
+	return &ConsumerHandler[T, TR]{
 		c: c,
 	}
 }
@@ -62,7 +62,7 @@ func (*EmptyResponse) WriteResponse(ctx context.Context, w http.ResponseWriter) 
 }
 
 // Handle implements the [Handler] interface.
-func (h *ConsumerHandler[T]) Handle(ctx context.Context, req *T) (*EmptyResponse, error) {
+func (h *ConsumerHandler[T, TR]) Handle(ctx context.Context, req *T) (*EmptyResponse, error) {
 	spanCtx, span := otel.Tracer("rpc").Start(ctx, "ConsumerHandler.Handle")
 	defer span.End()
 
@@ -74,17 +74,24 @@ func (h *ConsumerHandler[T]) Handle(ctx context.Context, req *T) (*EmptyResponse
 }
 
 // RequestBody implements the rest.Handler interface.
-func (h *ConsumerHandler[T]) RequestBody() openapi3.RequestBodyOrRef {
-	return openapi3.RequestBodyOrRef{}
+func (h *ConsumerHandler[T, TR]) RequestBody() openapi3.RequestBodyOrRef {
+	var req T
+	reqBody, err := TR(&req).Spec()
+	if err != nil {
+		return openapi3.RequestBodyOrRef{}
+	}
+
+	return openapi3.RequestBodyOrRef{
+		RequestBody: reqBody,
+	}
 }
 
 // Responses implements the rest.Handler interface.
-func (h *ConsumerHandler[T]) Responses() openapi3.Responses {
+func (h *ConsumerHandler[T, TR]) Responses() openapi3.Responses {
 	var resp EmptyResponse
 	statusCode, responseDef, err := resp.Spec()
 	if err != nil {
-		// Return empty responses if spec generation fails
-		return openapi3.Responses{}
+		panic(err)
 	}
 
 	return openapi3.Responses{
@@ -97,18 +104,16 @@ func (h *ConsumerHandler[T]) Responses() openapi3.Responses {
 }
 
 // ServeHTTP implements the [http.Handler] interface.
-func (h *ConsumerHandler[T]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *ConsumerHandler[T, TR]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	spanCtx, span := otel.Tracer("rpc").Start(r.Context(), "ConsumerHandler.ServeHTTP")
 	defer span.End()
 
 	var req T
-	// If T implements RequestReader, call ReadRequest
-	if rr, ok := any(&req).(interface{ ReadRequest(context.Context, *http.Request) error }); ok {
-		err := rr.ReadRequest(spanCtx, r)
-		if err != nil {
-			span.RecordError(err)
-			panic(err)
-		}
+	// TR constraint guarantees T implements RequestReader
+	err := TR(&req).ReadRequest(spanCtx, r)
+	if err != nil {
+		span.RecordError(err)
+		panic(err)
 	}
 
 	resp, err := h.Handle(spanCtx, &req)
@@ -141,13 +146,13 @@ func (f ProducerFunc[T]) Produce(ctx context.Context) (*T, error) {
 // ProducerHandler is a [Handler] that does not consume a request body.
 //
 // This is a very handy helper for implementing HTTP GET endpoints.
-type ProducerHandler[T any] struct {
+type ProducerHandler[T any, TR TypedResponse[T]] struct {
 	p Producer[T]
 }
 
 // ConsumeNothing initializes a [ProducerHandler] given a [Producer].
-func ConsumeNothing[T any](p Producer[T]) *ProducerHandler[T] {
-	return &ProducerHandler[T]{
+func ConsumeNothing[T any, TR TypedResponse[T]](p Producer[T]) *ProducerHandler[T, TR] {
+	return &ProducerHandler[T, TR]{
 		p: p,
 	}
 }
@@ -166,7 +171,7 @@ func (*EmptyRequest) ReadRequest(ctx context.Context, r *http.Request) error {
 }
 
 // Handle implements the [Handler] interface.
-func (h *ProducerHandler[T]) Handle(ctx context.Context, req *EmptyRequest) (*T, error) {
+func (h *ProducerHandler[T, TR]) Handle(ctx context.Context, req *EmptyRequest) (*T, error) {
 	spanCtx, span := otel.Tracer("rpc").Start(ctx, "ProducerHandler.Handle")
 	defer span.End()
 
@@ -174,7 +179,7 @@ func (h *ProducerHandler[T]) Handle(ctx context.Context, req *EmptyRequest) (*T,
 }
 
 // RequestBody implements the rest.Handler interface.
-func (h *ProducerHandler[T]) RequestBody() openapi3.RequestBodyOrRef {
+func (h *ProducerHandler[T, TR]) RequestBody() openapi3.RequestBodyOrRef {
 	var req EmptyRequest
 	reqBody, err := req.Spec()
 	if err != nil {
@@ -188,12 +193,24 @@ func (h *ProducerHandler[T]) RequestBody() openapi3.RequestBodyOrRef {
 }
 
 // Responses implements the rest.Handler interface.
-func (h *ProducerHandler[T]) Responses() openapi3.Responses {
-	return openapi3.Responses{}
+func (h *ProducerHandler[T, TR]) Responses() openapi3.Responses {
+	var resp T
+	statusCode, responseDef, err := TR(&resp).Spec()
+	if err != nil {
+		return openapi3.Responses{}
+	}
+
+	return openapi3.Responses{
+		MapOfResponseOrRefValues: map[string]openapi3.ResponseOrRef{
+			strconv.Itoa(statusCode): {
+				Response: responseDef,
+			},
+		},
+	}
 }
 
 // ServeHTTP implements the [http.Handler] interface.
-func (h *ProducerHandler[T]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *ProducerHandler[T, TR]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	spanCtx, span := otel.Tracer("rpc").Start(r.Context(), "ProducerHandler.ServeHTTP")
 	defer span.End()
 
@@ -210,13 +227,10 @@ func (h *ProducerHandler[T]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		panic(err)
 	}
 
-	// The response is of type *T, which could be a TypedResponse
-	// If T implements ResponseWriter, call WriteResponse
-	if rw, ok := any(resp).(interface{ WriteResponse(context.Context, http.ResponseWriter) error }); ok {
-		err = rw.WriteResponse(spanCtx, w)
-		if err != nil {
-			span.RecordError(err)
-			panic(err)
-		}
+	// TR constraint guarantees T implements ResponseWriter
+	err = TR(resp).WriteResponse(spanCtx, w)
+	if err != nil {
+		span.RecordError(err)
+		panic(err)
 	}
 }
