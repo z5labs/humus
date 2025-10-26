@@ -23,3 +23,10 @@ dist/
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# Hugo
+docs/public/
+docs/resources/_gen/
+docs/.hugo_build.lock
+docs/package.json
+docs/package-lock.json
