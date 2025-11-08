@@ -1,0 +1,70 @@
+// Copyright (c) 2025 Z5Labs and Contributors
+//
+// This software is released under the MIT License.
+// https://opensource.org/licenses/MIT
+
+// Package queue provides support for creating message queue processing services.
+//
+// The queue package implements a three-phase message processing pattern that separates
+// concerns for consuming, processing, and acknowledging messages from a queue:
+//
+//   - Consumer: retrieves messages from a queue
+//   - Processor: executes business logic on messages
+//   - Acknowledger: confirms successful processing back to the queue
+//
+// Runtime implementations orchestrate these three phases and handle the application
+// lifecycle. When a Consumer returns the EOQ error, it signals that the queue is
+// exhausted and the Runtime should shut down gracefully. This is particularly useful
+// for finite queues or batch processing scenarios.
+//
+// # Example Usage
+//
+// Here's a typical Runtime implementation that coordinates the three phases:
+//
+//	type MyRuntime struct {
+//	    consumer     queue.Consumer[Message]
+//	    processor    queue.Processor[Message]
+//	    acknowledger queue.Acknowledger[Message]
+//	}
+//
+//	func (r *MyRuntime) ProcessQueue(ctx context.Context) error {
+//	    for {
+//	        // Phase 1: Consume a message
+//	        msg, err := r.consumer.Consume(ctx)
+//	        if errors.Is(err, queue.EOQ) {
+//	            // Queue is exhausted, shut down gracefully
+//	            return nil
+//	        }
+//	        if err != nil {
+//	            return fmt.Errorf("consume failed: %w", err)
+//	        }
+//
+//	        // Phase 2: Process the message
+//	        if err := r.processor.Process(ctx, msg); err != nil {
+//	            return fmt.Errorf("process failed: %w", err)
+//	        }
+//
+//	        // Phase 3: Acknowledge successful processing
+//	        if err := r.acknowledger.Acknowledge(ctx, msg); err != nil {
+//	            return fmt.Errorf("acknowledge failed: %w", err)
+//	        }
+//	    }
+//	}
+//
+// The application is then built using the Builder and Run functions, which automatically
+// include OpenTelemetry instrumentation, panic recovery, and graceful shutdown handling:
+//
+//	func main() {
+//	    configReader := ... // io.Reader with YAML config
+//	    queue.Run(configReader, buildApp)
+//	}
+//
+//	func buildApp(ctx context.Context, cfg Config) (*queue.App, error) {
+//	    runtime := &MyRuntime{
+//	        consumer:     ...,
+//	        processor:    ...,
+//	        acknowledger: ...,
+//	    }
+//	    return queue.NewApp(runtime), nil
+//	}
+package queue
