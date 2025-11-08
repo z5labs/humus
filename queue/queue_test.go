@@ -250,12 +250,12 @@ func TestProcessAtMostOnce(t *testing.T) {
 			require.Equal(t, 0, acknowledger.callCount)
 		})
 
-		t.Run("if consumer returns EOQ", func(t *testing.T) {
+		t.Run("if consumer returns ErrEndOfQueue", func(t *testing.T) {
 			ctx := context.Background()
 
 			consumer := &mockConsumer[string]{
 				consumeFunc: func(ctx context.Context) (string, error) {
-					return "", EOQ
+					return "", ErrEndOfQueue
 				},
 			}
 
@@ -265,7 +265,7 @@ func TestProcessAtMostOnce(t *testing.T) {
 			p := ProcessAtMostOnce(consumer, processor, acknowledger)
 			err := p.ProcessItem(ctx)
 
-			require.ErrorIs(t, err, EOQ)
+			require.ErrorIs(t, err, ErrEndOfQueue)
 			require.Equal(t, 1, consumer.callCount)
 			require.Equal(t, 0, processor.callCount)
 			require.Equal(t, 0, acknowledger.callCount)
@@ -389,12 +389,12 @@ func TestProcessAtLeastOnce(t *testing.T) {
 			require.Equal(t, 0, acknowledger.callCount)
 		})
 
-		t.Run("if consumer returns EOQ", func(t *testing.T) {
+		t.Run("if consumer returns ErrEndOfQueue", func(t *testing.T) {
 			ctx := context.Background()
 
 			consumer := &mockConsumer[string]{
 				consumeFunc: func(ctx context.Context) (string, error) {
-					return "", EOQ
+					return "", ErrEndOfQueue
 				},
 			}
 
@@ -404,7 +404,7 @@ func TestProcessAtLeastOnce(t *testing.T) {
 			p := ProcessAtLeastOnce(consumer, processor, acknowledger)
 			err := p.ProcessItem(ctx)
 
-			require.ErrorIs(t, err, EOQ)
+			require.ErrorIs(t, err, ErrEndOfQueue)
 			require.Equal(t, 1, consumer.callCount)
 			require.Equal(t, 0, processor.callCount)
 			require.Equal(t, 0, acknowledger.callCount)

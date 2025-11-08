@@ -27,7 +27,7 @@ type MetricsConsumer struct {
 
 func (c *MetricsConsumer) Consume(ctx context.Context) (MetricsMessage, error) {
 	if c.index >= len(c.messages) {
-		return MetricsMessage{}, queue.EOQ
+		return MetricsMessage{}, queue.ErrEndOfQueue
 	}
 	msg := c.messages[c.index]
 	c.index++
@@ -80,7 +80,7 @@ func Example_processAtMostOnce() {
 	// Process messages until queue is exhausted
 	for {
 		err := itemProcessor.ProcessItem(ctx)
-		if errors.Is(err, queue.EOQ) {
+		if errors.Is(err, queue.ErrEndOfQueue) {
 			fmt.Println("Queue exhausted, shutting down")
 			break
 		}
@@ -110,7 +110,7 @@ type OrderConsumer struct {
 
 func (c *OrderConsumer) Consume(ctx context.Context) (OrderMessage, error) {
 	if c.index >= len(c.messages) {
-		return OrderMessage{}, queue.EOQ
+		return OrderMessage{}, queue.ErrEndOfQueue
 	}
 	msg := c.messages[c.index]
 	c.index++
@@ -174,7 +174,7 @@ func Example_processAtLeastOnce() {
 	// Process messages until queue is exhausted
 	for {
 		err := itemProcessor.ProcessItem(ctx)
-		if errors.Is(err, queue.EOQ) {
+		if errors.Is(err, queue.ErrEndOfQueue) {
 			fmt.Println("Queue exhausted, shutting down")
 			break
 		}

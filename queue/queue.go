@@ -26,14 +26,14 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// EOQ should be returned by [Consumer] that are consuming
+// ErrEndOfQueue should be returned by [Consumer] that are consuming
 // from a finite queue. This should then signify to [Runtime]
 // implementations to shut down.
-var EOQ = errors.New("queue: no more items")
+var ErrEndOfQueue = errors.New("queue: no more items")
 
 // Consumer consumes message(s), T, from a queue.
 //
-// Implementations should return [EOQ] when the queue is exhausted to signal
+// Implementations should return [ErrEndOfQueue] when the queue is exhausted to signal
 // graceful shutdown to [Runtime] implementations.
 type Consumer[T any] interface {
 	Consume(context.Context) (T, error)
@@ -85,7 +85,7 @@ type AtMostOnce[T any] struct {
 //
 //	processor := queue.ProcessAtMostOnce(consumer, processor, acknowledger)
 //	err := processor.ProcessItem(ctx)
-//	if errors.Is(err, queue.EOQ) {
+//	if errors.Is(err, queue.ErrEndOfQueue) {
 //	    // Queue exhausted, shutdown gracefully
 //	}
 func ProcessAtMostOnce[T any](c Consumer[T], p Processor[T], a Acknowledger[T]) *AtMostOnce[T] {
@@ -100,7 +100,7 @@ func ProcessAtMostOnce[T any](c Consumer[T], p Processor[T], a Acknowledger[T]) 
 
 // ProcessItem consumes, acknowledges, and processes a single message with at-most-once semantics.
 //
-// If consumption fails (including [EOQ]), the error is returned immediately. Otherwise,
+// If consumption fails (including [ErrEndOfQueue]), the error is returned immediately. Otherwise,
 // the message is acknowledged before processing. If acknowledgment or processing fails,
 // the error is returned, but the message has already been acknowledged and will not be retried.
 //
@@ -156,7 +156,7 @@ type AtLeastOnce[T any] struct {
 //
 //	processor := queue.ProcessAtLeastOnce(consumer, processor, acknowledger)
 //	err := processor.ProcessItem(ctx)
-//	if errors.Is(err, queue.EOQ) {
+//	if errors.Is(err, queue.ErrEndOfQueue) {
 //	    // Queue exhausted, shutdown gracefully
 //	}
 func ProcessAtLeastOnce[T any](c Consumer[T], p Processor[T], a Acknowledger[T]) *AtLeastOnce[T] {
@@ -171,7 +171,7 @@ func ProcessAtLeastOnce[T any](c Consumer[T], p Processor[T], a Acknowledger[T])
 
 // ProcessItem consumes, processes, and acknowledges a single message with at-least-once semantics.
 //
-// If consumption fails (including [EOQ]), the error is returned immediately. Otherwise,
+// If consumption fails (including [ErrEndOfQueue]), the error is returned immediately. Otherwise,
 // the message is processed before acknowledgment. If processing fails, the error is returned
 // and the message is not acknowledged, allowing for redelivery and retry. Only after successful
 // processing is the message acknowledged.

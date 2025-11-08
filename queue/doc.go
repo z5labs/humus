@@ -13,7 +13,7 @@
 //   - Acknowledger: confirms successful processing back to the queue
 //
 // Runtime implementations orchestrate these three phases and handle the application
-// lifecycle. When a Consumer returns the EOQ error, it signals that the queue is
+// lifecycle. When a Consumer returns the ErrEndOfQueue error, it signals that the queue is
 // exhausted and the Runtime should shut down gracefully. This is particularly useful
 // for finite queues or batch processing scenarios.
 //
@@ -31,7 +31,7 @@
 //	    for {
 //	        // Phase 1: Consume a message
 //	        msg, err := r.consumer.Consume(ctx)
-//	        if errors.Is(err, queue.EOQ) {
+//	        if errors.Is(err, queue.ErrEndOfQueue) {
 //	            // Queue is exhausted, shut down gracefully
 //	            return nil
 //	        }
@@ -81,7 +81,7 @@
 //	processor := queue.ProcessAtMostOnce(consumer, processor, acknowledger)
 //	for {
 //	    err := processor.ProcessItem(ctx)
-//	    if errors.Is(err, queue.EOQ) {
+//	    if errors.Is(err, queue.ErrEndOfQueue) {
 //	        return nil
 //	    }
 //	    // Continue even on errors - message already acknowledged
@@ -96,7 +96,7 @@
 //	processor := queue.ProcessAtLeastOnce(consumer, processor, acknowledger)
 //	for {
 //	    err := processor.ProcessItem(ctx)
-//	    if errors.Is(err, queue.EOQ) {
+//	    if errors.Is(err, queue.ErrEndOfQueue) {
 //	        return nil
 //	    }
 //	    if err != nil {
@@ -107,5 +107,5 @@
 //
 // Both processors automatically instrument operations with OpenTelemetry tracing
 // and logging. They can be used with any Runtime implementation by calling their
-// ProcessItem method in a loop until EOQ is returned.
+// ProcessItem method in a loop until ErrEndOfQueue is returned.
 package queue
