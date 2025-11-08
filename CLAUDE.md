@@ -4,11 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-Humus is a modular Go framework built on top of Bedrock (Z5Labs' base framework) that provides standardized patterns for building three types of applications:
+Humus is a modular Go framework built on top of Bedrock (Z5Labs' base framework) that provides standardized patterns for building four types of applications:
 
 1. **REST/HTTP Services** - OpenAPI-compliant web applications
 2. **gRPC Services** - gRPC-based microservices
 3. **Job Services** - One-off job executors
+4. **Queue Services** - Message queue processors with at-most-once or at-least-once delivery semantics
 
 All applications include standardized observability (OpenTelemetry), health checks, and graceful shutdown out of the box.
 
@@ -81,6 +82,7 @@ The `default_config.yaml` file contains framework defaults for OpenTelemetry con
   - `rest/rpc/` - RPC-style HTTP handler abstraction with OpenAPI generation
 - `grpc/` - gRPC application framework
 - `job/` - Job/batch application framework
+- `queue/` - Message queue processing framework with delivery semantics
 - `health/` - Health monitoring abstractions
 - `config/` - Configuration schemas (mainly OTel)
 - `concurrent/` - Thread-safe utilities
@@ -174,6 +176,35 @@ Handle(ctx context.Context) error
 
 No HTTP/gRPC server, just executes once with OTel and lifecycle management.
 
+#### Queue Services
+
+**Three-Phase Processing Pattern:**
+- **Consumer[T]** - Retrieves messages from a queue
+- **Processor[T]** - Executes business logic on messages
+- **Acknowledger[T]** - Confirms successful processing back to the queue
+
+**Built-in Processors:**
+
+`ProcessAtMostOnce` - At-most-once delivery semantics (Consume → Acknowledge → Process)
+- Messages acknowledged immediately after consumption, before processing
+- Processing failures result in message loss
+- Suitable for non-critical data (metrics, logging, caching)
+
+`ProcessAtLeastOnce` - At-least-once delivery semantics (Consume → Process → Acknowledge)
+- Messages acknowledged only after successful processing
+- Processing failures result in redelivery and retry
+- Requires idempotent processors to handle duplicates
+- Suitable for critical operations (financial transactions, database updates)
+
+**Runtime Interface:**
+```go
+type Runtime interface {
+    ProcessQueue(ctx context.Context) error
+}
+```
+
+Implementations should coordinate Consumer, Processor, and Acknowledger. Return `queue.ErrEndOfQueue` from Consumer when the queue is exhausted to trigger graceful shutdown.
+
 #### Health Monitoring
 
 **health.Monitor** - Interface for health checks:
@@ -210,6 +241,41 @@ app := job.NewApp(handlerFunc)
 // That's it - just implement Handler interface
 ```
 
+**Queue:**
+```go
+// Option 1: Use built-in processors
+processor := queue.ProcessAtMostOnce(consumer, processor, acknowledger)
+runtime := &MyRuntime{processor: processor}
+app := queue.NewApp(runtime)
+
+// Option 2: Custom runtime with manual coordination
+type MyRuntime struct {
+    consumer     queue.Consumer[Message]
+    processor    queue.Processor[Message]
+    acknowledger queue.Acknowledger[Message]
+}
+
+func (r *MyRuntime) ProcessQueue(ctx context.Context) error {
+    for {
+        msg, err := r.consumer.Consume(ctx)
+        if errors.Is(err, queue.ErrEndOfQueue) {
+            return nil // Graceful shutdown
+        }
+        if err != nil {
+            return err
+        }
+
+        if err := r.processor.Process(ctx, msg); err != nil {
+            return err
+        }
+
+        if err := r.acknowledger.Acknowledge(ctx, msg); err != nil {
+            return err
+        }
+    }
+}
+```
+
 ### Entry Point Pattern
 
 All service types follow this pattern:
@@ -218,6 +284,7 @@ func main() {
     rest.Run(configReader, app.Init)
     // or grpc.Run(configReader, app.Init)
     // or job.Run(configReader, app.Init)
+    // or queue.Run(configReader, app.Init)
 }
 ```
 
@@ -226,18 +293,26 @@ The initializer function receives config and returns the API/App:
 func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
     // Initialize your service
 }
+
+// For queue services:
+func Init(ctx context.Context, cfg Config) (*queue.App, error) {
+    runtime := &MyRuntime{...}
+    return queue.NewApp(runtime), nil
+}
 ```
 
 ## Important Conventions
 
 1. **Error Handling** - Use `rpc.ErrorHandler` interface for custom error responses in REST operations; set via `OnError()` operation option
-2. **JWT Authentication** - Implement `rest.JWTVerifier` interface to verify tokens and inject claims into context; framework handles token extraction from "Bearer " header and returns 401 on failure
-3. **OpenAPI Schemas** - Generated automatically via reflection from Go types (uses `github.com/swaggest/jsonschema-go`)
-4. **Health Checks** - REST apps should implement custom health handlers via `rest.Readiness()` and `rest.Liveness()` options; gRPC health is automatic
-5. **Graceful Shutdown** - Handled automatically by Bedrock lifecycle; no explicit cleanup needed in most cases
-6. **OTel Instrumentation** - Automatic for HTTP (via otelhttp) and gRPC (via interceptors); use `otel.Tracer/Meter` directly in business logic
-7. **Logging** - Use `humus.Logger(name)` to get an OpenTelemetry-integrated logger; returns `*slog.Logger`
-8. **Option Pattern** - Used throughout for extensibility (e.g., `rest.ApiOption`, `grpc.RunOption`, `rpc.OperationOption`)
+2. **Error Naming** - All error variables must follow the `ErrFoo` naming pattern (enforced by golangci-lint staticcheck ST1012); e.g., `var ErrNotFound = errors.New("not found")`
+3. **JWT Authentication** - Implement `rest.JWTVerifier` interface to verify tokens and inject claims into context; framework handles token extraction from "Bearer " header and returns 401 on failure
+4. **OpenAPI Schemas** - Generated automatically via reflection from Go types (uses `github.com/swaggest/jsonschema-go`)
+5. **Health Checks** - REST apps should implement custom health handlers via `rest.Readiness()` and `rest.Liveness()` options; gRPC health is automatic
+6. **Graceful Shutdown** - Handled automatically by Bedrock lifecycle; no explicit cleanup needed in most cases
+7. **OTel Instrumentation** - Automatic for HTTP (via otelhttp) and gRPC (via interceptors); use `otel.Tracer/Meter` directly in business logic
+8. **Logging** - Use `humus.Logger(name)` to get an OpenTelemetry-integrated logger; returns `*slog.Logger`
+9. **Option Pattern** - Used throughout for extensibility (e.g., `rest.ApiOption`, `grpc.RunOption`, `rpc.OperationOption`)
+10. **Queue End-of-Queue Signal** - Queue consumers should return `queue.ErrEndOfQueue` when the queue is exhausted to trigger graceful shutdown; particularly useful for finite queues or batch processing
 
 ## Testing Patterns
 
@@ -247,10 +322,15 @@ Tests use standard Go testing with:
 - Example tests in `*_example_test.go` files demonstrate usage patterns
 
 When writing tests:
+- Use `testify/require` for assertions (fail-fast) rather than `testify/assert`
 - Mock `context.Context` for handler tests
 - Use `httptest.NewRecorder()` for HTTP handler tests
 - Mock `grpc.ServiceRegistrar` for gRPC registration tests
 - Test health monitors in isolation before composing
+- For queue processors, use call order verification:
+  - Create a `callRecorder` to track method invocations
+  - Verify the correct sequence (e.g., Consume → Acknowledge → Process for at-most-once)
+  - Test error handling at each phase independently
 
 ## Dependencies
 
