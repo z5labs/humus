@@ -116,6 +116,38 @@ Pre-built serializers available:
 - `ReturnJson[Req, Resp](handler)` - Wraps handler to return JSON responses
 - Chain them: `rpc.NewOperation(ConsumeJson(ReturnJson(handlerFunc)))`
 
+**Producer/Consumer Shortcuts:**
+
+For GET endpoints (no request body, only response):
+- `rpc.ProduceJson[Resp](producer)` - Wraps a Producer to return JSON
+- `rpc.ProducerFunc[Resp]` - Function adapter for Producer interface
+
+For POST/PUT webhooks (request body, no response):
+- `rpc.ConsumeOnlyJson[Req](consumer)` - Wraps a Consumer to accept JSON
+- `rpc.ConsumerFunc[Req]` - Function adapter for Consumer interface
+
+Full request/response:
+- `rpc.HandleJson[Req, Resp](handler)` - Combines ConsumeJson and ReturnJson
+
+Example:
+```go
+// GET endpoint - only produces a response
+handler := rpc.ProducerFunc[HelloResponse](func(ctx context.Context) (*HelloResponse, error) {
+    return &HelloResponse{Message: "Hello, World!"}, nil
+})
+rest.Handle(http.MethodGet, rest.BasePath("/hello"), rpc.ProduceJson(handler))
+
+// POST webhook - only consumes a request
+consumer := rpc.ConsumerFunc[WebhookPayload](func(ctx context.Context, req *WebhookPayload) error {
+    // Process webhook, return status code
+    return nil
+})
+rest.Handle(http.MethodPost, rest.BasePath("/webhook"), rpc.ConsumeOnlyJson(consumer))
+
+// Full request/response - shorthand for ConsumeJson(ReturnJson(handler))
+rest.Handle(http.MethodPost, rest.BasePath("/users"), rpc.HandleJson(handlerFunc))
+```
+
 **Path Building:**
 ```go
 rest.BasePath("/users")              // Static path: /users
@@ -189,14 +221,37 @@ No HTTP/gRPC server, just executes once with OTel and lifecycle management.
 - Messages acknowledged immediately after consumption, before processing
 - Processing failures result in message loss
 - Suitable for non-critical data (metrics, logging, caching)
+- Returns a processor with `ProcessItem(ctx)` method for single-message processing
 
 `ProcessAtLeastOnce` - At-least-once delivery semantics (Consume → Process → Acknowledge)
 - Messages acknowledged only after successful processing
 - Processing failures result in redelivery and retry
 - Requires idempotent processors to handle duplicates
 - Suitable for critical operations (financial transactions, database updates)
+- Returns a processor with `ProcessItem(ctx)` method for single-message processing
 
-**Runtime Interface:**
+**Queue Processing Approaches:**
+
+**Approach 1: Using ProcessItem (Recommended for simple cases)**
+```go
+processor := queue.ProcessAtMostOnce(consumer, processor, acknowledger)
+
+// Process loop
+for {
+    err := processor.ProcessItem(ctx)
+    if errors.Is(err, queue.ErrEndOfQueue) {
+        break // Graceful shutdown
+    }
+    if err != nil {
+        // Handle error (at-most-once: message lost, at-least-once: will retry)
+        continue
+    }
+}
+```
+
+**Approach 2: Custom Runtime (For complex orchestration)**
+
+The Runtime interface allows full control over queue processing:
 ```go
 type Runtime interface {
     ProcessQueue(ctx context.Context) error
@@ -243,9 +298,27 @@ app := job.NewApp(handlerFunc)
 
 **Queue:**
 ```go
-// Option 1: Use built-in processors
-processor := queue.ProcessAtMostOnce(consumer, processor, acknowledger)
-runtime := &MyRuntime{processor: processor}
+// Option 1: Use built-in processors with ProcessItem
+type SimpleRuntime struct {
+    processor *queue.AtMostOnce[Message] // or *queue.AtLeastOnce[Message]
+}
+
+func (r *SimpleRuntime) ProcessQueue(ctx context.Context) error {
+    for {
+        err := r.processor.ProcessItem(ctx)
+        if errors.Is(err, queue.ErrEndOfQueue) {
+            return nil // Graceful shutdown
+        }
+        if err != nil {
+            // Handle error based on delivery semantics
+            continue
+        }
+    }
+}
+
+runtime := &SimpleRuntime{
+    processor: queue.ProcessAtMostOnce(consumer, processor, acknowledger),
+}
 app := queue.NewApp(runtime)
 
 // Option 2: Custom runtime with manual coordination
@@ -349,6 +422,7 @@ When writing tests:
 ## Examples
 
 The `example/` directory contains reference implementations:
+- `example/rest/petstore/` - REST API example with OpenAPI generation
 - `example/grpc/petstore/` - gRPC service example with health monitoring
 
 Refer to these for real-world usage patterns of the framework.
