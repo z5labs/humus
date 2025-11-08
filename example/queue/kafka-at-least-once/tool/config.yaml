@@ -1,0 +1,8 @@
+kafka:
+  brokers:
+    - localhost:9092
+  topic: orders
+
+publisher:
+  count: 10        # Number of messages to publish
+  interval: 1000   # Interval between messages in milliseconds (1 second)
