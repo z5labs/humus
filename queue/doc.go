@@ -67,4 +67,45 @@
 //	    }
 //	    return queue.NewApp(runtime), nil
 //	}
+//
+// # Processing Semantics
+//
+// The queue package provides two built-in item processors that implement different
+// delivery guarantee semantics:
+//
+// AtMostOnce guarantees that each message is processed at most once.
+// Messages are acknowledged immediately after consumption, before processing. If
+// processing fails, the message is lost and will not be retried. Use this for
+// non-critical data where performance is more important than reliability:
+//
+//	processor := queue.ProcessAtMostOnce(consumer, processor, acknowledger)
+//	for {
+//	    err := processor.ProcessItem(ctx)
+//	    if errors.Is(err, queue.EOQ) {
+//	        return nil
+//	    }
+//	    // Continue even on errors - message already acknowledged
+//	}
+//
+// AtLeastOnce guarantees that each message is processed at least once.
+// Messages are acknowledged only after successful processing. If processing fails,
+// the message will be redelivered for retry. Your Processor must be idempotent to
+// handle duplicate messages correctly. Use this for critical data where reliability
+// is more important than avoiding duplicate processing:
+//
+//	processor := queue.ProcessAtLeastOnce(consumer, processor, acknowledger)
+//	for {
+//	    err := processor.ProcessItem(ctx)
+//	    if errors.Is(err, queue.EOQ) {
+//	        return nil
+//	    }
+//	    if err != nil {
+//	        // Message not acknowledged, will be retried
+//	        return err
+//	    }
+//	}
+//
+// Both processors automatically instrument operations with OpenTelemetry tracing
+// and logging. They can be used with any Runtime implementation by calling their
+// ProcessItem method in a loop until EOQ is returned.
 package queue

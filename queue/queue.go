@@ -54,7 +54,18 @@ type Acknowledger[T any] interface {
 	Acknowledge(context.Context, T) error
 }
 
-type AtMostOnceItemProcessor[T any] struct {
+// AtMostOnce coordinates message processing with at-most-once delivery semantics.
+//
+// This processor acknowledges messages immediately after consuming them, before processing.
+// If processing fails, the message is already acknowledged and will be lost. This guarantees
+// that each message is processed at most once, making it suitable for use cases where
+// occasional data loss is acceptable (e.g., metrics collection, logging, caching).
+//
+// The processor automatically instruments operations with OpenTelemetry tracing and logging.
+// Use [ProcessAtMostOnce] to create instances of this type.
+//
+// Processing order: Consume → Acknowledge → Process
+type AtMostOnce[T any] struct {
 	tracer trace.Tracer
 	log    *slog.Logger
 
@@ -63,8 +74,22 @@ type AtMostOnceItemProcessor[T any] struct {
 	a Acknowledger[T]
 }
 
-func ProcessAtMostOnce[T any](c Consumer[T], p Processor[T], a Acknowledger[T]) *AtMostOnceItemProcessor[T] {
-	return &AtMostOnceItemProcessor[T]{
+// ProcessAtMostOnce creates a new [AtMostOnce] processor with at-most-once delivery semantics.
+//
+// The returned processor acknowledges messages before processing them, providing fast
+// throughput at the cost of potential message loss on processing failures. The processor
+// is automatically instrumented with OpenTelemetry tracing (tracer name: "queue") and
+// logging (logger name: "queue").
+//
+// Example:
+//
+//	processor := queue.ProcessAtMostOnce(consumer, processor, acknowledger)
+//	err := processor.ProcessItem(ctx)
+//	if errors.Is(err, queue.EOQ) {
+//	    // Queue exhausted, shutdown gracefully
+//	}
+func ProcessAtMostOnce[T any](c Consumer[T], p Processor[T], a Acknowledger[T]) *AtMostOnce[T] {
+	return &AtMostOnce[T]{
 		tracer: otel.Tracer("queue"),
 		log:    humus.Logger("queue"),
 		c:      c,
@@ -73,8 +98,16 @@ func ProcessAtMostOnce[T any](c Consumer[T], p Processor[T], a Acknowledger[T]) 
 	}
 }
 
-func (it AtMostOnceItemProcessor[T]) ProcessItem(ctx context.Context) error {
-	spanCtx, span := it.tracer.Start(ctx, "AtMostOnceItemProcessor.ProcessItem")
+// ProcessItem consumes, acknowledges, and processes a single message with at-most-once semantics.
+//
+// If consumption fails (including [EOQ]), the error is returned immediately. Otherwise,
+// the message is acknowledged before processing. If acknowledgment or processing fails,
+// the error is returned, but the message has already been acknowledged and will not be retried.
+//
+// This method creates an OpenTelemetry span named "AtMostOnce.ProcessItem" and
+// propagates the span context through all operations.
+func (it AtMostOnce[T]) ProcessItem(ctx context.Context) error {
+	spanCtx, span := it.tracer.Start(ctx, "AtMostOnce.ProcessItem")
 	defer span.End()
 
 	item, err := it.c.Consume(spanCtx)
@@ -90,7 +123,19 @@ func (it AtMostOnceItemProcessor[T]) ProcessItem(ctx context.Context) error {
 	return it.p.Process(spanCtx, item)
 }
 
-type AtLeastOnceItemProcessor[T any] struct {
+// AtLeastOnce coordinates message processing with at-least-once delivery semantics.
+//
+// This processor acknowledges messages only after successful processing. If processing fails,
+// the message is not acknowledged and will be redelivered for retry. This guarantees that
+// each message is processed at least once, but may result in duplicate processing. This makes
+// it suitable for use cases requiring reliable delivery where idempotent processing can handle
+// duplicates (e.g., financial transactions, database updates, event processing).
+//
+// The processor automatically instruments operations with OpenTelemetry tracing and logging.
+// Use [ProcessAtLeastOnce] to create instances of this type.
+//
+// Processing order: Consume → Process → Acknowledge
+type AtLeastOnce[T any] struct {
 	tracer trace.Tracer
 	log    *slog.Logger
 
@@ -99,8 +144,23 @@ type AtLeastOnceItemProcessor[T any] struct {
 	a Acknowledger[T]
 }
 
-func ProcessAtLeastOnce[T any](c Consumer[T], p Processor[T], a Acknowledger[T]) *AtLeastOnceItemProcessor[T] {
-	return &AtLeastOnceItemProcessor[T]{
+// ProcessAtLeastOnce creates a new [AtLeastOnce] processor with at-least-once delivery semantics.
+//
+// The returned processor acknowledges messages only after successful processing, providing
+// reliable delivery at the cost of potential duplicate processing. Ensure your [Processor]
+// implementation is idempotent to handle redelivered messages correctly. The processor is
+// automatically instrumented with OpenTelemetry tracing (tracer name: "queue") and logging
+// (logger name: "queue").
+//
+// Example:
+//
+//	processor := queue.ProcessAtLeastOnce(consumer, processor, acknowledger)
+//	err := processor.ProcessItem(ctx)
+//	if errors.Is(err, queue.EOQ) {
+//	    // Queue exhausted, shutdown gracefully
+//	}
+func ProcessAtLeastOnce[T any](c Consumer[T], p Processor[T], a Acknowledger[T]) *AtLeastOnce[T] {
+	return &AtLeastOnce[T]{
 		tracer: otel.Tracer("queue"),
 		log:    humus.Logger("queue"),
 		c:      c,
@@ -109,8 +169,17 @@ func ProcessAtLeastOnce[T any](c Consumer[T], p Processor[T], a Acknowledger[T])
 	}
 }
 
-func (it AtLeastOnceItemProcessor[T]) ProcessItem(ctx context.Context) error {
-	spanCtx, span := it.tracer.Start(ctx, "AtLeastOnceItemProcessor.ProcessItem")
+// ProcessItem consumes, processes, and acknowledges a single message with at-least-once semantics.
+//
+// If consumption fails (including [EOQ]), the error is returned immediately. Otherwise,
+// the message is processed before acknowledgment. If processing fails, the error is returned
+// and the message is not acknowledged, allowing for redelivery and retry. Only after successful
+// processing is the message acknowledged.
+//
+// This method creates an OpenTelemetry span named "AtLeastOnce.ProcessItem" and
+// propagates the span context through all operations.
+func (it AtLeastOnce[T]) ProcessItem(ctx context.Context) error {
+	spanCtx, span := it.tracer.Start(ctx, "AtLeastOnce.ProcessItem")
 	defer span.End()
 
 	item, err := it.c.Consume(spanCtx)
