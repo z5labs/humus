@@ -1,5 +1,4 @@
 //go:build testcontainers
-// +build testcontainers
 
 // Copyright (c) 2025 Z5Labs and Contributors
 //

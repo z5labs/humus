@@ -1,5 +1,4 @@
 //go:build testcontainers
-// +build testcontainers
 
 // Copyright (c) 2025 Z5Labs and Contributors
 //
@@ -535,7 +534,6 @@ func TestPhase3_Rebalancing(t *testing.T) {
 		go func() {
 			runtime2Done <- runtime2.ProcessQueue(ctx2)
 		}()
-
 
 		// Wait for rebalance to complete before producing more messages
 		// Rebalancing involves: consumer joining, partitions being revoked from consumer1,
