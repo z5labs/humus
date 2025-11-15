@@ -7,7 +7,7 @@ type: docs
 
 # Features
 
-Humus provides three distinct service types, each optimized for different use cases.
+Humus provides four distinct service types, each optimized for different use cases.
 
 ## Service Types
 
@@ -62,6 +62,24 @@ Build one-off job executors for batch processing, migrations, and scheduled task
 - Context-aware execution
 
 [Get Started with Jobs →]({{< ref "job" >}})
+
+### [Queue Services]({{< ref "queue" >}})
+
+Process messages from message queues with flexible delivery semantics and automatic concurrency management.
+
+**Best For:**
+- Event-driven architectures
+- Message queue processing (Kafka, RabbitMQ, etc.)
+- Asynchronous workloads
+- Stream processing
+
+**Key Features:**
+- At-most-once and at-least-once delivery semantics
+- Pluggable queue runtimes
+- Automatic concurrency management (Kafka: goroutine-per-partition)
+- Built-in OpenTelemetry instrumentation
+
+[Get Started with Queues →]({{< ref "queue" >}})
 
 ## Common Features
 
