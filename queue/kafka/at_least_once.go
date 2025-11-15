@@ -1,0 +1,102 @@
+// Copyright (c) 2025 Z5Labs and Contributors
+//
+// This software is released under the MIT License.
+// https://opensource.org/licenses/MIT
+
+package kafka
+
+import (
+	"context"
+	"log/slog"
+
+	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/queue"
+
+	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/twmb/franz-go/plugin/kotel"
+	"go.opentelemetry.io/otel"
+)
+
+type atLeastOnceMessagesHandler struct {
+	log       *slog.Logger
+	tracer    *kotel.Tracer
+	committer recordsCommitter
+	processor queue.Processor[Message]
+}
+
+func newAtLeastOnceMessagesHandler(
+	groupId string,
+	processor queue.Processor[Message],
+) func(recordsCommitter) recordsHandler {
+	return func(committer recordsCommitter) recordsHandler {
+		return atLeastOnceMessagesHandler{
+			log: humus.Logger("kafka").With(GroupIDAttr(groupId)),
+			tracer: kotel.NewTracer(
+				kotel.TracerProvider(otel.GetTracerProvider()),
+				kotel.TracerPropagator(otel.GetTextMapPropagator()),
+				kotel.LinkSpans(),
+				kotel.ConsumerGroup(groupId),
+			),
+			committer: committer,
+			processor: processor,
+		}
+	}
+}
+
+// AtLeastOnce configures the Kafka runtime to process messages from the specified topic
+func AtLeastOnce(topic string, processor queue.Processor[Message]) Option {
+	return func(o *Options) {
+		o.topics[topic] = newAtLeastOnceMessagesHandler(o.groupId, processor)
+	}
+}
+
+func (h atLeastOnceMessagesHandler) Handle(ctx context.Context, records []*kgo.Record) error {
+	for _, record := range records {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		if record.Context == nil {
+			record.Context = ctx
+		}
+
+		err := h.processRecord(record)
+		if err != nil {
+			h.log.ErrorContext(
+				ctx,
+				"failed to process kafka message",
+				TopicAttr(record.Topic),
+				PartitionAttr(record.Partition),
+				OffsetAttr(record.Offset),
+				slog.Any("error", err),
+			)
+		}
+	}
+
+	return h.committer.CommitRecords(ctx, records...)
+}
+
+func (h atLeastOnceMessagesHandler) processRecord(record *kgo.Record) error {
+	spanCtx, span := h.tracer.WithProcessSpan(record)
+	defer span.End()
+
+	headers := make([]Header, len(record.Headers))
+	for i, hdr := range record.Headers {
+		headers[i] = Header{
+			Key:   hdr.Key,
+			Value: hdr.Value,
+		}
+	}
+
+	return h.processor.Process(spanCtx, Message{
+		Headers:   headers,
+		Key:       record.Key,
+		Value:     record.Value,
+		Timestamp: record.Timestamp,
+		Topic:     record.Topic,
+		Partition: record.Partition,
+		Offset:    record.Offset,
+	})
+}
