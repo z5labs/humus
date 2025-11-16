@@ -51,7 +51,7 @@ func (p *OrderProcessor) Process(ctx context.Context, msg *OrderMessage) error {
 
 	// Idempotency check: skip if already processed
 	if p.processed[msg.OrderID] {
-		p.log.Info("skipping duplicate order",
+		p.log.InfoContext(ctx, "skipping duplicate order",
 			slog.String("order_id", msg.OrderID),
 		)
 		return nil
@@ -66,7 +66,7 @@ func (p *OrderProcessor) Process(ctx context.Context, msg *OrderMessage) error {
 	}
 
 	// Process the order
-	p.log.Info("processing order",
+	p.log.InfoContext(ctx, "processing order",
 		slog.String("order_id", msg.OrderID),
 		slog.Float64("amount", msg.Amount),
 		slog.String("product_id", msg.ProductID),
@@ -91,7 +91,7 @@ func (p *OrderProcessor) Process(ctx context.Context, msg *OrderMessage) error {
 	// Mark as processed
 	p.processed[msg.OrderID] = true
 
-	p.log.Info("order processed successfully",
+	p.log.InfoContext(ctx, "order processed successfully",
 		slog.String("order_id", msg.OrderID),
 	)
 

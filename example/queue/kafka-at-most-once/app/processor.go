@@ -57,7 +57,7 @@ func (p *MetricsProcessor) Process(ctx context.Context, msg *MetricMessage) erro
 	}
 
 	// Log the metric being processed
-	p.log.Info("processing metric",
+	p.log.InfoContext(ctx, "processing metric",
 		slog.String("name", msg.Name),
 		slog.Float64("value", msg.Value),
 		slog.Int64("timestamp", msg.Timestamp),
@@ -81,7 +81,7 @@ func (p *MetricsProcessor) Process(ctx context.Context, msg *MetricMessage) erro
 	// means each message is processed at most once, and message loss
 	// on failure is acceptable for metrics/logs.
 
-	p.log.Info("metric processed successfully",
+	p.log.InfoContext(ctx, "metric processed successfully",
 		slog.String("name", msg.Name),
 	)
 

@@ -62,23 +62,13 @@ func (h atLeastOnceMessagesHandler) Handle(ctx context.Context, records []*kgo.R
 			record.Context = ctx
 		}
 
-		err := h.processRecord(record)
-		if err != nil {
-			h.log.ErrorContext(
-				ctx,
-				"failed to process kafka message",
-				TopicAttr(record.Topic),
-				PartitionAttr(record.Partition),
-				OffsetAttr(record.Offset),
-				slog.Any("error", err),
-			)
-		}
+		h.processRecord(record)
 	}
 
 	return h.committer.CommitRecords(ctx, records...)
 }
 
-func (h atLeastOnceMessagesHandler) processRecord(record *kgo.Record) error {
+func (h atLeastOnceMessagesHandler) processRecord(record *kgo.Record) {
 	spanCtx, span := h.tracer.WithProcessSpan(record)
 	defer span.End()
 
@@ -90,7 +80,7 @@ func (h atLeastOnceMessagesHandler) processRecord(record *kgo.Record) error {
 		}
 	}
 
-	return h.processor.Process(spanCtx, Message{
+	err := h.processor.Process(spanCtx, Message{
 		Headers:   headers,
 		Key:       record.Key,
 		Value:     record.Value,
@@ -99,4 +89,14 @@ func (h atLeastOnceMessagesHandler) processRecord(record *kgo.Record) error {
 		Partition: record.Partition,
 		Offset:    record.Offset,
 	})
+	if err != nil {
+		h.log.ErrorContext(
+			spanCtx,
+			"failed to process kafka message",
+			TopicAttr(record.Topic),
+			PartitionAttr(record.Partition),
+			OffsetAttr(record.Offset),
+			slog.Any("error", err),
+		)
+	}
 }
