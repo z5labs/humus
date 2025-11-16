@@ -1,0 +1,27 @@
+kafka:
+  brokers:
+    - {{env "KAFKA_BROKERS" | default "localhost:9092"}}
+  topic: {{env "KAFKA_TOPIC" | default "orders"}}
+  group_id: {{env "KAFKA_GROUP_ID" | default "order-processor"}}
+
+otel:
+  resource:
+    service_name: kafka-at-least-once
+  trace:
+    exporter:
+      type: {{env "OTEL_TRACE_EXPORTER" | default "otlp"}}
+      otlp:
+        type: grpc
+        target: {{env "OTEL_OTLP_TARGET" | default "localhost:4317"}}
+  metric:
+    exporter:
+      type: {{env "OTEL_METRIC_EXPORTER" | default "otlp"}}
+      otlp:
+        type: grpc
+        target: {{env "OTEL_OTLP_TARGET" | default "localhost:4317"}}
+  log:
+    exporter:
+      type: {{env "OTEL_LOG_EXPORTER" | default "otlp"}}
+      otlp:
+        type: grpc
+        target: {{env "OTEL_OTLP_TARGET" | default "localhost:4317"}}

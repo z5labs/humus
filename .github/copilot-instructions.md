@@ -1,66 +1,200 @@
-## Quick orientation for AI code assistants
+## Repository Overview
 
-This repository is a modular Go framework (Humus) for REST, gRPC, Job and Queue apps built on top of Bedrock. Keep these facts front-and-center when making changes or generating code:
+Humus is a modular Go framework for building production-ready REST APIs, gRPC services, jobs, and queue processors on top of [Bedrock](https://github.com/z5labs/bedrock). All applications include automatic OpenTelemetry instrumentation, health monitoring, and graceful shutdown.
 
-- Core design: Builder + Runner. Builders return a `bedrock.AppBuilder` and are composed with `appbuilder.OTel`, `appbuilder.Recover`, and lifecycle hooks. The runner (`humus.NewRunner`) builds then runs the app and delegates errors to a pluggable `ErrorHandler`.
-- Primary package folders: `rest/`, `grpc/`, `job/`, `queue/`, `health/`, `config/`. Internal implementations live under `internal/` (e.g. `internal/otel`, `internal/httpserver`, `internal/grpcserver`). Use the public packages for examples and the `internal` packages for implementation details only.
+**Core Architecture: Builder + Runner Pattern**
+- Every service type has a `Builder[T Configer]` that returns `bedrock.AppBuilder[T]`
+- Builders wrap apps with: `appbuilder.LifecycleContext(appbuilder.OTel(appbuilder.Recover(...)))`
+- `humus.Runner` orchestrates: config read → app build → app run with pluggable `ErrorHandler`
+- Package-level `Run()` functions (e.g., `rest.Run`, `queue.Run`) combine builder+runner+defaults for simplicity
 
-## Important files to reference
-
-- `README.md` — high-level quick start and examples (root).
-- `CLAUDE.md` — existing AI guidance with useful commands and patterns.
-- `humus.go` — logger, Runner, OnError pattern: how apps are executed and how errors are handled.
-- `rest/rest.go`, `rest/rpc/` — canonical REST builder, runtime, and rpc handler patterns (ProduceJson, ConsumeJson, HandleJson, path building).
-- `grpc/grpc.go` — gRPC builder and Run wrapper; auto-registers health and OTel interceptors.
-- `config/otel.go` and `default_config.yaml` — canonical OTel configuration shape and environment-template functions.
-- `internal/run.go` — minimal run orchestration used by other packages.
-- `example/` — runnable examples (use these for end-to-end behavior and expected wiring).
-
-## Developer workflows (commands you can use)
-
-- Build everything: `go build ./...` (used in CI)
-- Run unit tests (race + coverage): `go test -race -cover ./...` or targeted packages `go test -race -cover ./rest/rpc`
-- Lint: `golangci-lint run` (CI uses same tool and settings)
-
-CI: See `.github/workflows/*` for build, codeql and docs pipelines.
-
-## Code patterns AI should follow (concrete, repo-specific)
-
-- Builders: produce a `bedrock.AppBuilder` by calling `appbuilder.LifecycleContext(appbuilder.OTel(appbuilder.Recover(...)))`. See `rest.Builder` and `grpc.Builder`.
-- App config: embed `humus.Config` (or `humus.Config`'s types) and implement provider interfaces when necessary (e.g., `ListenerProvider`, `HttpServerProvider`). Example: `rest.Config` embeds `humus.Config` and provides `Listener(ctx)` and `HttpServer(ctx, handler)`.
-- Entry points: use package runner helpers: `rest.Run(reader, initFn)`, `grpc.Run(...)`, `job.Run(...)`, `queue.Run(...)` — those wrap builder+runner+default config.
-- REST rpc handlers: prefer the typed helpers in `rest/rpc` (ProduceJson, ConsumeJson, HandleJson). Use `rest.Handle(method, rest.BasePath("/x").Param("id"), operation)` for registering.
-- Error handling: surface and use `humus.OnError(...)` or implement `humus.ErrorHandler` for custom run-time behavior.
-- Telemetry/config: follow `default_config.yaml` and `config/otel.go` shapes; YAML supports Go templating with `env` and `default` helpers — use these when producing config files.
-- Queue semantics: respect delivery patterns. Use `queue.ProcessAtMostOnce` or `queue.ProcessAtLeastOnce` as appropriate and propagate `queue.ErrEndOfQueue` to trigger graceful shutdown.
-
-## Naming and style constraints to obey
-
-- Error variables must follow `ErrFoo` (ST1012 / staticcheck expectation).
-- Use `testify/require` in tests (project convention). Prefer `require` over `assert` for most unit tests.
-- Use `humus.Logger(name)` / `humus.LogHandler` for structured logging so logs correlate with traces.
-
-## Quick examples to copy-paste (use these patterns exactly)
-
-1) Minimal REST main:
-
-```go
-func main() {
-    rest.Run(rest.YamlSource("config.yaml"), Init)
-}
-// Init(ctx, cfg) returns *rest.Api (build routes using rest.Handle and rpc helpers)
+**Package Structure:**
+```
+rest/         - REST/HTTP APIs with OpenAPI 3.0 generation
+  rpc/        - Type-safe request/response handlers (ProduceJson, ConsumeJson, HandleJson)
+grpc/         - gRPC services with auto-instrumentation
+job/          - One-off job executors
+queue/        - Message queue processors (at-most-once / at-least-once semantics)
+  kafka/      - Kafka implementation with goroutine-per-partition concurrency
+health/       - Health monitoring abstractions (Binary, AndMonitor, OrMonitor)
+config/       - OpenTelemetry configuration schemas
+internal/     - Framework implementation (otel, httpserver, grpcserver, run)
 ```
 
-2) Builder pattern (REST): see `rest.Builder` — the builder must create listener, http.Server (with otelhttp handler) and return a bedrock app that is wrapped with `app.Recover` and `app.InterruptOn`.
+## Essential Files
 
-## What to avoid / gotchas
+**Framework Core:**
+- `humus.go` - `Logger`, `Runner`, `OnError`, `ErrorHandler` patterns
+- `default_config.yaml` - OTel defaults with Go template functions (`env`, `default`)
+- `config/otel.go` - Complete OTel config structure (Resource, Trace, Metric, Log)
+- `.github/instructions/go.instructions.md` - Strict Go coding standards (read before editing)
 
-- Don't bypass the Bedrock lifecycle wrappers (OTel, Recover, lifecycle hooks). Directly starting servers without the builder-wrapper breaks automatic OTel init and graceful shutdown.
-- For at-least-once queue processors, ensure idempotency — retries may occur.
-- When changing public-facing handler signatures, update OpenAPI generation in `rest/rpc` and confirm `example/` builds.
+**Service Implementations:**
+- `rest/rest.go` - REST builder, `ListenerProvider`, `HttpServerProvider`, `Config` embedding
+- `rest/handle.go` - `Handle()` registration, `OperationOption`, middleware pattern
+- `rest/path.go` - Path building (`BasePath("/x").Segment("y").Param("id")`)
+- `rest/rpc/json.go` - `ReturnJson`, `ConsumeJson`, OpenAPI schema generation
+- `grpc/grpc.go` - gRPC builder with auto-registration of health service
+- `queue/queue.go` - `ProcessAtMostOnce`, `ProcessAtLeastOnce`, `ErrEndOfQueue`
+- `queue/kafka/kafka.go` - Kafka runtime with partition-level concurrency
 
-## Where to look for authoritative examples
+**Examples (authoritative):**
+- `example/rest/petstore/` - Full REST API with routes, handlers, config
+- `example/grpc/petstore/` - gRPC service with health monitoring
+- `example/queue/kafka-at-most-once/`, `example/queue/kafka-at-least-once/`
 
-- `example/rest/petstore` and `example/grpc/petstore` — real runnable apps that show proper wiring of configs, builders, and startup.
+## Developer Workflows
 
-If anything here is unclear or you want more detail about a specific package or workflow, tell me which area (REST rpc, gRPC, queue runtime, OTel config, or CI) and I will expand or adjust the instructions.
+**Build & Test:**
+```bash
+go build ./...                      # Build all packages (CI requirement)
+go test -race -cover ./...          # All tests with race detection
+go test -race -cover ./rest/rpc     # Targeted package testing
+golangci-lint run                   # Lint (uses .golangci.yaml: timeout=5m, tests=false)
+```
+
+**CI Pipelines:** `.github/workflows/` - `build.yaml` (lint + test), `codeql.yaml`, `docs.yaml`, `coverage.yaml`
+
+**Run Examples:**
+```bash
+cd example/rest/petstore && go run .
+cd example/queue/kafka-at-most-once && go run .
+```
+
+## Critical Code Patterns
+
+### Configuration
+```go
+// Custom config embeds humus.Config and implements provider interfaces
+type Config struct {
+    humus.Config `config:",squash"`
+    HTTP struct { Port uint } `config:"http"`
+}
+
+func (c Config) Listener(ctx context.Context) (net.Listener, error) {
+    return net.Listen("tcp", fmt.Sprintf(":%d", c.HTTP.Port))
+}
+
+// YAML supports Go templates: {{env "VAR" | default "value"}}
+// Always use bedrockcfg.MultiSource for composition
+```
+
+### REST Entry Point
+```go
+func main() {
+    rest.Run(rest.YamlSource("config.yaml"), Init)  // Or bytes.NewReader(embedBytes)
+}
+
+func Init(ctx context.Context, cfg rest.Config) (*rest.Api, error) {
+    api := rest.NewApi(cfg.OpenApi.Title, cfg.OpenApi.Version)
+    
+    // Register handlers using rest.Handle + rpc helpers
+    rest.Handle(http.MethodGet, rest.BasePath("/users").Param("id"), 
+        rpc.ProduceJson(getUserHandler),  // GET - only response
+        rest.QueryParam("format", rest.Required()),
+    )
+    
+    rest.Handle(http.MethodPost, rest.BasePath("/users"),
+        rpc.HandleJson(createUserHandler),  // POST - request + response
+    )
+    
+    rest.Handle(http.MethodPost, rest.BasePath("/webhook"),
+        rpc.ConsumeOnlyJson(webhookHandler),  // POST - only request
+    )
+    
+    return api, nil
+}
+```
+
+### RPC Handler Types
+```go
+// Producer (GET endpoints - no request body)
+rpc.ProducerFunc[Response](func(ctx context.Context) (*Response, error) { ... })
+// Wrap with: rpc.ProduceJson(producer)
+
+// Consumer (POST webhooks - no response body)
+rpc.ConsumerFunc[Request](func(ctx context.Context, req *Request) error { ... })
+// Wrap with: rpc.ConsumeOnlyJson(consumer)
+
+// Handler (full request/response)
+rpc.HandlerFunc[Request, Response](func(ctx context.Context, req *Request) (*Response, error) { ... })
+// Wrap with: rpc.HandleJson(handler) -- shorthand for ConsumeJson(ReturnJson(handler))
+```
+
+### Queue Processing
+```go
+// At-most-once: Consume → Acknowledge → Process (fast, may lose messages)
+processor := queue.ProcessAtMostOnce(consumer, processor, acknowledger)
+
+// At-least-once: Consume → Process → Acknowledge (reliable, may duplicate)
+processor := queue.ProcessAtLeastOnce(consumer, processor, acknowledger)
+
+// Signal graceful shutdown by returning ErrEndOfQueue from Consumer
+func (c *MyConsumer) Consume(ctx context.Context) (*Message, error) {
+    if noMoreMessages { return nil, queue.ErrEndOfQueue }
+    // ...
+}
+```
+
+### Error Handling
+```go
+// Runner-level (custom behavior on build/run errors)
+runner := humus.NewRunner(builder, humus.OnError(humus.ErrorHandlerFunc(func(err error) {
+    log.Fatal(err)  // Or custom reporting
+})))
+
+// Operation-level (REST handlers)
+rest.Handle(method, path, handler, 
+    rest.OnError(rest.ErrorHandlerFunc(func(ctx context.Context, w http.ResponseWriter, err error) {
+        // Custom error response
+    })),
+)
+```
+
+### Logging & Observability
+```go
+log := humus.Logger("service-name")  // Auto-integrated with OTel traces
+log.Info("message", slog.String("key", "value"))
+
+// Logs automatically correlate with traces when using OTel-instrumented code
+// All builders automatically initialize OTel SDK from config (no manual setup)
+```
+
+## Strict Requirements
+
+**Testing:**
+- Use `testify/require` (NOT `assert`) - see `rest/rest_test.go` for patterns
+- All tests must pass with `-race` flag
+- Table-driven tests preferred for multiple scenarios
+
+**Naming:**
+- Error variables: `var ErrFooBar = errors.New("...")` (enforced by staticcheck ST1012)
+- Package names: lowercase, singular, no underscores (e.g., `rest` not `rest_api`)
+
+**Go Conventions:**
+- Follow `.github/instructions/go.instructions.md` STRICTLY
+- NEVER duplicate `package` declarations in files
+- Return early to reduce nesting (happy path left-aligned)
+- Make zero values useful
+
+**Configuration:**
+- All YAML configs use Go templates with `env` and `default` functions
+- Default configs are embedded via `//go:embed default_config.yaml`
+- Custom configs MUST embed `humus.Config` with `` `config:",squash"` `` tag
+
+## Common Pitfalls
+
+❌ **Don't bypass lifecycle wrappers** - manually starting servers breaks OTel init and graceful shutdown  
+❌ **Don't ignore delivery semantics** - at-least-once processors MUST be idempotent  
+❌ **Don't change handler signatures** without updating OpenAPI generation in `rest/rpc`  
+❌ **Don't use `assert`** in tests - use `require` to fail fast  
+❌ **Don't hardcode config values** - use YAML templates: `{{env "VAR" | default "value"}}`
+
+## Quick Reference
+
+**Path Building:** `rest.BasePath("/api").Segment("v1").Segment("users").Param("id")`  
+**Parameters:** `rest.QueryParam("name", rest.Required())`, `rest.Header("Authorization", rest.Required(), rest.JWTAuth("jwt"))`  
+**Health Monitors:** `health.And(monitor1, monitor2)`, `health.Or(monitor1, monitor2)`, `new(health.Binary).MarkHealthy()`  
+**Kafka Runtime:** `kafka.NewAtMostOnceRuntime(brokers, topic, groupID, processor)` (goroutine-per-partition model)
+
+For detailed examples of any pattern, check `example/` or ask for specific clarification on: REST handlers, gRPC services, queue runtimes, OTel config, or CI workflows.
