@@ -4,7 +4,6 @@ weight: 60
 type: docs
 ---
 
-# Bedrock Integration
 
 Documentation coming soon.
 

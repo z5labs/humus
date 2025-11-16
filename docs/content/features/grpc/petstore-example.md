@@ -4,7 +4,6 @@ weight: 70
 type: docs
 ---
 
-# Petstore Example
 
 Documentation coming soon.
 

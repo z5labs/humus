@@ -4,7 +4,6 @@ weight: 50
 type: docs
 ---
 
-# From Grpc Go
 
 Documentation coming soon.
 

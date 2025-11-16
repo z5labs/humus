@@ -5,7 +5,6 @@ weight: 60
 type: docs
 ---
 
-# Error Handling
 
 Documentation coming soon.
 

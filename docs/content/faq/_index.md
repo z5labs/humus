@@ -5,7 +5,6 @@ weight: 7
 type: docs
 ---
 
-# FAQ & Troubleshooting
 
 Common questions, issues, and solutions for Humus applications.
 

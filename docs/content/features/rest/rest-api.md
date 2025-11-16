@@ -5,7 +5,6 @@ weight: 20
 type: docs
 ---
 
-# REST API
 
 Documentation coming soon.
 

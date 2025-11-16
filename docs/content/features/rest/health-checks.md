@@ -5,7 +5,6 @@ weight: 80
 type: docs
 ---
 
-# Health Checks
 
 Documentation coming soon.
 

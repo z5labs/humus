@@ -5,7 +5,6 @@ weight: 20
 type: docs
 ---
 
-# Your First Service
 
 In this guide, you'll build a simple REST service that responds with "Hello, World!". This will introduce you to the core concepts of Humus.
 

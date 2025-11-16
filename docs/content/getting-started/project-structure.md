@@ -5,7 +5,6 @@ weight: 40
 type: docs
 ---
 
-# Project Structure
 
 This guide provides recommended patterns for organizing Humus applications.
 

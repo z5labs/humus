@@ -4,7 +4,6 @@ weight: 50
 type: docs
 ---
 
-# Job Package
 
 Documentation coming soon.
 

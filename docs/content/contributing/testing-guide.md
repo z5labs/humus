@@ -4,7 +4,6 @@ weight: 40
 type: docs
 ---
 
-# Testing Guide
 
 Documentation coming soon.
 

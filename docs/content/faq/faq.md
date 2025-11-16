@@ -4,7 +4,6 @@ weight: 30
 type: docs
 ---
 
-# Faq
 
 Documentation coming soon.
 

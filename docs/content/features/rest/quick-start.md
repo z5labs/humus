@@ -5,7 +5,6 @@ weight: 10
 type: docs
 ---
 
-# REST Quick Start
 
 This guide walks you through building a complete REST API with CRUD operations.
 

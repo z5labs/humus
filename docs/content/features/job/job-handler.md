@@ -4,7 +4,6 @@ weight: 40
 type: docs
 ---
 
-# Job Handler
 
 Documentation coming soon.
 

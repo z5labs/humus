@@ -5,7 +5,6 @@ weight: 35
 type: docs
 ---
 
-# Authentication
 
 Humus REST services provide built-in support for multiple authentication schemes with automatic OpenAPI security specification generation.
 

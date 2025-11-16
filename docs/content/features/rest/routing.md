@@ -5,7 +5,6 @@ weight: 40
 type: docs
 ---
 
-# Routing
 
 Humus REST routing provides flexible path building and comprehensive parameter validation with automatic OpenAPI documentation generation.
 

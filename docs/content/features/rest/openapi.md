@@ -5,7 +5,6 @@ weight: 70
 type: docs
 ---
 
-# OpenAPI
 
 Documentation coming soon.
 

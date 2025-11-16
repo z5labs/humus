@@ -4,7 +4,6 @@ weight: 30
 type: docs
 ---
 
-# Builder Runner Pattern
 
 Documentation coming soon.
 

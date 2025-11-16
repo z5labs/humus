@@ -4,7 +4,6 @@ weight: 40
 type: docs
 ---
 
-# From Chi
 
 Documentation coming soon.
 

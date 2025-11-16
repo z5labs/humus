@@ -5,7 +5,6 @@ weight: 5
 type: docs
 ---
 
-# API Reference
 
 Quick reference guides for Humus packages. For complete API documentation, see [pkg.go.dev/github.com/z5labs/humus](https://pkg.go.dev/github.com/z5labs/humus).
 

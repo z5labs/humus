@@ -5,7 +5,6 @@ weight: 6
 type: docs
 ---
 
-# Migration & Integration
 
 Guides for migrating existing applications to Humus and integrating with other systems.
 

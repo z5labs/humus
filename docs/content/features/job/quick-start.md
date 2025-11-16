@@ -4,7 +4,6 @@ weight: 30
 type: docs
 ---
 
-# Quick Start
 
 Documentation coming soon.
 

@@ -5,7 +5,6 @@ weight: 1
 type: docs
 ---
 
-# Getting Started with Humus
 
 This guide will help you get started with Humus, from installation to building your first service.
 

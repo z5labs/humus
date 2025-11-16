@@ -5,7 +5,6 @@ weight: 50
 type: docs
 ---
 
-# Idempotency
 
 At-least-once processing guarantees message delivery but may deliver duplicates. Your processor must be **idempotent** - processing the same message multiple times produces the same result.
 

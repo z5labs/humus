@@ -5,7 +5,6 @@ weight: 20
 type: docs
 ---
 
-# Observability
 
 Humus provides built-in observability through automatic OpenTelemetry (OTel) integration. Every service gets traces, metrics, and logs out of the box.
 

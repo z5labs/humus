@@ -5,7 +5,6 @@ weight: 20
 type: docs
 ---
 
-# gRPC Services
 
 Humus gRPC services provide a complete framework for building high-performance microservices with automatic instrumentation, health checks, and seamless Protocol Buffers integration.
 

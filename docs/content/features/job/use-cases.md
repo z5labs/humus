@@ -4,7 +4,6 @@ weight: 50
 type: docs
 ---
 
-# Use Cases
 
 Documentation coming soon.
 

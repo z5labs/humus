@@ -4,7 +4,6 @@ weight: 40
 type: docs
 ---
 
-# Grpc Package
 
 Documentation coming soon.
 

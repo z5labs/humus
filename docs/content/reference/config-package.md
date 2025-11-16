@@ -4,7 +4,6 @@ weight: 70
 type: docs
 ---
 
-# Config Package
 
 Documentation coming soon.
 

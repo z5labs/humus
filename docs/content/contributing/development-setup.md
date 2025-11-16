@@ -4,7 +4,6 @@ weight: 30
 type: docs
 ---
 
-# Development Setup
 
 Documentation coming soon.
 
