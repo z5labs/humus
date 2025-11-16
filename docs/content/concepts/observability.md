@@ -347,6 +347,44 @@ log.WarnContext(ctx, "rate limit approaching", "current", current, "limit", limi
 log.ErrorContext(ctx, "failed to connect", "error", err)
 ```
 
+### Minimum Log Level Filtering
+
+You can configure minimum log levels per logger name to filter out verbose logs from specific packages:
+
+```yaml
+otel:
+  log:
+    processor:
+      type: batch
+      batch:
+        export_interval: 1s
+        max_size: 512
+    exporter:
+      type: otlp
+      otlp:
+        type: grpc
+        target: localhost:4317
+    minimum_log_level:
+      github.com/z5labs/humus/queue/kafka: info   # Filter DEBUG logs
+      github.com/twmb/franz-go/pkg/kgo: warn      # Filter DEBUG and INFO logs
+      github.com/some/verbose-lib: error           # Only ERROR logs
+```
+
+**How it works:**
+
+- **Logger name matching**: Uses the instrumentation scope name (package path) from `humus.Logger("package/name")`
+- **Prefix matching**: If "github.com/z5labs/humus" is configured, it matches "github.com/z5labs/humus/queue/kafka" and all subpackages
+- **Longest prefix wins**: More specific configurations take precedence
+- **Fail-open**: Unconfigured loggers allow all log levels
+
+**Supported levels:**
+- `debug` - All logs (most verbose)
+- `info` - INFO and above
+- `warn` or `warning` - WARN and above
+- `error` - Only ERROR logs (least verbose)
+
+This is useful for reducing noise from third-party libraries or specific internal packages without affecting other loggers.
+
 ## Sampling
 
 Control trace volume with sampling:
