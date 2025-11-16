@@ -5,7 +5,6 @@ weight: 10
 type: docs
 ---
 
-# REST Services
 
 Humus REST services provide a complete framework for building OpenAPI-compliant HTTP APIs with automatic schema generation, type-safe handlers, and built-in observability.
 

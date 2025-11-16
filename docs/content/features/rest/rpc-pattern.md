@@ -5,7 +5,6 @@ weight: 30
 type: docs
 ---
 
-# RPC Pattern
 
 The `rest/rpc` package provides a type-safe abstraction for HTTP handlers with automatic OpenAPI schema generation.
 

@@ -4,7 +4,6 @@ weight: 40
 type: docs
 ---
 
-# Custom Health Monitors
 
 Documentation coming soon.
 

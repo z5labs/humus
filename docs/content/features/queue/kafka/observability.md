@@ -5,7 +5,6 @@ weight: 70
 type: docs
 ---
 
-# Observability
 
 The Kafka runtime provides comprehensive OpenTelemetry integration with automatic tracing, metrics, and structured logging for message processing.
 

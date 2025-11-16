@@ -5,7 +5,6 @@ weight: 60
 type: docs
 ---
 
-# Multi-Topic Processing
 
 The Kafka runtime supports consuming and processing multiple topics simultaneously, each with its own processor and delivery semantics.
 

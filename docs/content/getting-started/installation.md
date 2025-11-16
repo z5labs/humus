@@ -5,7 +5,6 @@ weight: 10
 type: docs
 ---
 
-# Installation
 
 ## Installing Humus
 

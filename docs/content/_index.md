@@ -3,7 +3,6 @@ title: Humus
 type: docs
 ---
 
-# Humus
 
 **A modular Go framework for building production-ready services with standardized observability, health checks, and graceful shutdown.**
 

@@ -5,7 +5,6 @@ weight: 20
 type: docs
 ---
 
-# Delivery Semantics
 
 Queue processing services must choose between two fundamental delivery guarantees: **at-most-once** and **at-least-once**. This choice affects how your application handles failures and determines the reliability guarantees you can provide.
 

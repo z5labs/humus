@@ -4,7 +4,6 @@ weight: 30
 type: docs
 ---
 
-# From Vanilla Go
 
 Documentation coming soon.
 

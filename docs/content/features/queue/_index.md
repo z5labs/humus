@@ -5,7 +5,6 @@ weight: 40
 type: docs
 ---
 
-# Queue Services
 
 Humus queue services provide a complete framework for processing messages from message queues with configurable delivery semantics, automatic concurrency management, and built-in observability.
 

@@ -5,7 +5,6 @@ weight: 10
 type: docs
 ---
 
-# Configuration System
 
 Humus uses a powerful configuration system built on YAML with Go template support and multi-source composition.
 

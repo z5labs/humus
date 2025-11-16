@@ -5,7 +5,6 @@ weight: 30
 type: docs
 ---
 
-# Lifecycle Management
 
 Humus provides automatic lifecycle management for all service types, including graceful shutdown, panic recovery, and OS signal handling.
 

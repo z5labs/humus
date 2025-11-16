@@ -5,7 +5,6 @@ weight: 30
 type: docs
 ---
 
-# Job Services
 
 Humus Job services provide a framework for building one-off executors, batch processors, database migrations, and scheduled tasks with the same observability and lifecycle management as long-running services.
 

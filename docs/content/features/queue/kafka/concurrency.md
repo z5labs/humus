@@ -5,7 +5,6 @@ weight: 40
 type: docs
 ---
 
-# Concurrency Model
 
 The Kafka runtime uses a **goroutine-per-partition** architecture that provides automatic parallelism and partition isolation.
 

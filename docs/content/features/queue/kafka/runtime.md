@@ -5,7 +5,6 @@ weight: 20
 type: docs
 ---
 
-# Runtime Configuration
 
 The Kafka runtime provides extensive configuration options for controlling consumer behavior, fetch settings, and topic processing.
 

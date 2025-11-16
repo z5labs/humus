@@ -4,7 +4,6 @@ weight: 50
 type: docs
 ---
 
-# Best Practices
 
 Documentation coming soon.
 

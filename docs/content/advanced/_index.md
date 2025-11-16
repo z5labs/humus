@@ -5,7 +5,6 @@ weight: 4
 type: docs
 ---
 
-# Advanced Topics
 
 This section covers advanced patterns, customizations, and deep dives into Humus internals.
 

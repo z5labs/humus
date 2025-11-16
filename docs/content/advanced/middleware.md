@@ -4,7 +4,6 @@ weight: 60
 type: docs
 ---
 
-# Middleware
 
 Documentation coming soon.
 

@@ -5,7 +5,6 @@ weight: 10
 type: docs
 ---
 
-# Kafka Runtime
 
 The Humus Kafka runtime provides a production-ready integration with Apache Kafka, offering concurrent per-partition processing, automatic OpenTelemetry instrumentation, and flexible delivery semantics.
 

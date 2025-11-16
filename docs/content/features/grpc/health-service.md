@@ -4,7 +4,6 @@ weight: 50
 type: docs
 ---
 
-# Health Service
 
 Documentation coming soon.
 

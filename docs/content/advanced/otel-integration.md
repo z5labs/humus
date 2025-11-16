@@ -4,7 +4,6 @@ weight: 50
 type: docs
 ---
 
-# Otel Integration
 
 Documentation coming soon.
 

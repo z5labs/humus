@@ -5,7 +5,6 @@ weight: 2
 type: docs
 ---
 
-# Core Concepts
 
 This section covers the fundamental concepts and patterns that power Humus applications.
 

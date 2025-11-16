@@ -5,7 +5,6 @@ weight: 80
 type: docs
 ---
 
-# Production Configuration
 
 This guide covers best practices for deploying and configuring Kafka processors in production environments.
 

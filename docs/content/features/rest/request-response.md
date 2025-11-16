@@ -5,7 +5,6 @@ weight: 50
 type: docs
 ---
 
-# Request & Response Handling
 
 Documentation coming soon.
 

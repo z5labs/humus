@@ -5,7 +5,6 @@ weight: 30
 type: docs
 ---
 
-# Configuration
 
 Humus uses YAML-based configuration with Go template support. This provides a flexible, environment-aware configuration system.
 

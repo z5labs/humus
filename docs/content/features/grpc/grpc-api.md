@@ -4,7 +4,6 @@ weight: 40
 type: docs
 ---
 
-# Grpc Api
 
 Documentation coming soon.
 

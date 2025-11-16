@@ -5,7 +5,6 @@ weight: 3
 type: docs
 ---
 
-# Features
 
 Humus provides four distinct service types, each optimized for different use cases.
 

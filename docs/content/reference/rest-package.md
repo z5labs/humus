@@ -4,7 +4,6 @@ weight: 30
 type: docs
 ---
 
-# Rest Package
 
 Documentation coming soon.
 

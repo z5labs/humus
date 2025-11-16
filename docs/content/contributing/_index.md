@@ -5,7 +5,6 @@ weight: 8
 type: docs
 ---
 
-# Contributing to Humus
 
 Thank you for your interest in contributing to Humus! This guide will help you get started.
 

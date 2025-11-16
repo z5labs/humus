@@ -4,7 +4,6 @@ weight: 80
 type: docs
 ---
 
-# Multi Source Config
 
 Documentation coming soon.
 

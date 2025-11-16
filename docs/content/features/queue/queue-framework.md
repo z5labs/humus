@@ -5,7 +5,6 @@ weight: 10
 type: docs
 ---
 
-# Queue Framework
 
 The Humus queue framework implements a three-phase message processing pattern that separates concerns for consuming, processing, and acknowledging messages from a queue.
 

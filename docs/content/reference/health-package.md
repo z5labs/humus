@@ -4,7 +4,6 @@ weight: 60
 type: docs
 ---
 
-# Health Package
 
 Documentation coming soon.
 

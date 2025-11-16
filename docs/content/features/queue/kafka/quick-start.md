@@ -5,7 +5,6 @@ weight: 10
 type: docs
 ---
 
-# Kafka Quick Start
 
 This guide walks you through building a complete Kafka message processor with at-least-once delivery semantics.
 

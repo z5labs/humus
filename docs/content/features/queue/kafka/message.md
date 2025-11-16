@@ -5,7 +5,6 @@ weight: 30
 type: docs
 ---
 
-# Message Structure
 
 Kafka messages in Humus are represented by the `kafka.Message` type, which provides access to all message data and metadata.
 

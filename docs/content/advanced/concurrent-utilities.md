@@ -4,7 +4,6 @@ weight: 90
 type: docs
 ---
 
-# Concurrent Utilities
 
 Documentation coming soon.
 
