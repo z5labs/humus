@@ -282,6 +282,11 @@ func (lpi logProviderInitializer) Init(ctx context.Context) error {
 		return err
 	}
 
+	// Wrap with filtering processor if minimum log levels are configured
+	if len(lpi.cfg.MinimumLogLevel) > 0 {
+		lp = newFilteringProcessor(lp, lpi.cfg.MinimumLogLevel)
+	}
+
 	provider := log.NewLoggerProvider(
 		log.WithProcessor(lp),
 		log.WithResource(lpi.r),
