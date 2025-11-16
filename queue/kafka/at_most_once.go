@@ -106,18 +106,8 @@ func (h atMostOnceMessagesHandler) Handle(ctx context.Context, records []*kgo.Re
 				record.Context = ctx
 			}
 
-			err := h.processRecord(record)
-			if err != nil {
-				// Log error but continue processing (message already committed)
-				h.log.ErrorContext(
-					ctx,
-					"failed to process kafka message",
-					TopicAttr(record.Topic),
-					PartitionAttr(record.Partition),
-					OffsetAttr(record.Offset),
-					slog.Any("error", err),
-				)
-			}
+			h.processRecord(record)
+
 			return nil // Don't propagate errors - messages are already committed
 		})
 	}
@@ -125,7 +115,7 @@ func (h atMostOnceMessagesHandler) Handle(ctx context.Context, records []*kgo.Re
 	return p.Wait()
 }
 
-func (h atMostOnceMessagesHandler) processRecord(record *kgo.Record) error {
+func (h atMostOnceMessagesHandler) processRecord(record *kgo.Record) {
 	spanCtx, span := h.tracer.WithProcessSpan(record)
 	defer span.End()
 
@@ -137,7 +127,7 @@ func (h atMostOnceMessagesHandler) processRecord(record *kgo.Record) error {
 		}
 	}
 
-	return h.processor.Process(spanCtx, Message{
+	err := h.processor.Process(spanCtx, Message{
 		Headers:   headers,
 		Key:       record.Key,
 		Value:     record.Value,
@@ -146,4 +136,14 @@ func (h atMostOnceMessagesHandler) processRecord(record *kgo.Record) error {
 		Partition: record.Partition,
 		Offset:    record.Offset,
 	})
+	if err != nil {
+		h.log.ErrorContext(
+			spanCtx,
+			"failed to process kafka message",
+			TopicAttr(record.Topic),
+			PartitionAttr(record.Partition),
+			OffsetAttr(record.Offset),
+			slog.Any("error", err),
+		)
+	}
 }
