@@ -69,18 +69,21 @@ func main() {
 	log.Printf("successfully uploaded %d measurements to MinIO bucket %s (key: %s)", *count, *bucket, *objectKey)
 }
 
-func fetchWeatherStations() ([]WeatherStation, error) {
+func fetchWeatherStations() (stations []WeatherStation, err error) {
 	resp, err := http.Get(weatherStationsURL)
 	if err != nil {
 		return nil, fmt.Errorf("http get: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close response body: %w", cerr)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	var stations []WeatherStation
 	scanner := bufio.NewScanner(resp.Body)
 
 	for scanner.Scan() {
@@ -116,23 +119,30 @@ func fetchWeatherStations() ([]WeatherStation, error) {
 	return stations, nil
 }
 
-func generateToFile(filename string, count, workers int, stations []WeatherStation) error {
+func generateToFile(filename string, count, workers int, stations []WeatherStation) (err error) {
 	log.Printf("Generating %d measurements to file using %d workers...", count, workers)
 
 	f, err := os.Create(filename)
 	if err != nil {
 		return fmt.Errorf("create file: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close file: %w", cerr)
+		}
+	}()
 
 	w := bufio.NewWriterSize(f, 1024*1024)
-	defer w.Flush()
 
 	if err := generateMeasurementsConcurrent(w, count, workers, stations); err != nil {
 		return err
 	}
 
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("flush writer: %w", err)
+	}
+
+	return nil
 }
 
 func generateToMinio(endpoint, accessKey, secretKey, bucket, objectKey string, count, workers int, stations []WeatherStation) error {
@@ -164,25 +174,34 @@ func generateToMinio(endpoint, accessKey, secretKey, bucket, objectKey string, c
 	if err != nil {
 		return fmt.Errorf("create pipe: %w", err)
 	}
-	defer pr.Close()
+	defer func() {
+		_ = pr.Close()
+	}()
+
+	uploadCtx, uploadCancel := context.WithCancel(ctx)
+	defer uploadCancel()
 
 	errCh := make(chan error, 1)
 	go func() {
-		defer pw.Close()
+		defer func() {
+			_ = pw.Close()
+		}()
 		w := bufio.NewWriterSize(pw, 1024*1024)
 		err := generateMeasurementsConcurrent(w, count, workers, stations)
 		if err != nil {
+			uploadCancel() // Cancel the upload if generation fails
 			errCh <- err
 			return
 		}
 		if err := w.Flush(); err != nil {
+			uploadCancel()
 			errCh <- err
 			return
 		}
 		errCh <- nil
 	}()
 
-	_, err = mc.PutObject(ctx, bucket, objectKey, pr, -1, minio.PutObjectOptions{
+	_, err = mc.PutObject(uploadCtx, bucket, objectKey, pr, -1, minio.PutObjectOptions{
 		ContentType: "text/plain",
 	})
 	if err != nil {
@@ -250,7 +269,7 @@ func generateMeasurementsConcurrent(w io.Writer, count, workers int, stations []
 		go func(start, end int) {
 			defer wg.Done()
 			
-			rng := rand.New(rand.NewSource(time.Now().UnixNano() + int64(start)))
+			rng := rand.New(rand.NewSource(time.Now().UnixNano() ^ int64(start)))
 			var buf strings.Builder
 			buf.Grow(1024 * 1024) // 1MB buffer
 
@@ -267,14 +286,15 @@ func generateMeasurementsConcurrent(w io.Writer, count, workers int, stations []
 					buf.Reset()
 					buf.Grow(1024 * 1024)
 				}
-				
-				generated.Add(1)
 			}
 
 			// Flush remaining
 			if buf.Len() > 0 {
 				lineCh <- []byte(buf.String())
 			}
+
+			// Batch increment after loop for better performance
+			generated.Add(int64(end - start))
 		}(start, end)
 	}
 

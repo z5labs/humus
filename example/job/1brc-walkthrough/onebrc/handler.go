@@ -71,7 +71,11 @@ func (h *Handler) Handle(ctx context.Context) error {
 		h.log.ErrorContext(ctx, "failed to fetch input object", slog.Any("error", err))
 		return fmt.Errorf("get object: %w", err)
 	}
-	defer rc.Close()
+	defer func() {
+		if cerr := rc.Close(); cerr != nil {
+			h.log.WarnContext(ctx, "failed to close input object", slog.Any("error", cerr))
+		}
+	}()
 
 	parseCtx, parseEnd := h.tracer(ctx, "parse")
 	cityStats, err := Parse(bufio.NewReader(rc))
@@ -81,13 +85,16 @@ func (h *Handler) Handle(ctx context.Context) error {
 		return fmt.Errorf("parse: %w", err)
 	}
 
-	counter, _ := h.meter.Int64Counter("onebrc.cities.count")
+	counter, err := h.meter.Int64Counter("onebrc.cities.count")
+	if err != nil {
+		h.log.ErrorContext(ctx, "failed to create counter", slog.Any("error", err))
+		return fmt.Errorf("create counter: %w", err)
+	}
 	counter.Add(ctx, int64(len(cityStats)), metric.WithAttributes(attribute.String("bucket", h.bucket)))
 
-	calcCtx, calcEnd := h.tracer(ctx, "calculate")
+	_, calcEnd := h.tracer(ctx, "calculate")
 	results := Calculate(cityStats)
 	calcEnd()
-	_ = calcCtx
 
 	writeCtx, writeEnd := h.tracer(ctx, "write_results")
 	output := FormatResults(results)

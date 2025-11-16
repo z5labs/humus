@@ -80,15 +80,18 @@ func (h *Handler) Handle(ctx context.Context) error {
 	}
 
 	// 3. Record metric
-	counter, _ := h.meter.Int64Counter("onebrc.cities.count")
-	counter.Add(ctx, int64(len(cityStats)), 
+	counter, err := h.meter.Int64Counter("onebrc.cities.count")
+	if err != nil {
+		h.log.ErrorContext(ctx, "failed to create counter", slog.Any("error", err))
+		return fmt.Errorf("create counter: %w", err)
+	}
+	counter.Add(ctx, int64(len(cityStats)),
 		metric.WithAttributes(attribute.String("bucket", h.bucket)))
 
 	// 4. Calculate (with span)
-	calcCtx, calcEnd := h.tracer(ctx, "calculate")
+	_, calcEnd := h.tracer(ctx, "calculate")
 	results := Calculate(cityStats)
 	calcEnd()
-	_ = calcCtx
 
 	// 5. Write results (with span)
 	writeCtx, writeEnd := h.tracer(ctx, "write_results")

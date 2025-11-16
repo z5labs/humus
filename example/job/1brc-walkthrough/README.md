@@ -64,9 +64,9 @@ The job will:
 - Download `results.txt` from the `onebrc` bucket
 
 **Grafana:** http://localhost:3000 (admin/admin)
-- **Traces:** Explore → Tempo → Search for service "1brc-job"
+- **Traces:** Explore → Tempo → Search for service "1brc-job-walkthrough"
 - **Metrics:** Explore → Mimir → Query `onebrc_cities_count`
-- **Logs:** Explore → Loki → `{service_name="1brc-job"}`
+- **Logs:** Explore → Loki → `{service_name="1brc-job-walkthrough"}`
 
 ## Configuration
 
@@ -77,7 +77,10 @@ Environment variables (see `config.yaml`):
 - `MINIO_BUCKET`: Bucket name (default: onebrc)
 - `ONEBRC_INPUT_KEY`: Input object key (default: measurements.txt)
 - `ONEBRC_OUTPUT_KEY`: Output object key (default: results.txt)
-- `OTEL_EXPORTER_OTLP_ENDPOINT`: OTLP endpoint (default: localhost:4317)
+- `OTEL_OTLP_TARGET`: OTLP endpoint (default: localhost:4317)
+- `OTEL_TRACE_EXPORTER`: Trace exporter type (default: otlp)
+- `OTEL_METRIC_EXPORTER`: Metric exporter type (default: otlp)
+- `OTEL_LOG_EXPORTER`: Log exporter type (default: otlp)
 
 ## Architecture
 

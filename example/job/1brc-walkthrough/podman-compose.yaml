@@ -45,7 +45,8 @@ services:
       - tempo-data:/tmp/tempo
     ports:
       - "3200:3200"   # Tempo HTTP
-      - "4317"        # OTLP gRPC receiver (internal)
+      # Note: Port 4317 is for internal collector-to-tempo communication only.
+      # Applications should send telemetry to the OTel Collector on localhost:4317, not directly to Tempo.
     networks:
       - otel-net
 

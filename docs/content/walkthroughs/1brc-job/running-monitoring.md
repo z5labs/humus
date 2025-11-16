@@ -79,7 +79,7 @@ handle (2m45s)
 ### View Metrics
 
 1. **Explore** → Select **Mimir**
-2. Query: `onebrc_cities_count`
+2. Query: `onebrc_cities_count` (the metric is defined as `onebrc.cities.count` but exporters convert dots to underscores)
 3. You should see a datapoint showing 413 cities processed
 
 ### View Logs
