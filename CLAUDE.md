@@ -13,6 +13,10 @@ Humus is a modular Go framework built on top of Bedrock (Z5Labs' base framework)
 
 All applications include standardized observability (OpenTelemetry), health checks, and graceful shutdown out of the box.
 
+## Requirements
+
+- Go 1.24.0 or later (see `go.mod`)
+
 ## Development Commands
 
 ### Building
@@ -41,6 +45,14 @@ golangci-lint run
 # - Timeout: 5m
 # - Tests: false (configured in .golangci.yaml)
 ```
+
+### CI/CD Workflows
+
+Located in `.github/workflows/`:
+- `build.yaml` - Lint and test pipeline
+- `coverage.yaml` - Test coverage reporting
+- `docs.yaml` - Documentation site deployment
+- `codeql.yaml` - Security analysis
 
 ## Architecture
 
@@ -83,6 +95,7 @@ The `default_config.yaml` file contains framework defaults for OpenTelemetry con
 - `grpc/` - gRPC application framework
 - `job/` - Job/batch application framework
 - `queue/` - Message queue processing framework with delivery semantics
+  - `queue/kafka/` - Kafka-specific runtime with goroutine-per-partition concurrency
 - `health/` - Health monitoring abstractions
 - `config/` - Configuration schemas (mainly OTel)
 - `concurrent/` - Thread-safe utilities
@@ -210,55 +223,69 @@ No HTTP/gRPC server, just executes once with OTel and lifecycle management.
 
 #### Queue Services
 
-**Three-Phase Processing Pattern:**
-- **Consumer[T]** - Retrieves messages from a queue
+**Core Interfaces:**
+- **Consumer[T]** - Retrieves messages from a queue (return `ErrEndOfQueue` when exhausted)
 - **Processor[T]** - Executes business logic on messages
 - **Acknowledger[T]** - Confirms successful processing back to the queue
 
-**Built-in Processors:**
+**Delivery Semantics (implemented by Runtime):**
 
-`ProcessAtMostOnce` - At-most-once delivery semantics (Consume → Acknowledge → Process)
-- Messages acknowledged immediately after consumption, before processing
+At-most-once: Consume → Acknowledge → Process
+- Messages acknowledged before processing
 - Processing failures result in message loss
 - Suitable for non-critical data (metrics, logging, caching)
-- Returns a processor with `ProcessItem(ctx)` method for single-message processing
 
-`ProcessAtLeastOnce` - At-least-once delivery semantics (Consume → Process → Acknowledge)
+At-least-once: Consume → Process → Acknowledge
 - Messages acknowledged only after successful processing
 - Processing failures result in redelivery and retry
 - Requires idempotent processors to handle duplicates
 - Suitable for critical operations (financial transactions, database updates)
-- Returns a processor with `ProcessItem(ctx)` method for single-message processing
 
-**Queue Processing Approaches:**
-
-**Approach 1: Using ProcessItem (Recommended for simple cases)**
-```go
-processor := queue.ProcessAtMostOnce(consumer, processor, acknowledger)
-
-// Process loop
-for {
-    err := processor.ProcessItem(ctx)
-    if errors.Is(err, queue.ErrEndOfQueue) {
-        break // Graceful shutdown
-    }
-    if err != nil {
-        // Handle error (at-most-once: message lost, at-least-once: will retry)
-        continue
-    }
-}
-```
-
-**Approach 2: Custom Runtime (For complex orchestration)**
-
-The Runtime interface allows full control over queue processing:
+**Runtime Interface:**
 ```go
 type Runtime interface {
     ProcessQueue(ctx context.Context) error
 }
 ```
 
-Implementations should coordinate Consumer, Processor, and Acknowledger. Return `queue.ErrEndOfQueue` from Consumer when the queue is exhausted to trigger graceful shutdown.
+Implementations coordinate Consumer, Processor, and Acknowledger. Return `queue.ErrEndOfQueue` from Consumer when the queue is exhausted to trigger graceful shutdown.
+
+**Kafka Runtime (queue/kafka):**
+```go
+// Kafka-specific runtimes with goroutine-per-partition concurrency
+kafka.NewAtMostOnceRuntime(brokers, topic, groupID, processor)
+kafka.NewAtLeastOnceRuntime(brokers, topic, groupID, processor)
+```
+
+**Custom Runtime Example:**
+```go
+type MyRuntime struct {
+    consumer     queue.Consumer[Message]
+    processor    queue.Processor[Message]
+    acknowledger queue.Acknowledger[Message]
+}
+
+func (r *MyRuntime) ProcessQueue(ctx context.Context) error {
+    for {
+        msg, err := r.consumer.Consume(ctx)
+        if errors.Is(err, queue.ErrEndOfQueue) {
+            return nil // Graceful shutdown
+        }
+        if err != nil {
+            return err
+        }
+
+        // At-least-once: Process before Acknowledge
+        if err := r.processor.Process(ctx, msg); err != nil {
+            return err
+        }
+
+        if err := r.acknowledger.Acknowledge(ctx, msg); err != nil {
+            return err
+        }
+    }
+}
+```
 
 #### Health Monitoring
 
@@ -274,13 +301,10 @@ Implementations:
 
 ### Service Registration Patterns
 
-**REST:**
+**REST:** (see detailed examples in REST Services section above)
 ```go
 api := rest.NewApi("My Service", "v1.0.0")
-operation := rpc.NewOperation(
-    ConsumeJson(ReturnJson(handlerFunc)),
-)
-rest.Handle(http.MethodPost, rest.BasePath("/users"), operation)
+rest.Handle(http.MethodPost, rest.BasePath("/users"), rpc.HandleJson(handlerFunc))
 ```
 
 **gRPC:**
@@ -298,55 +322,13 @@ app := job.NewApp(handlerFunc)
 
 **Queue:**
 ```go
-// Option 1: Use built-in processors with ProcessItem
-type SimpleRuntime struct {
-    processor *queue.AtMostOnce[Message] // or *queue.AtLeastOnce[Message]
-}
-
-func (r *SimpleRuntime) ProcessQueue(ctx context.Context) error {
-    for {
-        err := r.processor.ProcessItem(ctx)
-        if errors.Is(err, queue.ErrEndOfQueue) {
-            return nil // Graceful shutdown
-        }
-        if err != nil {
-            // Handle error based on delivery semantics
-            continue
-        }
-    }
-}
-
-runtime := &SimpleRuntime{
-    processor: queue.ProcessAtMostOnce(consumer, processor, acknowledger),
-}
+// Using Kafka runtime (recommended for Kafka)
+runtime := kafka.NewAtLeastOnceRuntime(brokers, topic, groupID, processor)
 app := queue.NewApp(runtime)
 
-// Option 2: Custom runtime with manual coordination
-type MyRuntime struct {
-    consumer     queue.Consumer[Message]
-    processor    queue.Processor[Message]
-    acknowledger queue.Acknowledger[Message]
-}
-
-func (r *MyRuntime) ProcessQueue(ctx context.Context) error {
-    for {
-        msg, err := r.consumer.Consume(ctx)
-        if errors.Is(err, queue.ErrEndOfQueue) {
-            return nil // Graceful shutdown
-        }
-        if err != nil {
-            return err
-        }
-
-        if err := r.processor.Process(ctx, msg); err != nil {
-            return err
-        }
-
-        if err := r.acknowledger.Acknowledge(ctx, msg); err != nil {
-            return err
-        }
-    }
-}
+// Or custom runtime implementation (see Queue Services section above)
+runtime := &MyRuntime{...}
+app := queue.NewApp(runtime)
 ```
 
 ### Entry Point Pattern
@@ -376,8 +358,22 @@ func Init(ctx context.Context, cfg Config) (*queue.App, error) {
 
 ## Important Conventions
 
+**CRITICAL: Read [.github/instructions/go.instructions.md](.github/instructions/go.instructions.md) before editing any Go code.** This file contains strict Go coding standards that must be followed, including:
+- Package declaration rules (NEVER duplicate `package` declarations)
+- Naming conventions for variables, functions, and interfaces
+- Error handling patterns and propagation
+- Concurrency guidelines
+
 1. **Error Handling** - Use `rpc.ErrorHandler` interface for custom error responses in REST operations; set via `OnError()` operation option
-2. **Error Naming** - All error variables must follow the `ErrFoo` naming pattern (enforced by golangci-lint staticcheck ST1012); e.g., `var ErrNotFound = errors.New("not found")`
+2. **Error Naming (ENFORCED)** - All error variables must follow the `ErrFoo` naming pattern (enforced by golangci-lint staticcheck ST1012):
+   ```go
+   // Correct
+   var ErrNotFound = errors.New("not found")
+   var ErrInvalidInput = errors.New("invalid input")
+
+   // Wrong - will fail linting
+   var NotFoundError = errors.New("not found")
+   ```
 3. **JWT Authentication** - Implement `rest.JWTVerifier` interface to verify tokens and inject claims into context; framework handles token extraction from "Bearer " header and returns 401 on failure
 4. **OpenAPI Schemas** - Generated automatically via reflection from Go types (uses `github.com/swaggest/jsonschema-go`)
 5. **Health Checks** - REST apps should implement custom health handlers via `rest.Readiness()` and `rest.Liveness()` options; gRPC health is automatic
@@ -424,5 +420,17 @@ When writing tests:
 The `example/` directory contains reference implementations:
 - `example/rest/petstore/` - REST API example with OpenAPI generation
 - `example/grpc/petstore/` - gRPC service example with health monitoring
+- `example/queue/kafka-at-most-once/` - Kafka queue with at-most-once semantics
+- `example/queue/kafka-at-least-once/` - Kafka queue with at-least-once semantics
 
 Refer to these for real-world usage patterns of the framework.
+
+## Common Pitfalls
+
+- **Duplicate package declarations** - Each Go file must have exactly ONE `package` line (see [go.instructions.md](.github/instructions/go.instructions.md))
+- **Using `assert` in tests** - Use `require` for fail-fast behavior, not `assert`
+- **Hardcoding config values** - Use YAML templates: `{{env "VAR" | default "value"}}`
+- **Bypassing lifecycle wrappers** - Manual server starts break OTel init and graceful shutdown
+- **Non-idempotent at-least-once processors** - Must handle duplicate message delivery
+- **Ignoring ErrEndOfQueue** - Queue consumers must return this for graceful shutdown
+- **Wrong error variable names** - Use `ErrFoo` pattern, not `FooError` (enforced by linter)
