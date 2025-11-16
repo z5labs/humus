@@ -5,8 +5,6 @@ weight: 2
 type: docs
 ---
 
-# Infrastructure Setup
-
 The 1BRC walkthrough includes a complete observability stack using Podman Compose.
 
 ## Architecture Overview

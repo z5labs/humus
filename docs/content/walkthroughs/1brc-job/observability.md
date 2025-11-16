@@ -5,8 +5,6 @@ weight: 6
 type: docs
 ---
 
-# Observability
-
 The `onebrc/handler.go` orchestrates the workflow and adds OpenTelemetry instrumentation.
 
 ## Handler with OTel

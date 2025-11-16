@@ -5,8 +5,6 @@ weight: 5
 type: docs
 ---
 
-# Walkthroughs
-
 Learn Humus by building complete, production-ready applications from scratch.
 
 ## Available Walkthroughs

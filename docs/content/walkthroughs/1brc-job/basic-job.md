@@ -5,8 +5,6 @@ weight: 3
 type: docs
 ---
 
-# Building a Basic Job
-
 This section covers `app/app.go` - the core of your Humus job.
 
 ## The Config Struct

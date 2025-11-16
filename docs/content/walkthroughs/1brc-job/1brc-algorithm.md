@@ -5,8 +5,6 @@ weight: 5
 type: docs
 ---
 
-# 1BRC Algorithm
-
 The `onebrc` package implements the core challenge logic: parse temperature data and calculate statistics.
 
 ## Parser Implementation

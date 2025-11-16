@@ -5,8 +5,6 @@ weight: 1
 type: docs
 ---
 
-# Project Setup
-
 ## Directory Structure
 
 The 1BRC walkthrough follows a standard Go project layout:

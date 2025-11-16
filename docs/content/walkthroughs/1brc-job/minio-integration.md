@@ -5,8 +5,6 @@ weight: 4
 type: docs
 ---
 
-# MinIO Integration
-
 The `storage` package wraps the MinIO Go client for S3 operations.
 
 ## Client Implementation

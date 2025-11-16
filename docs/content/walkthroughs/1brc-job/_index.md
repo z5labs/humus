@@ -5,8 +5,6 @@ weight: 1
 type: docs
 ---
 
-# 1 Billion Row Challenge - Humus Job Walkthrough
-
 ## Overview
 
 This walkthrough teaches you how to build a production-ready job application using Humus to solve the [One Billion Row Challenge](https://github.com/gunnarmorling/1brc). You'll learn how to:

@@ -5,8 +5,6 @@ weight: 7
 type: docs
 ---
 
-# Running and Monitoring
-
 ## Generate Test Data
 
 First, generate temperature measurements:
