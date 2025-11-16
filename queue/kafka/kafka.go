@@ -90,6 +90,7 @@ func MaxConcurrentFetches(fetches int) Option {
 	}
 }
 
+// Runtime represents the Kafka runtime for processing messages.
 type Runtime struct {
 	log                  *slog.Logger
 	brokers              []string
@@ -101,6 +102,7 @@ type Runtime struct {
 	maxConcurrentFetches int
 }
 
+// NewRuntime creates a new Kafka runtime with the provided brokers, group ID, and options.
 func NewRuntime(
 	brokers []string,
 	groupID string,
@@ -158,6 +160,7 @@ type eventLoop struct {
 	partitionPool   *pool.ContextPool
 }
 
+// ProcessQueue starts processing the Kafka queue.
 func (r Runtime) ProcessQueue(ctx context.Context) error {
 	loop := eventLoop{
 		log:                r.log,

@@ -123,14 +123,14 @@ func TestEventLoop_Tick_ContextCancellation(t *testing.T) {
 			cancel() // Cancel immediately
 
 			loop := eventLoop{
-				log:                 slog.Default(),
-				fetches:             make(chan kgo.FetchTopic),
-				assignedPartitions:  make(chan assignedPartition),
-				lostPartitions:      make(chan topicPartition),
-				revokedPartitions:   make(chan topicPartition),
-				topicHandlers:       make(map[string]func(recordsCommitter) recordsHandler),
-				topicPartitions:     make(map[topicPartition]chan []*kgo.Record),
-				partitionPool:       pool.New().WithContext(ctx),
+				log:                slog.Default(),
+				fetches:            make(chan kgo.FetchTopic),
+				assignedPartitions: make(chan assignedPartition),
+				lostPartitions:     make(chan topicPartition),
+				revokedPartitions:  make(chan topicPartition),
+				topicHandlers:      make(map[string]func(recordsCommitter) recordsHandler),
+				topicPartitions:    make(map[topicPartition]chan []*kgo.Record),
+				partitionPool:      pool.New().WithContext(ctx),
 			}
 
 			err := loop.tick(ctx)
@@ -142,14 +142,14 @@ func TestEventLoop_Tick_ContextCancellation(t *testing.T) {
 			defer cancel()
 
 			loop := eventLoop{
-				log:                 slog.Default(),
-				fetches:             make(chan kgo.FetchTopic),
-				assignedPartitions:  make(chan assignedPartition),
-				lostPartitions:      make(chan topicPartition),
-				revokedPartitions:   make(chan topicPartition),
-				topicHandlers:       make(map[string]func(recordsCommitter) recordsHandler),
-				topicPartitions:     make(map[topicPartition]chan []*kgo.Record),
-				partitionPool:       pool.New().WithContext(ctx),
+				log:                slog.Default(),
+				fetches:            make(chan kgo.FetchTopic),
+				assignedPartitions: make(chan assignedPartition),
+				lostPartitions:     make(chan topicPartition),
+				revokedPartitions:  make(chan topicPartition),
+				topicHandlers:      make(map[string]func(recordsCommitter) recordsHandler),
+				topicPartitions:    make(map[topicPartition]chan []*kgo.Record),
+				partitionPool:      pool.New().WithContext(ctx),
 			}
 
 			err := loop.tick(ctx)
@@ -164,14 +164,14 @@ func TestEventLoop_Run_ContextCancellation(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 
 			loop := eventLoop{
-				log:                 slog.Default(),
-				fetches:             make(chan kgo.FetchTopic),
-				assignedPartitions:  make(chan assignedPartition),
-				lostPartitions:      make(chan topicPartition),
-				revokedPartitions:   make(chan topicPartition),
-				topicHandlers:       make(map[string]func(recordsCommitter) recordsHandler),
-				topicPartitions:     make(map[topicPartition]chan []*kgo.Record),
-				partitionPool:       pool.New().WithContext(ctx),
+				log:                slog.Default(),
+				fetches:            make(chan kgo.FetchTopic),
+				assignedPartitions: make(chan assignedPartition),
+				lostPartitions:     make(chan topicPartition),
+				revokedPartitions:  make(chan topicPartition),
+				topicHandlers:      make(map[string]func(recordsCommitter) recordsHandler),
+				topicPartitions:    make(map[topicPartition]chan []*kgo.Record),
+				partitionPool:      pool.New().WithContext(ctx),
 			}
 
 			// Cancel after a short delay
@@ -632,14 +632,14 @@ func TestEventLoop_Run_FullLifecycle(t *testing.T) {
 		})
 
 		loop := eventLoop{
-			log:                 slog.Default(),
-			fetches:             make(chan kgo.FetchTopic, 1),
-			assignedPartitions:  make(chan assignedPartition, 1),
-			lostPartitions:      make(chan topicPartition, 1),
-			revokedPartitions:   make(chan topicPartition, 1),
-			topicHandlers:       make(map[string]func(recordsCommitter) recordsHandler),
-			topicPartitions:     make(map[topicPartition]chan []*kgo.Record),
-			partitionPool:       pool.New().WithContext(ctx),
+			log:                slog.Default(),
+			fetches:            make(chan kgo.FetchTopic, 1),
+			assignedPartitions: make(chan assignedPartition, 1),
+			lostPartitions:     make(chan topicPartition, 1),
+			revokedPartitions:  make(chan topicPartition, 1),
+			topicHandlers:      make(map[string]func(recordsCommitter) recordsHandler),
+			topicPartitions:    make(map[topicPartition]chan []*kgo.Record),
+			partitionPool:      pool.New().WithContext(ctx),
 		}
 
 		// Run event loop in background
@@ -707,14 +707,14 @@ func TestEventLoop_Run_MissingPartitionWarnings(t *testing.T) {
 		capture := &captureHandler{Handler: slog.Default().Handler()}
 
 		loop := eventLoop{
-			log:                 makeTestLogger(capture),
-			fetches:             make(chan kgo.FetchTopic, 3),
-			assignedPartitions:  make(chan assignedPartition, 1),
-			lostPartitions:      make(chan topicPartition, 1),
-			revokedPartitions:   make(chan topicPartition, 1),
-			topicHandlers:       make(map[string]func(recordsCommitter) recordsHandler),
-			topicPartitions:     make(map[topicPartition]chan []*kgo.Record),
-			partitionPool:       pool.New().WithContext(ctx),
+			log:                makeTestLogger(capture),
+			fetches:            make(chan kgo.FetchTopic, 3),
+			assignedPartitions: make(chan assignedPartition, 1),
+			lostPartitions:     make(chan topicPartition, 1),
+			revokedPartitions:  make(chan topicPartition, 1),
+			topicHandlers:      make(map[string]func(recordsCommitter) recordsHandler),
+			topicPartitions:    make(map[topicPartition]chan []*kgo.Record),
+			partitionPool:      pool.New().WithContext(ctx),
 		}
 
 		// Run event loop in background
