@@ -7,6 +7,7 @@ package otel
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"go.opentelemetry.io/otel/log"
@@ -42,13 +43,9 @@ func newFilteringProcessor(inner sdklog.Processor, levels map[string]string) *fi
 	}
 
 	// Sort keys by length descending for longest prefix match
-	for i := 0; i < len(sortedKeys)-1; i++ {
-		for j := i + 1; j < len(sortedKeys); j++ {
-			if len(sortedKeys[j]) > len(sortedKeys[i]) {
-				sortedKeys[i], sortedKeys[j] = sortedKeys[j], sortedKeys[i]
-			}
-		}
-	}
+	slices.SortFunc(sortedKeys, func(a, b string) int {
+		return len(b) - len(a)
+	})
 
 	return &filteringProcessor{
 		inner:      inner,
