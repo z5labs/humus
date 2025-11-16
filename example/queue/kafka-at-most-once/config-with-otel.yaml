@@ -1,0 +1,84 @@
+# Enhanced Configuration with OpenTelemetry Integration
+# This configuration shows how to enable full observability for the kafka-at-most-once example
+#
+# Usage:
+#   1. Set required environment variables:
+#      export OTEL_SERVICE_NAME="kafka-at-most-once-example"
+#      export OTEL_TRACE_EXPORTER="otlp"
+#      export OTEL_METRIC_EXPORTER="otlp"
+#      export OTEL_LOG_EXPORTER="otlp"
+#      export OTEL_OTLP_TARGET="otel-collector:4317"
+#
+#   2. Run the application with this config:
+#      go run . -config config-with-otel.yaml
+
+# OpenTelemetry Configuration
+otel:
+  # Resource attributes identify this service instance
+  resource:
+    service_name: {{env "OTEL_SERVICE_NAME" | default "kafka-at-most-once-example"}}
+    service_version: {{env "OTEL_SERVICE_VERSION" | default "1.0.0"}}
+
+  # Trace configuration
+  trace:
+    processor:
+      type: {{env "OTEL_TRACE_PROCESSOR" | default "batch"}}
+      batch:
+        # Export traces every 10 seconds
+        export_interval: {{env "OTEL_TRACE_EXPORT_BATCH_INTERVAL" | default "10s"}}
+        # Or when batch reaches 25 spans
+        max_size: {{env "OTEL_TRACE_MAX_BATCH_SIZE" | default 25}}
+
+    sampling:
+      # 100% sampling for development (1.0 = sample everything)
+      # In production, consider reducing to 0.1 (10%) or lower
+      ratio: {{env "OTEL_SAMPLING" | default 1.0}}
+
+    exporter:
+      # Export to OpenTelemetry Collector via OTLP
+      type: {{env "OTEL_TRACE_EXPORTER" | default "otlp"}}
+      otlp:
+        # Use gRPC (more efficient) or http
+        type: {{env "OTEL_OTLP_CONN_TYPE" | default "grpc"}}
+        # OTel Collector endpoint
+        target: {{env "OTEL_OTLP_TARGET" | default "otel-collector:4317"}}
+
+  # Metric configuration
+  metric:
+    reader:
+      type: {{env "OTEL_METRIC_READER" | default "periodic"}}
+      periodic:
+        # Export metrics every 30 seconds
+        export_interval: {{env "OTEL_METRIC_EXPORT_INTERVAL" | default "30s"}}
+
+    exporter:
+      # Export to OpenTelemetry Collector via OTLP
+      type: {{env "OTEL_METRIC_EXPORTER" | default "otlp"}}
+      otlp:
+        type: {{env "OTEL_OTLP_CONN_TYPE" | default "grpc"}}
+        target: {{env "OTEL_OTLP_TARGET" | default "otel-collector:4317"}}
+
+  # Log configuration
+  log:
+    processor:
+      type: {{env "OTEL_LOG_PROCESSOR" | default "batch"}}
+      batch:
+        # Export logs every 1 second
+        export_interval: {{env "OTEL_LOG_EXPORT_BATCH_INTERVAL" | default "1s"}}
+        # Or when batch reaches 25 log records
+        max_size: {{env "OTEL_LOG_MAX_BATCH_SIZE" | default 25}}
+
+    exporter:
+      # Export to OpenTelemetry Collector via OTLP
+      type: {{env "OTEL_LOG_EXPORTER" | default "otlp"}}
+      otlp:
+        type: {{env "OTEL_OTLP_CONN_TYPE" | default "grpc"}}
+        target: {{env "OTEL_OTLP_TARGET" | default "otel-collector:4317"}}
+
+# Kafka Configuration
+kafka:
+  brokers:
+    # Point to Kafka container on the kafka-net network
+    - {{env "KAFKA_BROKERS" | default "kafka:9092"}}
+  topic: {{env "KAFKA_TOPIC" | default "metrics"}}
+  group_id: {{env "KAFKA_GROUP_ID" | default "metrics-processor"}}
