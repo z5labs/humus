@@ -31,7 +31,7 @@ type Server struct {
 
 func NewServer() *Server {
 	return &Server{
-		log:               humus.Logger("grpchealth"),
+		log:               humus.Logger("github.com/z5labs/humus/internal/grpchealth"),
 		services:          make(map[string]health.Monitor),
 		watchPollInterval: 10 * time.Second,
 	}

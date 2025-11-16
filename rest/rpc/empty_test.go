@@ -32,7 +32,7 @@ func TestEmptyResponse_WriteResponse(t *testing.T) {
 		w := httptest.NewRecorder()
 
 		er := emptyResponse{
-			tracer: otel.Tracer("rpc"),
+			tracer: otel.Tracer("github.com/z5labs/humus/rest/rpc"),
 		}
 		err := er.WriteResponse(context.Background(), w)
 
@@ -52,7 +52,7 @@ func TestConsumerHandler_Handle(t *testing.T) {
 
 		h := &consumerHandler[string]{
 			c:      c,
-			tracer: otel.Tracer("rpc"),
+			tracer: otel.Tracer("github.com/z5labs/humus/rest/rpc"),
 		}
 
 		req := "test"
@@ -71,7 +71,7 @@ func TestConsumerHandler_Handle(t *testing.T) {
 
 		h := &consumerHandler[string]{
 			c:      c,
-			tracer: otel.Tracer("rpc"),
+			tracer: otel.Tracer("github.com/z5labs/humus/rest/rpc"),
 		}
 
 		req := "test"
@@ -90,7 +90,7 @@ func TestConsumerHandler_RequestBody(t *testing.T) {
 
 		h := &consumerHandler[string]{
 			c:      c,
-			tracer: otel.Tracer("rpc"),
+			tracer: otel.Tracer("github.com/z5labs/humus/rest/rpc"),
 		}
 
 		reqBody := h.RequestBody()
@@ -107,7 +107,7 @@ func TestConsumerHandler_Responses(t *testing.T) {
 
 		h := &consumerHandler[string]{
 			c:      c,
-			tracer: otel.Tracer("rpc"),
+			tracer: otel.Tracer("github.com/z5labs/humus/rest/rpc"),
 		}
 
 		responses := h.Responses()
@@ -127,7 +127,7 @@ func TestConsumerHandler_ServeHTTP(t *testing.T) {
 
 		h := &consumerHandler[emptyRequest]{
 			c:      c,
-			tracer: otel.Tracer("rpc"),
+			tracer: otel.Tracer("github.com/z5labs/humus/rest/rpc"),
 		}
 
 		r := httptest.NewRequest(http.MethodPost, "http://example.com", nil)
@@ -147,7 +147,7 @@ func TestConsumerHandler_ServeHTTP(t *testing.T) {
 
 		h := &consumerHandler[emptyRequest]{
 			c:      c,
-			tracer: otel.Tracer("rpc"),
+			tracer: otel.Tracer("github.com/z5labs/humus/rest/rpc"),
 		}
 
 		r := httptest.NewRequest(http.MethodPost, "http://example.com", nil)
@@ -168,7 +168,7 @@ func TestProducerHandler_Handle(t *testing.T) {
 
 		h := &producerHandler[string]{
 			p:      p,
-			tracer: otel.Tracer("rpc"),
+			tracer: otel.Tracer("github.com/z5labs/humus/rest/rpc"),
 		}
 
 		var req emptyRequest
@@ -187,7 +187,7 @@ func TestProducerHandler_Handle(t *testing.T) {
 
 		h := &producerHandler[string]{
 			p:      p,
-			tracer: otel.Tracer("rpc"),
+			tracer: otel.Tracer("github.com/z5labs/humus/rest/rpc"),
 		}
 
 		var req emptyRequest
@@ -206,7 +206,7 @@ func TestProducerHandler_RequestBody(t *testing.T) {
 
 		h := &producerHandler[string]{
 			p:      p,
-			tracer: otel.Tracer("rpc"),
+			tracer: otel.Tracer("github.com/z5labs/humus/rest/rpc"),
 		}
 
 		reqBody := h.RequestBody()
@@ -223,7 +223,7 @@ func TestProducerHandler_Responses(t *testing.T) {
 
 		h := &producerHandler[string]{
 			p:      p,
-			tracer: otel.Tracer("rpc"),
+			tracer: otel.Tracer("github.com/z5labs/humus/rest/rpc"),
 		}
 
 		responses := h.Responses()
@@ -243,7 +243,7 @@ func TestProducerHandler_ServeHTTP(t *testing.T) {
 
 		h := &producerHandler[msgResponse]{
 			p:      p,
-			tracer: otel.Tracer("rpc"),
+			tracer: otel.Tracer("github.com/z5labs/humus/rest/rpc"),
 		}
 
 		r := httptest.NewRequest(http.MethodGet, "http://example.com", nil)
@@ -263,7 +263,7 @@ func TestProducerHandler_ServeHTTP(t *testing.T) {
 
 		h := &producerHandler[msgResponse]{
 			p:      p,
-			tracer: otel.Tracer("rpc"),
+			tracer: otel.Tracer("github.com/z5labs/humus/rest/rpc"),
 		}
 
 		r := httptest.NewRequest(http.MethodGet, "http://example.com", nil)

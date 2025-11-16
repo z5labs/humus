@@ -166,6 +166,8 @@ github.com/twmb/franz-go/pkg/kmsg v1.12.0 h1:CbatD7ers1KzDNgJqPbKOq0Bz/WLBdsTH75
 github.com/twmb/franz-go/pkg/kmsg v1.12.0/go.mod h1:+DPt4NC8RmI6hqb8G09+3giKObE6uD2Eya6CfqBpeJY=
 github.com/twmb/franz-go/plugin/kotel v1.6.0 h1:hmvLn/cVw/Hn56H3aJVJu/a/fh6m8J6Ajwp0IcEHbH8=
 github.com/twmb/franz-go/plugin/kotel v1.6.0/go.mod h1:ADmLuCa/NzHdXdWfl22FsIlGCack+YrHjivirHCBJaY=
+github.com/twmb/franz-go/plugin/kslog v1.0.0 h1:I64oEmF+0PDvmyLgwrlOtg4mfpSE9GwlcLxM4af2t60=
+github.com/twmb/franz-go/plugin/kslog v1.0.0/go.mod h1:8pMjK3OJJJNNYddBSbnXZkIK5dCKFIk9GcVVCDgvnQc=
 github.com/yudai/gojsondiff v1.0.0 h1:27cbfqXLVEJ1o8I6v3y9lg8Ydm53EKqHXAOMxEGlCOA=
 github.com/yudai/gojsondiff v1.0.0/go.mod h1:AY32+k2cwILAkW1fbgxQ5mUmMiZFgLIV+FBNExI05xg=
 github.com/yudai/golcs v0.0.0-20170316035057-ecda9a501e82 h1:BHyfKlQyqbsFN5p3IfnEUduWvb9is428/nNb5L3U01M=

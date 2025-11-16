@@ -195,7 +195,7 @@ func TestJsonRequest_ReadRequest(t *testing.T) {
 			r.Header.Set("Content-Type", "text/plain")
 
 			jr := JsonRequest[msgRequest]{
-				tracer: otel.Tracer("rpc"),
+				tracer: otel.Tracer("github.com/z5labs/humus/rest/rpc"),
 			}
 			err := jr.ReadRequest(context.Background(), r)
 

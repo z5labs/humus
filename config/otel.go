@@ -448,6 +448,7 @@ type LogExporter struct {
 // Configuration mapping:
 //   - processor: How log records are processed before export
 //   - exporter: Where and how to send log data
+//   - minimum_log_level: Map of logger names to minimum log levels for filtering
 //
 // Example:
 //
@@ -462,9 +463,13 @@ type LogExporter struct {
 //	    otlp:
 //	      type: grpc
 //	      target: localhost:4317
+//	  minimum_log_level:
+//	    github.com/z5labs/humus/queue/kafka: info
+//	    github.com/twmb/franz-go/pkg/kgo: warn
 type Log struct {
-	Processor LogProcessor `config:"processor"`
-	Exporter  LogExporter  `config:"exporter"`
+	Processor       LogProcessor      `config:"processor"`
+	Exporter        LogExporter       `config:"exporter"`
+	MinimumLogLevel map[string]string `config:"minimum_log_level"`
 }
 
 // OTel defines the complete OpenTelemetry configuration for Humus applications.

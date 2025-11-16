@@ -25,3 +25,5 @@ otel:
       otlp:
         type: grpc
         target: {{env "OTEL_OTLP_TARGET" | default "localhost:4317"}}
+    minimum_log_level:
+      github.com/twmb/franz-go/pkg/kgo: warn

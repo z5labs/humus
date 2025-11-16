@@ -39,7 +39,7 @@ type OrderProcessor struct {
 // NewOrderProcessor creates a new order processor.
 func NewOrderProcessor() *OrderProcessor {
 	return &OrderProcessor{
-		log:       humus.Logger("order-processor"),
+		log:       humus.Logger("github.com/z5labs/humus/example/queue/kafka-at-least-once/app"),
 		processed: make(map[string]bool),
 	}
 }

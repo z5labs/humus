@@ -30,7 +30,7 @@ func newAtLeastOnceMessagesHandler(
 ) func(recordsCommitter) recordsHandler {
 	return func(committer recordsCommitter) recordsHandler {
 		return atLeastOnceMessagesHandler{
-			log: humus.Logger("kafka").With(GroupIDAttr(groupId)),
+			log: humus.Logger("github.com/z5labs/humus/queue/kafka").With(GroupIDAttr(groupId)),
 			tracer: kotel.NewTracer(
 				kotel.TracerProvider(otel.GetTracerProvider()),
 				kotel.TracerPropagator(otel.GetTextMapPropagator()),

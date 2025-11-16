@@ -37,8 +37,8 @@ func ListPets(ctx context.Context, db StmtPreparer) rest.ApiOption {
 	}))
 
 	h := &listPetsHandler{
-		tracer:       otel.Tracer("endpoint"),
-		log:          humus.Logger("endpoint"),
+		tracer:       otel.Tracer("github.com/z5labs/humus/example/rest/petstore/endpoint"),
+		log:          humus.Logger("github.com/z5labs/humus/example/rest/petstore/endpoint"),
 		listPetsStmt: stmt,
 	}
 

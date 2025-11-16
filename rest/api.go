@@ -138,7 +138,7 @@ type Api struct {
 //	    rest.Readiness(customReadinessHandler),
 //	)
 func NewApi(title, version string, opts ...ApiOption) *Api {
-	log := humus.Logger("rest")
+	log := humus.Logger("github.com/z5labs/humus/rest")
 
 	ao := &ApiOptions{
 		mux: chi.NewMux(),

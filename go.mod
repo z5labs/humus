@@ -14,6 +14,7 @@ require (
 	github.com/twmb/franz-go v1.20.3
 	github.com/twmb/franz-go/pkg/kadm v1.17.1
 	github.com/twmb/franz-go/plugin/kotel v1.6.0
+	github.com/twmb/franz-go/plugin/kslog v1.0.0
 	github.com/z5labs/bedrock v0.20.2
 	github.com/z5labs/sdk-go v0.2.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.13.0
@@ -29,6 +30,7 @@ require (
 	go.opentelemetry.io/otel/log v0.14.0
 	go.opentelemetry.io/otel/sdk v1.38.0
 	go.opentelemetry.io/otel/sdk/log v0.14.0
+	go.opentelemetry.io/otel/sdk/log/logtest v0.14.0
 	go.opentelemetry.io/otel/sdk/metric v1.38.0
 	go.opentelemetry.io/otel/trace v1.38.0
 	golang.org/x/sync v0.18.0
