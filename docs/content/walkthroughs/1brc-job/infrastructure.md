@@ -2,6 +2,7 @@
 title: Infrastructure Setup
 description: Running the observability stack with Podman Compose
 weight: 2
+type: docs
 ---
 
 # Infrastructure Setup

@@ -2,6 +2,7 @@
 title: Observability
 description: Adding traces, metrics, and logs
 weight: 6
+type: docs
 ---
 
 # Observability

@@ -2,6 +2,7 @@
 title: Running and Monitoring
 description: Execute the job and view telemetry in Grafana
 weight: 7
+type: docs
 ---
 
 # Running and Monitoring

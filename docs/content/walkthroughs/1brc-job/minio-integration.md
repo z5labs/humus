@@ -2,6 +2,7 @@
 title: MinIO Integration
 description: Building the S3 storage client
 weight: 4
+type: docs
 ---
 
 # MinIO Integration

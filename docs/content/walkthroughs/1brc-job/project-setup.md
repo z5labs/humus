@@ -2,6 +2,7 @@
 title: Project Setup
 description: Understanding the project structure and dependencies
 weight: 1
+type: docs
 ---
 
 # Project Setup

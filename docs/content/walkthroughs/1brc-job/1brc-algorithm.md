@@ -2,6 +2,7 @@
 title: 1BRC Algorithm
 description: Parsing and calculating temperature statistics
 weight: 5
+type: docs
 ---
 
 # 1BRC Algorithm

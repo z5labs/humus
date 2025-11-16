@@ -2,6 +2,7 @@
 title: Building a Basic Job
 description: Understanding the Config struct and Init function
 weight: 3
+type: docs
 ---
 
 # Building a Basic Job
