@@ -80,11 +80,15 @@ func TestAtMostOnce_BasicConsumption(t *testing.T) {
 		defer mu.Unlock()
 		require.Len(t, consumedMessages, expectedCount, "should consume exactly %d messages", expectedCount)
 
-		// Verify messages were consumed in order
+		// Verify all expected messages were received (order not guaranteed due to concurrent processing)
+		receivedValues := make(map[string]bool)
+		for _, msg := range consumedMessages {
+			receivedValues[string(msg.Value)] = true
+		}
+
 		for i := 0; i < expectedCount; i++ {
 			expected := fmt.Sprintf("message-%d", i)
-			actual := string(consumedMessages[i].Value)
-			require.Equal(t, expected, actual, "message %d should be in order", i)
+			require.True(t, receivedValues[expected], "message %s should have been consumed", expected)
 		}
 	})
 }
