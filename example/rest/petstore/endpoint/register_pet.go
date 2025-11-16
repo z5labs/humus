@@ -40,8 +40,8 @@ func RegisterPet(ctx context.Context, db StmtPreparer) rest.ApiOption {
 	}))
 
 	h := &registerPetHandler{
-		tracer:          otel.Tracer("endpoint"),
-		log:             humus.Logger("endpoint"),
+		tracer:          otel.Tracer("github.com/z5labs/humus/example/rest/petstore/endpoint"),
+		log:             humus.Logger("github.com/z5labs/humus/example/rest/petstore/endpoint"),
 		registerPetStmt: stmt,
 	}
 

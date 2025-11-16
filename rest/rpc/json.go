@@ -30,7 +30,7 @@ type ReturnJsonHandler[Req, Resp any] struct {
 func ReturnJson[Req, Resp any](h Handler[Req, Resp]) *ReturnJsonHandler[Req, Resp] {
 	return &ReturnJsonHandler[Req, Resp]{
 		inner:  h,
-		tracer: otel.Tracer("rpc"),
+		tracer: otel.Tracer("github.com/z5labs/humus/rest/rpc"),
 	}
 }
 
@@ -142,7 +142,7 @@ type ConsumeJsonHandler[Req, Resp any] struct {
 func ConsumeJson[Req, Resp any](h Handler[Req, Resp]) *ConsumeJsonHandler[Req, Resp] {
 	return &ConsumeJsonHandler[Req, Resp]{
 		inner:  h,
-		tracer: otel.Tracer("rpc"),
+		tracer: otel.Tracer("github.com/z5labs/humus/rest/rpc"),
 	}
 }
 
@@ -254,7 +254,7 @@ func (h *ConsumeJsonHandler[Req, Resp]) ServeHTTP(w http.ResponseWriter, r *http
 func ProduceJson[T any](p Producer[T]) *ReturnJsonHandler[emptyRequest, T] {
 	inner := &producerHandler[T]{
 		p:      p,
-		tracer: otel.Tracer("rpc"),
+		tracer: otel.Tracer("github.com/z5labs/humus/rest/rpc"),
 	}
 	return ReturnJson(inner)
 }
@@ -272,7 +272,7 @@ func ProduceJson[T any](p Producer[T]) *ReturnJsonHandler[emptyRequest, T] {
 func ConsumeOnlyJson[T any](c Consumer[T]) *ConsumeJsonHandler[T, emptyResponse] {
 	inner := &consumerHandler[T]{
 		c:      c,
-		tracer: otel.Tracer("rpc"),
+		tracer: otel.Tracer("github.com/z5labs/humus/rest/rpc"),
 	}
 	return ConsumeJson(inner)
 }

@@ -38,7 +38,7 @@ type MetricsProcessor struct {
 // NewMetricsProcessor creates a new metrics processor.
 func NewMetricsProcessor() *MetricsProcessor {
 	return &MetricsProcessor{
-		log: humus.Logger("metrics-processor"),
+		log: humus.Logger("github.com/z5labs/humus/example/queue/kafka-at-most-once/app"),
 	}
 }
 

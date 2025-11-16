@@ -18,6 +18,7 @@ import (
 	"github.com/sourcegraph/conc/pool"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/plugin/kotel"
+	"github.com/twmb/franz-go/plugin/kslog"
 	"go.opentelemetry.io/otel"
 )
 
@@ -125,7 +126,7 @@ func NewRuntime(
 	}
 
 	return Runtime{
-		log:                  humus.Logger("kafka").With(GroupIDAttr(groupID)),
+		log:                  humus.Logger("github.com/z5labs/humus/queue/kafka").With(GroupIDAttr(groupID)),
 		brokers:              brokers,
 		groupID:              groupID,
 		topics:               cfg.topics,
@@ -174,7 +175,7 @@ func (r Runtime) ProcessQueue(ctx context.Context) error {
 	}
 
 	clientOpts := []kgo.Opt{
-		// kgo.WithLogger(kslog.New(r.log)), TODO: should only log at warning or above
+		kgo.WithLogger(kslog.New(humus.Logger("github.com/twmb/franz-go/pkg/kgo"))),
 		kgo.WithHooks(
 			kotel.NewTracer(
 				kotel.TracerProvider(otel.GetTracerProvider()),

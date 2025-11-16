@@ -141,7 +141,7 @@ func Handle(method string, path Path, h Handler, opts ...OperationOption) ApiOpt
 		}
 
 		ao.mux.Method(method, endpoint, otelhttp.WithRouteTag(endpoint, &operationHandler{
-			tracer:     otel.Tracer("rest"),
+			tracer:     otel.Tracer("github.com/z5labs/humus/rest"),
 			errHandler: oo.errHandler,
 			transforms: oo.transforms,
 			inner:      h,

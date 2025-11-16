@@ -125,7 +125,7 @@ func (c Config) Listener(ctx context.Context) (net.Listener, error) {
 func (c Config) HttpServer(ctx context.Context, h http.Handler) (*http.Server, error) {
 	s := &http.Server{
 		Handler:  h,
-		ErrorLog: slog.NewLogLogger(humus.Logger("rest").Handler(), slog.LevelError),
+		ErrorLog: slog.NewLogLogger(humus.Logger("github.com/z5labs/humus/rest").Handler(), slog.LevelError),
 	}
 	return s, nil
 }
