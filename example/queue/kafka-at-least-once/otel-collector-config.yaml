@@ -24,6 +24,34 @@ processors:
         value: development
         action: insert
 
+connectors:
+  # Span metrics connector to generate metrics from traces
+  # This creates request count (calls), latency histograms (duration), and error metrics
+  spanmetrics:
+    # Histogram configuration for latency distribution
+    histogram:
+      explicit:
+        buckets: [10ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s]
+    # Dimensions to include in generated metrics
+    dimensions:
+      - name: http.method
+      - name: http.status_code
+      - name: rpc.method
+      - name: messaging.operation
+      - name: messaging.destination.name
+    # Use cumulative temporality for Prometheus/Mimir compatibility
+    aggregation_temporality: "CUMULATIVE"
+    # Cache settings for high cardinality management
+    aggregation_cardinality_limit: 1000
+    resource_metrics_cache_size: 1000
+    # Flush metrics every 15 seconds
+    metrics_flush_interval: 15s
+    # Expire stale metrics after 5 minutes
+    metrics_expiration: 5m
+    # Enable exemplars for trace-to-metric correlation
+    exemplars:
+      enabled: true
+
 exporters:
   # Export traces to Tempo
   otlp/tempo:
@@ -50,10 +78,12 @@ service:
     traces:
       receivers: [otlp]
       processors: [batch, resource]
-      exporters: [otlp/tempo, debug]
+      # spanmetrics connector receives traces and generates metrics
+      exporters: [otlp/tempo, spanmetrics, debug]
 
     metrics:
-      receivers: [otlp]
+      # spanmetrics connector outputs generated metrics to this pipeline
+      receivers: [otlp, spanmetrics]
       processors: [batch, resource]
       exporters: [otlphttp/mimir, debug]
 

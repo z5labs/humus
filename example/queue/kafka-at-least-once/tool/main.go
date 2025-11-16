@@ -57,12 +57,12 @@ func generateRandomOrder() *OrderMessage {
 	}
 }
 
-func createTopic(ctx context.Context, client *kgo.Client, topic string) error {
+func createTopic(ctx context.Context, client *kgo.Client, topic string, partitions int) error {
 	adminClient := kadm.NewClient(client)
 	// Don't close adminClient - it wraps the main client which we still need
 
-	// Create topic with default settings: 1 partition, replication factor 1
-	resp, err := adminClient.CreateTopics(ctx, 1, 1, nil, topic)
+	// Create topic with specified partitions and replication factor 1
+	resp, err := adminClient.CreateTopics(ctx, int32(partitions), 1, nil, topic)
 	if err != nil {
 		return fmt.Errorf("failed to create topic: %w", err)
 	}
@@ -86,6 +86,7 @@ func createTopic(ctx context.Context, client *kgo.Client, topic string) error {
 func main() {
 	brokers := flag.String("brokers", "localhost:9092", "comma-separated list of Kafka brokers")
 	topic := flag.String("topic", "orders", "Kafka topic to publish to")
+	partitions := flag.Int("partitions", 3, "number of partitions to create for the topic")
 	duration := flag.Duration("duration", 10*time.Second, "number of messages to publish (overrides config)")
 	flag.Parse()
 
@@ -105,16 +106,22 @@ func main() {
 	defer cancel()
 
 	// Create topic if it doesn't exist
-	if err := createTopic(ctx, client, *topic); err != nil {
+	if err := createTopic(ctx, client, *topic, *partitions); err != nil {
 		log.Fatalf("failed to ensure topic exists: %v", err)
 	}
 
 	// Publish messages
 	published := 0
+	failed := 0
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("Shutdown signal received, stopping publisher", published)
+			log.Printf("Shutdown signal received, flushing remaining messages...")
+			// Flush any remaining messages
+			if err := client.Flush(context.Background()); err != nil {
+				log.Printf("failed to flush: %v", err)
+			}
+			log.Printf("Publisher stopped. Published %d messages, failed %d", published, failed)
 			return
 		default:
 		}
@@ -135,17 +142,15 @@ func main() {
 			Value: data,
 		}
 
-		// Publish
+		// Publish synchronously to match at-least-once consumer throughput
 		result := client.ProduceSync(ctx, record)
-		err = result.FirstErr()
-		if errors.Is(err, context.DeadlineExceeded) {
+		if err := result.FirstErr(); err != nil {
+			if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+				log.Printf("failed to publish message: %v", err)
+			}
+			failed++
 			continue
 		}
-		if err != nil {
-			log.Printf("failed to publish message: %v", err)
-			continue
-		}
-
 		published++
 	}
 }

@@ -32,7 +32,11 @@ datasources:
             value: service_name
         queries:
           - name: 'Request rate'
-            query: 'sum(rate(traces_spanmetrics_calls_total{$$__tags}[5m]))'
+            query: 'sum(rate(calls_total{$$__tags}[5m]))'
+          - name: 'P95 Latency'
+            query: 'histogram_quantile(0.95, sum(rate(duration_milliseconds_bucket{$$__tags}[5m])) by (le))'
+          - name: 'Error rate'
+            query: 'sum(rate(calls_total{$$__tags,status_code="STATUS_CODE_ERROR"}[5m]))'
       serviceMap:
         datasourceUid: mimir
       nodeGraph:

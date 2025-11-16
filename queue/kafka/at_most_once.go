@@ -12,6 +12,7 @@ import (
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/queue"
 
+	"github.com/sourcegraph/conc/pool"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/plugin/kotel"
 	"go.opentelemetry.io/otel"
@@ -80,8 +81,9 @@ func AtMostOnce(topic string, processor queue.Processor[Message]) Option {
 }
 
 // Handle processes a batch of Kafka records using at-most-once semantics.
-// Records are committed first, then processed. Processing errors are logged but
+// Records are committed first, then processed concurrently. Processing errors are logged but
 // do not prevent the commit, meaning messages may be lost on processing failure.
+// Since records are already committed, they can be processed in parallel for better throughput.
 func (h atMostOnceMessagesHandler) Handle(ctx context.Context, records []*kgo.Record) error {
 	// Commit records first (at-most-once: commit before processing)
 	err := h.committer.CommitRecords(ctx, records...)
@@ -94,33 +96,33 @@ func (h atMostOnceMessagesHandler) Handle(ctx context.Context, records []*kgo.Re
 		return err
 	}
 
-	// Process each record after commit
+	// Process all records concurrently after commit
+	// Since records are already committed, we can process them in parallel
+	p := pool.New().WithContext(ctx)
+
 	for _, record := range records {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
+		p.Go(func(ctx context.Context) error {
+			if record.Context == nil {
+				record.Context = ctx
+			}
 
-		if record.Context == nil {
-			record.Context = ctx
-		}
-
-		err := h.processRecord(record)
-		if err != nil {
-			// Log error but continue processing (message already committed)
-			h.log.ErrorContext(
-				ctx,
-				"failed to process kafka message",
-				TopicAttr(record.Topic),
-				PartitionAttr(record.Partition),
-				OffsetAttr(record.Offset),
-				slog.Any("error", err),
-			)
-		}
+			err := h.processRecord(record)
+			if err != nil {
+				// Log error but continue processing (message already committed)
+				h.log.ErrorContext(
+					ctx,
+					"failed to process kafka message",
+					TopicAttr(record.Topic),
+					PartitionAttr(record.Partition),
+					OffsetAttr(record.Offset),
+					slog.Any("error", err),
+				)
+			}
+			return nil // Don't propagate errors - messages are already committed
+		})
 	}
 
-	return nil
+	return p.Wait()
 }
 
 func (h atMostOnceMessagesHandler) processRecord(record *kgo.Record) error {
