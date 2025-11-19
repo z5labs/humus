@@ -1,0 +1,166 @@
+version: '3.8'
+
+services:
+  # Kafka broker with mTLS configuration
+  kafka:
+    image: docker.io/apache/kafka-native:latest
+    container_name: kafka-mtls-at-least-once
+    ports:
+      - "9092:9092"  # Internal plaintext (for controller)
+      - "9093:9093"  # External SSL with mTLS
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+      - ./certs:/etc/kafka/secrets:z  # Mount certificates
+    networks:
+      - kafka-net
+    environment:
+      # Kraft mode settings
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9092"
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+
+      # Listener configuration with SSL
+      KAFKA_LISTENERS: CONTROLLER://0.0.0.0:9092,SSL://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: SSL://localhost:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,SSL:SSL
+      KAFKA_INTER_BROKER_LISTENER_NAME: CONTROLLER
+
+      # SSL/TLS Configuration
+      KAFKA_SSL_KEYSTORE_FILENAME: kafka.keystore.jks
+      KAFKA_SSL_KEYSTORE_CREDENTIALS: keystore_creds
+      KAFKA_SSL_KEY_CREDENTIALS: key_creds
+      KAFKA_SSL_TRUSTSTORE_FILENAME: kafka.truststore.jks
+      KAFKA_SSL_TRUSTSTORE_CREDENTIALS: truststore_creds
+      KAFKA_SSL_CLIENT_AUTH: required  # Require client certificates (mTLS)
+      KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ""  # Disable hostname verification for localhost
+
+      # Log settings
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+
+      # Kafka cluster ID (must be a valid UUID)
+      KAFKA_CLUSTER_ID: "MtlsKafkaCluster1234567890="
+
+      # Cluster settings
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+
+  # Certificate generator - runs once to create certs if they don't exist
+  cert-generator:
+    build:
+      context: ./tool/certgen
+      dockerfile_inline: |
+        FROM docker.io/golang:1.24-alpine AS builder
+        WORKDIR /build
+        COPY . .
+        RUN go build -o certgen .
+
+        FROM docker.io/eclipse-temurin:21-jre-alpine
+        RUN apk add --no-cache openssl
+        COPY --from=builder /build/certgen /usr/local/bin/certgen
+        ENTRYPOINT ["/usr/local/bin/certgen"]
+    container_name: cert-generator
+    volumes:
+      - ./certs:/certs:z
+    command: ["-certs-dir", "/certs"]
+    networks:
+      - kafka-net
+
+  # OpenTelemetry Collector - Central telemetry hub
+  otel-collector:
+    image: docker.io/otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector-mtls
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:z
+    ports:
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+      - "8888:8888"   # Prometheus metrics exposed by the collector
+    networks:
+      - kafka-net
+    depends_on:
+      - tempo
+      - mimir
+      - loki
+
+  # Grafana Tempo - Distributed tracing backend
+  tempo:
+    image: docker.io/grafana/tempo:latest
+    container_name: tempo-mtls
+    command: ["-config.file=/etc/tempo-config.yaml"]
+    volumes:
+      - ./tempo-config.yaml:/etc/tempo-config.yaml:z
+      - tempo-data:/tmp/tempo
+    ports:
+      - "3200:3200"   # Tempo HTTP
+      - "4317"        # OTLP gRPC receiver (internal)
+    networks:
+      - kafka-net
+
+  # Grafana Mimir - Metrics storage
+  mimir:
+    image: docker.io/grafana/mimir:latest
+    container_name: mimir-mtls
+    command: ["-config.file=/etc/mimir-config.yaml"]
+    volumes:
+      - ./mimir-config.yaml:/etc/mimir-config.yaml:z
+      - mimir-data:/tmp/mimir
+    ports:
+      - "8080:8080"   # Mimir HTTP (Prometheus compatible)
+      - "9095:9095"   # Mimir gRPC (Prometheus Remote Write)
+    networks:
+      - kafka-net
+
+  # Grafana Loki - Log aggregation
+  loki:
+    image: docker.io/grafana/loki:latest
+    container_name: loki-mtls
+    command: ["-config.file=/etc/loki-config.yaml"]
+    volumes:
+      - ./loki-config.yaml:/etc/loki-config.yaml:z
+      - loki-data:/tmp/loki
+    ports:
+      - "3100:3100"   # Loki HTTP
+    networks:
+      - kafka-net
+
+  # Grafana - Observability visualization
+  grafana:
+    image: docker.io/grafana/grafana:latest
+    container_name: grafana-mtls
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+      - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor,correlations
+    volumes:
+      - ./grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:z
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"   # Grafana web UI
+    networks:
+      - kafka-net
+    depends_on:
+      - tempo
+      - mimir
+      - loki
+
+volumes:
+  kafka-data:
+    driver: local
+  tempo-data:
+    driver: local
+  mimir-data:
+    driver: local
+  loki-data:
+    driver: local
+  grafana-data:
+    driver: local
+
+networks:
+  kafka-net:
+    driver: bridge
