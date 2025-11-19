@@ -14,6 +14,7 @@ import (
 	"flag"
 	"fmt"
 	"math/big"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -181,7 +182,11 @@ func generateCertificate(caKey *rsa.PrivateKey, caCert *x509.Certificate, common
 	if isClient {
 		template.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
 	} else {
-		template.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
+		// Server certificate needs both server and client auth for inter-broker SSL
+		template.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}
+		// Add Subject Alternative Names for hostname verification
+		template.DNSNames = []string{"kafka", "localhost"}
+		template.IPAddresses = []net.IP{net.ParseIP("127.0.0.1")}
 	}
 
 	// Sign certificate with CA
