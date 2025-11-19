@@ -50,12 +50,22 @@ services:
 
   # Certificate generator - runs once to create certs if they don't exist
   cert-generator:
-    image: docker.io/alpine/openssl:latest
+    build:
+      context: ./tool/certgen
+      dockerfile_inline: |
+        FROM docker.io/golang:1.24-alpine AS builder
+        WORKDIR /build
+        COPY . .
+        RUN go build -o certgen .
+
+        FROM docker.io/eclipse-temurin:21-jre-alpine
+        RUN apk add --no-cache openssl
+        COPY --from=builder /build/certgen /usr/local/bin/certgen
+        ENTRYPOINT ["/usr/local/bin/certgen"]
     container_name: cert-generator
     volumes:
       - ./certs:/certs:z
-      - ./scripts:/scripts:z
-    entrypoint: ["/bin/sh", "/scripts/generate-certs.sh"]
+    command: ["-certs-dir", "/certs"]
     networks:
       - kafka-net
 

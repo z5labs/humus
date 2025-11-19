@@ -55,32 +55,32 @@ kafka:
 
 ### Generating Test Certificates
 
-For testing, you can generate self-signed certificates:
+Certificates are automatically generated when you run `podman-compose up` or `docker-compose up`. The setup includes a Go-based certificate generator (`tool/certgen`) that creates all required certificates and Java keystores.
+
+If you want to generate certificates manually:
 
 ```bash
-# Create certs directory
-mkdir -p certs
+# Build the certificate generator
+cd tool/certgen
+go build -o certgen .
 
-# Generate CA
-openssl req -new -x509 -days 365 -keyout certs/ca-key.pem -out certs/ca-cert.pem \
-  -subj "/CN=Test CA" -nodes
+# Generate certificates
+./certgen -certs-dir ../../certs
 
-# Generate server certificate (for Kafka broker)
-openssl req -new -keyout certs/server-key.pem -out certs/server-req.pem \
-  -subj "/CN=kafka" -nodes
-openssl x509 -req -in certs/server-req.pem -CA certs/ca-cert.pem \
-  -CAkey certs/ca-key.pem -CAcreateserial -out certs/server-cert.pem -days 365
-
-# Generate client certificate
-openssl req -new -keyout certs/client-key.pem -out certs/client-req.pem \
-  -subj "/CN=kafka-client" -nodes
-openssl x509 -req -in certs/client-req.pem -CA certs/ca-cert.pem \
-  -CAkey certs/ca-key.pem -CAcreateserial -out certs/client-cert.pem -days 365
+# Or use custom keystore password
+./certgen -certs-dir ../../certs -keystore-pass mypassword
 ```
 
-### Running with Docker Compose
+The certificate generator creates:
+- CA certificate and private key
+- Server certificate for Kafka broker
+- Client certificate for applications
+- Java keystores (JKS format) for Kafka
+- Credential files for keystore passwords
 
-A complete setup with Kafka, Zookeeper, and mTLS is available in the repository examples.
+### Running with Docker/Podman Compose
+
+The example includes a complete setup with Kafka broker, certificate generation, and observability stack:
 
 ### Running the Application
 
