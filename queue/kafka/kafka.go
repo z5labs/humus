@@ -7,9 +7,12 @@ package kafka
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log/slog"
 	"maps"
+	"os"
 	"slices"
 	"time"
 
@@ -48,6 +51,36 @@ type recordsCommitter interface {
 	CommitRecords(context.Context, ...*kgo.Record) error
 }
 
+// TLSConfig holds TLS/mTLS configuration for secure Kafka connections.
+type TLSConfig struct {
+	// Client certificate (PEM-encoded) - supports both file path and raw data
+	// If CertFile is set, it will be loaded; otherwise CertData is used
+	CertFile string
+	CertData []byte
+
+	// Client private key (PEM-encoded) - supports both file path and raw data
+	// If KeyFile is set, it will be loaded; otherwise KeyData is used
+	KeyFile string
+	KeyData []byte
+
+	// CA certificate (PEM-encoded) for verifying broker certificates
+	// If CAFile is set, it will be loaded; otherwise CAData is used
+	CAFile string
+	CAData []byte
+
+	// ServerName for SNI (Server Name Indication)
+	// If empty, the broker hostname will be used
+	ServerName string
+
+	// MinVersion specifies the minimum TLS version (e.g., tls.VersionTLS12)
+	// If 0, a default minimum version will be used
+	MinVersion uint16
+
+	// MaxVersion specifies the maximum TLS version
+	// If 0, the highest version supported by the implementation is used
+	MaxVersion uint16
+}
+
 // Options represents configuration options for the Kafka runtime.
 type Options struct {
 	groupId              string
@@ -56,6 +89,7 @@ type Options struct {
 	rebalanceTimeout     time.Duration
 	fetchMaxBytes        int32
 	maxConcurrentFetches int
+	tlsConfig            *TLSConfig
 }
 
 // Option defines a function type for configuring Kafka runtime options.
@@ -91,6 +125,40 @@ func MaxConcurrentFetches(fetches int) Option {
 	}
 }
 
+// WithTLS configures TLS/mTLS for secure connections to Kafka brokers.
+// The TLSConfig supports both file paths and in-memory certificate data,
+// making it suitable for both traditional file-based deployments and
+// Kubernetes secret-based deployments.
+//
+// Example with file paths:
+//
+//	tlsCfg := kafka.TLSConfig{
+//	    CertFile: "/path/to/client-cert.pem",
+//	    KeyFile:  "/path/to/client-key.pem",
+//	    CAFile:   "/path/to/ca-cert.pem",
+//	}
+//	runtime := kafka.NewRuntime(brokers, groupID,
+//	    kafka.WithTLS(tlsCfg),
+//	    kafka.AtLeastOnce(topic, processor),
+//	)
+//
+// Example with in-memory data (e.g., from Kubernetes secrets):
+//
+//	tlsCfg := kafka.TLSConfig{
+//	    CertData: certBytes,
+//	    KeyData:  keyBytes,
+//	    CAData:   caBytes,
+//	}
+//	runtime := kafka.NewRuntime(brokers, groupID,
+//	    kafka.WithTLS(tlsCfg),
+//	    kafka.AtLeastOnce(topic, processor),
+//	)
+func WithTLS(cfg TLSConfig) Option {
+	return func(o *Options) {
+		o.tlsConfig = &cfg
+	}
+}
+
 // Runtime represents the Kafka runtime for processing messages.
 type Runtime struct {
 	log                  *slog.Logger
@@ -101,6 +169,7 @@ type Runtime struct {
 	rebalanceTimeout     time.Duration
 	fetchMaxBytes        int32
 	maxConcurrentFetches int
+	tlsConfig            *TLSConfig
 }
 
 // NewRuntime creates a new Kafka runtime with the provided brokers, group ID, and options.
@@ -134,6 +203,7 @@ func NewRuntime(
 		rebalanceTimeout:     cfg.rebalanceTimeout,
 		fetchMaxBytes:        cfg.fetchMaxBytes,
 		maxConcurrentFetches: cfg.maxConcurrentFetches,
+		tlsConfig:            cfg.tlsConfig,
 	}
 }
 
@@ -159,6 +229,74 @@ type eventLoop struct {
 	topicHandlers   map[string]func(recordsCommitter) recordsHandler
 	topicPartitions map[topicPartition]chan []*kgo.Record
 	partitionPool   *pool.ContextPool
+}
+
+// buildTLSConfig constructs a *tls.Config from TLSConfig.
+// It supports loading certificates from files or using in-memory data.
+func buildTLSConfig(cfg *TLSConfig) (*tls.Config, error) {
+	if cfg == nil {
+		return nil, nil
+	}
+
+	tlsConfig := &tls.Config{
+		MinVersion: cfg.MinVersion,
+		MaxVersion: cfg.MaxVersion,
+		ServerName: cfg.ServerName,
+	}
+
+	// Load client certificate and key
+	var certData, keyData []byte
+	var err error
+
+	// Load certificate
+	if cfg.CertFile != "" {
+		certData, err = os.ReadFile(cfg.CertFile)
+		if err != nil {
+			return nil, fmt.Errorf("kafka: failed to read client certificate file %q: %w", cfg.CertFile, err)
+		}
+	} else if len(cfg.CertData) > 0 {
+		certData = cfg.CertData
+	}
+
+	// Load private key
+	if cfg.KeyFile != "" {
+		keyData, err = os.ReadFile(cfg.KeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("kafka: failed to read client key file %q: %w", cfg.KeyFile, err)
+		}
+	} else if len(cfg.KeyData) > 0 {
+		keyData = cfg.KeyData
+	}
+
+	// If both cert and key are provided, load them
+	if len(certData) > 0 && len(keyData) > 0 {
+		cert, err := tls.X509KeyPair(certData, keyData)
+		if err != nil {
+			return nil, fmt.Errorf("kafka: failed to load client certificate and key: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+
+	// Load CA certificate for broker verification
+	var caData []byte
+	if cfg.CAFile != "" {
+		caData, err = os.ReadFile(cfg.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("kafka: failed to read CA certificate file %q: %w", cfg.CAFile, err)
+		}
+	} else if len(cfg.CAData) > 0 {
+		caData = cfg.CAData
+	}
+
+	if len(caData) > 0 {
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caData) {
+			return nil, fmt.Errorf("kafka: failed to parse CA certificate")
+		}
+		tlsConfig.RootCAs = caCertPool
+	}
+
+	return tlsConfig, nil
 }
 
 // ProcessQueue starts processing the Kafka queue.
@@ -200,6 +338,15 @@ func (r Runtime) ProcessQueue(ctx context.Context) error {
 		kgo.OnPartitionsAssigned(loop.onPartitionsAssigned(ctx)),
 		kgo.OnPartitionsRevoked(loop.onPartitionsRevoked(ctx)),
 		kgo.OnPartitionsLost(loop.onPartitionsLost(ctx)),
+	}
+
+	// Configure TLS if provided
+	if r.tlsConfig != nil {
+		tlsCfg, err := buildTLSConfig(r.tlsConfig)
+		if err != nil {
+			return err
+		}
+		clientOpts = append(clientOpts, kgo.DialTLSConfig(tlsCfg))
 	}
 
 	client, err := kgo.NewClient(clientOpts...)
