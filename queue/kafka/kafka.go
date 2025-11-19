@@ -7,6 +7,7 @@ package kafka
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -56,6 +57,7 @@ type Options struct {
 	rebalanceTimeout     time.Duration
 	fetchMaxBytes        int32
 	maxConcurrentFetches int
+	tlsConfig            *tls.Config
 }
 
 // Option defines a function type for configuring Kafka runtime options.
@@ -91,6 +93,40 @@ func MaxConcurrentFetches(fetches int) Option {
 	}
 }
 
+// WithTLS configures TLS/mTLS for secure connections to Kafka brokers.
+// Pass a fully configured *tls.Config with certificates, CA pool, and other TLS settings.
+//
+// Example:
+//
+//	// Load certificates
+//	cert, err := tls.LoadX509KeyPair("client-cert.pem", "client-key.pem")
+//	if err != nil {
+//	    return err
+//	}
+//	
+//	caCert, err := os.ReadFile("ca-cert.pem")
+//	if err != nil {
+//	    return err
+//	}
+//	caCertPool := x509.NewCertPool()
+//	caCertPool.AppendCertsFromPEM(caCert)
+//	
+//	tlsConfig := &tls.Config{
+//	    Certificates: []tls.Certificate{cert},
+//	    RootCAs:      caCertPool,
+//	    MinVersion:   tls.VersionTLS12,
+//	}
+//	
+//	runtime := kafka.NewRuntime(brokers, groupID,
+//	    kafka.WithTLS(tlsConfig),
+//	    kafka.AtLeastOnce(topic, processor),
+//	)
+func WithTLS(cfg *tls.Config) Option {
+	return func(o *Options) {
+		o.tlsConfig = cfg
+	}
+}
+
 // Runtime represents the Kafka runtime for processing messages.
 type Runtime struct {
 	log                  *slog.Logger
@@ -101,6 +137,7 @@ type Runtime struct {
 	rebalanceTimeout     time.Duration
 	fetchMaxBytes        int32
 	maxConcurrentFetches int
+	tlsConfig            *tls.Config
 }
 
 // NewRuntime creates a new Kafka runtime with the provided brokers, group ID, and options.
@@ -134,6 +171,7 @@ func NewRuntime(
 		rebalanceTimeout:     cfg.rebalanceTimeout,
 		fetchMaxBytes:        cfg.fetchMaxBytes,
 		maxConcurrentFetches: cfg.maxConcurrentFetches,
+		tlsConfig:            cfg.tlsConfig,
 	}
 }
 
@@ -200,6 +238,11 @@ func (r Runtime) ProcessQueue(ctx context.Context) error {
 		kgo.OnPartitionsAssigned(loop.onPartitionsAssigned(ctx)),
 		kgo.OnPartitionsRevoked(loop.onPartitionsRevoked(ctx)),
 		kgo.OnPartitionsLost(loop.onPartitionsLost(ctx)),
+	}
+
+	// Configure TLS if provided
+	if r.tlsConfig != nil {
+		clientOpts = append(clientOpts, kgo.DialTLSConfig(r.tlsConfig))
 	}
 
 	client, err := kgo.NewClient(clientOpts...)
