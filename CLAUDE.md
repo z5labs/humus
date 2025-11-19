@@ -252,10 +252,57 @@ Implementations coordinate Consumer, Processor, and Acknowledger. Return `queue.
 
 **Kafka Runtime (queue/kafka):**
 ```go
-// Kafka-specific runtimes with goroutine-per-partition concurrency
-kafka.NewAtMostOnceRuntime(brokers, topic, groupID, processor)
-kafka.NewAtLeastOnceRuntime(brokers, topic, groupID, processor)
+// Basic Kafka runtime with goroutine-per-partition concurrency
+runtime := kafka.NewRuntime(
+    brokers,
+    groupID,
+    kafka.AtLeastOnce(topic, processor),
+)
+
+// With mTLS authentication for secure broker connections
+runtime := kafka.NewRuntime(
+    brokers,
+    groupID,
+    kafka.WithTLS(kafka.TLSConfig{
+        CertFile: "/path/to/client-cert.pem",
+        KeyFile:  "/path/to/client-key.pem",
+        CAFile:   "/path/to/ca-cert.pem",
+    }),
+    kafka.AtLeastOnce(topic, processor),
+)
+
+// Multiple topics with different processors
+runtime := kafka.NewRuntime(
+    brokers,
+    groupID,
+    kafka.AtLeastOnce("orders", ordersProcessor),
+    kafka.AtMostOnce("events", eventsProcessor),
+)
+
+// Advanced configuration with TLS, timeouts, and fetch settings
+runtime := kafka.NewRuntime(
+    brokers,
+    groupID,
+    kafka.WithTLS(kafka.TLSConfig{
+        CertData: certBytes,  // Or use in-memory data from Kubernetes secrets
+        KeyData:  keyBytes,
+        CAData:   caBytes,
+        ServerName: "kafka.example.com",  // Optional SNI
+        MinVersion: tls.VersionTLS12,     // Optional TLS version
+    }),
+    kafka.SessionTimeout(45 * time.Second),
+    kafka.RebalanceTimeout(30 * time.Second),
+    kafka.FetchMaxBytes(50 * 1024 * 1024),  // 50 MB
+    kafka.MaxConcurrentFetches(10),
+    kafka.AtLeastOnce(topic, processor),
+)
 ```
+
+**TLS Configuration Options:**
+- File-based: `CertFile`, `KeyFile`, `CAFile` (traditional deployments)
+- Memory-based: `CertData`, `KeyData`, `CAData` (Kubernetes secrets)
+- Optional: `ServerName` (SNI), `MinVersion`, `MaxVersion`
+- Supports both mTLS (client cert + CA) and TLS-only (CA only)
 
 **Custom Runtime Example:**
 ```go
@@ -422,6 +469,7 @@ The `example/` directory contains reference implementations:
 - `example/grpc/petstore/` - gRPC service example with health monitoring
 - `example/queue/kafka-at-most-once/` - Kafka queue with at-most-once semantics
 - `example/queue/kafka-at-least-once/` - Kafka queue with at-least-once semantics
+- `example/queue/kafka-mtls-at-least-once/` - Kafka queue with mTLS authentication
 
 Refer to these for real-world usage patterns of the framework.
 
