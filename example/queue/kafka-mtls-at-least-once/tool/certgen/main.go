@@ -204,7 +204,7 @@ func writePrivateKey(filename string, key *rsa.PrivateKey) error {
 		Bytes: x509.MarshalPKCS1PrivateKey(key),
 	})
 
-	if err := os.WriteFile(filename, keyPEM, 0644); err != nil {
+	if err := os.WriteFile(filename, keyPEM, 0600); err != nil {
 		return fmt.Errorf("failed to write private key: %w", err)
 	}
 
@@ -273,7 +273,9 @@ func createJavaKeystores(certsDir, keystorePass string) error {
 	}
 
 	// Clean up temporary PKCS12 file
-	os.Remove(p12File)
+	if err := os.Remove(p12File); err != nil && !os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "Warning: failed to remove temporary file %s: %v\n", p12File, err)
+	}
 
 	return nil
 }
@@ -281,7 +283,7 @@ func createJavaKeystores(certsDir, keystorePass string) error {
 func writeCredentialFiles(certsDir, keystorePass string) error {
 	credFiles := []string{"keystore_creds", "key_creds", "truststore_creds"}
 	for _, file := range credFiles {
-		if err := os.WriteFile(filepath.Join(certsDir, file), []byte(keystorePass+"\n"), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(certsDir, file), []byte(keystorePass+"\n"), 0600); err != nil {
 			return fmt.Errorf("failed to write credential file %s: %w", file, err)
 		}
 	}

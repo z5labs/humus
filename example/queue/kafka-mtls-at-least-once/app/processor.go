@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
-	"sync"
 	"time"
 
 	"github.com/z5labs/humus"
@@ -26,37 +25,23 @@ type OrderMessage struct {
 	Quantity  int     `json:"quantity"`
 }
 
-// OrderProcessor processes order messages with idempotent handling.
+// OrderProcessor processes order messages.
 //
-// This demonstrates at-least-once processing where messages may be delivered
-// multiple times, so the processor must be idempotent.
+// This is a simple example processor that demonstrates message processing
+// in an at-least-once delivery scenario.
 type OrderProcessor struct {
-	log       *slog.Logger
-	processed map[string]bool
-	mu        sync.Mutex
+	log *slog.Logger
 }
 
 // NewOrderProcessor creates a new order processor.
 func NewOrderProcessor() *OrderProcessor {
 	return &OrderProcessor{
-		log:       humus.Logger("github.com/z5labs/humus/example/queue/kafka-mtls-at-least-once/app"),
-		processed: make(map[string]bool),
+		log: humus.Logger("github.com/z5labs/humus/example/queue/kafka-mtls-at-least-once/app"),
 	}
 }
 
-// Process implements queue.Processor interface with idempotent handling.
+// Process implements queue.Processor interface.
 func (p *OrderProcessor) Process(ctx context.Context, msg *OrderMessage) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	// Idempotency check: skip if already processed
-	if p.processed[msg.OrderID] {
-		p.log.InfoContext(ctx, "skipping duplicate order",
-			slog.String("order_id", msg.OrderID),
-		)
-		return nil
-	}
-
 	// Validate order
 	if msg.Amount <= 0 {
 		return fmt.Errorf("invalid order amount: %f", msg.Amount)
@@ -88,9 +73,6 @@ func (p *OrderProcessor) Process(ctx context.Context, msg *OrderMessage) error {
 	//
 	// All in a transactional manner to ensure consistency
 
-	// Mark as processed
-	p.processed[msg.OrderID] = true
-
 	p.log.InfoContext(ctx, "order processed successfully",
 		slog.String("order_id", msg.OrderID),
 	)
@@ -119,7 +101,7 @@ func (d *DecodingProcessor) Process(ctx context.Context, msg kafka.Message) erro
 		return fmt.Errorf("failed to decode message: %w", err)
 	}
 
-	// Delegate to business logic processor (which is idempotent)
+	// Delegate to business logic processor
 	return d.handler.Process(ctx, decodedMsg)
 }
 
