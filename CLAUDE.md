@@ -260,10 +260,18 @@ runtime := kafka.NewRuntime(
 )
 
 // With mTLS authentication for secure broker connections
-cert, _ := tls.LoadX509KeyPair("client-cert.pem", "client-key.pem")
-caCert, _ := os.ReadFile("ca-cert.pem")
+cert, err := tls.LoadX509KeyPair("client-cert.pem", "client-key.pem")
+if err != nil {
+    return err
+}
+caCert, err := os.ReadFile("ca-cert.pem")
+if err != nil {
+    return err
+}
 caCertPool := x509.NewCertPool()
-caCertPool.AppendCertsFromPEM(caCert)
+if ok := caCertPool.AppendCertsFromPEM(caCert); !ok {
+    return fmt.Errorf("failed to parse CA certificate")
+}
 
 tlsConfig := &tls.Config{
     Certificates: []tls.Certificate{cert},

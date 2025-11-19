@@ -1,0 +1,100 @@
+# OpenTelemetry Collector Configuration
+# This collector receives telemetry from the kafka-at-least-once application
+# and forwards it to Tempo (traces), Mimir (metrics), and Loki (logs)
+
+receivers:
+  # OTLP receiver for traces, metrics, and logs
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Batch processor to reduce the number of outgoing connections
+  batch:
+    timeout: 10s
+    send_batch_size: 1024
+
+  # Resource processor to add additional metadata
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: development
+        action: insert
+
+connectors:
+  # Span metrics connector to generate metrics from traces
+  # This creates request count (calls), latency histograms (duration), and error metrics
+  spanmetrics:
+    # Histogram configuration for latency distribution
+    histogram:
+      explicit:
+        buckets: [10ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s]
+    # Dimensions to include in generated metrics
+    dimensions:
+      - name: http.method
+      - name: http.status_code
+      - name: rpc.method
+      - name: messaging.operation
+      - name: messaging.destination.name
+    # Use cumulative temporality for Prometheus/Mimir compatibility
+    aggregation_temporality: "CUMULATIVE"
+    # Cache settings for high cardinality management
+    aggregation_cardinality_limit: 1000
+    resource_metrics_cache_size: 1000
+    # Flush metrics every 15 seconds
+    metrics_flush_interval: 15s
+    # Expire stale metrics after 5 minutes
+    metrics_expiration: 5m
+    # Enable exemplars for trace-to-metric correlation
+    exemplars:
+      enabled: true
+
+exporters:
+  # Export traces to Tempo
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+  # Export metrics to Mimir via OTLP (recommended)
+  otlphttp/mimir:
+    endpoint: http://mimir:8080/otlp
+
+  # Export logs to Loki via OTLP HTTP
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+
+  # Debug exporter for troubleshooting (optional, can be removed in production)
+  debug:
+    verbosity: detailed
+    sampling_initial: 5
+    sampling_thereafter: 200
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch, resource]
+      # spanmetrics connector receives traces and generates metrics
+      exporters: [otlp/tempo, spanmetrics, debug]
+
+    metrics:
+      # spanmetrics connector outputs generated metrics to this pipeline
+      receivers: [otlp, spanmetrics]
+      processors: [batch, resource]
+      exporters: [otlphttp/mimir, debug]
+
+    logs:
+      receivers: [otlp]
+      processors: [batch, resource]
+      exporters: [otlphttp/loki, debug]
+
+  # Enable telemetry for the collector itself
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      level: detailed

@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// generateTestCertificates generates a test CA, server cert, and client cert
+// generateTestCertificates generates a test CA and client certificate
 // for testing TLS functionality.
 func generateTestCertificates(t *testing.T) (caCert, clientCert, clientKey []byte) {
 	t.Helper()
