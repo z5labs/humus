@@ -260,14 +260,21 @@ runtime := kafka.NewRuntime(
 )
 
 // With mTLS authentication for secure broker connections
+cert, _ := tls.LoadX509KeyPair("client-cert.pem", "client-key.pem")
+caCert, _ := os.ReadFile("ca-cert.pem")
+caCertPool := x509.NewCertPool()
+caCertPool.AppendCertsFromPEM(caCert)
+
+tlsConfig := &tls.Config{
+    Certificates: []tls.Certificate{cert},
+    RootCAs:      caCertPool,
+    MinVersion:   tls.VersionTLS12,
+}
+
 runtime := kafka.NewRuntime(
     brokers,
     groupID,
-    kafka.WithTLS(kafka.TLSConfig{
-        CertFile: "/path/to/client-cert.pem",
-        KeyFile:  "/path/to/client-key.pem",
-        CAFile:   "/path/to/ca-cert.pem",
-    }),
+    kafka.WithTLS(tlsConfig),
     kafka.AtLeastOnce(topic, processor),
 )
 
@@ -283,12 +290,11 @@ runtime := kafka.NewRuntime(
 runtime := kafka.NewRuntime(
     brokers,
     groupID,
-    kafka.WithTLS(kafka.TLSConfig{
-        CertData: certBytes,  // Or use in-memory data from Kubernetes secrets
-        KeyData:  keyBytes,
-        CAData:   caBytes,
-        ServerName: "kafka.example.com",  // Optional SNI
-        MinVersion: tls.VersionTLS12,     // Optional TLS version
+    kafka.WithTLS(&tls.Config{
+        Certificates: []tls.Certificate{cert},
+        RootCAs:      caCertPool,
+        ServerName:   "kafka.example.com",
+        MinVersion:   tls.VersionTLS12,
     }),
     kafka.SessionTimeout(45 * time.Second),
     kafka.RebalanceTimeout(30 * time.Second),
@@ -298,10 +304,10 @@ runtime := kafka.NewRuntime(
 )
 ```
 
-**TLS Configuration Options:**
-- File-based: `CertFile`, `KeyFile`, `CAFile` (traditional deployments)
-- Memory-based: `CertData`, `KeyData`, `CAData` (Kubernetes secrets)
-- Optional: `ServerName` (SNI), `MinVersion`, `MaxVersion`
+**TLS Configuration:**
+- Use standard `*tls.Config` from Go's `crypto/tls` package
+- Load certificates with `tls.LoadX509KeyPair()` or `tls.X509KeyPair()` for in-memory data
+- Configure CA pool with `x509.CertPool` for broker verification
 - Supports both mTLS (client cert + CA) and TLS-only (CA only)
 
 **Custom Runtime Example:**
