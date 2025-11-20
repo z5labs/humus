@@ -34,6 +34,7 @@ type atMostOnceMessagesHandler struct {
 	tracer    *kotel.Tracer
 	committer recordsCommitter
 	processor queue.Processor[Message]
+	metrics   *metricsRecorder
 }
 
 func newAtMostOnceMessagesHandler(
@@ -41,6 +42,11 @@ func newAtMostOnceMessagesHandler(
 	processor queue.Processor[Message],
 ) func(recordsCommitter) recordsHandler {
 	return func(committer recordsCommitter) recordsHandler {
+		metrics, err := newMetricsRecorder()
+		if err != nil {
+			panic(err) // Metrics initialization failure is a fatal error
+		}
+
 		return atMostOnceMessagesHandler{
 			log: humus.Logger("github.com/z5labs/humus/queue/kafka").With(GroupIDAttr(groupId)),
 			tracer: kotel.NewTracer(
@@ -51,6 +57,7 @@ func newAtMostOnceMessagesHandler(
 			),
 			committer: committer,
 			processor: processor,
+			metrics:   metrics,
 		}
 	}
 }
@@ -94,6 +101,18 @@ func (h atMostOnceMessagesHandler) Handle(ctx context.Context, records []*kgo.Re
 			slog.Any("error", err),
 		)
 		return err
+	}
+
+	// Record commit metrics (group by topic and partition)
+	if len(records) > 0 {
+		commitCounts := make(map[topicPartition]int)
+		for _, record := range records {
+			tp := topicPartition{topic: record.Topic, partition: record.Partition}
+			commitCounts[tp]++
+		}
+		for tp, count := range commitCounts {
+			h.metrics.recordMessagesCommitted(ctx, tp.topic, tp.partition, count)
+		}
 	}
 
 	// Process all records concurrently after commit
@@ -145,5 +164,8 @@ func (h atMostOnceMessagesHandler) processRecord(record *kgo.Record) {
 			OffsetAttr(record.Offset),
 			slog.Any("error", err),
 		)
+		h.metrics.recordProcessingFailure(spanCtx, record.Topic, record.Partition, "at_most_once")
+	} else {
+		h.metrics.recordMessageProcessed(spanCtx, record.Topic, record.Partition, "at_most_once")
 	}
 }
