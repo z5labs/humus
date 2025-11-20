@@ -74,14 +74,15 @@ func (h atLeastOnceMessagesHandler) Handle(ctx context.Context, records []*kgo.R
 
 	err := h.committer.CommitRecords(ctx, records...)
 	if err == nil && len(records) > 0 {
-		// Record commit metrics (group by topic and partition)
-		commitCounts := make(map[topicPartition]int)
+		// Record commit metrics (group by partition)
+		commitCounts := make(map[int32]int)
+		var topic string
 		for _, record := range records {
-			tp := topicPartition{topic: record.Topic, partition: record.Partition}
-			commitCounts[tp]++
+			topic = record.Topic
+			commitCounts[record.Partition]++
 		}
-		for tp, count := range commitCounts {
-			h.metrics.recordMessagesCommitted(ctx, tp.topic, tp.partition, count)
+		for partition, count := range commitCounts {
+			h.metrics.recordMessagesCommitted(ctx, topic, partition, count)
 		}
 	}
 
