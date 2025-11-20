@@ -197,6 +197,7 @@ Every Kafka runtime automatically includes:
 
 - **Consumer Group Management** - Automatic partition assignment and rebalancing
 - **OpenTelemetry Tracing** - Spans per message with context propagation
+- **OpenTelemetry Metrics** - Message processing, commits, and failure metrics
 - **Graceful Shutdown** - Clean shutdown on SIGTERM/SIGINT with offset commits
 - **Error Handling** - Structured logging with message metadata
 

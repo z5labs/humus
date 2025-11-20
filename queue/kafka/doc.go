@@ -174,13 +174,51 @@
 //
 // # OpenTelemetry Instrumentation
 //
-// All message processing is automatically instrumented with OpenTelemetry tracing
-// and logging through the core queue package processors. Traces include:
+// All message processing is automatically instrumented with OpenTelemetry tracing,
+// metrics, and logging through the core queue package processors.
+//
+// ## Tracing
+//
+// Traces include:
 //   - Span per message with processing order visible
 //   - Context propagation through consume/process/acknowledge phases
 //   - Error recording in spans
 //
-// No additional tracing configuration is needed in your processor implementation.
+// ## Metrics
+//
+// The following metrics are automatically recorded for monitoring consumer health and throughput:
+//
+// kafka.consumer.messages.processed (counter):
+//   - Description: Total number of Kafka messages successfully processed
+//   - Unit: {message}
+//   - Labels:
+//     - topic: Kafka topic name
+//     - partition: Partition number
+//     - delivery_semantics: "at_least_once" or "at_most_once"
+//
+// kafka.consumer.messages.committed (counter):
+//   - Description: Total number of Kafka messages committed
+//   - Unit: {message}
+//   - Labels:
+//     - topic: Kafka topic name
+//     - partition: Partition number
+//
+// kafka.consumer.processing.failures (counter):
+//   - Description: Total number of Kafka message processing failures
+//   - Unit: {failure}
+//   - Labels:
+//     - topic: Kafka topic name
+//     - partition: Partition number
+//     - delivery_semantics: "at_least_once" or "at_most_once"
+//
+// These metrics help identify:
+//   - Processing bottlenecks (low processed count)
+//   - Commit failures (committed count lower than processed for at-least-once)
+//   - Error rates (high failure count)
+//   - Partition imbalances (uneven distribution across partitions)
+//
+// No additional metrics configuration is needed in your processor implementation.
+// Metrics are exported through the OTel meter provider configured in your application.
 //
 // # Configuration
 //
