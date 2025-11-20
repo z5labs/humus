@@ -1,0 +1,81 @@
+# Grafana Mimir Configuration
+# Metrics storage backend running in monolithic mode
+
+# Run Mimir in monolithic mode (all components in single process)
+target: all,alertmanager
+
+# Disable multi-tenancy for simplicity
+multitenancy_enabled: false
+
+# Server configuration
+server:
+  http_listen_port: 8080
+  grpc_listen_port: 9095
+  log_level: info
+
+# Distributor configuration
+distributor:
+  ring:
+    kvstore:
+      store: memberlist
+
+# Ingester configuration
+ingester:
+  ring:
+    kvstore:
+      store: memberlist
+    replication_factor: 1
+
+# Storage configuration (local filesystem for development)
+blocks_storage:
+  backend: filesystem
+  filesystem:
+    dir: /tmp/mimir/blocks
+  tsdb:
+    dir: /tmp/mimir/tsdb
+
+# Compactor configuration
+compactor:
+  data_dir: /tmp/mimir/compactor
+  sharding_ring:
+    kvstore:
+      store: memberlist
+
+# Store gateway configuration
+store_gateway:
+  sharding_ring:
+    replication_factor: 1
+    kvstore:
+      store: memberlist
+
+# Ruler configuration (for recording rules and alerts)
+ruler:
+  rule_path: /tmp/mimir/rules-temp
+  alertmanager_url: http://localhost:8080/alertmanager
+
+# Limits configuration
+limits:
+  # Increase limits for development
+  max_global_series_per_user: 0
+  max_global_exemplars_per_user: 100000
+  ingestion_rate: 10000
+  ingestion_burst_size: 200000
+
+# Memberlist configuration (for service discovery)
+memberlist:
+  join_members: ["localhost"]
+
+# Alertmanager configuration
+alertmanager:
+  data_dir: /tmp/mimir/alertmanager
+  external_url: http://localhost:8080/alertmanager
+  sharding_ring:
+    replication_factor: 1
+    kvstore:
+      store: memberlist
+
+# Ruler storage configuration
+ruler_storage:
+  backend: filesystem
+  filesystem:
+    dir: /tmp/mimir/rules
