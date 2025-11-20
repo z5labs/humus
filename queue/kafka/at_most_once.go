@@ -164,8 +164,8 @@ func (h atMostOnceMessagesHandler) processRecord(record *kgo.Record) {
 			OffsetAttr(record.Offset),
 			slog.Any("error", err),
 		)
-		h.metrics.recordProcessingFailure(spanCtx, record.Topic, record.Partition, "at_most_once")
+		h.metrics.recordProcessingFailure(spanCtx, record.Topic, record.Partition)
 	} else {
-		h.metrics.recordMessageProcessed(spanCtx, record.Topic, record.Partition, "at_most_once")
+		h.metrics.recordMessageProcessed(spanCtx, record.Topic, record.Partition)
 	}
 }

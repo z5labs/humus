@@ -188,28 +188,26 @@
 //
 // The following metrics are automatically recorded for monitoring consumer health and throughput:
 //
-// kafka.consumer.messages.processed (counter):
+// messaging.client.processed.messages (counter):
 //   - Description: Total number of Kafka messages successfully processed
 //   - Unit: {message}
 //   - Labels:
 //     - topic: Kafka topic name
 //     - partition: Partition number
-//     - delivery_semantics: "at_least_once" or "at_most_once"
 //
-// kafka.consumer.messages.committed (counter):
+// messaging.client.committed.messages (counter):
 //   - Description: Total number of Kafka messages committed
 //   - Unit: {message}
 //   - Labels:
 //     - topic: Kafka topic name
 //     - partition: Partition number
 //
-// kafka.consumer.processing.failures (counter):
+// messaging.process.failures (counter):
 //   - Description: Total number of Kafka message processing failures
 //   - Unit: {failure}
 //   - Labels:
 //     - topic: Kafka topic name
 //     - partition: Partition number
-//     - delivery_semantics: "at_least_once" or "at_most_once"
 //
 // These metrics help identify:
 //   - Processing bottlenecks (low processed count)

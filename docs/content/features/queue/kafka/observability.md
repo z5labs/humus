@@ -214,28 +214,26 @@ The Kafka runtime automatically exports metrics for monitoring consumer health a
 
 The following metrics are automatically recorded:
 
-- **`kafka.consumer.messages.processed`** (counter)
+- **`messaging.client.processed.messages`** (counter)
   - Description: Total number of Kafka messages successfully processed
   - Unit: `{message}`
   - Labels:
     - `topic`: Kafka topic name
     - `partition`: Partition number
-    - `delivery_semantics`: "at_least_once" or "at_most_once"
 
-- **`kafka.consumer.messages.committed`** (counter)
+- **`messaging.client.committed.messages`** (counter)
   - Description: Total number of Kafka messages committed
   - Unit: `{message}`
   - Labels:
     - `topic`: Kafka topic name
     - `partition`: Partition number
 
-- **`kafka.consumer.processing.failures`** (counter)
+- **`messaging.process.failures`** (counter)
   - Description: Total number of Kafka message processing failures
   - Unit: `{failure}`
   - Labels:
     - `topic`: Kafka topic name
     - `partition`: Partition number
-    - `delivery_semantics`: "at_least_once" or "at_most_once"
 
 **Using These Metrics:**
 
@@ -249,16 +247,16 @@ These metrics help identify:
 
 ```promql
 # Messages processed per second by topic
-rate(kafka_consumer_messages_processed_total{topic="orders"}[1m])
+rate(messaging_client_processed_messages_total{topic="orders"}[1m])
 
-# Processing failure rate by delivery semantics
-rate(kafka_consumer_processing_failures_total{delivery_semantics="at_least_once"}[5m])
+# Processing failure rate
+rate(messaging_process_failures_total[5m])
 
 # Commit success ratio (at-least-once only)
-kafka_consumer_messages_committed_total / kafka_consumer_messages_processed_total
+messaging_client_committed_messages_total / messaging_client_processed_messages_total
 
 # Processing by partition (identify hotspots)
-sum by (partition) (kafka_consumer_messages_processed_total{topic="orders"})
+sum by (partition) (messaging_client_processed_messages_total{topic="orders"})
 ```
 
 ### Custom Metrics
@@ -413,24 +411,24 @@ Monitor Kafka consumer metrics:
 
 2. **Messages Processed per Second**
    ```promql
-   rate(kafka_consumer_messages_processed_total{topic="orders"}[1m])
+   rate(messaging_client_processed_messages_total{topic="orders"}[1m])
    ```
 
 3. **Messages Committed per Second**
    ```promql
-   rate(kafka_consumer_messages_committed_total{topic="orders"}[1m])
+   rate(messaging_client_committed_messages_total{topic="orders"}[1m])
    ```
 
 4. **Processing Error Rate**
    ```promql
-   rate(kafka_consumer_processing_failures_total{topic="orders"}[1m])
+   rate(messaging_process_failures_total{topic="orders"}[1m])
    ```
 
 5. **Processing Failure Ratio**
    ```promql
-   rate(kafka_consumer_processing_failures_total{topic="orders"}[5m]) 
+   rate(messaging_process_failures_total{topic="orders"}[5m]) 
    / 
-   rate(kafka_consumer_messages_processed_total{topic="orders"}[5m])
+   rate(messaging_client_processed_messages_total{topic="orders"}[5m])
    ```
 
 ## Debugging

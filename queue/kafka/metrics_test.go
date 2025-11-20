@@ -45,9 +45,9 @@ func TestMetricsRecorder(t *testing.T) {
 
 		// Record some messages processed
 		ctx := context.Background()
-		recorder.recordMessageProcessed(ctx, "test-topic", 0, "at_least_once")
-		recorder.recordMessageProcessed(ctx, "test-topic", 1, "at_least_once")
-		recorder.recordMessageProcessed(ctx, "test-topic", 0, "at_most_once")
+		recorder.recordMessageProcessed(ctx, "test-topic", 0)
+		recorder.recordMessageProcessed(ctx, "test-topic", 1)
+		recorder.recordMessageProcessed(ctx, "test-topic", 0)
 
 		// Collect metrics
 		var rm metricdata.ResourceMetrics
@@ -61,7 +61,7 @@ func TestMetricsRecorder(t *testing.T) {
 		// Find the messages processed metric
 		var found bool
 		for _, metric := range rm.ScopeMetrics[0].Metrics {
-			if metric.Name == "kafka.consumer.messages.processed" {
+			if metric.Name == "messaging.client.processed.messages" {
 				found = true
 				require.Equal(t, "{message}", metric.Unit)
 				require.Equal(t, "Total number of Kafka messages processed", metric.Description)
@@ -71,8 +71,8 @@ func TestMetricsRecorder(t *testing.T) {
 				require.True(t, ok)
 				require.True(t, sum.IsMonotonic)
 
-				// We should have recorded 3 data points (different label combinations)
-				require.Len(t, sum.DataPoints, 3)
+				// We should have recorded 2 data points (different partitions)
+				require.Len(t, sum.DataPoints, 2)
 
 				// Verify total count
 				var total int64
@@ -109,7 +109,7 @@ func TestMetricsRecorder(t *testing.T) {
 		// Find the messages committed metric
 		var found bool
 		for _, metric := range rm.ScopeMetrics[0].Metrics {
-			if metric.Name == "kafka.consumer.messages.committed" {
+			if metric.Name == "messaging.client.committed.messages" {
 				found = true
 				require.Equal(t, "{message}", metric.Unit)
 				require.Equal(t, "Total number of Kafka messages committed", metric.Description)
@@ -146,9 +146,9 @@ func TestMetricsRecorder(t *testing.T) {
 
 		// Record some failures
 		ctx := context.Background()
-		recorder.recordProcessingFailure(ctx, "test-topic", 0, "at_least_once")
-		recorder.recordProcessingFailure(ctx, "test-topic", 0, "at_least_once")
-		recorder.recordProcessingFailure(ctx, "test-topic", 1, "at_most_once")
+		recorder.recordProcessingFailure(ctx, "test-topic", 0)
+		recorder.recordProcessingFailure(ctx, "test-topic", 0)
+		recorder.recordProcessingFailure(ctx, "test-topic", 1)
 
 		// Collect metrics
 		var rm metricdata.ResourceMetrics
@@ -158,7 +158,7 @@ func TestMetricsRecorder(t *testing.T) {
 		// Find the processing failures metric
 		var found bool
 		for _, metric := range rm.ScopeMetrics[0].Metrics {
-			if metric.Name == "kafka.consumer.processing.failures" {
+			if metric.Name == "messaging.process.failures" {
 				found = true
 				require.Equal(t, "{failure}", metric.Unit)
 				require.Equal(t, "Total number of Kafka message processing failures", metric.Description)
@@ -168,7 +168,7 @@ func TestMetricsRecorder(t *testing.T) {
 				require.True(t, ok)
 				require.True(t, sum.IsMonotonic)
 
-				// We should have recorded 2 data points (different label combinations)
+				// We should have recorded 2 data points (different partitions)
 				require.Len(t, sum.DataPoints, 2)
 
 				// Verify total count
@@ -195,7 +195,7 @@ func TestMetricsRecorder(t *testing.T) {
 
 		// Record a message with specific attributes
 		ctx := context.Background()
-		recorder.recordMessageProcessed(ctx, "my-topic", 42, "at_least_once")
+		recorder.recordMessageProcessed(ctx, "my-topic", 42)
 
 		// Collect metrics
 		var rm metricdata.ResourceMetrics
@@ -204,7 +204,7 @@ func TestMetricsRecorder(t *testing.T) {
 
 		// Find the messages processed metric
 		for _, metric := range rm.ScopeMetrics[0].Metrics {
-			if metric.Name == "kafka.consumer.messages.processed" {
+			if metric.Name == "messaging.client.processed.messages" {
 				sum, ok := metric.Data.(metricdata.Sum[int64])
 				require.True(t, ok)
 				require.Len(t, sum.DataPoints, 1)
@@ -218,10 +218,6 @@ func TestMetricsRecorder(t *testing.T) {
 				partition, found := attrs.Value("partition")
 				require.True(t, found)
 				require.Equal(t, int64(42), partition.AsInt64())
-
-				deliverySemantics, found := attrs.Value("delivery_semantics")
-				require.True(t, found)
-				require.Equal(t, "at_least_once", deliverySemantics.AsString())
 			}
 		}
 	})

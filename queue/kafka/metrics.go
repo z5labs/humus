@@ -29,7 +29,7 @@ func newMetricsRecorder() (*metricsRecorder, error) {
 	meter := otel.GetMeterProvider().Meter(meterName)
 
 	messagesProcessed, err := meter.Int64Counter(
-		"kafka.consumer.messages.processed",
+		"messaging.client.processed.messages",
 		metric.WithDescription("Total number of Kafka messages processed"),
 		metric.WithUnit("{message}"),
 	)
@@ -38,7 +38,7 @@ func newMetricsRecorder() (*metricsRecorder, error) {
 	}
 
 	messagesCommitted, err := meter.Int64Counter(
-		"kafka.consumer.messages.committed",
+		"messaging.client.committed.messages",
 		metric.WithDescription("Total number of Kafka messages committed"),
 		metric.WithUnit("{message}"),
 	)
@@ -47,7 +47,7 @@ func newMetricsRecorder() (*metricsRecorder, error) {
 	}
 
 	processingFailures, err := meter.Int64Counter(
-		"kafka.consumer.processing.failures",
+		"messaging.process.failures",
 		metric.WithDescription("Total number of Kafka message processing failures"),
 		metric.WithUnit("{failure}"),
 	)
@@ -63,12 +63,11 @@ func newMetricsRecorder() (*metricsRecorder, error) {
 }
 
 // recordMessageProcessed records a successfully processed message.
-func (m *metricsRecorder) recordMessageProcessed(ctx context.Context, topic string, partition int32, deliverySemantics string) {
+func (m *metricsRecorder) recordMessageProcessed(ctx context.Context, topic string, partition int32) {
 	m.messagesProcessed.Add(ctx, 1,
 		metric.WithAttributes(
 			attribute.String("topic", topic),
 			attribute.Int("partition", int(partition)),
-			attribute.String("delivery_semantics", deliverySemantics),
 		),
 	)
 }
@@ -84,12 +83,11 @@ func (m *metricsRecorder) recordMessagesCommitted(ctx context.Context, topic str
 }
 
 // recordProcessingFailure records a message processing failure.
-func (m *metricsRecorder) recordProcessingFailure(ctx context.Context, topic string, partition int32, deliverySemantics string) {
+func (m *metricsRecorder) recordProcessingFailure(ctx context.Context, topic string, partition int32) {
 	m.processingFailures.Add(ctx, 1,
 		metric.WithAttributes(
 			attribute.String("topic", topic),
 			attribute.Int("partition", int(partition)),
-			attribute.String("delivery_semantics", deliverySemantics),
 		),
 	)
 }
