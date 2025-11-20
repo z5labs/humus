@@ -252,10 +252,71 @@ Implementations coordinate Consumer, Processor, and Acknowledger. Return `queue.
 
 **Kafka Runtime (queue/kafka):**
 ```go
-// Kafka-specific runtimes with goroutine-per-partition concurrency
-kafka.NewAtMostOnceRuntime(brokers, topic, groupID, processor)
-kafka.NewAtLeastOnceRuntime(brokers, topic, groupID, processor)
+// Basic Kafka runtime with goroutine-per-partition concurrency
+runtime := kafka.NewRuntime(
+    brokers,
+    groupID,
+    kafka.AtLeastOnce(topic, processor),
+)
+
+// With mTLS authentication for secure broker connections
+cert, err := tls.LoadX509KeyPair("client-cert.pem", "client-key.pem")
+if err != nil {
+    return err
+}
+caCert, err := os.ReadFile("ca-cert.pem")
+if err != nil {
+    return err
+}
+caCertPool := x509.NewCertPool()
+if ok := caCertPool.AppendCertsFromPEM(caCert); !ok {
+    return fmt.Errorf("failed to parse CA certificate")
+}
+
+tlsConfig := &tls.Config{
+    Certificates: []tls.Certificate{cert},
+    RootCAs:      caCertPool,
+    MinVersion:   tls.VersionTLS12,
+}
+
+runtime := kafka.NewRuntime(
+    brokers,
+    groupID,
+    kafka.WithTLS(tlsConfig),
+    kafka.AtLeastOnce(topic, processor),
+)
+
+// Multiple topics with different processors
+runtime := kafka.NewRuntime(
+    brokers,
+    groupID,
+    kafka.AtLeastOnce("orders", ordersProcessor),
+    kafka.AtMostOnce("events", eventsProcessor),
+)
+
+// Advanced configuration with TLS, timeouts, and fetch settings
+runtime := kafka.NewRuntime(
+    brokers,
+    groupID,
+    kafka.WithTLS(&tls.Config{
+        Certificates: []tls.Certificate{cert},
+        RootCAs:      caCertPool,
+        ServerName:   "kafka.example.com",
+        MinVersion:   tls.VersionTLS12,
+    }),
+    kafka.SessionTimeout(45 * time.Second),
+    kafka.RebalanceTimeout(30 * time.Second),
+    kafka.FetchMaxBytes(50 * 1024 * 1024),  // 50 MB
+    kafka.MaxConcurrentFetches(10),
+    kafka.AtLeastOnce(topic, processor),
+)
 ```
+
+**TLS Configuration:**
+- Use standard `*tls.Config` from Go's `crypto/tls` package
+- Load certificates with `tls.LoadX509KeyPair()` or `tls.X509KeyPair()` for in-memory data
+- Configure CA pool with `x509.CertPool` for broker verification
+- Supports both mTLS (client cert + CA) and TLS-only (CA only)
 
 **Custom Runtime Example:**
 ```go
@@ -422,6 +483,7 @@ The `example/` directory contains reference implementations:
 - `example/grpc/petstore/` - gRPC service example with health monitoring
 - `example/queue/kafka-at-most-once/` - Kafka queue with at-most-once semantics
 - `example/queue/kafka-at-least-once/` - Kafka queue with at-least-once semantics
+- `example/queue/kafka-mtls-at-least-once/` - Kafka queue with mTLS authentication
 
 Refer to these for real-world usage patterns of the framework.
 

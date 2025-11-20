@@ -1,0 +1,41 @@
+kafka:
+  brokers:
+    - {{env "KAFKA_BROKERS" | default "localhost:9093"}}
+  topic: {{env "KAFKA_TOPIC" | default "orders"}}
+  group_id: {{env "KAFKA_GROUP_ID" | default "order-processor-mtls"}}
+  tls:
+    # TLS certificates can be provided as file paths or environment variables
+    # pointing to certificate content (useful for Kubernetes secrets)
+    cert_file: {{env "KAFKA_CLIENT_CERT_FILE" | default "./certs/client-cert.pem"}}
+    key_file: {{env "KAFKA_CLIENT_KEY_FILE" | default "./certs/client-key.pem"}}
+    ca_file: {{env "KAFKA_CA_CERT_FILE" | default "./certs/ca-cert.pem"}}
+    
+    # Optional: Server name for SNI (Server Name Indication)
+    # server_name: kafka.example.com
+    
+    # Optional: Minimum TLS version (12 = TLS 1.2, 13 = TLS 1.3)
+    # min_version: 12
+
+otel:
+  resource:
+    service_name: kafka-mtls-at-least-once
+  trace:
+    exporter:
+      type: {{env "OTEL_TRACE_EXPORTER" | default "otlp"}}
+      otlp:
+        type: grpc
+        target: {{env "OTEL_OTLP_TARGET" | default "localhost:4317"}}
+  metric:
+    exporter:
+      type: {{env "OTEL_METRIC_EXPORTER" | default "otlp"}}
+      otlp:
+        type: grpc
+        target: {{env "OTEL_OTLP_TARGET" | default "localhost:4317"}}
+  log:
+    exporter:
+      type: {{env "OTEL_LOG_EXPORTER" | default "otlp"}}
+      otlp:
+        type: grpc
+        target: {{env "OTEL_OTLP_TARGET" | default "localhost:4317"}}
+    minimum_log_level:
+      github.com/twmb/franz-go/pkg/kgo: warn
