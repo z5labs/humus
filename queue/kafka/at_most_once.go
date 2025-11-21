@@ -14,6 +14,8 @@ import (
 
 	"github.com/sourcegraph/conc/pool"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -39,12 +41,35 @@ func (o atMostOnceOrchestrator) Orchestrate(
 	consumer queue.Consumer[fetch],
 	acknowledger queue.Acknowledger[[]*kgo.Record],
 ) queue.Runtime {
+	m := meter()
+
+	messagesProcessed, _ := m.Int64Counter(
+		"kafka.consumer.messages.processed",
+		metric.WithDescription("Total number of Kafka messages processed"),
+		metric.WithUnit("{message}"),
+	)
+
+	messagesCommitted, _ := m.Int64Counter(
+		"kafka.consumer.messages.committed",
+		metric.WithDescription("Total number of Kafka messages successfully committed"),
+		metric.WithUnit("{message}"),
+	)
+
+	processingFailures, _ := m.Int64Counter(
+		"kafka.consumer.processing.failures",
+		metric.WithDescription("Total number of Kafka message processing failures"),
+		metric.WithUnit("{failure}"),
+	)
+
 	return atMostOncePartitionRuntime{
-		log:          logger().With(GroupIDAttr(o.groupId)),
-		tracer:       tracer(),
-		consumer:     consumer,
-		processor:    o.processor,
-		acknowledger: acknowledger,
+		log:                logger().With(GroupIDAttr(o.groupId)),
+		tracer:             tracer(),
+		consumer:           consumer,
+		processor:          o.processor,
+		acknowledger:       acknowledger,
+		messagesProcessed:  messagesProcessed,
+		messagesCommitted:  messagesCommitted,
+		processingFailures: processingFailures,
 	}
 }
 
@@ -63,11 +88,14 @@ func (o atMostOnceOrchestrator) Orchestrate(
 //   - Cache updates
 //   - Analytics events where exact-once is not required
 type atMostOncePartitionRuntime struct {
-	log          *slog.Logger
-	tracer       trace.Tracer
-	consumer     queue.Consumer[fetch]
-	processor    queue.Processor[Message]
-	acknowledger queue.Acknowledger[[]*kgo.Record]
+	log                *slog.Logger
+	tracer             trace.Tracer
+	consumer           queue.Consumer[fetch]
+	processor          queue.Processor[Message]
+	acknowledger       queue.Acknowledger[[]*kgo.Record]
+	messagesProcessed  metric.Int64Counter
+	messagesCommitted  metric.Int64Counter
+	processingFailures metric.Int64Counter
 }
 
 // ProcessQueue implements queue.Runtime interface.
@@ -92,6 +120,16 @@ func (rt atMostOncePartitionRuntime) ProcessQueue(ctx context.Context) error {
 				slog.Any("error", err),
 			)
 			return err
+		}
+
+		// Increment committed messages counter
+		if rt.messagesCommitted != nil && len(f.records) > 0 {
+			attrs := []attribute.KeyValue{
+				attribute.String("messaging.destination.name", f.records[0].Topic),
+				attribute.Int("messaging.destination.partition.id", int(f.records[0].Partition)),
+				attribute.String("delivery.semantics", "at_most_once"),
+			}
+			rt.messagesCommitted.Add(ctx, int64(len(f.records)), metric.WithAttributes(attrs...))
 		}
 
 		// Process all records concurrently after commit
@@ -145,7 +183,24 @@ func (rt *atMostOncePartitionRuntime) processRecord(record *kgo.Record) {
 		Partition: record.Partition,
 		Offset:    record.Offset,
 	})
+
+	// Increment processed messages counter
+	attrs := []attribute.KeyValue{
+		attribute.String("messaging.destination.name", record.Topic),
+		attribute.Int("messaging.destination.partition.id", int(record.Partition)),
+		attribute.String("delivery.semantics", "at_most_once"),
+	}
+	if rt.messagesProcessed != nil {
+		rt.messagesProcessed.Add(spanCtx, 1, metric.WithAttributes(attrs...))
+	}
+
 	if err != nil {
+		// Increment failure counter
+		if rt.processingFailures != nil {
+			failureAttrs := append(attrs, attribute.String("error.type", err.Error()))
+			rt.processingFailures.Add(spanCtx, 1, metric.WithAttributes(failureAttrs...))
+		}
+
 		rt.log.ErrorContext(
 			spanCtx,
 			"failed to process kafka message",

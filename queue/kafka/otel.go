@@ -10,6 +10,7 @@ import (
 
 	"github.com/z5labs/humus"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -19,4 +20,8 @@ func logger() *slog.Logger {
 
 func tracer() trace.Tracer {
 	return otel.Tracer("github.com/z5labs/humus/queue/kafka")
+}
+
+func meter() metric.Meter {
+	return otel.Meter("github.com/z5labs/humus/queue/kafka")
 }
