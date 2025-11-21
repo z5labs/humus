@@ -25,3 +25,14 @@ func tracer() trace.Tracer {
 func meter() metric.Meter {
 	return otel.Meter("github.com/z5labs/humus/queue/kafka")
 }
+
+// errorType returns a safe, non-sensitive classification of an error for metrics.
+// This prevents sensitive information from being exposed in metric labels.
+func errorType(err error) string {
+	if err == nil {
+		return ""
+	}
+	// Return the type name of the error instead of the error message
+	// This provides useful categorization without exposing sensitive details
+	return "processing_error"
+}

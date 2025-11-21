@@ -171,7 +171,7 @@ func (rt atLeastOncePartitionRuntime) processRecord(record *kgo.Record) {
 	if err != nil {
 		// Increment failure counter
 		if rt.processingFailures != nil {
-			failureAttrs := append(attrs, attribute.String("error.type", err.Error()))
+			failureAttrs := append(attrs, attribute.String("error.type", errorType(err)))
 			rt.processingFailures.Add(spanCtx, 1, metric.WithAttributes(failureAttrs...))
 		}
 

@@ -201,6 +201,7 @@
 //	kafka.consumer.processing.failures - Total number of Kafka message processing failures
 //	  Labels: messaging.destination.name (topic), messaging.destination.partition.id, delivery.semantics, error.type
 //	  Unit: {failure}
+//	  Note: error.type is a generic classification ("processing_error") to avoid exposing sensitive information
 //
 // The delivery.semantics label will be either "at_most_once" or "at_least_once" depending
 // on the runtime used. These metrics help monitor:
