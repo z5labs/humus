@@ -7,69 +7,99 @@ package kafka
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
-	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/queue"
 
 	"github.com/twmb/franz-go/pkg/kgo"
-	"github.com/twmb/franz-go/plugin/kotel"
-	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 )
 
-type atLeastOnceMessagesHandler struct {
-	log       *slog.Logger
-	tracer    *kotel.Tracer
-	committer recordsCommitter
+type atLeastOnceOrchestrator struct {
+	groupId   string
 	processor queue.Processor[Message]
 }
 
-func newAtLeastOnceMessagesHandler(
-	groupId string,
+func newAtLeastOnceOrchestrator(
+	groupID string,
 	processor queue.Processor[Message],
-) func(recordsCommitter) recordsHandler {
-	return func(committer recordsCommitter) recordsHandler {
-		return atLeastOnceMessagesHandler{
-			log: humus.Logger("github.com/z5labs/humus/queue/kafka").With(GroupIDAttr(groupId)),
-			tracer: kotel.NewTracer(
-				kotel.TracerProvider(otel.GetTracerProvider()),
-				kotel.TracerPropagator(otel.GetTextMapPropagator()),
-				kotel.LinkSpans(),
-				kotel.ConsumerGroup(groupId),
-			),
-			committer: committer,
-			processor: processor,
-		}
+) partitionOrchestrator {
+	return atLeastOnceOrchestrator{
+		groupId:   groupID,
+		processor: processor,
 	}
 }
 
 // AtLeastOnce configures the Kafka runtime to process messages from the specified topic
+// with at-least-once delivery semantics (process before acknowledge).
 func AtLeastOnce(topic string, processor queue.Processor[Message]) Option {
 	return func(o *Options) {
-		o.topics[topic] = newAtLeastOnceMessagesHandler(o.groupId, processor)
+		o.topics[topic] = newAtLeastOnceOrchestrator(o.groupId, processor)
 	}
 }
 
-func (h atLeastOnceMessagesHandler) Handle(ctx context.Context, records []*kgo.Record) error {
-	for _, record := range records {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		if record.Context == nil {
-			record.Context = ctx
-		}
-
-		h.processRecord(record)
+func (o atLeastOnceOrchestrator) Orchestrate(
+	consumer queue.Consumer[fetch],
+	acknowledger queue.Acknowledger[[]*kgo.Record],
+) queue.Runtime {
+	return atLeastOncePartitionRuntime{
+		log:          logger().With(GroupIDAttr(o.groupId)),
+		tracer:       tracer(),
+		consumer:     consumer,
+		processor:    o.processor,
+		acknowledger: acknowledger,
 	}
-
-	return h.committer.CommitRecords(ctx, records...)
 }
 
-func (h atLeastOnceMessagesHandler) processRecord(record *kgo.Record) {
-	spanCtx, span := h.tracer.WithProcessSpan(record)
+type atLeastOncePartitionRuntime struct {
+	log          *slog.Logger
+	tracer       trace.Tracer
+	consumer     queue.Consumer[fetch]
+	processor    queue.Processor[Message]
+	acknowledger queue.Acknowledger[[]*kgo.Record]
+}
+
+func (rt atLeastOncePartitionRuntime) ProcessQueue(ctx context.Context) error {
+	for {
+		// Consume a fetch
+		f, err := rt.consumer.Consume(ctx)
+		if errors.Is(err, queue.ErrEndOfQueue) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+
+		// Process all records in the fetch
+		for _, record := range f.records {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+
+			if record.Context == nil {
+				record.Context = ctx
+			}
+
+			rt.processRecord(record)
+		}
+
+		// Acknowledge all records after processing
+		err = rt.acknowledger.Acknowledge(ctx, f.records)
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func (rt atLeastOncePartitionRuntime) processRecord(record *kgo.Record) {
+	spanCtx, span := rt.tracer.Start(
+		record.Context,
+		"kafka.process",
+		trace.WithSpanKind(trace.SpanKindConsumer),
+	)
 	defer span.End()
 
 	headers := make([]Header, len(record.Headers))
@@ -80,7 +110,7 @@ func (h atLeastOnceMessagesHandler) processRecord(record *kgo.Record) {
 		}
 	}
 
-	err := h.processor.Process(spanCtx, Message{
+	err := rt.processor.Process(spanCtx, Message{
 		Headers:   headers,
 		Key:       record.Key,
 		Value:     record.Value,
@@ -90,7 +120,7 @@ func (h atLeastOnceMessagesHandler) processRecord(record *kgo.Record) {
 		Offset:    record.Offset,
 	})
 	if err != nil {
-		h.log.ErrorContext(
+		rt.log.ErrorContext(
 			spanCtx,
 			"failed to process kafka message",
 			TopicAttr(record.Topic),

@@ -41,18 +41,10 @@ type Message struct {
 	Attrs     uint8
 }
 
-type recordsHandler interface {
-	Handle(context.Context, []*kgo.Record) error
-}
-
-type recordsCommitter interface {
-	CommitRecords(context.Context, ...*kgo.Record) error
-}
-
 // Options represents configuration options for the Kafka runtime.
 type Options struct {
 	groupId              string
-	topics               map[string]func(recordsCommitter) recordsHandler
+	topics               map[string]partitionOrchestrator
 	sessionTimeout       time.Duration
 	rebalanceTimeout     time.Duration
 	fetchMaxBytes        int32
@@ -103,20 +95,20 @@ func MaxConcurrentFetches(fetches int) Option {
 //	if err != nil {
 //	    return err
 //	}
-//	
+//
 //	caCert, err := os.ReadFile("ca-cert.pem")
 //	if err != nil {
 //	    return err
 //	}
 //	caCertPool := x509.NewCertPool()
 //	caCertPool.AppendCertsFromPEM(caCert)
-//	
+//
 //	tlsConfig := &tls.Config{
 //	    Certificates: []tls.Certificate{cert},
 //	    RootCAs:      caCertPool,
 //	    MinVersion:   tls.VersionTLS12,
 //	}
-//	
+//
 //	runtime := kafka.NewRuntime(brokers, groupID,
 //	    kafka.WithTLS(tlsConfig),
 //	    kafka.AtLeastOnce(topic, processor),
@@ -132,7 +124,7 @@ type Runtime struct {
 	log                  *slog.Logger
 	brokers              []string
 	groupID              string
-	topics               map[string]func(recordsCommitter) recordsHandler
+	topics               map[string]partitionOrchestrator
 	sessionTimeout       time.Duration
 	rebalanceTimeout     time.Duration
 	fetchMaxBytes        int32
@@ -148,7 +140,7 @@ func NewRuntime(
 ) Runtime {
 	cfg := &Options{
 		groupId:              groupID,
-		topics:               make(map[string]func(recordsCommitter) recordsHandler),
+		topics:               make(map[string]partitionOrchestrator),
 		sessionTimeout:       45 * time.Second,
 		rebalanceTimeout:     30 * time.Second,
 		fetchMaxBytes:        50 * 1024 * 1024, // 50 MB
@@ -163,7 +155,7 @@ func NewRuntime(
 	}
 
 	return Runtime{
-		log:                  humus.Logger("github.com/z5labs/humus/queue/kafka").With(GroupIDAttr(groupID)),
+		log:                  logger().With(GroupIDAttr(groupID)),
 		brokers:              brokers,
 		groupID:              groupID,
 		topics:               cfg.topics,
@@ -175,42 +167,13 @@ func NewRuntime(
 	}
 }
 
-type topicPartition struct {
-	topic     string
-	partition int32
-}
-
-type assignedPartition struct {
-	topicPartition
-
-	handler recordsHandler
-}
-
-type eventLoop struct {
-	log *slog.Logger
-
-	fetches            chan kgo.FetchTopic
-	assignedPartitions chan assignedPartition
-	lostPartitions     chan topicPartition
-	revokedPartitions  chan topicPartition
-
-	topicHandlers   map[string]func(recordsCommitter) recordsHandler
-	topicPartitions map[topicPartition]chan []*kgo.Record
-	partitionPool   *pool.ContextPool
-}
-
 // ProcessQueue starts processing the Kafka queue.
 func (r Runtime) ProcessQueue(ctx context.Context) error {
-	loop := eventLoop{
-		log:                r.log,
-		fetches:            make(chan kgo.FetchTopic),
-		assignedPartitions: make(chan assignedPartition),
-		lostPartitions:     make(chan topicPartition),
-		revokedPartitions:  make(chan topicPartition),
-		topicHandlers:      r.topics,
-		topicPartitions:    make(map[topicPartition]chan []*kgo.Record),
-		partitionPool:      pool.New().WithContext(ctx),
-	}
+	loop := newEventLoop(ctx, r.log, r.topics)
+
+	onPartitionAssigned := loop.onPartitionsAssigned(ctx)
+	onPartitionRevoked := loop.onPartitionsRevoked(ctx)
+	onPartitionLost := loop.onPartitionsLost(ctx)
 
 	clientOpts := []kgo.Opt{
 		kgo.WithLogger(kslog.New(humus.Logger("github.com/twmb/franz-go/pkg/kgo"))),
@@ -235,9 +198,11 @@ func (r Runtime) ProcessQueue(ctx context.Context) error {
 		kgo.FetchMaxBytes(r.fetchMaxBytes),
 		kgo.MaxConcurrentFetches(r.maxConcurrentFetches),
 		kgo.DisableAutoCommit(),
-		kgo.OnPartitionsAssigned(loop.onPartitionsAssigned(ctx)),
-		kgo.OnPartitionsRevoked(loop.onPartitionsRevoked(ctx)),
-		kgo.OnPartitionsLost(loop.onPartitionsLost(ctx)),
+		kgo.OnPartitionsAssigned(func(ctx context.Context, c *kgo.Client, m map[string][]int32) {
+			onPartitionAssigned(ctx, c, m)
+		}),
+		kgo.OnPartitionsRevoked(onPartitionRevoked),
+		kgo.OnPartitionsLost(onPartitionLost),
 	}
 
 	// Configure TLS if provided
@@ -249,239 +214,11 @@ func (r Runtime) ProcessQueue(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("kafka: failed to create client: %w", err)
 	}
-
-	topicHandlers := make(map[string]recordsHandler)
-	for topic, f := range r.topics {
-		topicHandlers[topic] = f(client)
-	}
+	defer client.Close()
 
 	p := pool.New().WithContext(ctx)
 	p.Go(loop.fetchRecords(client))
 	p.Go(loop.run)
 
 	return p.Wait()
-}
-
-type onPartitionCallback func(ctx context.Context, client *kgo.Client, partitions map[string][]int32)
-
-func (loop eventLoop) onPartitionsAssigned(ctx context.Context) onPartitionCallback {
-	return func(_ context.Context, client *kgo.Client, assigned map[string][]int32) {
-		for topic, partitions := range assigned {
-			for _, partition := range partitions {
-				handler := loop.topicHandlers[topic](client)
-
-				ap := assignedPartition{
-					topicPartition: topicPartition{topic: topic, partition: partition},
-					handler:        handler,
-				}
-
-				select {
-				case <-ctx.Done():
-					return
-				case loop.assignedPartitions <- ap:
-				}
-			}
-		}
-	}
-}
-
-func (loop eventLoop) onPartitionsLost(ctx context.Context) onPartitionCallback {
-	return func(_ context.Context, _ *kgo.Client, lost map[string][]int32) {
-		for topic, partitions := range lost {
-			for _, partition := range partitions {
-				select {
-				case <-ctx.Done():
-					return
-				case loop.lostPartitions <- topicPartition{topic: topic, partition: partition}:
-				}
-			}
-		}
-	}
-}
-
-func (loop eventLoop) onPartitionsRevoked(ctx context.Context) onPartitionCallback {
-	return func(_ context.Context, _ *kgo.Client, revoked map[string][]int32) {
-		for topic, partitions := range revoked {
-			for _, partition := range partitions {
-				select {
-				case <-ctx.Done():
-					return
-				case loop.revokedPartitions <- topicPartition{topic: topic, partition: partition}:
-				}
-			}
-		}
-	}
-}
-
-type pollFetcher interface {
-	Close()
-	PollFetches(context.Context) kgo.Fetches
-}
-
-func (loop eventLoop) fetchRecords(client pollFetcher) func(context.Context) error {
-	return func(ctx context.Context) error {
-		defer client.Close()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
-
-			fetches := client.PollFetches(ctx)
-			for _, fetch := range fetches {
-				for _, topic := range fetch.Topics {
-					select {
-					case <-ctx.Done():
-						return ctx.Err()
-					case loop.fetches <- topic:
-					}
-				}
-			}
-		}
-	}
-}
-
-func (loop eventLoop) shutdown() error {
-	for _, ch := range loop.topicPartitions {
-		close(ch)
-	}
-
-	return loop.partitionPool.Wait()
-}
-
-func (loop eventLoop) run(ctx context.Context) error {
-	for {
-		err := loop.tick(ctx)
-		if err != nil {
-			return loop.shutdown()
-		}
-	}
-}
-
-func (loop eventLoop) tick(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case tp := <-loop.assignedPartitions:
-		return loop.handleAssignedPartition(ctx, tp)
-	case tp := <-loop.lostPartitions:
-		return loop.handleLostPartition(ctx, tp)
-	case tp := <-loop.revokedPartitions:
-		return loop.handleRevokedPartition(ctx, tp)
-	case fetch := <-loop.fetches:
-		return loop.handleFetch(ctx, fetch)
-	}
-}
-
-func (loop eventLoop) handleAssignedPartition(ctx context.Context, ap assignedPartition) error {
-	loop.log.InfoContext(
-		ctx,
-		"topic partition assigned",
-		TopicAttr(ap.topic),
-		PartitionAttr(ap.partition),
-	)
-
-	records := make(chan []*kgo.Record)
-	loop.topicPartitions[ap.topicPartition] = records
-
-	loop.partitionPool.Go(processRecords(records, ap.handler))
-
-	return nil
-}
-
-func processRecords(recordsCh <-chan []*kgo.Record, handler recordsHandler) func(context.Context) error {
-	return func(ctx context.Context) error {
-		for {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case records, ok := <-recordsCh:
-				if !ok {
-					return nil
-				}
-
-				err := handler.Handle(ctx, records)
-				if err != nil {
-					return err
-				}
-			}
-		}
-	}
-}
-
-func (loop eventLoop) handleLostPartition(ctx context.Context, tp topicPartition) error {
-	loop.log.InfoContext(
-		ctx,
-		"topic partition lost",
-		TopicAttr(tp.topic),
-		PartitionAttr(tp.partition),
-	)
-
-	recordCh, exists := loop.topicPartitions[tp]
-	if !exists {
-		loop.log.WarnContext(
-			ctx,
-			"topic partition not found for lost partition",
-			TopicAttr(tp.topic),
-			PartitionAttr(tp.partition),
-		)
-		return nil
-	}
-
-	close(recordCh)
-	delete(loop.topicPartitions, tp)
-
-	return nil
-}
-
-func (loop eventLoop) handleRevokedPartition(ctx context.Context, tp topicPartition) error {
-	loop.log.InfoContext(
-		ctx,
-		"topic partition revoked",
-		TopicAttr(tp.topic),
-		PartitionAttr(tp.partition),
-	)
-
-	recordCh, exists := loop.topicPartitions[tp]
-	if !exists {
-		loop.log.WarnContext(
-			ctx,
-			"topic partition not found for revoked partition",
-			TopicAttr(tp.topic),
-			PartitionAttr(tp.partition),
-		)
-		return nil
-	}
-
-	close(recordCh)
-	delete(loop.topicPartitions, tp)
-
-	return nil
-}
-
-func (loop eventLoop) handleFetch(ctx context.Context, fetch kgo.FetchTopic) error {
-	for _, partition := range fetch.Partitions {
-		tp := topicPartition{topic: fetch.Topic, partition: partition.Partition}
-		recordCh, exists := loop.topicPartitions[tp]
-		if !exists {
-			loop.log.WarnContext(
-				ctx,
-				"topic partition not found for fetched records",
-				TopicAttr(tp.topic),
-				PartitionAttr(tp.partition),
-			)
-			continue
-		}
-
-		records := partition.Records
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case recordCh <- records:
-		}
-	}
-
-	return nil
 }

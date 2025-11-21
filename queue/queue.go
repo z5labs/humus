@@ -37,11 +37,27 @@ type Consumer[T any] interface {
 	Consume(context.Context) (T, error)
 }
 
+// ConsumerFunc is an adapter to allow the use of ordinary functions as [Consumer]s.
+type ConsumerFunc[T any] func(context.Context) (T, error)
+
+// Consume implements the [Consumer] interface.
+func (f ConsumerFunc[T]) Consume(ctx context.Context) (T, error) {
+	return f(ctx)
+}
+
 // Processor implements the business logic for processing message(s), T.
 //
 // Process is called after a message is consumed and before it is acknowledged.
 type Processor[T any] interface {
 	Process(context.Context, T) error
+}
+
+// ProcessorFunc is an adapter to allow the use of ordinary functions as [Processor]s.
+type ProcessorFunc[T any] func(context.Context, T) error
+
+// Process implements the [Processor] interface.
+func (f ProcessorFunc[T]) Process(ctx context.Context, t T) error {
+	return f(ctx, t)
 }
 
 // Acknowledger tells the queue that message(s), T, have been successfully processed.
@@ -50,6 +66,14 @@ type Processor[T any] interface {
 // completion back to the queue system.
 type Acknowledger[T any] interface {
 	Acknowledge(context.Context, T) error
+}
+
+// AcknowledgerFunc is an adapter to allow the use of ordinary functions as [Acknowledger]s.
+type AcknowledgerFunc[T any] func(context.Context, T) error
+
+// Acknowledge implements the [Acknowledger] interface.
+func (f AcknowledgerFunc[T]) Acknowledge(ctx context.Context, t T) error {
+	return f(ctx, t)
 }
 
 //go:embed default_config.yaml
@@ -108,6 +132,14 @@ type Config struct {
 // the application will shut down gracefully.
 type Runtime interface {
 	ProcessQueue(context.Context) error
+}
+
+// RuntimeFunc is an adapter to allow the use of ordinary functions as [Runtime]s.
+type RuntimeFunc func(context.Context) error
+
+// ProcessQueue implements the [Runtime] interface.
+func (f RuntimeFunc) ProcessQueue(ctx context.Context) error {
+	return f(ctx)
 }
 
 // App wraps a [Runtime] and implements the [bedrock.App] interface.
