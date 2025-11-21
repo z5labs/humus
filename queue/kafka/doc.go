@@ -190,15 +190,15 @@
 //
 // The following metrics are automatically collected:
 //
-//	kafka.consumer.messages.processed - Total number of Kafka messages processed
+//	messaging.client.messages.processed - Total number of Kafka messages processed
 //	  Labels: messaging.destination.name (topic), messaging.destination.partition.id, delivery.semantics
 //	  Unit: {message}
 //
-//	kafka.consumer.messages.committed - Total number of Kafka messages successfully committed
+//	messaging.client.messages.committed - Total number of Kafka messages successfully committed
 //	  Labels: messaging.destination.name (topic), messaging.destination.partition.id, delivery.semantics
 //	  Unit: {message}
 //
-//	kafka.consumer.processing.failures - Total number of Kafka message processing failures
+//	messaging.client.processing.failures - Total number of Kafka message processing failures
 //	  Labels: messaging.destination.name (topic), messaging.destination.partition.id, delivery.semantics, error.type
 //	  Unit: {failure}
 //	  Note: error.type is a generic classification ("processing_error") to avoid exposing sensitive information

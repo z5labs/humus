@@ -45,35 +45,8 @@ func (o atLeastOnceOrchestrator) Orchestrate(
 	consumer queue.Consumer[fetch],
 	acknowledger queue.Acknowledger[[]*kgo.Record],
 ) queue.Runtime {
-	m := meter()
 	log := logger().With(GroupIDAttr(o.groupId))
-
-	messagesProcessed, err := m.Int64Counter(
-		"kafka.consumer.messages.processed",
-		metric.WithDescription("Total number of Kafka messages processed"),
-		metric.WithUnit("{message}"),
-	)
-	if err != nil {
-		log.Warn("failed to create messages processed metric", slog.Any("error", err))
-	}
-
-	messagesCommitted, err := m.Int64Counter(
-		"kafka.consumer.messages.committed",
-		metric.WithDescription("Total number of Kafka messages successfully committed"),
-		metric.WithUnit("{message}"),
-	)
-	if err != nil {
-		log.Warn("failed to create messages committed metric", slog.Any("error", err))
-	}
-
-	processingFailures, err := m.Int64Counter(
-		"kafka.consumer.processing.failures",
-		metric.WithDescription("Total number of Kafka message processing failures"),
-		metric.WithUnit("{failure}"),
-	)
-	if err != nil {
-		log.Warn("failed to create processing failures metric", slog.Any("error", err))
-	}
+	metrics := initConsumerMetrics(log)
 
 	return atLeastOncePartitionRuntime{
 		log:                log,
@@ -81,9 +54,9 @@ func (o atLeastOnceOrchestrator) Orchestrate(
 		consumer:           consumer,
 		processor:          o.processor,
 		acknowledger:       acknowledger,
-		messagesProcessed:  messagesProcessed,
-		messagesCommitted:  messagesCommitted,
-		processingFailures: processingFailures,
+		messagesProcessed:  metrics.messagesProcessed,
+		messagesCommitted:  metrics.messagesCommitted,
+		processingFailures: metrics.processingFailures,
 	}
 }
 
@@ -133,8 +106,8 @@ func (rt atLeastOncePartitionRuntime) ProcessQueue(ctx context.Context) error {
 		// Increment committed messages counter
 		if rt.messagesCommitted != nil && len(f.records) > 0 {
 			attrs := []attribute.KeyValue{
-				attribute.String("messaging.destination.name", f.records[0].Topic),
-				attribute.Int("messaging.destination.partition.id", int(f.records[0].Partition)),
+				attribute.String("messaging.destination.name", f.topic),
+				attribute.Int("messaging.destination.partition.id", int(f.partition)),
 				attribute.String("delivery.semantics", "at_least_once"),
 			}
 			rt.messagesCommitted.Add(ctx, int64(len(f.records)), metric.WithAttributes(attrs...))
