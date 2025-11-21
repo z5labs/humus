@@ -270,4 +270,3 @@ func TestAtMostOncePartitionRuntime_MetricsRecordProcessingFailures(t *testing.T
 
 	require.Equal(t, int64(2), failureCount, "should record 2 failures")
 }
-

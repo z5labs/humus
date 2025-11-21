@@ -22,17 +22,21 @@ func tracer() trace.Tracer {
 	return otel.Tracer("github.com/z5labs/humus/queue/kafka")
 }
 
+// meter returns the OpenTelemetry meter for the Kafka package.
+// It uses the global meter provider configured via otel.SetMeterProvider.
 func meter() metric.Meter {
 	return otel.Meter("github.com/z5labs/humus/queue/kafka")
 }
 
 // errorType returns a safe, non-sensitive classification of an error for metrics.
-// This prevents sensitive information from being exposed in metric labels.
+// This prevents sensitive information from being exposed in metric labels while
+// still providing meaningful categorization for monitoring.
 func errorType(err error) string {
 	if err == nil {
 		return ""
 	}
-	// Return the type name of the error instead of the error message
-	// This provides useful categorization without exposing sensitive details
+	// Return "processing_error" as a generic classification
+	// This provides useful error tracking without exposing sensitive details
+	// that might be contained in error messages
 	return "processing_error"
 }

@@ -46,27 +46,37 @@ func (o atLeastOnceOrchestrator) Orchestrate(
 	acknowledger queue.Acknowledger[[]*kgo.Record],
 ) queue.Runtime {
 	m := meter()
+	log := logger().With(GroupIDAttr(o.groupId))
 
-	messagesProcessed, _ := m.Int64Counter(
+	messagesProcessed, err := m.Int64Counter(
 		"kafka.consumer.messages.processed",
 		metric.WithDescription("Total number of Kafka messages processed"),
 		metric.WithUnit("{message}"),
 	)
+	if err != nil {
+		log.Warn("failed to create messages processed metric", slog.Any("error", err))
+	}
 
-	messagesCommitted, _ := m.Int64Counter(
+	messagesCommitted, err := m.Int64Counter(
 		"kafka.consumer.messages.committed",
 		metric.WithDescription("Total number of Kafka messages successfully committed"),
 		metric.WithUnit("{message}"),
 	)
+	if err != nil {
+		log.Warn("failed to create messages committed metric", slog.Any("error", err))
+	}
 
-	processingFailures, _ := m.Int64Counter(
+	processingFailures, err := m.Int64Counter(
 		"kafka.consumer.processing.failures",
 		metric.WithDescription("Total number of Kafka message processing failures"),
 		metric.WithUnit("{failure}"),
 	)
+	if err != nil {
+		log.Warn("failed to create processing failures metric", slog.Any("error", err))
+	}
 
 	return atLeastOncePartitionRuntime{
-		log:                logger().With(GroupIDAttr(o.groupId)),
+		log:                log,
 		tracer:             tracer(),
 		consumer:           consumer,
 		processor:          o.processor,
