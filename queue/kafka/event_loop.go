@@ -7,7 +7,6 @@ package kafka
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 
 	"github.com/sourcegraph/conc/pool"
@@ -175,7 +174,6 @@ func (loop eventLoop) run(ctx context.Context) error {
 }
 
 func (loop eventLoop) tick(ctx context.Context) error {
-	fmt.Println("tick")
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
