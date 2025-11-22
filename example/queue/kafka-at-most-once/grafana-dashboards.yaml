@@ -1,0 +1,15 @@
+# Grafana Dashboards Configuration
+# Auto-provisioned dashboards for Kafka at-most-once queue monitoring
+
+apiVersion: 1
+
+providers:
+  - name: 'Kafka At-Most-Once'
+    orgId: 1
+    folder: 'Queue Monitoring'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
