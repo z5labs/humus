@@ -84,11 +84,15 @@ type atMostOncePartitionRuntime struct {
 // ProcessQueue implements queue.Runtime interface.
 // It consumes fetches, acknowledges them immediately, then processes all records concurrently (at-most-once semantics).
 func (rt atMostOncePartitionRuntime) ProcessQueue(ctx context.Context) error {
+	// Create pool once and use across all batches for better performance
+	p := pool.New().WithContext(ctx)
+
 	for {
 		// Consume a fetch
 		f, err := rt.consumer.Consume(ctx)
 		if errors.Is(err, queue.ErrEndOfQueue) {
-			return nil
+			// Wait for all pending tasks before returning
+			return p.Wait()
 		}
 		if err != nil {
 			return err
@@ -116,25 +120,23 @@ func (rt atMostOncePartitionRuntime) ProcessQueue(ctx context.Context) error {
 
 		// Process all records concurrently after commit
 		// Since records are already committed, we can process them in parallel
-		p := pool.New().WithContext(ctx)
-
 		for _, record := range f.records {
 			// Capture record in closure
 			record := record
 			p.Go(func(ctx context.Context) error {
+				// Use the context from the pool instead of modifying the record
+				// to avoid data races when processing multiple batches concurrently
 				if record.Context == nil {
-					record.Context = ctx
+					// Create a new record with the context set
+					recordWithContext := *record
+					recordWithContext.Context = ctx
+					rt.processRecord(&recordWithContext)
+				} else {
+					rt.processRecord(record)
 				}
-
-				rt.processRecord(record)
 
 				return nil // Don't propagate errors - messages are already committed
 			})
-		}
-
-		err = p.Wait()
-		if err != nil {
-			return err
 		}
 	}
 }
