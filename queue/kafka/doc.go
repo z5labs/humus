@@ -191,20 +191,19 @@
 // The following metrics are automatically collected:
 //
 //	messaging.client.messages.processed - Total number of Kafka messages processed
-//	  Labels: messaging.destination.name (topic), messaging.destination.partition.id, delivery.semantics
+//	  Labels: messaging.destination.name (topic), messaging.destination.partition.id
 //	  Unit: {message}
 //
 //	messaging.client.messages.committed - Total number of Kafka messages successfully committed
-//	  Labels: messaging.destination.name (topic), messaging.destination.partition.id, delivery.semantics
+//	  Labels: messaging.destination.name (topic), messaging.destination.partition.id
 //	  Unit: {message}
 //
 //	messaging.client.processing.failures - Total number of Kafka message processing failures
-//	  Labels: messaging.destination.name (topic), messaging.destination.partition.id, delivery.semantics, error.type
+//	  Labels: messaging.destination.name (topic), messaging.destination.partition.id, error.type
 //	  Unit: {failure}
 //	  Note: error.type is a generic classification ("processing_error") to avoid exposing sensitive information
 //
-// The delivery.semantics label will be either "at_most_once" or "at_least_once" depending
-// on the runtime used. These metrics help monitor:
+// These metrics help monitor:
 //   - Message throughput (messages processed per second)
 //   - Consumer lag (by comparing processed vs committed)
 //   - Error rates (failures per message)

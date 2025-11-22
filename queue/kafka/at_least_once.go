@@ -108,7 +108,6 @@ func (rt atLeastOncePartitionRuntime) ProcessQueue(ctx context.Context) error {
 			attrs := []attribute.KeyValue{
 				attribute.String("messaging.destination.name", f.topic),
 				attribute.Int("messaging.destination.partition.id", int(f.partition)),
-				attribute.String("delivery.semantics", "at_least_once"),
 			}
 			rt.messagesCommitted.Add(ctx, int64(len(f.records)), metric.WithAttributes(attrs...))
 		}
@@ -145,7 +144,6 @@ func (rt atLeastOncePartitionRuntime) processRecord(record *kgo.Record) {
 	attrs := []attribute.KeyValue{
 		attribute.String("messaging.destination.name", record.Topic),
 		attribute.Int("messaging.destination.partition.id", int(record.Partition)),
-		attribute.String("delivery.semantics", "at_least_once"),
 	}
 	if rt.messagesProcessed != nil {
 		rt.messagesProcessed.Add(spanCtx, 1, metric.WithAttributes(attrs...))
