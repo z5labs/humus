@@ -13,6 +13,8 @@ import (
 	"github.com/z5labs/humus/queue"
 
 	"github.com/twmb/franz-go/pkg/kgo"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -43,21 +45,30 @@ func (o atLeastOnceOrchestrator) Orchestrate(
 	consumer queue.Consumer[fetch],
 	acknowledger queue.Acknowledger[[]*kgo.Record],
 ) queue.Runtime {
+	log := logger().With(GroupIDAttr(o.groupId))
+	metrics := initConsumerMetrics(log)
+
 	return atLeastOncePartitionRuntime{
-		log:          logger().With(GroupIDAttr(o.groupId)),
-		tracer:       tracer(),
-		consumer:     consumer,
-		processor:    o.processor,
-		acknowledger: acknowledger,
+		log:                log,
+		tracer:             tracer(),
+		consumer:           consumer,
+		processor:          o.processor,
+		acknowledger:       acknowledger,
+		messagesProcessed:  metrics.messagesProcessed,
+		messagesCommitted:  metrics.messagesCommitted,
+		processingFailures: metrics.processingFailures,
 	}
 }
 
 type atLeastOncePartitionRuntime struct {
-	log          *slog.Logger
-	tracer       trace.Tracer
-	consumer     queue.Consumer[fetch]
-	processor    queue.Processor[Message]
-	acknowledger queue.Acknowledger[[]*kgo.Record]
+	log                *slog.Logger
+	tracer             trace.Tracer
+	consumer           queue.Consumer[fetch]
+	processor          queue.Processor[Message]
+	acknowledger       queue.Acknowledger[[]*kgo.Record]
+	messagesProcessed  metric.Int64Counter
+	messagesCommitted  metric.Int64Counter
+	processingFailures metric.Int64Counter
 }
 
 func (rt atLeastOncePartitionRuntime) ProcessQueue(ctx context.Context) error {
@@ -91,6 +102,15 @@ func (rt atLeastOncePartitionRuntime) ProcessQueue(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+
+		// Increment committed messages counter
+		if rt.messagesCommitted != nil && len(f.records) > 0 {
+			attrs := []attribute.KeyValue{
+				attribute.String("messaging.destination.name", f.topic),
+				attribute.Int("messaging.destination.partition.id", int(f.partition)),
+			}
+			rt.messagesCommitted.Add(ctx, int64(len(f.records)), metric.WithAttributes(attrs...))
+		}
 	}
 }
 
@@ -119,7 +139,23 @@ func (rt atLeastOncePartitionRuntime) processRecord(record *kgo.Record) {
 		Partition: record.Partition,
 		Offset:    record.Offset,
 	})
+
+	// Increment processed messages counter
+	attrs := []attribute.KeyValue{
+		attribute.String("messaging.destination.name", record.Topic),
+		attribute.Int("messaging.destination.partition.id", int(record.Partition)),
+	}
+	if rt.messagesProcessed != nil {
+		rt.messagesProcessed.Add(spanCtx, 1, metric.WithAttributes(attrs...))
+	}
+
 	if err != nil {
+		// Increment failure counter
+		if rt.processingFailures != nil {
+			failureAttrs := append(attrs, attribute.String("error.type", errorType(err)))
+			rt.processingFailures.Add(spanCtx, 1, metric.WithAttributes(failureAttrs...))
+		}
+
 		rt.log.ErrorContext(
 			spanCtx,
 			"failed to process kafka message",

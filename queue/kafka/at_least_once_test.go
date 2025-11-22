@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"testing"
 
 	"github.com/z5labs/humus/queue"
@@ -60,12 +61,24 @@ func (m *mockRecordAcknowledger) Acknowledge(ctx context.Context, records []*kgo
 }
 
 // callRecorder tracks the order of method calls for verifying semantics.
+// It is thread-safe to support concurrent processing.
 type callRecorder struct {
+	mu    sync.Mutex
 	calls []string
 }
 
 func (c *callRecorder) record(call string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.calls = append(c.calls, call)
+}
+
+func (c *callRecorder) getCalls() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	result := make([]string, len(c.calls))
+	copy(result, c.calls)
+	return result
 }
 
 // orderTrackingConsumer wraps mockFetchConsumer to track call order.
@@ -177,11 +190,12 @@ func TestAtLeastOncePartitionRuntime_ProcessQueue_VerifyCallOrder(t *testing.T) 
 
 	// Verify call order: Consume → Process → Acknowledge (then Consume again for ErrEndOfQueue)
 	require.NoError(t, err)
-	require.Len(t, recorder.calls, 4)
-	require.Equal(t, "Consume", recorder.calls[0])
-	require.Equal(t, "Process", recorder.calls[1])
-	require.Equal(t, "Acknowledge", recorder.calls[2])
-	require.Equal(t, "Consume", recorder.calls[3]) // Second consume returns ErrEndOfQueue
+	calls := recorder.getCalls()
+	require.Len(t, calls, 4)
+	require.Equal(t, "Consume", calls[0])
+	require.Equal(t, "Process", calls[1])
+	require.Equal(t, "Acknowledge", calls[2])
+	require.Equal(t, "Consume", calls[3]) // Second consume returns ErrEndOfQueue
 }
 
 func TestAtLeastOncePartitionRuntime_ProcessQueue_ConsumeError(t *testing.T) {
