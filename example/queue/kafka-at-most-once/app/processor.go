@@ -68,7 +68,7 @@ func (p *MetricsProcessor) Process(ctx context.Context, msg *MetricMessage) erro
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-time.After(time.Duration(rand.IntN(201)+50) * time.Millisecond):
+	case <-time.After(time.Duration(rand.IntN(351)+50) * time.Millisecond):
 	}
 
 	// In a real application, you might:

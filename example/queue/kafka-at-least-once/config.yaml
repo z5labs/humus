@@ -14,6 +14,10 @@ otel:
         type: grpc
         target: {{env "OTEL_OTLP_TARGET" | default "localhost:4317"}}
   metric:
+    reader:
+      type: {{env "OTEL_METRIC_READER" | default "periodic"}}
+      periodic:
+        export_interval: {{env "OTEL_METRIC_EXPORT_INTERVAL" | default "1s"}}
     exporter:
       type: {{env "OTEL_METRIC_EXPORTER" | default "otlp"}}
       otlp:
