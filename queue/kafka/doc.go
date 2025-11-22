@@ -174,13 +174,43 @@
 //
 // # OpenTelemetry Instrumentation
 //
-// All message processing is automatically instrumented with OpenTelemetry tracing
-// and logging through the core queue package processors. Traces include:
+// All message processing is automatically instrumented with OpenTelemetry tracing,
+// logging, and metrics through the core queue package processors.
+//
+// # Tracing
+//
+// Traces include:
 //   - Span per message with processing order visible
 //   - Context propagation through consume/process/acknowledge phases
 //   - Error recording in spans
 //
 // No additional tracing configuration is needed in your processor implementation.
+//
+// # Metrics
+//
+// The following metrics are automatically collected:
+//
+//	messaging.client.messages.processed - Total number of Kafka messages processed
+//	  Labels: messaging.destination.name (topic), messaging.destination.partition.id
+//	  Unit: {message}
+//
+//	messaging.client.messages.committed - Total number of Kafka messages successfully committed
+//	  Labels: messaging.destination.name (topic), messaging.destination.partition.id
+//	  Unit: {message}
+//
+//	messaging.client.processing.failures - Total number of Kafka message processing failures
+//	  Labels: messaging.destination.name (topic), messaging.destination.partition.id, error.type
+//	  Unit: {failure}
+//	  Note: error.type is a generic classification ("processing_error") to avoid exposing sensitive information
+//
+// These metrics help monitor:
+//   - Message throughput (messages processed per second)
+//   - Consumer lag (by comparing processed vs committed)
+//   - Error rates (failures per message)
+//   - Partition-level performance
+//
+// All metrics use the OpenTelemetry meter provider configured in your application via
+// otel.GetMeterProvider().
 //
 // # Configuration
 //
