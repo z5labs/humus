@@ -7,16 +7,25 @@ package kafka
 
 import (
 	"context"
-	"errors"
 	"log/slog"
+	"strconv"
 
 	"github.com/z5labs/humus/queue"
 
+	"github.com/sourcegraph/conc/pool"
 	"github.com/twmb/franz-go/pkg/kgo"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	semconv "go.opentelemetry.io/otel/semconv/v1.37.0"
 	"go.opentelemetry.io/otel/trace"
 )
+
+// AtLeastOnce configures the Kafka runtime to process messages from the specified topic
+// with at-least-once delivery semantics (process before acknowledge).
+func AtLeastOnce(topic string, processor queue.Processor[Message]) Option {
+	return func(o *Options) {
+		o.topics[topic] = newAtLeastOnceOrchestrator(o.groupId, processor)
+	}
+}
 
 type atLeastOnceOrchestrator struct {
 	groupId   string
@@ -33,14 +42,6 @@ func newAtLeastOnceOrchestrator(
 	}
 }
 
-// AtLeastOnce configures the Kafka runtime to process messages from the specified topic
-// with at-least-once delivery semantics (process before acknowledge).
-func AtLeastOnce(topic string, processor queue.Processor[Message]) Option {
-	return func(o *Options) {
-		o.topics[topic] = newAtLeastOnceOrchestrator(o.groupId, processor)
-	}
-}
-
 func (o atLeastOnceOrchestrator) Orchestrate(
 	consumer queue.Consumer[fetch],
 	acknowledger queue.Acknowledger[[]*kgo.Record],
@@ -49,120 +50,91 @@ func (o atLeastOnceOrchestrator) Orchestrate(
 	metrics := initConsumerMetrics(log)
 
 	return atLeastOncePartitionRuntime{
-		log:                log,
-		tracer:             tracer(),
-		consumer:           consumer,
-		processor:          o.processor,
-		acknowledger:       acknowledger,
-		messagesProcessed:  metrics.messagesProcessed,
-		messagesCommitted:  metrics.messagesCommitted,
-		processingFailures: metrics.processingFailures,
+		log:      log,
+		tracer:   tracer(),
+		consumer: consumer,
+		processor: recordProcessor{
+			log:               log,
+			tracer:            tracer(),
+			processor:         o.processor,
+			messagesProcessed: metrics.messagesProcessed,
+		},
+		acknowledger:      acknowledger,
+		messagesCommitted: metrics.messagesCommitted,
 	}
 }
 
 type atLeastOncePartitionRuntime struct {
-	log                *slog.Logger
-	tracer             trace.Tracer
-	consumer           queue.Consumer[fetch]
-	processor          queue.Processor[Message]
-	acknowledger       queue.Acknowledger[[]*kgo.Record]
-	messagesProcessed  metric.Int64Counter
-	messagesCommitted  metric.Int64Counter
-	processingFailures metric.Int64Counter
+	log               *slog.Logger
+	tracer            trace.Tracer
+	consumer          queue.Consumer[fetch]
+	processor         recordProcessor
+	acknowledger      queue.Acknowledger[[]*kgo.Record]
+	messagesCommitted metric.Int64Counter
 }
 
 func (rt atLeastOncePartitionRuntime) ProcessQueue(ctx context.Context) error {
-	for {
-		// Consume a fetch
-		f, err := rt.consumer.Consume(ctx)
-		if errors.Is(err, queue.ErrEndOfQueue) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
+	p := pool.New().WithContext(ctx)
 
-		// Process all records in the fetch
-		for _, record := range f.records {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
+	fetchCh := make(chan fetch)
+	p.Go(consumeFetches(rt.log, rt.consumer, fetchCh))
+
+	recordCh := make(chan *kgo.Record)
+	p.Go(rt.processFetches(recordCh, fetchCh))
+
+	p.Go(rt.acknowledgeRecords(recordCh))
+
+	return p.Wait()
+}
+
+func (rt atLeastOncePartitionRuntime) processFetches(recordCh chan<- *kgo.Record, fetchCh <-chan fetch) func(context.Context) error {
+	return func(ctx context.Context) error {
+		defer close(recordCh)
+
+		for f := range fetchCh {
+			for _, record := range f.records {
+				rt.processor.process(ctx, record)
+
+				select {
+				case <-ctx.Done():
+					rt.log.WarnContext(
+						ctx,
+						"context cancelled while processing records",
+						slog.Any("error", ctx.Err()),
+					)
+					return nil
+				case recordCh <- record:
+				}
 			}
-
-			if record.Context == nil {
-				record.Context = ctx
-			}
-
-			rt.processRecord(record)
 		}
 
-		// Acknowledge all records after processing
-		err = rt.acknowledger.Acknowledge(ctx, f.records)
-		if err != nil {
-			return err
-		}
-
-		// Increment committed messages counter
-		if rt.messagesCommitted != nil && len(f.records) > 0 {
-			attrs := []attribute.KeyValue{
-				attribute.String("messaging.destination.name", f.topic),
-				attribute.Int("messaging.destination.partition.id", int(f.partition)),
-			}
-			rt.messagesCommitted.Add(ctx, int64(len(f.records)), metric.WithAttributes(attrs...))
-		}
+		return nil
 	}
 }
 
-func (rt atLeastOncePartitionRuntime) processRecord(record *kgo.Record) {
-	spanCtx, span := rt.tracer.Start(
-		record.Context,
-		"kafka.process",
-		trace.WithSpanKind(trace.SpanKindConsumer),
-	)
-	defer span.End()
+func (rt atLeastOncePartitionRuntime) acknowledgeRecords(recordCh <-chan *kgo.Record) func(context.Context) error {
+	return func(ctx context.Context) error {
+		for record := range recordCh {
+			err := rt.acknowledger.Acknowledge(ctx, []*kgo.Record{record})
+			if err != nil {
+				rt.log.ErrorContext(
+					ctx,
+					"failed to commit kafka records",
+					TopicAttr(record.Topic),
+					PartitionAttr(record.Partition),
+					OffsetAttr(record.Offset),
+					slog.Any("error", err),
+				)
 
-	headers := make([]Header, len(record.Headers))
-	for i, hdr := range record.Headers {
-		headers[i] = Header{
-			Key:   hdr.Key,
-			Value: hdr.Value,
+				// TODO: how should this be handled?
+				continue
+			}
+
+			rt.messagesCommitted.Add(ctx, 1, metric.WithAttributes(
+				semconv.MessagingDestinationName(record.Topic),
+				semconv.MessagingDestinationPartitionID(strconv.FormatInt(int64(record.Partition), 10)),
+			))
 		}
-	}
-
-	err := rt.processor.Process(spanCtx, Message{
-		Headers:   headers,
-		Key:       record.Key,
-		Value:     record.Value,
-		Timestamp: record.Timestamp,
-		Topic:     record.Topic,
-		Partition: record.Partition,
-		Offset:    record.Offset,
-	})
-
-	// Increment processed messages counter
-	attrs := []attribute.KeyValue{
-		attribute.String("messaging.destination.name", record.Topic),
-		attribute.Int("messaging.destination.partition.id", int(record.Partition)),
-	}
-	if rt.messagesProcessed != nil {
-		rt.messagesProcessed.Add(spanCtx, 1, metric.WithAttributes(attrs...))
-	}
-
-	if err != nil {
-		// Increment failure counter
-		if rt.processingFailures != nil {
-			failureAttrs := append(attrs, attribute.String("error.type", errorType(err)))
-			rt.processingFailures.Add(spanCtx, 1, metric.WithAttributes(failureAttrs...))
-		}
-
-		rt.log.ErrorContext(
-			spanCtx,
-			"failed to process kafka message",
-			TopicAttr(record.Topic),
-			PartitionAttr(record.Partition),
-			OffsetAttr(record.Offset),
-			slog.Any("error", err),
-		)
+		return nil
 	}
 }
