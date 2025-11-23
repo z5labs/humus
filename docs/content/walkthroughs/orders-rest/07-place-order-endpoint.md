@@ -1,7 +1,7 @@
 ---
 title: Place Order Endpoint
 description: Implement POST /v1/order with service orchestration
-weight: 7
+weight: 6
 type: docs
 slug: place-order-endpoint
 ---

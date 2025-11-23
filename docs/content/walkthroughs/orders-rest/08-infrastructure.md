@@ -1,7 +1,7 @@
 ---
 title: Infrastructure & Observability
 description: Set up Podman Compose with observability stack and Wiremock
-weight: 8
+weight: 7
 type: docs
 slug: infrastructure
 ---

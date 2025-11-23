@@ -89,13 +89,12 @@ The complete source code is available at:
 1. **[Project Setup]({{< ref "/walkthroughs/orders-rest/01-project-setup" >}})** - Create directory structure and initialize the module
 2. **[Minimal Running App]({{< ref "/walkthroughs/orders-rest/02-minimal-app" >}})** - Create a minimal REST API to verify setup
 3. **[Scaffolding Endpoints]({{< ref "/walkthroughs/orders-rest/03-scaffolding-endpoints" >}})** - Define domain types and scaffold endpoints with dummy responses
-4. **[Data Service]({{< ref "/walkthroughs/orders-rest/04-data-service" >}})** - Implement the storage service layer
-5. **[Backend Services]({{< ref "/walkthroughs/orders-rest/05-backend-services" >}})** - Add restriction and eligibility services
-6. **[List Orders Endpoint]({{< ref "/walkthroughs/orders-rest/06-list-orders-endpoint" >}})** - Implement GET /v1/orders with pagination
-7. **[Place Order Endpoint]({{< ref "/walkthroughs/orders-rest/07-place-order-endpoint" >}})** - Implement POST /v1/order with orchestration
-8. **[Infrastructure & Observability]({{< ref "/walkthroughs/orders-rest/08-infrastructure" >}})** - Set up Podman Compose with observability stack
-9. **[Exploring Traces & Metrics]({{< ref "/walkthroughs/orders-rest/09-observability" >}})** - Explore traces, logs, and metrics in Grafana
-10. **[Running & Testing]({{< ref "/walkthroughs/orders-rest/10-running-testing" >}})** - End-to-end testing scenarios
+4. **[Backend Services]({{< ref "/walkthroughs/orders-rest/04-backend-services" >}})** - Implement data storage, restriction, and eligibility service clients
+5. **[List Orders Endpoint]({{< ref "/walkthroughs/orders-rest/06-list-orders-endpoint" >}})** - Implement GET /v1/orders with pagination
+6. **[Place Order Endpoint]({{< ref "/walkthroughs/orders-rest/07-place-order-endpoint" >}})** - Implement POST /v1/order with orchestration
+7. **[Infrastructure & Observability]({{< ref "/walkthroughs/orders-rest/08-infrastructure" >}})** - Set up Podman Compose with observability stack
+8. **[Exploring Traces & Metrics]({{< ref "/walkthroughs/orders-rest/09-observability" >}})** - Explore traces, logs, and metrics in Grafana
+9. **[Running & Testing]({{< ref "/walkthroughs/orders-rest/10-running-testing" >}})** - End-to-end testing scenarios
 
 Let's get started!
 

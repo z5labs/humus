@@ -1,7 +1,7 @@
 ---
 title: Observability
 description: Explore traces, logs, and metrics in Grafana
-weight: 9
+weight: 8
 type: docs
 slug: observability
 ---

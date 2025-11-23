@@ -1,7 +1,7 @@
 ---
 title: List Orders Endpoint
 description: Implement GET /v1/orders with cursor-based pagination
-weight: 6
+weight: 5
 type: docs
 slug: list-orders-endpoint
 ---

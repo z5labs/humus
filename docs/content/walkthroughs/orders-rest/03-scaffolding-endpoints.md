@@ -281,6 +281,6 @@ The clean code organization also sets you up for success as the application grow
 
 ## What's Next
 
-Now that we have working endpoints with our domain model defined, let's implement the data service that will store and retrieve orders.
+Now that we have working endpoints with our domain model defined, let's implement the backend services that power our order management system.
 
-[Next: Data Service →]({{< ref "/walkthroughs/orders-rest/04-data-service" >}})
+[Next: Backend Services →]({{< ref "/walkthroughs/orders-rest/04-backend-services" >}})
