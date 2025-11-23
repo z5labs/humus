@@ -45,11 +45,28 @@ type Order struct {
 	Status     OrderStatus `json:"status"`
 }
 
-// QueryResult contains the result of a Query operation.
-type QueryResult struct {
-	Orders     []Order
-	HasMore    bool
-	NextCursor string
+// QueryRequest contains the parameters for a Query operation.
+type QueryRequest struct {
+	AccountID string      `json:"account_id"`
+	Status    OrderStatus `json:"status,omitempty"`
+	Cursor    string      `json:"cursor,omitempty"`
+	Limit     int         `json:"limit"`
+}
+
+// QueryResponse contains the result of a Query operation.
+type QueryResponse struct {
+	Orders     []Order `json:"orders"`
+	HasMore    bool    `json:"has_more"`
+	NextCursor string  `json:"next_cursor"`
+}
+
+// PutItemRequest contains the parameters for a PutItem operation.
+type PutItemRequest struct {
+	Order Order `json:"order"`
+}
+
+// PutItemResponse contains the result of a PutItem operation.
+type PutItemResponse struct {
 }
 
 // DataClient is a client for the data service.
@@ -72,34 +89,21 @@ func NewDataClient(baseURL string, httpClient *http.Client) *DataClient {
 The Query method sends all parameters in a JSON request body, following DynamoDB's API pattern:
 
 ```go
-func (s *DataClient) Query(ctx context.Context, accountID string, status OrderStatus, cursor string, limit int) (*QueryResult, error) {
+func (s *DataClient) Query(ctx context.Context, req *QueryRequest) (*QueryResponse, error) {
 	u := s.baseURL + "/data/orders"
 
-	// Build request body like DynamoDB
-	reqBody := struct {
-		AccountID string      `json:"account_id"`
-		Status    OrderStatus `json:"status,omitempty"`
-		Cursor    string      `json:"cursor,omitempty"`
-		Limit     int         `json:"limit"`
-	}{
-		AccountID: accountID,
-		Status:    status,
-		Cursor:    cursor,
-		Limit:     limit,
-	}
-
 	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(reqBody); err != nil {
+	if err := json.NewEncoder(&body).Encode(req); err != nil {
 		return nil, fmt.Errorf("failed to encode request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, &body)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, u, &body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Content-Type", "application/json")
 
-	resp, err := s.httpClient.Do(req)
+	resp, err := s.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
@@ -109,51 +113,43 @@ func (s *DataClient) Query(ctx context.Context, accountID string, status OrderSt
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	var result struct {
-		Orders     []Order `json:"orders"`
-		HasMore    bool    `json:"has_more"`
-		NextCursor string  `json:"next_cursor"`
-	}
+	var result QueryResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	return &QueryResult{
-		Orders:     result.Orders,
-		HasMore:    result.HasMore,
-		NextCursor: result.NextCursor,
-	}, nil
+	return &result, nil
 }
 ```
 
 ## PutItem Implementation
 
 ```go
-func (s *DataClient) PutItem(ctx context.Context, order Order) error {
+func (s *DataClient) PutItem(ctx context.Context, req *PutItemRequest) (*PutItemResponse, error) {
 	u := s.baseURL + "/data/orders"
 
 	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(order); err != nil {
-		return fmt.Errorf("failed to encode order: %w", err)
+	if err := json.NewEncoder(&body).Encode(req); err != nil {
+		return nil, fmt.Errorf("failed to encode request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, &body)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, u, &body)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Content-Type", "application/json")
 
-	resp, err := s.httpClient.Do(req)
+	resp, err := s.httpClient.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("failed to execute request: %w", err)
+		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	return nil
+	return &PutItemResponse{}, nil
 }
 ```
 
