@@ -15,8 +15,8 @@ type EligibilityClient struct {
 	httpClient *http.Client
 }
 
-// NewEligibility creates a new eligibility service client.
-func NewEligibility(baseURL string, httpClient *http.Client) *EligibilityClient {
+// NewEligibilityClient creates a new eligibility service client.
+func NewEligibilityClient(baseURL string, httpClient *http.Client) *EligibilityClient {
 	return &EligibilityClient{
 		baseURL:    baseURL,
 		httpClient: httpClient,

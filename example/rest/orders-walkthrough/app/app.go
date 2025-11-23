@@ -30,9 +30,9 @@ func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
 	}
 
 	// Initialize services
-	dataSvc := service.NewData(cfg.Services.DataURL, httpClient)
-	restrictionSvc := service.NewRestriction(cfg.Services.RestrictionURL, httpClient)
-	eligibilitySvc := service.NewEligibility(cfg.Services.EligibilityURL, httpClient)
+	dataSvc := service.NewDataClient(cfg.Services.DataURL, httpClient)
+	restrictionSvc := service.NewRestrictionClient(cfg.Services.RestrictionURL, httpClient)
+	eligibilitySvc := service.NewEligibilityClient(cfg.Services.EligibilityURL, httpClient)
 
 	// Create API with endpoints
 	api := rest.NewApi(

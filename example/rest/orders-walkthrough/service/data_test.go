@@ -130,7 +130,7 @@ func TestDataServiceClient_Query(t *testing.T) {
 			}))
 			defer server.Close()
 
-			client := NewData(server.URL, http.DefaultClient)
+			client := NewDataClient(server.URL, http.DefaultClient)
 			result, err := client.Query(context.Background(), tt.accountID, tt.status, tt.cursor, tt.limit)
 
 			if tt.wantErr {
@@ -214,7 +214,7 @@ func TestDataServiceClient_PutItem(t *testing.T) {
 			}))
 			defer server.Close()
 
-			client := NewData(server.URL, http.DefaultClient)
+			client := NewDataClient(server.URL, http.DefaultClient)
 			err := client.PutItem(context.Background(), tt.order)
 
 			if tt.wantErr {

@@ -15,8 +15,8 @@ type RestrictionClient struct {
 	httpClient *http.Client
 }
 
-// NewRestriction creates a new restriction service client.
-func NewRestriction(baseURL string, httpClient *http.Client) *RestrictionClient {
+// NewRestrictionClient creates a new restriction service client.
+func NewRestrictionClient(baseURL string, httpClient *http.Client) *RestrictionClient {
 	return &RestrictionClient{
 		baseURL:    baseURL,
 		httpClient: httpClient,

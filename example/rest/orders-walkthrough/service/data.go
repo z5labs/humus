@@ -19,8 +19,8 @@ type DataClient struct {
 	httpClient *http.Client
 }
 
-// NewData creates a new data service client.
-func NewData(baseURL string, httpClient *http.Client) *DataClient {
+// NewDataClient creates a new data service client.
+func NewDataClient(baseURL string, httpClient *http.Client) *DataClient {
 	return &DataClient{
 		baseURL:    baseURL,
 		httpClient: httpClient,

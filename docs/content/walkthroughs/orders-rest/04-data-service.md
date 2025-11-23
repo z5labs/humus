@@ -6,59 +6,37 @@ type: docs
 slug: data-service
 ---
 
-The Data Service provides a DynamoDB-like interface for storing and querying orders.
+The Data Service provides a DynamoDB-like interface for storing and querying orders. Note that `QueryResult` is defined in the `endpoint` package since it's used by endpoint handlers—following the consumer-defined contract pattern.
 
-## Service Interface
+## HTTP Client Implementation
 
-Create `service/data.go`:
+Create `service/data.go` with the HTTP client that calls our backend:
 
 ```go
 package service
 
 import (
-	"context"
-
-	"rest-orders-walkthrough/model"
-)
-
-// QueryResult contains the result of a Query operation.
-type QueryResult struct {
-	Orders     []model.Order
-	HasMore    bool
-	NextCursor string
-}
-
-// DataService provides access to order data storage.
-type DataService interface {
-	// Query retrieves orders for an account with optional filtering and pagination.
-	Query(ctx context.Context, accountID string, status *model.OrderStatus, cursor string, limit int) (*QueryResult, error)
-	// PutItem stores a new order.
-	PutItem(ctx context.Context, order model.Order) error
-}
-```
-
-## HTTP Client Implementation
-
-Add the HTTP client that calls our Wiremock backend:
-
-```go
-import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
+
+	"github.com/z5labs/humus/example/rest/orders-walkthrough/endpoint"
 )
 
-type dataServiceClient struct {
+// DataClient is a client for the data service.
+type DataClient struct {
 	baseURL    string
 	httpClient *http.Client
 }
 
-func NewDataService(baseURL string, httpClient *http.Client) DataService {
-	return &dataServiceClient{
+// NewDataClient creates a new data service client.
+func NewDataClient(baseURL string, httpClient *http.Client) *DataClient {
+	return &DataClient{
 		baseURL:    baseURL,
 		httpClient: httpClient,
 	}
@@ -68,7 +46,7 @@ func NewDataService(baseURL string, httpClient *http.Client) DataService {
 ## Query Implementation
 
 ```go
-func (s *dataServiceClient) Query(ctx context.Context, accountID string, status *model.OrderStatus, cursor string, limit int) (*QueryResult, error) {
+func (s *DataClient) Query(ctx context.Context, accountID string, status *endpoint.OrderStatus, cursor string, limit int) (*endpoint.QueryResult, error) {
 	u, err := url.Parse(s.baseURL + "/data/orders")
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse URL: %w", err)
@@ -101,15 +79,15 @@ func (s *dataServiceClient) Query(ctx context.Context, accountID string, status 
 	}
 
 	var result struct {
-		Orders     []model.Order `json:"orders"`
-		HasMore    bool          `json:"has_more"`
-		NextCursor string        `json:"next_cursor"`
+		Orders     []endpoint.Order `json:"orders"`
+		HasMore    bool             `json:"has_more"`
+		NextCursor string           `json:"next_cursor"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	return &QueryResult{
+	return &endpoint.QueryResult{
 		Orders:     result.Orders,
 		HasMore:    result.HasMore,
 		NextCursor: result.NextCursor,
@@ -120,7 +98,7 @@ func (s *dataServiceClient) Query(ctx context.Context, accountID string, status 
 ## PutItem Implementation
 
 ```go
-func (s *dataServiceClient) PutItem(ctx context.Context, order model.Order) error {
+func (s *DataClient) PutItem(ctx context.Context, order endpoint.Order) error {
 	u := s.baseURL + "/data/orders"
 
 	body, err := json.Marshal(order)

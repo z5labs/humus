@@ -100,7 +100,7 @@ func TestEligibilityServiceClient_CheckEligibility(t *testing.T) {
 			}))
 			defer server.Close()
 
-			client := NewEligibility(server.URL, http.DefaultClient)
+			client := NewEligibilityClient(server.URL, http.DefaultClient)
 			result, err := client.CheckEligibility(context.Background(), tt.accountID)
 
 			if tt.wantErr {

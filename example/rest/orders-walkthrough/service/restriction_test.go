@@ -94,7 +94,7 @@ func TestRestrictionServiceClient_CheckRestrictions(t *testing.T) {
 			}))
 			defer server.Close()
 
-			client := NewRestriction(server.URL, http.DefaultClient)
+			client := NewRestrictionClient(server.URL, http.DefaultClient)
 			restrictions, err := client.CheckRestrictions(context.Background(), tt.accountID)
 
 			if tt.wantErr {
