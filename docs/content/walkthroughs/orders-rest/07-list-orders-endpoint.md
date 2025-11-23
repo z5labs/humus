@@ -21,14 +21,13 @@ import (
 	"net/http"
 	"strconv"
 
-	"rest-orders-walkthrough/model"
-	"rest-orders-walkthrough/service"
+	"github.com/z5labs/humus/example/rest/orders-walkthrough/service"
 	"github.com/z5labs/humus/rest"
 	"github.com/z5labs/humus/rest/rpc"
 )
 
 // ListOrders creates the GET /v1/orders endpoint.
-func ListOrders(dataSvc service.DataService) rest.ApiOption {
+func ListOrders(dataSvc DataService) rest.ApiOption {
 	handler := &listOrdersHandler{dataSvc: dataSvc}
 
 	return rest.Handle(
@@ -54,10 +53,10 @@ Key components:
 
 ```go
 type listOrdersHandler struct {
-	dataSvc service.DataService
+	dataSvc DataService
 }
 
-func (h *listOrdersHandler) Produce(ctx context.Context) (*model.ListOrdersResponse, error) {
+func (h *listOrdersHandler) Produce(ctx context.Context) (*ListOrdersResponse, error) {
 	// Extract query parameters from context
 	accountNumberValues := rest.QueryParamValue(ctx, "accountNumber")
 	accountNumber := ""
@@ -101,9 +100,9 @@ func (h *listOrdersHandler) Produce(ctx context.Context) (*model.ListOrdersRespo
 	}
 
 	// Parse status filter
-	var status *model.OrderStatus
+	var status *service.OrderStatus
 	if statusStr != "" {
-		s := model.OrderStatus(statusStr)
+		s := service.OrderStatus(statusStr)
 		status = &s
 	}
 
@@ -113,10 +112,16 @@ func (h *listOrdersHandler) Produce(ctx context.Context) (*model.ListOrdersRespo
 		return nil, err
 	}
 
+	// Convert service orders to endpoint orders
+	orders := make([]Order, len(result.Orders))
+	for i, svcOrder := range result.Orders {
+		orders[i] = orderFromService(svcOrder)
+	}
+
 	// Build response with cursor-based pagination
-	response := &model.ListOrdersResponse{
-		Orders: result.Orders,
-		PageInfo: model.PageInfo{
+	response := &ListOrdersResponse{
+		Orders: orders,
+		PageInfo: PageInfo{
 			HasNextPage: result.HasMore,
 		},
 	}

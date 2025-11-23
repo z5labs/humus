@@ -65,12 +65,18 @@ The cursor is an opaque token (base64-encoded OrderID) that points to the last i
 
 This ensures the API response matches the OpenAPI schema exactly.
 
-**Why in the Endpoint Package?** The model types are defined in the `endpoint` package because:
-1. **Consumer-defined interfaces** - Following idiomatic Go, the endpoint package defines both the interfaces it needs AND the types those interfaces use
-2. **No circular dependencies** - The endpoint package imports service implementations (not the other way around), avoiding import cycles
-3. **Clear ownership** - The endpoint package owns the contract (interfaces + types) that services must satisfy
+**Why in the Endpoint Package?** These endpoint-specific types (like `ListOrdersResponse`, `PageInfo`) are defined in the `endpoint` package because:
+1. **API response structure** - These types define the shape of HTTP responses returned to clients
+2. **Consumer-defined interfaces** - Following idiomatic Go, the endpoint package defines the service interfaces it needs (in `endpoint/interfaces.go`)
+3. **Separation from service layer** - Service packages define their own domain types (`service.Order`, `service.OrderStatus`), while endpoints convert these to API response types
 
-Only common types shared across multiple endpoints belong here.
+**Package Architecture:**
+- `service/` packages define domain types and business logic types
+- `endpoint/` package defines API request/response types and service interfaces
+- Endpoints import service types and convert them to API responses (see `orderFromService()` helper)
+- Services **never** import from endpoint package - this prevents circular dependencies
+
+Only types shared across multiple endpoints in the same package belong in `model.go`.
 
 ## Create List Orders Endpoint
 

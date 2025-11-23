@@ -8,17 +8,15 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-
-	"github.com/z5labs/humus/example/rest/orders-walkthrough/endpoint"
 )
 
 func TestDataServiceClient_Query(t *testing.T) {
-	pending := endpoint.OrderStatusPending
+	pending := OrderStatusPending
 
 	tests := []struct {
 		name           string
 		accountID      string
-		status         *endpoint.OrderStatus
+		status         *OrderStatus
 		cursor         string
 		limit          int
 		mockResponse   string
@@ -150,18 +148,18 @@ func TestDataServiceClient_Query(t *testing.T) {
 func TestDataServiceClient_PutItem(t *testing.T) {
 	tests := []struct {
 		name           string
-		order          endpoint.Order
+		order          Order
 		mockStatusCode int
 		wantErr        bool
 		validateBody   bool
 	}{
 		{
 			name: "success",
-			order: endpoint.Order{
+			order: Order{
 				OrderID:    "order-123",
 				AccountID:  "ACC-001",
 				CustomerID: "CUST-001",
-				Status:     endpoint.OrderStatusPending,
+				Status:     OrderStatusPending,
 			},
 			mockStatusCode: http.StatusCreated,
 			wantErr:        false,
@@ -169,11 +167,11 @@ func TestDataServiceClient_PutItem(t *testing.T) {
 		},
 		{
 			name: "non-201 status code",
-			order: endpoint.Order{
+			order: Order{
 				OrderID:    "order-456",
 				AccountID:  "ACC-002",
 				CustomerID: "CUST-002",
-				Status:     endpoint.OrderStatusPending,
+				Status:     OrderStatusPending,
 			},
 			mockStatusCode: http.StatusInternalServerError,
 			wantErr:        true,
@@ -181,11 +179,11 @@ func TestDataServiceClient_PutItem(t *testing.T) {
 		},
 		{
 			name: "conflict status",
-			order: endpoint.Order{
+			order: Order{
 				OrderID:    "order-789",
 				AccountID:  "ACC-003",
 				CustomerID: "CUST-003",
-				Status:     endpoint.OrderStatusPending,
+				Status:     OrderStatusPending,
 			},
 			mockStatusCode: http.StatusConflict,
 			wantErr:        true,
@@ -201,7 +199,7 @@ func TestDataServiceClient_PutItem(t *testing.T) {
 				require.Equal(t, "application/json", r.Header.Get("Content-Type"))
 
 				if tt.validateBody {
-					var receivedOrder endpoint.Order
+					var receivedOrder Order
 					err := json.NewDecoder(r.Body).Decode(&receivedOrder)
 					require.NoError(t, err)
 					require.Equal(t, tt.order.OrderID, receivedOrder.OrderID)

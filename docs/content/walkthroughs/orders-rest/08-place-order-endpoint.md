@@ -23,8 +23,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/sourcegraph/conc/pool"
 
-	"rest-orders-walkthrough/model"
-	"rest-orders-walkthrough/service"
+	"github.com/z5labs/humus/example/rest/orders-walkthrough/service"
 	"github.com/z5labs/humus/rest"
 	"github.com/z5labs/humus/rest/rpc"
 )
@@ -87,28 +86,29 @@ type placeOrderHandler struct {
 
 func (h *placeOrderHandler) Handle(ctx context.Context, req *PlaceOrderRequest) (*PlaceOrderResponse, error) {
 	// Run validation checks concurrently using conc/pool
-	var restrictions []service.Restriction
-	var eligibility *service.EligibilityResult
-
-	p := pool.New().WithMaxGoroutines(2).WithContext(ctx)
+	p := pool.New().WithContext(ctx)
 
 	// Check restrictions concurrently
 	p.Go(func(ctx context.Context) error {
-		r, err := h.restrictionSvc.CheckRestrictions(ctx, req.AccountID)
+		restrictions, err := h.restrictionSvc.CheckRestrictions(ctx, req.AccountID)
 		if err != nil {
 			return err
 		}
-		restrictions = r
+		if len(restrictions) > 0 {
+			return ErrAccountRestricted
+		}
 		return nil
 	})
 
 	// Check eligibility concurrently
 	p.Go(func(ctx context.Context) error {
-		e, err := h.eligibilitySvc.CheckEligibility(ctx, req.AccountID)
+		eligibility, err := h.eligibilitySvc.CheckEligibility(ctx, req.AccountID)
 		if err != nil {
 			return err
 		}
-		eligibility = e
+		if !eligibility.Eligible {
+			return ErrAccountIneligible
+		}
 		return nil
 	})
 
@@ -117,21 +117,13 @@ func (h *placeOrderHandler) Handle(ctx context.Context, req *PlaceOrderRequest) 
 		return nil, err
 	}
 
-	// Validate results
-	if len(restrictions) > 0 {
-		return nil, ErrAccountRestricted
-	}
-	if !eligibility.Eligible {
-		return nil, ErrAccountIneligible
-	}
-
 	// Create and store the order
 	orderID := uuid.New().String()
-	order := model.Order{
+	order := service.Order{
 		OrderID:    orderID,
 		AccountID:  req.AccountID,
 		CustomerID: req.CustomerID,
-		Status:     model.OrderStatusPending,
+		Status:     service.OrderStatusPending,
 	}
 
 	if err := h.dataSvc.PutItem(ctx, order); err != nil {

@@ -28,20 +28,21 @@ type Restriction struct {
 	Description string `json:"description"`
 }
 
-type restrictionServiceClient struct {
+// RestrictionClient is a client for the restriction service.
+type RestrictionClient struct {
 	baseURL    string
 	httpClient *http.Client
 }
 
-// NewRestrictionService creates a new restriction service client.
-func NewRestrictionService(baseURL string, httpClient *http.Client) *restrictionServiceClient {
-	return &restrictionServiceClient{
+// NewRestrictionClient creates a new restriction service client.
+func NewRestrictionClient(baseURL string, httpClient *http.Client) *RestrictionClient {
+	return &RestrictionClient{
 		baseURL:    baseURL,
 		httpClient: httpClient,
 	}
 }
 
-func (s *restrictionServiceClient) CheckRestrictions(ctx context.Context, accountID string) ([]Restriction, error) {
+func (s *RestrictionClient) CheckRestrictions(ctx context.Context, accountID string) ([]Restriction, error) {
 	u := fmt.Sprintf("%s/restrictions/%s", s.baseURL, accountID)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
@@ -60,7 +61,6 @@ func (s *restrictionServiceClient) CheckRestrictions(ctx context.Context, accoun
 	}
 
 	var result struct {
-		AccountID    string        `json:"account_id"`
 		Restrictions []Restriction `json:"restrictions"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -85,26 +85,27 @@ import (
 	"net/http"
 )
 
-// EligibilityResult contains the eligibility check result.
+// EligibilityResult contains the result of an eligibility check.
 type EligibilityResult struct {
 	Eligible bool   `json:"eligible"`
 	Reason   string `json:"reason"`
 }
 
-type eligibilityServiceClient struct {
+// EligibilityClient is a client for the eligibility service.
+type EligibilityClient struct {
 	baseURL    string
 	httpClient *http.Client
 }
 
-// NewEligibilityService creates a new eligibility service client.
-func NewEligibilityService(baseURL string, httpClient *http.Client) *eligibilityServiceClient {
-	return &eligibilityServiceClient{
+// NewEligibilityClient creates a new eligibility service client.
+func NewEligibilityClient(baseURL string, httpClient *http.Client) *EligibilityClient {
+	return &EligibilityClient{
 		baseURL:    baseURL,
 		httpClient: httpClient,
 	}
 }
 
-func (s *eligibilityServiceClient) CheckEligibility(ctx context.Context, accountID string) (*EligibilityResult, error) {
+func (s *EligibilityClient) CheckEligibility(ctx context.Context, accountID string) (*EligibilityResult, error) {
 	u := fmt.Sprintf("%s/eligibility/%s", s.baseURL, accountID)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
@@ -149,9 +150,11 @@ The Wiremock stubs provide several test scenarios:
 
 Both services follow the same structure:
 1. Export domain types (`Restriction`, `EligibilityResult`)
-2. Create private client struct holding HTTP client
-3. Implement constructor function returning concrete type
+2. Create exported client struct holding HTTP client (`RestrictionClient`, `EligibilityClient`)
+3. Implement constructor function returning pointer to concrete type
 4. Implement methods with context, error handling, JSON decoding
+
+**Key Architectural Decision:** Services define their own types (like `Restriction`, `EligibilityResult`, `Order`, `OrderStatus`) and never import from the endpoint package. This ensures clean separation of concerns and prevents circular dependencies.
 
 ### Idiomatic Go: Consumer-Defined Interfaces
 
@@ -210,7 +213,7 @@ func TestRestrictionServiceClient_CheckRestrictions(t *testing.T) {
             }))
             defer server.Close()
 
-            client := NewRestrictionService(server.URL, http.DefaultClient)
+            client := NewRestrictionClient(server.URL, http.DefaultClient)
             restrictions, err := client.CheckRestrictions(context.Background(), tt.accountID)
 
             if tt.wantErr {

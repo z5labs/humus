@@ -45,8 +45,8 @@ import (
 	"context"
 	"net/http"
 
-	"rest-orders-walkthrough/endpoint"
-	"rest-orders-walkthrough/service"
+	"github.com/z5labs/humus/example/rest/orders-walkthrough/endpoint"
+	"github.com/z5labs/humus/example/rest/orders-walkthrough/service"
 	"github.com/z5labs/humus/rest"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -60,14 +60,14 @@ func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
 	}
 
 	// Initialize services
-	dataSvc := service.NewDataService(cfg.Services.DataURL, httpClient)
-	restrictionSvc := service.NewRestrictionService(cfg.Services.RestrictionURL, httpClient)
-	eligibilitySvc := service.NewEligibilityService(cfg.Services.EligibilityURL, httpClient)
+	dataSvc := service.NewDataClient(cfg.Services.DataURL, httpClient)
+	restrictionSvc := service.NewRestrictionClient(cfg.Services.RestrictionURL, httpClient)
+	eligibilitySvc := service.NewEligibilityClient(cfg.Services.EligibilityURL, httpClient)
 
 	// Create API with endpoints
 	api := rest.NewApi(
-		"Orders API",
-		"v1.0.0",
+		cfg.OpenApi.Title,
+		cfg.OpenApi.Version,
 		endpoint.ListOrders(dataSvc),
 		endpoint.PlaceOrder(restrictionSvc, eligibilitySvc, dataSvc),
 	)
@@ -93,7 +93,7 @@ import (
 	"bytes"
 	_ "embed"
 
-	"rest-orders-walkthrough/app"
+	"github.com/z5labs/humus/example/rest/orders-walkthrough/app"
 	"github.com/z5labs/humus/rest"
 )
 

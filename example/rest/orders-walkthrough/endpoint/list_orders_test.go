@@ -11,23 +11,24 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/z5labs/humus/example/rest/orders-walkthrough/service"
 	"github.com/z5labs/humus/rest"
 )
 
 // mockDataService implements DataService for testing.
 type mockDataService struct {
-	queryFunc   func(ctx context.Context, accountID string, status *OrderStatus, cursor string, limit int) (*QueryResult, error)
-	putItemFunc func(ctx context.Context, order Order) error
+	queryFunc   func(ctx context.Context, accountID string, status *service.OrderStatus, cursor string, limit int) (*service.QueryResult, error)
+	putItemFunc func(ctx context.Context, order service.Order) error
 }
 
-func (m *mockDataService) Query(ctx context.Context, accountID string, status *OrderStatus, cursor string, limit int) (*QueryResult, error) {
+func (m *mockDataService) Query(ctx context.Context, accountID string, status *service.OrderStatus, cursor string, limit int) (*service.QueryResult, error) {
 	if m.queryFunc != nil {
 		return m.queryFunc(ctx, accountID, status, cursor, limit)
 	}
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockDataService) PutItem(ctx context.Context, order Order) error {
+func (m *mockDataService) PutItem(ctx context.Context, order service.Order) error {
 	if m.putItemFunc != nil {
 		return m.putItemFunc(ctx, order)
 	}
@@ -36,20 +37,23 @@ func (m *mockDataService) PutItem(ctx context.Context, order Order) error {
 
 func TestListOrdersHandler_Produce_Success(t *testing.T) {
 	expectedOrders := []Order{
-		{OrderID: "order-1", AccountID: "acct-123", CustomerID: "cust-1", Status: OrderStatusPending},
-		{OrderID: "order-2", AccountID: "acct-123", CustomerID: "cust-2", Status: OrderStatusCompleted},
+		{OrderID: "order-1", AccountID: "acct-123", CustomerID: "cust-1", Status: "pending"},
+		{OrderID: "order-2", AccountID: "acct-123", CustomerID: "cust-2", Status: "completed"},
 	}
 
 	dataSvc := &mockDataService{
-		queryFunc: func(ctx context.Context, accountID string, status *OrderStatus, cursor string, limit int) (*QueryResult, error) {
+		queryFunc: func(ctx context.Context, accountID string, status *service.OrderStatus, cursor string, limit int) (*service.QueryResult, error) {
 			require.Equal(t, "acct-123", accountID)
 			require.Equal(t, 10, limit)
 			require.Equal(t, "", cursor)
 			require.NotNil(t, status)
-			require.Equal(t, OrderStatusPending, *status)
+			require.Equal(t, service.OrderStatusPending, *status)
 
-			return &QueryResult{
-				Orders:     expectedOrders,
+			return &service.QueryResult{
+				Orders: []service.Order{
+					{OrderID: "order-1", AccountID: "acct-123", CustomerID: "cust-1", Status: service.OrderStatusPending},
+					{OrderID: "order-2", AccountID: "acct-123", CustomerID: "cust-2", Status: service.OrderStatusCompleted},
+				},
 				HasMore:    false,
 				NextCursor: "",
 			}, nil
@@ -83,14 +87,14 @@ func TestListOrdersHandler_Produce_WithPagination(t *testing.T) {
 	encodedInputCursor := base64.StdEncoding.EncodeToString([]byte("current-cursor"))
 
 	dataSvc := &mockDataService{
-		queryFunc: func(ctx context.Context, accountID string, status *OrderStatus, cursor string, limit int) (*QueryResult, error) {
+		queryFunc: func(ctx context.Context, accountID string, status *service.OrderStatus, cursor string, limit int) (*service.QueryResult, error) {
 			require.Equal(t, "acct-123", accountID)
 			require.Equal(t, 20, limit)
 			require.Equal(t, "current-cursor", cursor)
 
-			return &QueryResult{
-				Orders: []Order{
-					{OrderID: "order-1", AccountID: "acct-123", CustomerID: "cust-1", Status: OrderStatusPending},
+			return &service.QueryResult{
+				Orders: []service.Order{
+					{OrderID: "order-1", AccountID: "acct-123", CustomerID: "cust-1", Status: service.OrderStatusPending},
 				},
 				HasMore:    true,
 				NextCursor: expectedCursor,
@@ -121,14 +125,14 @@ func TestListOrdersHandler_Produce_WithPagination(t *testing.T) {
 
 func TestListOrdersHandler_Produce_WithStatusFilter(t *testing.T) {
 	dataSvc := &mockDataService{
-		queryFunc: func(ctx context.Context, accountID string, status *OrderStatus, cursor string, limit int) (*QueryResult, error) {
+		queryFunc: func(ctx context.Context, accountID string, status *service.OrderStatus, cursor string, limit int) (*service.QueryResult, error) {
 			require.Equal(t, "acct-123", accountID)
 			require.NotNil(t, status)
-			require.Equal(t, OrderStatusCompleted, *status)
+			require.Equal(t, service.OrderStatusCompleted, *status)
 
-			return &QueryResult{
-				Orders: []Order{
-					{OrderID: "order-1", AccountID: "acct-123", CustomerID: "cust-1", Status: OrderStatusCompleted},
+			return &service.QueryResult{
+				Orders: []service.Order{
+					{OrderID: "order-1", AccountID: "acct-123", CustomerID: "cust-1", Status: service.OrderStatusCompleted},
 				},
 				HasMore:    false,
 				NextCursor: "",
@@ -154,20 +158,20 @@ func TestListOrdersHandler_Produce_WithStatusFilter(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, listResp.Orders, 1)
-	require.Equal(t, OrderStatusCompleted, listResp.Orders[0].Status)
+	require.Equal(t, "completed", listResp.Orders[0].Status)
 }
 
 func TestListOrdersHandler_Produce_DefaultsWhenOptionalParamsProvided(t *testing.T) {
 	dataSvc := &mockDataService{
-		queryFunc: func(ctx context.Context, accountID string, status *OrderStatus, cursor string, limit int) (*QueryResult, error) {
+		queryFunc: func(ctx context.Context, accountID string, status *service.OrderStatus, cursor string, limit int) (*service.QueryResult, error) {
 			// When optional params are provided with values matching defaults
 			require.Equal(t, "", cursor)
 			require.Equal(t, 10, limit)
 			require.NotNil(t, status)
-			require.Equal(t, OrderStatusPending, *status)
+			require.Equal(t, service.OrderStatusPending, *status)
 
-			return &QueryResult{
-				Orders:     []Order{},
+			return &service.QueryResult{
+				Orders:     []service.Order{},
 				HasMore:    false,
 				NextCursor: "",
 			}, nil
@@ -208,12 +212,12 @@ func TestListOrdersHandler_Produce_InvalidLimitRejected(t *testing.T) {
 
 func TestListOrdersHandler_Produce_ValidNumericLimit(t *testing.T) {
 	dataSvc := &mockDataService{
-		queryFunc: func(ctx context.Context, accountID string, status *OrderStatus, cursor string, limit int) (*QueryResult, error) {
+		queryFunc: func(ctx context.Context, accountID string, status *service.OrderStatus, cursor string, limit int) (*service.QueryResult, error) {
 			// Numeric limit value of 25 should be parsed and used
 			require.Equal(t, 25, limit)
 
-			return &QueryResult{
-				Orders:     []Order{},
+			return &service.QueryResult{
+				Orders:     []service.Order{},
 				HasMore:    false,
 				NextCursor: "",
 			}, nil
@@ -236,7 +240,7 @@ func TestListOrdersHandler_Produce_ValidNumericLimit(t *testing.T) {
 
 func TestListOrdersHandler_Produce_DataServiceError(t *testing.T) {
 	dataSvc := &mockDataService{
-		queryFunc: func(ctx context.Context, accountID string, status *OrderStatus, cursor string, limit int) (*QueryResult, error) {
+		queryFunc: func(ctx context.Context, accountID string, status *service.OrderStatus, cursor string, limit int) (*service.QueryResult, error) {
 			return nil, errors.New("database connection failed")
 		},
 	}
@@ -294,10 +298,10 @@ func TestListOrdersHandler_Produce_InvalidStatusFilter(t *testing.T) {
 
 func TestListOrdersHandler_Produce_NextCursorWithoutHasMore(t *testing.T) {
 	dataSvc := &mockDataService{
-		queryFunc: func(ctx context.Context, accountID string, status *OrderStatus, cursor string, limit int) (*QueryResult, error) {
-			return &QueryResult{
-				Orders: []Order{
-					{OrderID: "order-1", AccountID: "acct-123", CustomerID: "cust-1", Status: OrderStatusPending},
+		queryFunc: func(ctx context.Context, accountID string, status *service.OrderStatus, cursor string, limit int) (*service.QueryResult, error) {
+			return &service.QueryResult{
+				Orders: []service.Order{
+					{OrderID: "order-1", AccountID: "acct-123", CustomerID: "cust-1", Status: service.OrderStatusPending},
 				},
 				HasMore:    false,
 				NextCursor: "cursor-should-be-ignored",

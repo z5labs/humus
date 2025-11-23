@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 
+	"github.com/z5labs/humus/example/rest/orders-walkthrough/service"
 	"github.com/z5labs/humus/rest"
 	"github.com/z5labs/humus/rest/rpc"
 )
@@ -73,9 +74,9 @@ func (h *listOrdersHandler) Produce(ctx context.Context) (*ListOrdersResponse, e
 	}
 
 	// Parse status filter
-	var status *OrderStatus
+	var status *service.OrderStatus
 	if statusStr != "" {
-		s := OrderStatus(statusStr)
+		s := service.OrderStatus(statusStr)
 		status = &s
 	}
 
@@ -85,9 +86,15 @@ func (h *listOrdersHandler) Produce(ctx context.Context) (*ListOrdersResponse, e
 		return nil, err
 	}
 
+	// Convert service orders to endpoint orders
+	orders := make([]Order, len(result.Orders))
+	for i, svcOrder := range result.Orders {
+		orders[i] = orderFromService(svcOrder)
+	}
+
 	// Build response with cursor-based pagination
 	response := &ListOrdersResponse{
-		Orders: result.Orders,
+		Orders: orders,
 		PageInfo: PageInfo{
 			HasNextPage: result.HasMore,
 		},

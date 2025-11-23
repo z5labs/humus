@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-
-	"github.com/z5labs/humus/example/rest/orders-walkthrough/endpoint"
 )
+
+// Restriction represents a single restriction on an account.
+type Restriction struct {
+	Code        string `json:"code"`
+	Description string `json:"description"`
+}
 
 // RestrictionClient is a client for the restriction service.
 type RestrictionClient struct {
@@ -23,7 +27,7 @@ func NewRestrictionClient(baseURL string, httpClient *http.Client) *RestrictionC
 	}
 }
 
-func (s *RestrictionClient) CheckRestrictions(ctx context.Context, accountID string) ([]endpoint.Restriction, error) {
+func (s *RestrictionClient) CheckRestrictions(ctx context.Context, accountID string) ([]Restriction, error) {
 	u := fmt.Sprintf("%s/restrictions/%s", s.baseURL, accountID)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
@@ -42,7 +46,7 @@ func (s *RestrictionClient) CheckRestrictions(ctx context.Context, accountID str
 	}
 
 	var result struct {
-		Restrictions []endpoint.Restriction `json:"restrictions"`
+		Restrictions []Restriction `json:"restrictions"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)

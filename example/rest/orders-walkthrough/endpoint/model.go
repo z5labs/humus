@@ -1,25 +1,13 @@
 package endpoint
 
-// OrderStatus represents the current state of an order.
-type OrderStatus string
+import "github.com/z5labs/humus/example/rest/orders-walkthrough/service"
 
-const (
-	// OrderStatusPending indicates the order is waiting to be processed.
-	OrderStatusPending OrderStatus = "pending"
-	// OrderStatusProcessing indicates the order is currently being processed.
-	OrderStatusProcessing OrderStatus = "processing"
-	// OrderStatusCompleted indicates the order has been successfully completed.
-	OrderStatusCompleted OrderStatus = "completed"
-	// OrderStatusFailed indicates the order has failed.
-	OrderStatusFailed OrderStatus = "failed"
-)
-
-// Order represents a customer order.
+// Order represents a customer order in the API response.
 type Order struct {
-	OrderID    string      `json:"order_id"`
-	AccountID  string      `json:"account_id"`
-	CustomerID string      `json:"customer_id"`
-	Status     OrderStatus `json:"status"`
+	OrderID    string `json:"order_id"`
+	AccountID  string `json:"account_id"`
+	CustomerID string `json:"customer_id"`
+	Status     string `json:"status"`
 }
 
 // PageInfo contains pagination information for list responses.
@@ -34,21 +22,12 @@ type ListOrdersResponse struct {
 	PageInfo PageInfo `json:"page_info"`
 }
 
-// QueryResult contains the result of a Query operation.
-type QueryResult struct {
-	Orders     []Order
-	HasMore    bool
-	NextCursor string
-}
-
-// Restriction represents a single restriction on an account.
-type Restriction struct {
-	Code        string `json:"code"`
-	Description string `json:"description"`
-}
-
-// EligibilityResult contains the result of an eligibility check.
-type EligibilityResult struct {
-	Eligible bool   `json:"eligible"`
-	Reason   string `json:"reason"`
+// orderFromService converts a service.Order to an endpoint.Order for API responses.
+func orderFromService(svcOrder service.Order) Order {
+	return Order{
+		OrderID:    svcOrder.OrderID,
+		AccountID:  svcOrder.AccountID,
+		CustomerID: svcOrder.CustomerID,
+		Status:     string(svcOrder.Status),
+	}
 }

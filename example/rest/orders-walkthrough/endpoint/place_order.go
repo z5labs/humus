@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/sourcegraph/conc/pool"
 
+	"github.com/z5labs/humus/example/rest/orders-walkthrough/service"
 	"github.com/z5labs/humus/rest"
 	"github.com/z5labs/humus/rest/rpc"
 )
@@ -85,11 +86,11 @@ func (h *placeOrderHandler) Handle(ctx context.Context, req *PlaceOrderRequest) 
 
 	// Create and store the order
 	orderID := uuid.New().String()
-	order := Order{
+	order := service.Order{
 		OrderID:    orderID,
 		AccountID:  req.AccountID,
 		CustomerID: req.CustomerID,
-		Status:     OrderStatusPending,
+		Status:     service.OrderStatusPending,
 	}
 
 	if err := h.dataSvc.PutItem(ctx, order); err != nil {
