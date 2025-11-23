@@ -1,7 +1,7 @@
 ---
 title: Place Order Endpoint
 description: Implement POST /v1/order with service orchestration
-weight: 8
+weight: 9
 type: docs
 slug: place-order-endpoint
 ---
@@ -204,4 +204,4 @@ The framework automatically generates:
 
 With both endpoints complete, let's set up the full observability infrastructure to see traces, metrics, and logs in Grafana.
 
-[Next: Infrastructure & Observability →]({{< ref "/walkthroughs/orders-rest/09-infrastructure" >}})
+[Next: Infrastructure & Observability →]({{< ref "/walkthroughs/orders-rest/10-infrastructure" >}})

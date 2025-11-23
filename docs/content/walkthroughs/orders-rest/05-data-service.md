@@ -1,7 +1,7 @@
 ---
 title: Data Service
 description: Implement the storage service layer with HTTP client
-weight: 4
+weight: 5
 type: docs
 slug: data-service
 ---
@@ -163,4 +163,4 @@ func (s *dataServiceClient) PutItem(ctx context.Context, order model.Order) erro
 
 Let's implement the restriction and eligibility services that validate order placement.
 
-[Next: Backend Services →]({{< ref "/walkthroughs/orders-rest/05-backend-services" >}})
+[Next: Backend Services →]({{< ref "/walkthroughs/orders-rest/06-backend-services" >}})

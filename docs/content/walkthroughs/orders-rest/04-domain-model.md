@@ -1,7 +1,7 @@
 ---
 title: Domain Model
 description: Define Order types and pagination structures
-weight: 3
+weight: 4
 type: docs
 slug: domain-model
 ---
@@ -74,4 +74,4 @@ This ensures the API response matches the OpenAPI schema exactly.
 
 With our domain model defined, let's implement the data service that will store and retrieve orders.
 
-[Next: Data Service →]({{< ref "/walkthroughs/orders-rest/04-data-service" >}})
+[Next: Data Service →]({{< ref "/walkthroughs/orders-rest/05-data-service" >}})

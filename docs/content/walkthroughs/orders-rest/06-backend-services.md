@@ -1,7 +1,7 @@
 ---
 title: Backend Services
 description: Implement restriction and eligibility service clients
-weight: 5
+weight: 6
 type: docs
 slug: backend-services
 ---
@@ -236,4 +236,4 @@ See `service/*_test.go` for complete test suites covering success cases, errors,
 
 With all services implemented and tested, let's create the main application entry point.
 
-[Next: Basic API →]({{< ref "/walkthroughs/orders-rest/06-basic-api" >}})
+[Next: Basic API →]({{< ref "/walkthroughs/orders-rest/07-basic-api" >}})

@@ -119,6 +119,6 @@ You'll see the OpenAPI 3.0 spec for your API (currently with no operations defin
 
 ## What's Next
 
-Now that we have a running API, let's define our domain model and start adding actual endpoints.
+Now that we have a running API, let's quickly scaffold our endpoints to see how fast we can get them working.
 
-[Next: Domain Model →]({{< ref "/walkthroughs/orders-rest/03-domain-model" >}})
+[Next: Scaffolding Endpoints →]({{< ref "/walkthroughs/orders-rest/03-scaffolding-endpoints" >}})

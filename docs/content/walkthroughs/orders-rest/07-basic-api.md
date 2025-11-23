@@ -1,7 +1,7 @@
 ---
 title: Basic API
 description: Create the application entry point and configuration
-weight: 6
+weight: 7
 type: docs
 slug: basic-api
 ---
@@ -138,4 +138,4 @@ The config uses Go templating:
 
 Now let's implement the GET /v1/orders endpoint with cursor-based pagination.
 
-[Next: List Orders Endpoint →]({{< ref "/walkthroughs/orders-rest/07-list-orders-endpoint" >}})
+[Next: List Orders Endpoint →]({{< ref "/walkthroughs/orders-rest/08-list-orders-endpoint" >}})
