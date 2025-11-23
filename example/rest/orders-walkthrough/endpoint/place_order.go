@@ -57,11 +57,13 @@ func (h *placeOrderHandler) Handle(ctx context.Context, req *PlaceOrderRequest) 
 
 	// Check restrictions concurrently
 	p.Go(func(ctx context.Context) error {
-		restrictions, err := h.restrictionSvc.CheckRestrictions(ctx, req.AccountID)
+		resp, err := h.restrictionSvc.CheckRestrictions(ctx, &service.CheckRestrictionsRequest{
+			AccountID: req.AccountID,
+		})
 		if err != nil {
 			return err
 		}
-		if len(restrictions) > 0 {
+		if len(resp.Restrictions) > 0 {
 			return ErrAccountRestricted
 		}
 		return nil
@@ -69,11 +71,13 @@ func (h *placeOrderHandler) Handle(ctx context.Context, req *PlaceOrderRequest) 
 
 	// Check eligibility concurrently
 	p.Go(func(ctx context.Context) error {
-		eligibility, err := h.eligibilitySvc.CheckEligibility(ctx, req.AccountID)
+		resp, err := h.eligibilitySvc.CheckEligibility(ctx, &service.CheckEligibilityRequest{
+			AccountID: req.AccountID,
+		})
 		if err != nil {
 			return err
 		}
-		if !eligibility.Eligible {
+		if !resp.Eligible {
 			return ErrAccountIneligible
 		}
 		return nil
@@ -93,7 +97,7 @@ func (h *placeOrderHandler) Handle(ctx context.Context, req *PlaceOrderRequest) 
 		Status:     service.OrderStatusPending,
 	}
 
-	if err := h.dataSvc.PutItem(ctx, order); err != nil {
+	if _, err := h.dataSvc.PutItem(ctx, &service.PutItemRequest{Order: order}); err != nil {
 		return nil, err
 	}
 

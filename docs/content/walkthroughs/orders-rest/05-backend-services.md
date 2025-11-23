@@ -28,6 +28,16 @@ type Restriction struct {
 	Description string `json:"description"`
 }
 
+// CheckRestrictionsRequest contains the parameters for checking account restrictions.
+type CheckRestrictionsRequest struct {
+	AccountID string `json:"account_id"`
+}
+
+// CheckRestrictionsResponse contains the result of a restriction check.
+type CheckRestrictionsResponse struct {
+	Restrictions []Restriction `json:"restrictions"`
+}
+
 // RestrictionClient is a client for the restriction service.
 type RestrictionClient struct {
 	baseURL    string
@@ -42,15 +52,15 @@ func NewRestrictionClient(baseURL string, httpClient *http.Client) *RestrictionC
 	}
 }
 
-func (s *RestrictionClient) CheckRestrictions(ctx context.Context, accountID string) ([]Restriction, error) {
-	u := fmt.Sprintf("%s/restrictions/%s", s.baseURL, accountID)
+func (s *RestrictionClient) CheckRestrictions(ctx context.Context, req *CheckRestrictionsRequest) (*CheckRestrictionsResponse, error) {
+	u := fmt.Sprintf("%s/restrictions/%s", s.baseURL, req.AccountID)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	resp, err := s.httpClient.Do(req)
+	resp, err := s.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
@@ -60,14 +70,12 @@ func (s *RestrictionClient) CheckRestrictions(ctx context.Context, accountID str
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	var result struct {
-		Restrictions []Restriction `json:"restrictions"`
-	}
+	var result CheckRestrictionsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	return result.Restrictions, nil
+	return &result, nil
 }
 ```
 
@@ -85,8 +93,13 @@ import (
 	"net/http"
 )
 
-// EligibilityResult contains the result of an eligibility check.
-type EligibilityResult struct {
+// CheckEligibilityRequest contains the parameters for checking order eligibility.
+type CheckEligibilityRequest struct {
+	AccountID string `json:"account_id"`
+}
+
+// CheckEligibilityResponse contains the result of an eligibility check.
+type CheckEligibilityResponse struct {
 	Eligible bool   `json:"eligible"`
 	Reason   string `json:"reason"`
 }
@@ -105,15 +118,15 @@ func NewEligibilityClient(baseURL string, httpClient *http.Client) *EligibilityC
 	}
 }
 
-func (s *EligibilityClient) CheckEligibility(ctx context.Context, accountID string) (*EligibilityResult, error) {
-	u := fmt.Sprintf("%s/eligibility/%s", s.baseURL, accountID)
+func (s *EligibilityClient) CheckEligibility(ctx context.Context, req *CheckEligibilityRequest) (*CheckEligibilityResponse, error) {
+	u := fmt.Sprintf("%s/eligibility/%s", s.baseURL, req.AccountID)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	resp, err := s.httpClient.Do(req)
+	resp, err := s.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
@@ -123,7 +136,7 @@ func (s *EligibilityClient) CheckEligibility(ctx context.Context, accountID stri
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	var result EligibilityResult
+	var result CheckEligibilityResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
@@ -148,13 +161,20 @@ The Wiremock stubs provide several test scenarios:
 
 ## Common Patterns
 
-Both services follow the same structure:
-1. Export domain types (`Restriction`, `EligibilityResult`)
-2. Create exported client struct holding HTTP client (`RestrictionClient`, `EligibilityClient`)
-3. Implement constructor function returning pointer to concrete type
-4. Implement methods with context, error handling, JSON decoding
+All three service clients follow the same structure:
+1. **Export domain types** - `Restriction`, `Order`, `OrderStatus`
+2. **Define Request/Response types** - Each method takes a `*Request` and returns a `*Response`
+3. **Export client struct** - Holds `baseURL` and `httpClient`
+4. **Constructor function** - Returns pointer to concrete type
+5. **Methods with consistent signature** - `(ctx context.Context, req *Request) (*Response, error)`
 
-**Key Architectural Decision:** Services define their own types (like `Restriction`, `EligibilityResult`, `Order`, `OrderStatus`) and never import from the endpoint package. This ensures clean separation of concerns and prevents circular dependencies.
+**Key Benefits of Request/Response Pattern:**
+- **Extensibility** - Easy to add new fields without breaking method signatures
+- **Consistency** - All service methods follow the same pattern
+- **Clarity** - Request types document what data is needed
+- **Testability** - Easy to construct test cases with different request parameters
+
+**Key Architectural Decision:** Services define their own types (like `Restriction`, `CheckRestrictionsResponse`, `Order`, `OrderStatus`) and never import from the endpoint package. This ensures clean separation of concerns and prevents circular dependencies.
 
 ### Idiomatic Go: Consumer-Defined Interfaces
 
@@ -163,11 +183,11 @@ Following idiomatic Go, **interfaces are defined by the consumer, not the provid
 **`endpoint/interfaces.go`:**
 ```go
 type RestrictionService interface {
-    CheckRestrictions(ctx context.Context, accountID string) ([]service.Restriction, error)
+    CheckRestrictions(ctx context.Context, req *service.CheckRestrictionsRequest) (*service.CheckRestrictionsResponse, error)
 }
 
 type EligibilityService interface {
-    CheckEligibility(ctx context.Context, accountID string) (*service.EligibilityResult, error)
+    CheckEligibility(ctx context.Context, req *service.CheckEligibilityRequest) (*service.CheckEligibilityResponse, error)
 }
 ```
 
@@ -185,17 +205,16 @@ The service clients include comprehensive table-driven tests using `httptest.Ser
 func TestRestrictionServiceClient_CheckRestrictions(t *testing.T) {
     tests := []struct {
         name             string
-        accountID        string
+        req              *CheckRestrictionsRequest
         mockResponse     string
         mockStatusCode   int
         wantErr          bool
         wantRestrictions int
     }{
         {
-            name:      "no restrictions",
-            accountID: "ACC-001",
+            name: "no restrictions",
+            req:  &CheckRestrictionsRequest{AccountID: "ACC-001"},
             mockResponse: `{
-                "account_id": "ACC-001",
                 "restrictions": []
             }`,
             mockStatusCode:   http.StatusOK,
@@ -214,7 +233,7 @@ func TestRestrictionServiceClient_CheckRestrictions(t *testing.T) {
             defer server.Close()
 
             client := NewRestrictionClient(server.URL, http.DefaultClient)
-            restrictions, err := client.CheckRestrictions(context.Background(), tt.accountID)
+            resp, err := client.CheckRestrictions(context.Background(), tt.req)
 
             if tt.wantErr {
                 require.Error(t, err)
@@ -222,7 +241,7 @@ func TestRestrictionServiceClient_CheckRestrictions(t *testing.T) {
             }
 
             require.NoError(t, err)
-            require.Len(t, restrictions, tt.wantRestrictions)
+            require.Len(t, resp.Restrictions, tt.wantRestrictions)
         })
     }
 }
@@ -230,6 +249,7 @@ func TestRestrictionServiceClient_CheckRestrictions(t *testing.T) {
 
 Key testing patterns:
 - **Table-driven tests** - Easy to add new scenarios
+- **Request/Response types** - Clear test case structure
 - **httptest.Server** - Mock HTTP backends without network calls
 - **testify/require** - Fail-fast assertions (repository standard)
 

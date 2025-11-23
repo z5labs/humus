@@ -17,40 +17,42 @@ import (
 
 // mockRestrictionService implements RestrictionService for testing.
 type mockRestrictionService struct {
-	checkRestrictionsFunc func(ctx context.Context, accountID string) ([]service.Restriction, error)
+	checkRestrictionsFunc func(ctx context.Context, req *service.CheckRestrictionsRequest) (*service.CheckRestrictionsResponse, error)
 }
 
-func (m *mockRestrictionService) CheckRestrictions(ctx context.Context, accountID string) ([]service.Restriction, error) {
+func (m *mockRestrictionService) CheckRestrictions(ctx context.Context, req *service.CheckRestrictionsRequest) (*service.CheckRestrictionsResponse, error) {
 	if m.checkRestrictionsFunc != nil {
-		return m.checkRestrictionsFunc(ctx, accountID)
+		return m.checkRestrictionsFunc(ctx, req)
 	}
 	return nil, errors.New("not implemented")
 }
 
 // mockEligibilityService implements EligibilityService for testing.
 type mockEligibilityService struct {
-	checkEligibilityFunc func(ctx context.Context, accountID string) (*service.EligibilityResult, error)
+	checkEligibilityFunc func(ctx context.Context, req *service.CheckEligibilityRequest) (*service.CheckEligibilityResponse, error)
 }
 
-func (m *mockEligibilityService) CheckEligibility(ctx context.Context, accountID string) (*service.EligibilityResult, error) {
+func (m *mockEligibilityService) CheckEligibility(ctx context.Context, req *service.CheckEligibilityRequest) (*service.CheckEligibilityResponse, error) {
 	if m.checkEligibilityFunc != nil {
-		return m.checkEligibilityFunc(ctx, accountID)
+		return m.checkEligibilityFunc(ctx, req)
 	}
 	return nil, errors.New("not implemented")
 }
 
 func TestPlaceOrderHandler_Handle_Success(t *testing.T) {
 	restrictionSvc := &mockRestrictionService{
-		checkRestrictionsFunc: func(ctx context.Context, accountID string) ([]service.Restriction, error) {
-			require.Equal(t, "acct-123", accountID)
-			return []service.Restriction{}, nil
+		checkRestrictionsFunc: func(ctx context.Context, req *service.CheckRestrictionsRequest) (*service.CheckRestrictionsResponse, error) {
+			require.Equal(t, "acct-123", req.AccountID)
+			return &service.CheckRestrictionsResponse{
+				Restrictions: []service.Restriction{},
+			}, nil
 		},
 	}
 
 	eligibilitySvc := &mockEligibilityService{
-		checkEligibilityFunc: func(ctx context.Context, accountID string) (*service.EligibilityResult, error) {
-			require.Equal(t, "acct-123", accountID)
-			return &service.EligibilityResult{
+		checkEligibilityFunc: func(ctx context.Context, req *service.CheckEligibilityRequest) (*service.CheckEligibilityResponse, error) {
+			require.Equal(t, "acct-123", req.AccountID)
+			return &service.CheckEligibilityResponse{
 				Eligible: true,
 				Reason:   "account is in good standing",
 			}, nil
@@ -59,9 +61,9 @@ func TestPlaceOrderHandler_Handle_Success(t *testing.T) {
 
 	var capturedOrder service.Order
 	dataSvc := &mockDataService{
-		putItemFunc: func(ctx context.Context, order service.Order) error {
-			capturedOrder = order
-			return nil
+		putItemFunc: func(ctx context.Context, req *service.PutItemRequest) (*service.PutItemResponse, error) {
+			capturedOrder = req.Order
+			return &service.PutItemResponse{}, nil
 		},
 	}
 
@@ -101,16 +103,18 @@ func TestPlaceOrderHandler_Handle_Success(t *testing.T) {
 
 func TestPlaceOrderHandler_Handle_AccountRestricted(t *testing.T) {
 	restrictionSvc := &mockRestrictionService{
-		checkRestrictionsFunc: func(ctx context.Context, accountID string) ([]service.Restriction, error) {
-			return []service.Restriction{
-				{Code: "FRAUD", Description: "Account flagged for fraud"},
+		checkRestrictionsFunc: func(ctx context.Context, req *service.CheckRestrictionsRequest) (*service.CheckRestrictionsResponse, error) {
+			return &service.CheckRestrictionsResponse{
+				Restrictions: []service.Restriction{
+					{Code: "FRAUD", Description: "Account flagged for fraud"},
+				},
 			}, nil
 		},
 	}
 
 	eligibilitySvc := &mockEligibilityService{
-		checkEligibilityFunc: func(ctx context.Context, accountID string) (*service.EligibilityResult, error) {
-			return &service.EligibilityResult{
+		checkEligibilityFunc: func(ctx context.Context, req *service.CheckEligibilityRequest) (*service.CheckEligibilityResponse, error) {
+			return &service.CheckEligibilityResponse{
 				Eligible: true,
 				Reason:   "",
 			}, nil
@@ -118,9 +122,9 @@ func TestPlaceOrderHandler_Handle_AccountRestricted(t *testing.T) {
 	}
 
 	dataSvc := &mockDataService{
-		putItemFunc: func(ctx context.Context, order service.Order) error {
+		putItemFunc: func(ctx context.Context, req *service.PutItemRequest) (*service.PutItemResponse, error) {
 			t.Fatal("PutItem should not be called when account is restricted")
-			return nil
+			return nil, nil
 		},
 	}
 
@@ -149,14 +153,16 @@ func TestPlaceOrderHandler_Handle_AccountRestricted(t *testing.T) {
 
 func TestPlaceOrderHandler_Handle_AccountIneligible(t *testing.T) {
 	restrictionSvc := &mockRestrictionService{
-		checkRestrictionsFunc: func(ctx context.Context, accountID string) ([]service.Restriction, error) {
-			return []service.Restriction{}, nil
+		checkRestrictionsFunc: func(ctx context.Context, req *service.CheckRestrictionsRequest) (*service.CheckRestrictionsResponse, error) {
+			return &service.CheckRestrictionsResponse{
+				Restrictions: []service.Restriction{},
+			}, nil
 		},
 	}
 
 	eligibilitySvc := &mockEligibilityService{
-		checkEligibilityFunc: func(ctx context.Context, accountID string) (*service.EligibilityResult, error) {
-			return &service.EligibilityResult{
+		checkEligibilityFunc: func(ctx context.Context, req *service.CheckEligibilityRequest) (*service.CheckEligibilityResponse, error) {
+			return &service.CheckEligibilityResponse{
 				Eligible: false,
 				Reason:   "account does not meet minimum requirements",
 			}, nil
@@ -164,9 +170,9 @@ func TestPlaceOrderHandler_Handle_AccountIneligible(t *testing.T) {
 	}
 
 	dataSvc := &mockDataService{
-		putItemFunc: func(ctx context.Context, order service.Order) error {
+		putItemFunc: func(ctx context.Context, req *service.PutItemRequest) (*service.PutItemResponse, error) {
 			t.Fatal("PutItem should not be called when account is ineligible")
-			return nil
+			return nil, nil
 		},
 	}
 
@@ -195,14 +201,14 @@ func TestPlaceOrderHandler_Handle_AccountIneligible(t *testing.T) {
 
 func TestPlaceOrderHandler_Handle_RestrictionServiceError(t *testing.T) {
 	restrictionSvc := &mockRestrictionService{
-		checkRestrictionsFunc: func(ctx context.Context, accountID string) ([]service.Restriction, error) {
+		checkRestrictionsFunc: func(ctx context.Context, req *service.CheckRestrictionsRequest) (*service.CheckRestrictionsResponse, error) {
 			return nil, errors.New("restriction service unavailable")
 		},
 	}
 
 	eligibilitySvc := &mockEligibilityService{
-		checkEligibilityFunc: func(ctx context.Context, accountID string) (*service.EligibilityResult, error) {
-			return &service.EligibilityResult{
+		checkEligibilityFunc: func(ctx context.Context, req *service.CheckEligibilityRequest) (*service.CheckEligibilityResponse, error) {
+			return &service.CheckEligibilityResponse{
 				Eligible: true,
 				Reason:   "",
 			}, nil
@@ -210,9 +216,9 @@ func TestPlaceOrderHandler_Handle_RestrictionServiceError(t *testing.T) {
 	}
 
 	dataSvc := &mockDataService{
-		putItemFunc: func(ctx context.Context, order service.Order) error {
+		putItemFunc: func(ctx context.Context, req *service.PutItemRequest) (*service.PutItemResponse, error) {
 			t.Fatal("PutItem should not be called when restriction check fails")
-			return nil
+			return nil, nil
 		},
 	}
 
@@ -241,21 +247,23 @@ func TestPlaceOrderHandler_Handle_RestrictionServiceError(t *testing.T) {
 
 func TestPlaceOrderHandler_Handle_EligibilityServiceError(t *testing.T) {
 	restrictionSvc := &mockRestrictionService{
-		checkRestrictionsFunc: func(ctx context.Context, accountID string) ([]service.Restriction, error) {
-			return []service.Restriction{}, nil
+		checkRestrictionsFunc: func(ctx context.Context, req *service.CheckRestrictionsRequest) (*service.CheckRestrictionsResponse, error) {
+			return &service.CheckRestrictionsResponse{
+				Restrictions: []service.Restriction{},
+			}, nil
 		},
 	}
 
 	eligibilitySvc := &mockEligibilityService{
-		checkEligibilityFunc: func(ctx context.Context, accountID string) (*service.EligibilityResult, error) {
+		checkEligibilityFunc: func(ctx context.Context, req *service.CheckEligibilityRequest) (*service.CheckEligibilityResponse, error) {
 			return nil, errors.New("eligibility service unavailable")
 		},
 	}
 
 	dataSvc := &mockDataService{
-		putItemFunc: func(ctx context.Context, order service.Order) error {
+		putItemFunc: func(ctx context.Context, req *service.PutItemRequest) (*service.PutItemResponse, error) {
 			t.Fatal("PutItem should not be called when eligibility check fails")
-			return nil
+			return nil, nil
 		},
 	}
 
@@ -284,14 +292,16 @@ func TestPlaceOrderHandler_Handle_EligibilityServiceError(t *testing.T) {
 
 func TestPlaceOrderHandler_Handle_DataServiceError(t *testing.T) {
 	restrictionSvc := &mockRestrictionService{
-		checkRestrictionsFunc: func(ctx context.Context, accountID string) ([]service.Restriction, error) {
-			return []service.Restriction{}, nil
+		checkRestrictionsFunc: func(ctx context.Context, req *service.CheckRestrictionsRequest) (*service.CheckRestrictionsResponse, error) {
+			return &service.CheckRestrictionsResponse{
+				Restrictions: []service.Restriction{},
+			}, nil
 		},
 	}
 
 	eligibilitySvc := &mockEligibilityService{
-		checkEligibilityFunc: func(ctx context.Context, accountID string) (*service.EligibilityResult, error) {
-			return &service.EligibilityResult{
+		checkEligibilityFunc: func(ctx context.Context, req *service.CheckEligibilityRequest) (*service.CheckEligibilityResponse, error) {
+			return &service.CheckEligibilityResponse{
 				Eligible: true,
 				Reason:   "",
 			}, nil
@@ -299,8 +309,8 @@ func TestPlaceOrderHandler_Handle_DataServiceError(t *testing.T) {
 	}
 
 	dataSvc := &mockDataService{
-		putItemFunc: func(ctx context.Context, order service.Order) error {
-			return errors.New("database write failed")
+		putItemFunc: func(ctx context.Context, req *service.PutItemRequest) (*service.PutItemResponse, error) {
+			return nil, errors.New("database write failed")
 		},
 	}
 
@@ -329,17 +339,19 @@ func TestPlaceOrderHandler_Handle_DataServiceError(t *testing.T) {
 
 func TestPlaceOrderHandler_Handle_MultipleRestrictions(t *testing.T) {
 	restrictionSvc := &mockRestrictionService{
-		checkRestrictionsFunc: func(ctx context.Context, accountID string) ([]service.Restriction, error) {
-			return []service.Restriction{
-				{Code: "FRAUD", Description: "Account flagged for fraud"},
-				{Code: "REGULATORY", Description: "Regulatory hold"},
+		checkRestrictionsFunc: func(ctx context.Context, req *service.CheckRestrictionsRequest) (*service.CheckRestrictionsResponse, error) {
+			return &service.CheckRestrictionsResponse{
+				Restrictions: []service.Restriction{
+					{Code: "FRAUD", Description: "Account flagged for fraud"},
+					{Code: "REGULATORY", Description: "Regulatory hold"},
+				},
 			}, nil
 		},
 	}
 
 	eligibilitySvc := &mockEligibilityService{
-		checkEligibilityFunc: func(ctx context.Context, accountID string) (*service.EligibilityResult, error) {
-			return &service.EligibilityResult{
+		checkEligibilityFunc: func(ctx context.Context, req *service.CheckEligibilityRequest) (*service.CheckEligibilityResponse, error) {
+			return &service.CheckEligibilityResponse{
 				Eligible: true,
 				Reason:   "",
 			}, nil
@@ -347,9 +359,9 @@ func TestPlaceOrderHandler_Handle_MultipleRestrictions(t *testing.T) {
 	}
 
 	dataSvc := &mockDataService{
-		putItemFunc: func(ctx context.Context, order service.Order) error {
+		putItemFunc: func(ctx context.Context, req *service.PutItemRequest) (*service.PutItemResponse, error) {
 			t.Fatal("PutItem should not be called when account has restrictions")
-			return nil
+			return nil, nil
 		},
 	}
 
@@ -382,16 +394,18 @@ func TestPlaceOrderHandler_Handle_ConcurrentValidation(t *testing.T) {
 	eligibilityCalled := false
 
 	restrictionSvc := &mockRestrictionService{
-		checkRestrictionsFunc: func(ctx context.Context, accountID string) ([]service.Restriction, error) {
+		checkRestrictionsFunc: func(ctx context.Context, req *service.CheckRestrictionsRequest) (*service.CheckRestrictionsResponse, error) {
 			restrictionCalled = true
-			return []service.Restriction{}, nil
+			return &service.CheckRestrictionsResponse{
+				Restrictions: []service.Restriction{},
+			}, nil
 		},
 	}
 
 	eligibilitySvc := &mockEligibilityService{
-		checkEligibilityFunc: func(ctx context.Context, accountID string) (*service.EligibilityResult, error) {
+		checkEligibilityFunc: func(ctx context.Context, req *service.CheckEligibilityRequest) (*service.CheckEligibilityResponse, error) {
 			eligibilityCalled = true
-			return &service.EligibilityResult{
+			return &service.CheckEligibilityResponse{
 				Eligible: true,
 				Reason:   "",
 			}, nil
@@ -399,8 +413,8 @@ func TestPlaceOrderHandler_Handle_ConcurrentValidation(t *testing.T) {
 	}
 
 	dataSvc := &mockDataService{
-		putItemFunc: func(ctx context.Context, order service.Order) error {
-			return nil
+		putItemFunc: func(ctx context.Context, req *service.PutItemRequest) (*service.PutItemResponse, error) {
+			return &service.PutItemResponse{}, nil
 		},
 	}
 

@@ -77,7 +77,12 @@ func (h *listOrdersHandler) Produce(ctx context.Context) (*ListOrdersResponse, e
 	status := service.OrderStatus(statusStr)
 
 	// Query data service
-	result, err := h.dataSvc.Query(ctx, accountNumber, status, cursor, limit)
+	result, err := h.dataSvc.Query(ctx, &service.QueryRequest{
+		AccountID: accountNumber,
+		Status:    status,
+		Cursor:    cursor,
+		Limit:     limit,
+	})
 	if err != nil {
 		return nil, err
 	}

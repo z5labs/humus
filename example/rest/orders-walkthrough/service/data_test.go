@@ -13,10 +13,7 @@ import (
 func TestDataServiceClient_Query(t *testing.T) {
 	tests := []struct {
 		name           string
-		accountID      string
-		status         OrderStatus
-		cursor         string
-		limit          int
+		req            *QueryRequest
 		mockResponse   string
 		mockStatusCode int
 		wantErr        bool
@@ -25,9 +22,11 @@ func TestDataServiceClient_Query(t *testing.T) {
 		wantNextCursor string
 	}{
 		{
-			name:      "success with results",
-			accountID: "ACC-001",
-			limit:     10,
+			name: "success with results",
+			req: &QueryRequest{
+				AccountID: "ACC-001",
+				Limit:     10,
+			},
 			mockResponse: `{
 				"orders": [
 					{"order_id": "order-1", "account_id": "ACC-001", "customer_id": "CUST-001", "status": "pending"},
@@ -43,9 +42,11 @@ func TestDataServiceClient_Query(t *testing.T) {
 			wantNextCursor: "cursor-abc",
 		},
 		{
-			name:           "success with no results",
-			accountID:      "ACC-002",
-			limit:          10,
+			name: "success with no results",
+			req: &QueryRequest{
+				AccountID: "ACC-002",
+				Limit:     10,
+			},
 			mockResponse:   `{"orders": [], "has_more": false, "next_cursor": ""}`,
 			mockStatusCode: http.StatusOK,
 			wantErr:        false,
@@ -54,10 +55,12 @@ func TestDataServiceClient_Query(t *testing.T) {
 			wantNextCursor: "",
 		},
 		{
-			name:      "success with status filter",
-			accountID: "ACC-001",
-			status:    OrderStatusPending,
-			limit:     10,
+			name: "success with status filter",
+			req: &QueryRequest{
+				AccountID: "ACC-001",
+				Status:    OrderStatusPending,
+				Limit:     10,
+			},
 			mockResponse: `{
 				"orders": [
 					{"order_id": "order-1", "account_id": "ACC-001", "customer_id": "CUST-001", "status": "pending"}
@@ -71,10 +74,12 @@ func TestDataServiceClient_Query(t *testing.T) {
 			wantHasMore:    false,
 		},
 		{
-			name:      "success with cursor pagination",
-			accountID: "ACC-001",
-			cursor:    "cursor-previous",
-			limit:     10,
+			name: "success with cursor pagination",
+			req: &QueryRequest{
+				AccountID: "ACC-001",
+				Cursor:    "cursor-previous",
+				Limit:     10,
+			},
 			mockResponse: `{
 				"orders": [
 					{"order_id": "order-3", "account_id": "ACC-001", "customer_id": "CUST-001", "status": "completed"}
@@ -88,17 +93,21 @@ func TestDataServiceClient_Query(t *testing.T) {
 			wantHasMore:    false,
 		},
 		{
-			name:           "non-200 status code",
-			accountID:      "ACC-001",
-			limit:          10,
+			name: "non-200 status code",
+			req: &QueryRequest{
+				AccountID: "ACC-001",
+				Limit:     10,
+			},
 			mockResponse:   ``,
 			mockStatusCode: http.StatusInternalServerError,
 			wantErr:        true,
 		},
 		{
-			name:           "malformed JSON response",
-			accountID:      "ACC-001",
-			limit:          10,
+			name: "malformed JSON response",
+			req: &QueryRequest{
+				AccountID: "ACC-001",
+				Limit:     10,
+			},
 			mockResponse:   `{"orders": [invalid json`,
 			mockStatusCode: http.StatusOK,
 			wantErr:        true,
@@ -113,21 +122,16 @@ func TestDataServiceClient_Query(t *testing.T) {
 				require.Equal(t, "application/json", r.Header.Get("Content-Type"))
 
 				// Verify request body
-				var reqBody struct {
-					AccountID string      `json:"account_id"`
-					Status    OrderStatus `json:"status,omitempty"`
-					Cursor    string      `json:"cursor,omitempty"`
-					Limit     int         `json:"limit"`
-				}
+				var reqBody QueryRequest
 				err := json.NewDecoder(r.Body).Decode(&reqBody)
 				require.NoError(t, err)
-				require.Equal(t, tt.accountID, reqBody.AccountID)
-				require.Equal(t, tt.limit, reqBody.Limit)
-				if tt.cursor != "" {
-					require.Equal(t, tt.cursor, reqBody.Cursor)
+				require.Equal(t, tt.req.AccountID, reqBody.AccountID)
+				require.Equal(t, tt.req.Limit, reqBody.Limit)
+				if tt.req.Cursor != "" {
+					require.Equal(t, tt.req.Cursor, reqBody.Cursor)
 				}
-				if tt.status != "" {
-					require.Equal(t, tt.status, reqBody.Status)
+				if tt.req.Status != "" {
+					require.Equal(t, tt.req.Status, reqBody.Status)
 				}
 
 				w.WriteHeader(tt.mockStatusCode)
@@ -136,7 +140,7 @@ func TestDataServiceClient_Query(t *testing.T) {
 			defer server.Close()
 
 			client := NewDataClient(server.URL, http.DefaultClient)
-			result, err := client.Query(context.Background(), tt.accountID, tt.status, tt.cursor, tt.limit)
+			result, err := client.Query(context.Background(), tt.req)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -155,18 +159,20 @@ func TestDataServiceClient_Query(t *testing.T) {
 func TestDataServiceClient_PutItem(t *testing.T) {
 	tests := []struct {
 		name           string
-		order          Order
+		req            *PutItemRequest
 		mockStatusCode int
 		wantErr        bool
 		validateBody   bool
 	}{
 		{
 			name: "success",
-			order: Order{
-				OrderID:    "order-123",
-				AccountID:  "ACC-001",
-				CustomerID: "CUST-001",
-				Status:     OrderStatusPending,
+			req: &PutItemRequest{
+				Order: Order{
+					OrderID:    "order-123",
+					AccountID:  "ACC-001",
+					CustomerID: "CUST-001",
+					Status:     OrderStatusPending,
+				},
 			},
 			mockStatusCode: http.StatusCreated,
 			wantErr:        false,
@@ -174,11 +180,13 @@ func TestDataServiceClient_PutItem(t *testing.T) {
 		},
 		{
 			name: "non-201 status code",
-			order: Order{
-				OrderID:    "order-456",
-				AccountID:  "ACC-002",
-				CustomerID: "CUST-002",
-				Status:     OrderStatusPending,
+			req: &PutItemRequest{
+				Order: Order{
+					OrderID:    "order-456",
+					AccountID:  "ACC-002",
+					CustomerID: "CUST-002",
+					Status:     OrderStatusPending,
+				},
 			},
 			mockStatusCode: http.StatusInternalServerError,
 			wantErr:        true,
@@ -186,11 +194,13 @@ func TestDataServiceClient_PutItem(t *testing.T) {
 		},
 		{
 			name: "conflict status",
-			order: Order{
-				OrderID:    "order-789",
-				AccountID:  "ACC-003",
-				CustomerID: "CUST-003",
-				Status:     OrderStatusPending,
+			req: &PutItemRequest{
+				Order: Order{
+					OrderID:    "order-789",
+					AccountID:  "ACC-003",
+					CustomerID: "CUST-003",
+					Status:     OrderStatusPending,
+				},
 			},
 			mockStatusCode: http.StatusConflict,
 			wantErr:        true,
@@ -206,13 +216,13 @@ func TestDataServiceClient_PutItem(t *testing.T) {
 				require.Equal(t, "application/json", r.Header.Get("Content-Type"))
 
 				if tt.validateBody {
-					var receivedOrder Order
-					err := json.NewDecoder(r.Body).Decode(&receivedOrder)
+					var receivedReq PutItemRequest
+					err := json.NewDecoder(r.Body).Decode(&receivedReq)
 					require.NoError(t, err)
-					require.Equal(t, tt.order.OrderID, receivedOrder.OrderID)
-					require.Equal(t, tt.order.AccountID, receivedOrder.AccountID)
-					require.Equal(t, tt.order.CustomerID, receivedOrder.CustomerID)
-					require.Equal(t, tt.order.Status, receivedOrder.Status)
+					require.Equal(t, tt.req.Order.OrderID, receivedReq.Order.OrderID)
+					require.Equal(t, tt.req.Order.AccountID, receivedReq.Order.AccountID)
+					require.Equal(t, tt.req.Order.CustomerID, receivedReq.Order.CustomerID)
+					require.Equal(t, tt.req.Order.Status, receivedReq.Order.Status)
 				}
 
 				w.WriteHeader(tt.mockStatusCode)
@@ -220,7 +230,7 @@ func TestDataServiceClient_PutItem(t *testing.T) {
 			defer server.Close()
 
 			client := NewDataClient(server.URL, http.DefaultClient)
-			err := client.PutItem(context.Background(), tt.order)
+			_, err := client.PutItem(context.Background(), tt.req)
 
 			if tt.wantErr {
 				require.Error(t, err)

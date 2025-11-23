@@ -7,8 +7,13 @@ import (
 	"net/http"
 )
 
-// EligibilityResult contains the result of an eligibility check.
-type EligibilityResult struct {
+// CheckEligibilityRequest contains the parameters for checking order eligibility.
+type CheckEligibilityRequest struct {
+	AccountID string `json:"account_id"`
+}
+
+// CheckEligibilityResponse contains the result of an eligibility check.
+type CheckEligibilityResponse struct {
 	Eligible bool   `json:"eligible"`
 	Reason   string `json:"reason"`
 }
@@ -27,15 +32,15 @@ func NewEligibilityClient(baseURL string, httpClient *http.Client) *EligibilityC
 	}
 }
 
-func (s *EligibilityClient) CheckEligibility(ctx context.Context, accountID string) (*EligibilityResult, error) {
-	u := fmt.Sprintf("%s/eligibility/%s", s.baseURL, accountID)
+func (s *EligibilityClient) CheckEligibility(ctx context.Context, req *CheckEligibilityRequest) (*CheckEligibilityResponse, error) {
+	u := fmt.Sprintf("%s/eligibility/%s", s.baseURL, req.AccountID)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	resp, err := s.httpClient.Do(req)
+	resp, err := s.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
@@ -45,7 +50,7 @@ func (s *EligibilityClient) CheckEligibility(ctx context.Context, accountID stri
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	var result EligibilityResult
+	var result CheckEligibilityResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}

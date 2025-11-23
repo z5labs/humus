@@ -12,17 +12,16 @@ import (
 func TestRestrictionServiceClient_CheckRestrictions(t *testing.T) {
 	tests := []struct {
 		name             string
-		accountID        string
+		req              *CheckRestrictionsRequest
 		mockResponse     string
 		mockStatusCode   int
 		wantErr          bool
 		wantRestrictions int
 	}{
 		{
-			name:      "no restrictions",
-			accountID: "ACC-001",
+			name: "no restrictions",
+			req:  &CheckRestrictionsRequest{AccountID: "ACC-001"},
 			mockResponse: `{
-				"account_id": "ACC-001",
 				"restrictions": []
 			}`,
 			mockStatusCode:   http.StatusOK,
@@ -30,10 +29,9 @@ func TestRestrictionServiceClient_CheckRestrictions(t *testing.T) {
 			wantRestrictions: 0,
 		},
 		{
-			name:      "single fraud restriction",
-			accountID: "ACC-FRAUD",
+			name: "single fraud restriction",
+			req:  &CheckRestrictionsRequest{AccountID: "ACC-FRAUD"},
 			mockResponse: `{
-				"account_id": "ACC-FRAUD",
 				"restrictions": [
 					{"code": "FRAUD", "description": "Account flagged for fraudulent activity"}
 				]
@@ -43,10 +41,9 @@ func TestRestrictionServiceClient_CheckRestrictions(t *testing.T) {
 			wantRestrictions: 1,
 		},
 		{
-			name:      "multiple restrictions",
-			accountID: "ACC-BLOCKED",
+			name: "multiple restrictions",
+			req:  &CheckRestrictionsRequest{AccountID: "ACC-BLOCKED"},
 			mockResponse: `{
-				"account_id": "ACC-BLOCKED",
 				"restrictions": [
 					{"code": "FRAUD", "description": "Account flagged for fraudulent activity"},
 					{"code": "COMPLIANCE", "description": "Compliance hold"},
@@ -59,7 +56,7 @@ func TestRestrictionServiceClient_CheckRestrictions(t *testing.T) {
 		},
 		{
 			name:             "non-200 status code",
-			accountID:        "ACC-ERROR",
+			req:              &CheckRestrictionsRequest{AccountID: "ACC-ERROR"},
 			mockResponse:     ``,
 			mockStatusCode:   http.StatusInternalServerError,
 			wantErr:          true,
@@ -67,7 +64,7 @@ func TestRestrictionServiceClient_CheckRestrictions(t *testing.T) {
 		},
 		{
 			name:             "malformed JSON response",
-			accountID:        "ACC-BAD",
+			req:              &CheckRestrictionsRequest{AccountID: "ACC-BAD"},
 			mockResponse:     `{"restrictions": [invalid json`,
 			mockStatusCode:   http.StatusOK,
 			wantErr:          true,
@@ -75,7 +72,7 @@ func TestRestrictionServiceClient_CheckRestrictions(t *testing.T) {
 		},
 		{
 			name:             "not found",
-			accountID:        "ACC-NOTFOUND",
+			req:              &CheckRestrictionsRequest{AccountID: "ACC-NOTFOUND"},
 			mockResponse:     `{"error": "account not found"}`,
 			mockStatusCode:   http.StatusNotFound,
 			wantErr:          true,
@@ -87,7 +84,7 @@ func TestRestrictionServiceClient_CheckRestrictions(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodGet, r.Method)
-				require.Equal(t, "/restrictions/"+tt.accountID, r.URL.Path)
+				require.Equal(t, "/restrictions/"+tt.req.AccountID, r.URL.Path)
 
 				w.WriteHeader(tt.mockStatusCode)
 				_, _ = w.Write([]byte(tt.mockResponse))
@@ -95,7 +92,7 @@ func TestRestrictionServiceClient_CheckRestrictions(t *testing.T) {
 			defer server.Close()
 
 			client := NewRestrictionClient(server.URL, http.DefaultClient)
-			restrictions, err := client.CheckRestrictions(context.Background(), tt.accountID)
+			resp, err := client.CheckRestrictions(context.Background(), tt.req)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -103,11 +100,12 @@ func TestRestrictionServiceClient_CheckRestrictions(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			require.Len(t, restrictions, tt.wantRestrictions)
+			require.NotNil(t, resp)
+			require.Len(t, resp.Restrictions, tt.wantRestrictions)
 
 			// Validate restriction structure for cases with restrictions
 			if tt.wantRestrictions > 0 {
-				for _, r := range restrictions {
+				for _, r := range resp.Restrictions {
 					require.NotEmpty(t, r.Code)
 					require.NotEmpty(t, r.Description)
 				}

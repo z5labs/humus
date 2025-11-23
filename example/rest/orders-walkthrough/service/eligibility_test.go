@@ -12,7 +12,7 @@ import (
 func TestEligibilityServiceClient_CheckEligibility(t *testing.T) {
 	tests := []struct {
 		name           string
-		accountID      string
+		req            *CheckEligibilityRequest
 		mockResponse   string
 		mockStatusCode int
 		wantErr        bool
@@ -20,8 +20,8 @@ func TestEligibilityServiceClient_CheckEligibility(t *testing.T) {
 		wantReason     string
 	}{
 		{
-			name:      "eligible account",
-			accountID: "ACC-001",
+			name: "eligible account",
+			req:  &CheckEligibilityRequest{AccountID: "ACC-001"},
 			mockResponse: `{
 				"eligible": true,
 				"reason": ""
@@ -32,8 +32,8 @@ func TestEligibilityServiceClient_CheckEligibility(t *testing.T) {
 			wantReason:     "",
 		},
 		{
-			name:      "ineligible - account type not supported",
-			accountID: "ACC-INELIGIBLE",
+			name: "ineligible - account type not supported",
+			req:  &CheckEligibilityRequest{AccountID: "ACC-INELIGIBLE"},
 			mockResponse: `{
 				"eligible": false,
 				"reason": "Account type not supported for ordering"
@@ -44,8 +44,8 @@ func TestEligibilityServiceClient_CheckEligibility(t *testing.T) {
 			wantReason:     "Account type not supported for ordering",
 		},
 		{
-			name:      "ineligible - insufficient funds",
-			accountID: "ACC-NOFUNDS",
+			name: "ineligible - insufficient funds",
+			req:  &CheckEligibilityRequest{AccountID: "ACC-NOFUNDS"},
 			mockResponse: `{
 				"eligible": false,
 				"reason": "Insufficient funds"
@@ -57,7 +57,7 @@ func TestEligibilityServiceClient_CheckEligibility(t *testing.T) {
 		},
 		{
 			name:           "non-200 status code",
-			accountID:      "ACC-ERROR",
+			req:            &CheckEligibilityRequest{AccountID: "ACC-ERROR"},
 			mockResponse:   ``,
 			mockStatusCode: http.StatusInternalServerError,
 			wantErr:        true,
@@ -65,7 +65,7 @@ func TestEligibilityServiceClient_CheckEligibility(t *testing.T) {
 		},
 		{
 			name:           "malformed JSON response",
-			accountID:      "ACC-BAD",
+			req:            &CheckEligibilityRequest{AccountID: "ACC-BAD"},
 			mockResponse:   `{"eligible": invalid json`,
 			mockStatusCode: http.StatusOK,
 			wantErr:        true,
@@ -73,7 +73,7 @@ func TestEligibilityServiceClient_CheckEligibility(t *testing.T) {
 		},
 		{
 			name:           "service unavailable",
-			accountID:      "ACC-DOWN",
+			req:            &CheckEligibilityRequest{AccountID: "ACC-DOWN"},
 			mockResponse:   ``,
 			mockStatusCode: http.StatusServiceUnavailable,
 			wantErr:        true,
@@ -81,7 +81,7 @@ func TestEligibilityServiceClient_CheckEligibility(t *testing.T) {
 		},
 		{
 			name:           "not found",
-			accountID:      "ACC-NOTFOUND",
+			req:            &CheckEligibilityRequest{AccountID: "ACC-NOTFOUND"},
 			mockResponse:   `{"error": "account not found"}`,
 			mockStatusCode: http.StatusNotFound,
 			wantErr:        true,
@@ -93,7 +93,7 @@ func TestEligibilityServiceClient_CheckEligibility(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, http.MethodGet, r.Method)
-				require.Equal(t, "/eligibility/"+tt.accountID, r.URL.Path)
+				require.Equal(t, "/eligibility/"+tt.req.AccountID, r.URL.Path)
 
 				w.WriteHeader(tt.mockStatusCode)
 				_, _ = w.Write([]byte(tt.mockResponse))
@@ -101,7 +101,7 @@ func TestEligibilityServiceClient_CheckEligibility(t *testing.T) {
 			defer server.Close()
 
 			client := NewEligibilityClient(server.URL, http.DefaultClient)
-			result, err := client.CheckEligibility(context.Background(), tt.accountID)
+			resp, err := client.CheckEligibility(context.Background(), tt.req)
 
 			if tt.wantErr {
 				require.Error(t, err)
@@ -109,10 +109,10 @@ func TestEligibilityServiceClient_CheckEligibility(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			require.NotNil(t, result)
-			require.Equal(t, tt.wantEligible, result.Eligible)
+			require.NotNil(t, resp)
+			require.Equal(t, tt.wantEligible, resp.Eligible)
 			if tt.wantReason != "" {
-				require.Equal(t, tt.wantReason, result.Reason)
+				require.Equal(t, tt.wantReason, resp.Reason)
 			}
 		})
 	}
