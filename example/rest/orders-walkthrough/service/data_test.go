@@ -108,17 +108,26 @@ func TestDataServiceClient_Query(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				require.Equal(t, http.MethodGet, r.Method)
+				require.Equal(t, http.MethodPost, r.Method)
 				require.Equal(t, "/data/orders", r.URL.Path)
+				require.Equal(t, "application/json", r.Header.Get("Content-Type"))
 
-				// Verify query parameters
-				q := r.URL.Query()
-				require.Equal(t, tt.accountID, q.Get("account_id"))
+				// Verify request body
+				var reqBody struct {
+					AccountID string      `json:"account_id"`
+					Status    OrderStatus `json:"status,omitempty"`
+					Cursor    string      `json:"cursor,omitempty"`
+					Limit     int         `json:"limit"`
+				}
+				err := json.NewDecoder(r.Body).Decode(&reqBody)
+				require.NoError(t, err)
+				require.Equal(t, tt.accountID, reqBody.AccountID)
+				require.Equal(t, tt.limit, reqBody.Limit)
 				if tt.cursor != "" {
-					require.Equal(t, tt.cursor, q.Get("cursor"))
+					require.Equal(t, tt.cursor, reqBody.Cursor)
 				}
 				if tt.status != "" {
-					require.Equal(t, string(tt.status), q.Get("status"))
+					require.Equal(t, tt.status, reqBody.Status)
 				}
 
 				w.WriteHeader(tt.mockStatusCode)

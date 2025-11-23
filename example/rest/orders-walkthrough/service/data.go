@@ -5,10 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
-	"strconv"
 )
 
 // OrderStatus represents the current state of an order.
@@ -55,26 +52,31 @@ func NewDataClient(baseURL string, httpClient *http.Client) *DataClient {
 }
 
 func (s *DataClient) Query(ctx context.Context, accountID string, status OrderStatus, cursor string, limit int) (*QueryResult, error) {
-	u, err := url.Parse(s.baseURL + "/data/orders")
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse URL: %w", err)
+	u := s.baseURL + "/data/orders"
+
+	// Build request body like DynamoDB
+	reqBody := struct {
+		AccountID string      `json:"account_id"`
+		Status    OrderStatus `json:"status,omitempty"`
+		Cursor    string      `json:"cursor,omitempty"`
+		Limit     int         `json:"limit"`
+	}{
+		AccountID: accountID,
+		Status:    status,
+		Cursor:    cursor,
+		Limit:     limit,
 	}
 
-	q := u.Query()
-	q.Set("account_id", accountID)
-	q.Set("limit", strconv.Itoa(limit))
-	if cursor != "" {
-		q.Set("cursor", cursor)
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(reqBody); err != nil {
+		return nil, fmt.Errorf("failed to encode request: %w", err)
 	}
-	if status != "" {
-		q.Set("status", string(status))
-	}
-	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, &body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -105,19 +107,16 @@ func (s *DataClient) Query(ctx context.Context, accountID string, status OrderSt
 func (s *DataClient) PutItem(ctx context.Context, order Order) error {
 	u := s.baseURL + "/data/orders"
 
-	body, err := json.Marshal(order)
-	if err != nil {
-		return fmt.Errorf("failed to marshal order: %w", err)
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(order); err != nil {
+		return fmt.Errorf("failed to encode order: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, &body)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.GetBody = func() (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(body)), nil
-	}
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {

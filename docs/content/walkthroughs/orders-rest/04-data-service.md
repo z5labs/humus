@@ -20,10 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
-	"strconv"
 )
 
 // OrderStatus represents the current state of an order.
@@ -72,28 +69,35 @@ func NewDataClient(baseURL string, httpClient *http.Client) *DataClient {
 
 ## Query Implementation
 
+The Query method sends all parameters in a JSON request body, following DynamoDB's API pattern:
+
 ```go
 func (s *DataClient) Query(ctx context.Context, accountID string, status OrderStatus, cursor string, limit int) (*QueryResult, error) {
-	u, err := url.Parse(s.baseURL + "/data/orders")
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse URL: %w", err)
+	u := s.baseURL + "/data/orders"
+
+	// Build request body like DynamoDB
+	reqBody := struct {
+		AccountID string      `json:"account_id"`
+		Status    OrderStatus `json:"status,omitempty"`
+		Cursor    string      `json:"cursor,omitempty"`
+		Limit     int         `json:"limit"`
+	}{
+		AccountID: accountID,
+		Status:    status,
+		Cursor:    cursor,
+		Limit:     limit,
 	}
 
-	q := u.Query()
-	q.Set("account_id", accountID)
-	q.Set("limit", strconv.Itoa(limit))
-	if cursor != "" {
-		q.Set("cursor", cursor)
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(reqBody); err != nil {
+		return nil, fmt.Errorf("failed to encode request: %w", err)
 	}
-	if status != "" {
-		q.Set("status", string(status))
-	}
-	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, &body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -128,19 +132,16 @@ func (s *DataClient) Query(ctx context.Context, accountID string, status OrderSt
 func (s *DataClient) PutItem(ctx context.Context, order Order) error {
 	u := s.baseURL + "/data/orders"
 
-	body, err := json.Marshal(order)
-	if err != nil {
-		return fmt.Errorf("failed to marshal order: %w", err)
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(order); err != nil {
+		return fmt.Errorf("failed to encode order: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, &body)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.GetBody = func() (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(body)), nil
-	}
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -158,11 +159,13 @@ func (s *DataClient) PutItem(ctx context.Context, order Order) error {
 
 ## Key Patterns
 
-1. **Context Propagation** - All methods accept `context.Context` for timeouts and trace propagation
-2. **Error Wrapping** - Use `fmt.Errorf("message: %w", err)` for error chains
-3. **Resource Cleanup** - Use `defer func() { _ = resp.Body.Close() }()` to ensure bodies are closed while satisfying the linter's error checking
-4. **Status Code Validation** - Check for expected HTTP status codes
-5. **Reusable Request Bodies** - Set `req.GetBody` to support HTTP redirects and retries by allowing the HTTP client to recreate the request body when needed
+1. **DynamoDB-Like API** - All parameters sent via JSON request body instead of query parameters, matching DynamoDB's API pattern
+2. **Context Propagation** - All methods accept `context.Context` for timeouts and trace propagation
+3. **Error Wrapping** - Use `fmt.Errorf("message: %w", err)` for error chains
+4. **Resource Cleanup** - Use `defer func() { _ = resp.Body.Close() }()` to ensure bodies are closed while satisfying the linter's error checking
+5. **Status Code Validation** - Check for expected HTTP status codes
+6. **Automatic Request Body Reuse** - Passing `*bytes.Buffer` to `http.NewRequestWithContext()` automatically sets `GetBody`, enabling HTTP redirects and retries without manual configuration
+7. **Optional Fields** - Use `omitempty` JSON tags for optional parameters (status, cursor) so they're omitted when empty
 
 ## What's Next
 
