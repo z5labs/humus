@@ -85,19 +85,19 @@ You should see output like:
 
 The API is running! Press Ctrl+C to stop it.
 
-## Test the Health Endpoint
+## Test the Health Endpoints
 
-Humus automatically provides health endpoints:
+Humus automatically provides liveness and readiness health endpoints:
 
 ```bash
-curl http://localhost:8090/health
+# Liveness probe
+curl http://localhost:8090/health/liveness
+
+# Readiness probe
+curl http://localhost:8090/health/readiness
 ```
 
-Response:
-
-```json
-{"status":"healthy"}
-```
+Both endpoints return `200 OK` by default (empty response body).
 
 ## OpenAPI Documentation
 
