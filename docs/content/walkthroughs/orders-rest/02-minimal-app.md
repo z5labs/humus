@@ -21,18 +21,6 @@ This minimal config just sets the HTTP port. The `{{env "VAR" | default "value"}
 
 ## Application Initialization
 
-Create `app/config.go`:
-
-```go
-package app
-
-import "github.com/z5labs/humus/rest"
-
-type Config struct {
-	rest.Config `config:",squash"`
-}
-```
-
 Create `app/app.go`:
 
 ```go
@@ -43,6 +31,10 @@ import (
 
 	"github.com/z5labs/humus/rest"
 )
+
+type Config struct {
+	rest.Config `config:",squash"`
+}
 
 func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
 	api := rest.NewApi("Orders API", "v1.0.0")

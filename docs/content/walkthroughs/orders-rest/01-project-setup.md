@@ -13,7 +13,7 @@ Let's start by creating the project structure for our orders REST API.
 Create the following directory structure:
 
 ```bash
-mkdir -p rest-orders-walkthrough/{app,endpoint,service,model,wiremock/mappings}
+mkdir -p rest-orders-walkthrough/{app,endpoint,service,wiremock/mappings}
 cd rest-orders-walkthrough
 ```
 
@@ -25,17 +25,16 @@ rest-orders-walkthrough/
 ├── config.yaml                # Configuration with OTel settings
 ├── go.mod                     # Module definition
 ├── app/
-│   ├── app.go                 # API initialization
-│   └── config.go              # Config struct
+│   └── app.go                 # API initialization and config
 ├── endpoint/
+│   ├── model.go               # Domain types (Order, pagination)
+│   ├── interfaces.go          # Service interfaces
 │   ├── list_orders.go         # GET /v1/orders
 │   └── place_order.go         # POST /v1/order
 ├── service/
 │   ├── data.go                # Data service client
 │   ├── restriction.go         # Restriction service client
 │   └── eligibility.go         # Eligibility service client
-├── model/
-│   └── order.go               # Domain types
 ├── podman-compose.yaml        # Infrastructure stack
 └── wiremock/
     └── mappings/              # Wiremock stub definitions
@@ -57,12 +56,11 @@ require github.com/z5labs/humus v0.16.0
 
 Each package has a specific responsibility:
 
-- **model/** - Domain types (Order, pagination) - no dependencies on other packages
-- **service/** - Service interfaces and HTTP client implementations
-- **endpoint/** - REST endpoint handlers using services
+- **endpoint/** - Domain types, service interfaces, and REST endpoint handlers
+- **service/** - Service HTTP client implementations (depend on endpoint types)
 - **app/** - Application initialization and configuration
 
-This separation keeps concerns clean and makes testing easier.
+This follows idiomatic Go where **consumers define interfaces** - the endpoint package defines what it needs from services, and service implementations import endpoint types to satisfy those interfaces.
 
 ## What's Next
 

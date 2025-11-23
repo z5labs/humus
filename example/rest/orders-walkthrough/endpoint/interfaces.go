@@ -2,30 +2,27 @@ package endpoint
 
 import (
 	"context"
-
-	"github.com/z5labs/humus/example/rest/orders-walkthrough/model"
-	"github.com/z5labs/humus/example/rest/orders-walkthrough/service"
 )
 
 // DataService provides access to order data storage.
 // Following idiomatic Go, the consumer (endpoint package) defines the interface.
 type DataService interface {
 	// Query retrieves orders for an account with optional filtering and pagination.
-	Query(ctx context.Context, accountID string, status *model.OrderStatus, cursor string, limit int) (*service.QueryResult, error)
+	Query(ctx context.Context, accountID string, status *OrderStatus, cursor string, limit int) (*QueryResult, error)
 	// PutItem stores a new order.
-	PutItem(ctx context.Context, order model.Order) error
+	PutItem(ctx context.Context, order Order) error
 }
 
 // RestrictionService checks for account restrictions.
 // Following idiomatic Go, the consumer (endpoint package) defines the interface.
 type RestrictionService interface {
 	// CheckRestrictions returns all restrictions for an account.
-	CheckRestrictions(ctx context.Context, accountID string) ([]service.Restriction, error)
+	CheckRestrictions(ctx context.Context, accountID string) ([]Restriction, error)
 }
 
 // EligibilityService checks account eligibility for placing orders.
 // Following idiomatic Go, the consumer (endpoint package) defines the interface.
 type EligibilityService interface {
 	// CheckEligibility determines if an account is eligible to place orders.
-	CheckEligibility(ctx context.Context, accountID string) (*service.EligibilityResult, error)
+	CheckEligibility(ctx context.Context, accountID string) (*EligibilityResult, error)
 }

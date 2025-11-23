@@ -5,13 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-)
 
-// EligibilityResult contains the result of an eligibility check.
-type EligibilityResult struct {
-	Eligible bool   `json:"eligible"`
-	Reason   string `json:"reason"`
-}
+	"github.com/z5labs/humus/example/rest/orders-walkthrough/endpoint"
+)
 
 // EligibilityClient is a client for the eligibility service.
 type EligibilityClient struct {
@@ -27,7 +23,7 @@ func NewEligibility(baseURL string, httpClient *http.Client) *EligibilityClient 
 	}
 }
 
-func (s *EligibilityClient) CheckEligibility(ctx context.Context, accountID string) (*EligibilityResult, error) {
+func (s *EligibilityClient) CheckEligibility(ctx context.Context, accountID string) (*endpoint.EligibilityResult, error) {
 	u := fmt.Sprintf("%s/eligibility/%s", s.baseURL, accountID)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
@@ -45,7 +41,7 @@ func (s *EligibilityClient) CheckEligibility(ctx context.Context, accountID stri
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	var result EligibilityResult
+	var result endpoint.EligibilityResult
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}

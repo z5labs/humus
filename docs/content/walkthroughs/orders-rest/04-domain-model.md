@@ -10,10 +10,10 @@ Let's define the core domain types for our order system.
 
 ## Order Model
 
-Create `model/order.go`:
+Create `endpoint/model.go`:
 
 ```go
-package model
+package endpoint
 
 // OrderStatus represents the current state of an order.
 type OrderStatus string
@@ -69,6 +69,16 @@ All fields have explicit JSON tags:
 - `json:"end_cursor,omitempty"` - Omits field if empty
 
 This ensures the API response matches the OpenAPI schema exactly.
+
+## Why in the Endpoint Package?
+
+The model types are defined in the `endpoint` package because:
+
+1. **Consumer-defined interfaces** - Following idiomatic Go, the endpoint package defines both the interfaces it needs AND the types those interfaces use
+2. **No circular dependencies** - Service implementations import endpoint types, avoiding import cycles
+3. **Clear ownership** - The endpoint package owns the contract (interfaces + types) that services must satisfy
+
+This is a common Go pattern where the consumer defines the full contract.
 
 ## What's Next
 

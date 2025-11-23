@@ -1,4 +1,4 @@
-package model
+package endpoint
 
 // OrderStatus represents the current state of an order.
 type OrderStatus string
@@ -32,4 +32,23 @@ type PageInfo struct {
 type ListOrdersResponse struct {
 	Orders   []Order  `json:"orders"`
 	PageInfo PageInfo `json:"page_info"`
+}
+
+// QueryResult contains the result of a Query operation.
+type QueryResult struct {
+	Orders     []Order
+	HasMore    bool
+	NextCursor string
+}
+
+// Restriction represents a single restriction on an account.
+type Restriction struct {
+	Code        string `json:"code"`
+	Description string `json:"description"`
+}
+
+// EligibilityResult contains the result of an eligibility check.
+type EligibilityResult struct {
+	Eligible bool   `json:"eligible"`
+	Reason   string `json:"reason"`
 }

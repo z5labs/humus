@@ -9,16 +9,15 @@ slug: scaffolding-endpoints
 Now that we have a running API, let's scaffold our two endpoints with dummy responses. This demonstrates how quickly you can get working endpoints before implementing any business logic.
 
 We'll organize the code into a clean structure:
-- `model/` - Domain models
-- `endpoint/` - HTTP endpoint handlers
+- `endpoint/` - Domain models and HTTP endpoint handlers
 - `app/` - Application initialization
 
 ## Define Domain Models
 
-First, create `model/order.go` with the core domain types:
+First, create `endpoint/model.go` with the core domain types:
 
 ```go
-package model
+package endpoint
 
 // OrderStatus represents the current state of an order.
 type OrderStatus string
@@ -68,18 +67,17 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/z5labs/humus/example/rest/orders-walkthrough/model"
 	"github.com/z5labs/humus/rest"
 	"github.com/z5labs/humus/rest/rpc"
 )
 
 // ListOrders creates the GET /v1/orders endpoint.
 func ListOrders() rest.ApiOption {
-	handler := rpc.ProducerFunc[model.ListOrdersResponse](func(ctx context.Context) (*model.ListOrdersResponse, error) {
+	handler := rpc.ProducerFunc[ListOrdersResponse](func(ctx context.Context) (*ListOrdersResponse, error) {
 		// Return empty list for now
-		return &model.ListOrdersResponse{
-			Orders: []model.Order{},
-			PageInfo: model.PageInfo{
+		return &ListOrdersResponse{
+			Orders: []Order{},
+			PageInfo: PageInfo{
 				HasNextPage: false,
 			},
 		}, nil
@@ -106,7 +104,6 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/z5labs/humus/example/rest/orders-walkthrough/model"
 	"github.com/z5labs/humus/rest"
 	"github.com/z5labs/humus/rest/rpc"
 )
@@ -176,11 +173,12 @@ func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
 ```
 
 Key patterns demonstrated here:
-- **Separation of concerns** - Models, endpoints, and app logic are in separate packages
+- **Separation of concerns** - Endpoints and app logic are in separate packages
 - **GET endpoint** - Uses `rpc.ProducerFunc` (no request body) with `rpc.ProduceJson`
 - **POST endpoint** - Uses `rpc.HandlerFunc` (request + response) with `rpc.HandleJson`
 - **Dummy responses** - Hardcoded values allow immediate testing
 - **No dependencies** - No services or database needed yet
+- **Models with endpoints** - Types live in the endpoint package where they're used
 
 ## Run the API
 
@@ -240,7 +238,7 @@ Look for:
 ## What We Accomplished
 
 In just a few minutes, you:
-1. ✅ Created a clean package structure (model, endpoint, app)
+1. ✅ Created a clean package structure (endpoint, app)
 2. ✅ Defined domain types with type-safe constants
 3. ✅ Registered two working endpoints with dummy handlers
 4. ✅ Tested both with real HTTP requests
@@ -249,8 +247,7 @@ In just a few minutes, you:
 This demonstrates Humus's productivity: you defined types, registered handlers, and got working endpoints with OpenAPI docs—no schema files, no decorators, just Go code.
 
 The clean separation between packages also sets you up for success as the application grows:
-- `model/` owns the domain concepts
-- `endpoint/` owns the HTTP contract
+- `endpoint/` owns the domain types and HTTP contract
 - `app/` composes everything together
 
 ## What's Next

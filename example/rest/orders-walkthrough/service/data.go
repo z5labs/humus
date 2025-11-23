@@ -10,15 +10,8 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/z5labs/humus/example/rest/orders-walkthrough/model"
+	"github.com/z5labs/humus/example/rest/orders-walkthrough/endpoint"
 )
-
-// QueryResult contains the result of a Query operation.
-type QueryResult struct {
-	Orders     []model.Order
-	HasMore    bool
-	NextCursor string
-}
 
 // DataClient is a client for the data service.
 type DataClient struct {
@@ -34,7 +27,7 @@ func NewData(baseURL string, httpClient *http.Client) *DataClient {
 	}
 }
 
-func (s *DataClient) Query(ctx context.Context, accountID string, status *model.OrderStatus, cursor string, limit int) (*QueryResult, error) {
+func (s *DataClient) Query(ctx context.Context, accountID string, status *endpoint.OrderStatus, cursor string, limit int) (*endpoint.QueryResult, error) {
 	u, err := url.Parse(s.baseURL + "/data/orders")
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse URL: %w", err)
@@ -67,22 +60,22 @@ func (s *DataClient) Query(ctx context.Context, accountID string, status *model.
 	}
 
 	var result struct {
-		Orders     []model.Order `json:"orders"`
-		HasMore    bool          `json:"has_more"`
-		NextCursor string        `json:"next_cursor"`
+		Orders     []endpoint.Order `json:"orders"`
+		HasMore    bool             `json:"has_more"`
+		NextCursor string           `json:"next_cursor"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	return &QueryResult{
+	return &endpoint.QueryResult{
 		Orders:     result.Orders,
 		HasMore:    result.HasMore,
 		NextCursor: result.NextCursor,
 	}, nil
 }
 
-func (s *DataClient) PutItem(ctx context.Context, order model.Order) error {
+func (s *DataClient) PutItem(ctx context.Context, order endpoint.Order) error {
 	u := s.baseURL + "/data/orders"
 
 	body, err := json.Marshal(order)

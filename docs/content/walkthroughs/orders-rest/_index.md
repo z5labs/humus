@@ -37,7 +37,7 @@ The API integrates with three backend services:
 
 By the end of this walkthrough, you will:
 
-1. **Structure a Humus REST application** - Understand the model/service/endpoint/app pattern
+1. **Structure a Humus REST application** - Understand the endpoint/service/app pattern where endpoints define interfaces
 2. **Implement service interfaces** - Create HTTP client wrappers with proper error handling
 3. **Use RPC patterns** - Apply `rpc.ProduceJson` for GET and `rpc.HandleJson` for POST
 4. **Add query parameters** - Use `rest.QueryParam` with validation

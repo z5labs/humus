@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"strconv"
 
-	"github.com/z5labs/humus/example/rest/orders-walkthrough/model"
 	"github.com/z5labs/humus/rest"
 	"github.com/z5labs/humus/rest/rpc"
 )
@@ -31,7 +30,7 @@ type listOrdersHandler struct {
 	dataSvc DataService
 }
 
-func (h *listOrdersHandler) Produce(ctx context.Context) (*model.ListOrdersResponse, error) {
+func (h *listOrdersHandler) Produce(ctx context.Context) (*ListOrdersResponse, error) {
 	accountNumberValues := rest.QueryParamValue(ctx, "accountNumber")
 	accountNumber := ""
 	if len(accountNumberValues) > 0 {
@@ -74,9 +73,9 @@ func (h *listOrdersHandler) Produce(ctx context.Context) (*model.ListOrdersRespo
 	}
 
 	// Parse status filter
-	var status *model.OrderStatus
+	var status *OrderStatus
 	if statusStr != "" {
-		s := model.OrderStatus(statusStr)
+		s := OrderStatus(statusStr)
 		status = &s
 	}
 
@@ -87,9 +86,9 @@ func (h *listOrdersHandler) Produce(ctx context.Context) (*model.ListOrdersRespo
 	}
 
 	// Build response with cursor-based pagination
-	response := &model.ListOrdersResponse{
+	response := &ListOrdersResponse{
 		Orders: result.Orders,
-		PageInfo: model.PageInfo{
+		PageInfo: PageInfo{
 			HasNextPage: result.HasMore,
 		},
 	}

@@ -9,16 +9,16 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/z5labs/humus/example/rest/orders-walkthrough/model"
+	"github.com/z5labs/humus/example/rest/orders-walkthrough/endpoint"
 )
 
 func TestDataServiceClient_Query(t *testing.T) {
-	pending := model.OrderStatusPending
+	pending := endpoint.OrderStatusPending
 
 	tests := []struct {
 		name           string
 		accountID      string
-		status         *model.OrderStatus
+		status         *endpoint.OrderStatus
 		cursor         string
 		limit          int
 		mockResponse   string
@@ -150,18 +150,18 @@ func TestDataServiceClient_Query(t *testing.T) {
 func TestDataServiceClient_PutItem(t *testing.T) {
 	tests := []struct {
 		name           string
-		order          model.Order
+		order          endpoint.Order
 		mockStatusCode int
 		wantErr        bool
 		validateBody   bool
 	}{
 		{
 			name: "success",
-			order: model.Order{
+			order: endpoint.Order{
 				OrderID:    "order-123",
 				AccountID:  "ACC-001",
 				CustomerID: "CUST-001",
-				Status:     model.OrderStatusPending,
+				Status:     endpoint.OrderStatusPending,
 			},
 			mockStatusCode: http.StatusCreated,
 			wantErr:        false,
@@ -169,11 +169,11 @@ func TestDataServiceClient_PutItem(t *testing.T) {
 		},
 		{
 			name: "non-201 status code",
-			order: model.Order{
+			order: endpoint.Order{
 				OrderID:    "order-456",
 				AccountID:  "ACC-002",
 				CustomerID: "CUST-002",
-				Status:     model.OrderStatusPending,
+				Status:     endpoint.OrderStatusPending,
 			},
 			mockStatusCode: http.StatusInternalServerError,
 			wantErr:        true,
@@ -181,11 +181,11 @@ func TestDataServiceClient_PutItem(t *testing.T) {
 		},
 		{
 			name: "conflict status",
-			order: model.Order{
+			order: endpoint.Order{
 				OrderID:    "order-789",
 				AccountID:  "ACC-003",
 				CustomerID: "CUST-003",
-				Status:     model.OrderStatusPending,
+				Status:     endpoint.OrderStatusPending,
 			},
 			mockStatusCode: http.StatusConflict,
 			wantErr:        true,
@@ -201,7 +201,7 @@ func TestDataServiceClient_PutItem(t *testing.T) {
 				require.Equal(t, "application/json", r.Header.Get("Content-Type"))
 
 				if tt.validateBody {
-					var receivedOrder model.Order
+					var receivedOrder endpoint.Order
 					err := json.NewDecoder(r.Body).Decode(&receivedOrder)
 					require.NoError(t, err)
 					require.Equal(t, tt.order.OrderID, receivedOrder.OrderID)
