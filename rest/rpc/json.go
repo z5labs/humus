@@ -219,6 +219,21 @@ func (h *ConsumeJsonHandler[Req, Resp]) RequestBody() openapi3.RequestBodyOrRef 
 
 // Responses implements the rest.Handler interface.
 func (h *ConsumeJsonHandler[Req, Resp]) Responses() openapi3.Responses {
+	var resp Resp
+	// Check if the response type implements TypedResponse interface
+	if typedResp, ok := any(&resp).(interface {
+		Spec() (int, *openapi3.Response, error)
+	}); ok {
+		statusCode, respSpec, err := typedResp.Spec()
+		if err != nil {
+			return openapi3.Responses{}
+		}
+		return openapi3.Responses{
+			MapOfResponseOrRefValues: map[string]openapi3.ResponseOrRef{
+				strconv.Itoa(statusCode): {Response: respSpec},
+			},
+		}
+	}
 	return openapi3.Responses{}
 }
 
@@ -235,10 +250,21 @@ func (h *ConsumeJsonHandler[Req, Resp]) ServeHTTP(w http.ResponseWriter, r *http
 		panic(err)
 	}
 
-	_, err = h.Handle(spanCtx, &req)
+	resp, err := h.Handle(spanCtx, &req)
 	if err != nil {
 		span.RecordError(err)
 		panic(err)
+	}
+
+	// Check if the response type implements ResponseWriter interface
+	if writer, ok := any(resp).(interface {
+		WriteResponse(context.Context, http.ResponseWriter) error
+	}); ok {
+		err = writer.WriteResponse(spanCtx, w)
+		if err != nil {
+			span.RecordError(err)
+			panic(err)
+		}
 	}
 }
 
