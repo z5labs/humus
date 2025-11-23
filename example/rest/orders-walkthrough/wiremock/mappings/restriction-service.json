@@ -1,0 +1,69 @@
+{
+  "mappings": [
+    {
+      "name": "Check restrictions - no restrictions",
+      "request": {
+        "method": "GET",
+        "urlPath": "/restrictions/ACC-001"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "account_id": "ACC-001",
+          "restrictions": []
+        }
+      }
+    },
+    {
+      "name": "Check restrictions - fraud restriction",
+      "request": {
+        "method": "GET",
+        "urlPath": "/restrictions/ACC-FRAUD"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "account_id": "ACC-FRAUD",
+          "restrictions": [
+            {
+              "code": "FRAUD_SUSPECTED",
+              "description": "Account flagged for suspected fraudulent activity"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Check restrictions - multiple restrictions",
+      "request": {
+        "method": "GET",
+        "urlPath": "/restrictions/ACC-BLOCKED"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "account_id": "ACC-BLOCKED",
+          "restrictions": [
+            {
+              "code": "ACCOUNT_SUSPENDED",
+              "description": "Account has been suspended"
+            },
+            {
+              "code": "PAYMENT_OVERDUE",
+              "description": "Account has overdue payments"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
