@@ -1,7 +1,7 @@
 ---
 title: List Orders Endpoint
 description: Implement GET /v1/orders with cursor-based pagination
-weight: 8
+weight: 7
 type: docs
 slug: list-orders-endpoint
 ---
@@ -186,4 +186,4 @@ curl -s "http://localhost:8090/v1/orders?accountNumber=ACC-001&after=T1JELTAwMw=
 
 Now let's implement the POST /v1/order endpoint with service orchestration.
 
-[Next: Place Order Endpoint →]({{< ref "/walkthroughs/orders-rest/09-place-order-endpoint" >}})
+[Next: Place Order Endpoint →]({{< ref "/walkthroughs/orders-rest/08-place-order-endpoint" >}})

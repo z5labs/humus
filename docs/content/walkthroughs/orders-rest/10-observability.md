@@ -1,7 +1,7 @@
 ---
 title: Observability
 description: Explore traces, logs, and metrics in Grafana
-weight: 11
+weight: 10
 type: docs
 slug: observability
 ---
@@ -115,4 +115,4 @@ func (h *handler) Handle(ctx context.Context) error {
 
 Let's run through complete end-to-end testing scenarios.
 
-[Next: Running & Testing →]({{< ref "/walkthroughs/orders-rest/12-running-testing" >}})
+[Next: Running & Testing →]({{< ref "/walkthroughs/orders-rest/11-running-testing" >}})

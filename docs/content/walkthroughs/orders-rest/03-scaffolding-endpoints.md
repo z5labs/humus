@@ -12,9 +12,9 @@ We'll organize the code into a clean structure:
 - `endpoint/` - Domain models and HTTP endpoint handlers
 - `app/` - Application initialization
 
-## Define Domain Models
+## Define Common Domain Models
 
-First, create `endpoint/model.go` with the core domain types:
+First, create `endpoint/model.go` with common types shared across endpoints:
 
 ```go
 package endpoint
@@ -46,15 +46,31 @@ type PageInfo struct {
 	HasNextPage bool   `json:"has_next_page"`
 	EndCursor   string `json:"end_cursor,omitempty"`
 }
-
-// ListOrdersResponse is the response for listing orders with pagination.
-type ListOrdersResponse struct {
-	Orders   []Order  `json:"orders"`
-	PageInfo PageInfo `json:"page_info"`
-}
 ```
 
-Notice we're using a typed `OrderStatus` constant rather than plain strings—this provides better type safety and IDE support.
+### Design Decisions
+
+**Typed Constants:** We use a typed `OrderStatus` constant rather than plain strings—this provides better type safety and IDE support.
+
+**Cursor-Based Pagination:** We use cursor-based pagination instead of offset-based for several reasons:
+1. **Consistency** - No skipped or duplicated items when data changes
+2. **Performance** - Database can efficiently seek to cursor position
+3. **Scalability** - Works well with large datasets
+
+The cursor is an opaque token (base64-encoded OrderID) that points to the last item returned.
+
+**JSON Tags:** All fields have explicit JSON tags:
+- `json:"order_id"` - Uses snake_case for API consistency
+- `json:"end_cursor,omitempty"` - Omits field if empty
+
+This ensures the API response matches the OpenAPI schema exactly.
+
+**Why in the Endpoint Package?** The model types are defined in the `endpoint` package because:
+1. **Consumer-defined interfaces** - Following idiomatic Go, the endpoint package defines both the interfaces it needs AND the types those interfaces use
+2. **No circular dependencies** - Service implementations import endpoint types, avoiding import cycles
+3. **Clear ownership** - The endpoint package owns the contract (interfaces + types) that services must satisfy
+
+Only common types shared across multiple endpoints belong here.
 
 ## Create List Orders Endpoint
 
@@ -70,6 +86,12 @@ import (
 	"github.com/z5labs/humus/rest"
 	"github.com/z5labs/humus/rest/rpc"
 )
+
+// ListOrdersResponse is the response for listing orders with pagination.
+type ListOrdersResponse struct {
+	Orders   []Order  `json:"orders"`
+	PageInfo PageInfo `json:"page_info"`
+}
 
 // ListOrders creates the GET /v1/orders endpoint.
 func ListOrders() rest.ApiOption {
@@ -91,7 +113,7 @@ func ListOrders() rest.ApiOption {
 }
 ```
 
-This is a **Producer**—it produces a response without consuming a request body. Perfect for GET endpoints.
+This is a **Producer**—it produces a response without consuming a request body. Perfect for GET endpoints. The response type is defined here since it's specific to this endpoint.
 
 ## Create Place Order Endpoint
 
@@ -138,7 +160,7 @@ func PlaceOrder() rest.ApiOption {
 }
 ```
 
-Request/response types are defined in the endpoint package—they represent the API contract, not the domain model.
+Request/response types are defined alongside their endpoints—they represent the API contract specific to that operation.
 
 ## Wire Up the Application
 
@@ -178,7 +200,7 @@ Key patterns demonstrated here:
 - **POST endpoint** - Uses `rpc.HandlerFunc` (request + response) with `rpc.HandleJson`
 - **Dummy responses** - Hardcoded values allow immediate testing
 - **No dependencies** - No services or database needed yet
-- **Models with endpoints** - Types live in the endpoint package where they're used
+- **Type organization** - Common types in `model.go`, endpoint-specific types alongside their handlers
 
 ## Run the API
 
@@ -246,12 +268,13 @@ In just a few minutes, you:
 
 This demonstrates Humus's productivity: you defined types, registered handlers, and got working endpoints with OpenAPI docs—no schema files, no decorators, just Go code.
 
-The clean separation between packages also sets you up for success as the application grows:
-- `endpoint/` owns the domain types and HTTP contract
-- `app/` composes everything together
+The clean code organization also sets you up for success as the application grows:
+- `endpoint/model.go` - Common domain types shared across endpoints
+- `endpoint/*.go` - Each endpoint file contains its specific request/response types and handler
+- `app/` - Application composition and wiring
 
 ## What's Next
 
-Now that we have working endpoints, let's add real business logic with backend services and proper validation.
+Now that we have working endpoints with our domain model defined, let's implement the data service that will store and retrieve orders.
 
-[Next: Domain Model →]({{< ref "/walkthroughs/orders-rest/04-domain-model" >}})
+[Next: Data Service →]({{< ref "/walkthroughs/orders-rest/04-data-service" >}})
