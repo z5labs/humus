@@ -45,7 +45,6 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/z5labs/humus/example/rest/orders-walkthrough/endpoint"
 	"github.com/z5labs/humus/example/rest/orders-walkthrough/service"
 	"github.com/z5labs/humus/rest"
 
@@ -59,17 +58,15 @@ func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
 		Transport: otelhttp.NewTransport(http.DefaultTransport),
 	}
 
-	// Initialize services
-	dataSvc := service.NewDataClient(cfg.Services.DataURL, httpClient)
-	restrictionSvc := service.NewRestrictionClient(cfg.Services.RestrictionURL, httpClient)
-	eligibilitySvc := service.NewEligibilityClient(cfg.Services.EligibilityURL, httpClient)
+	// Initialize services (we'll use these when we add endpoints)
+	_ = service.NewDataClient(cfg.Services.DataURL, httpClient)
+	_ = service.NewRestrictionClient(cfg.Services.RestrictionURL, httpClient)
+	_ = service.NewEligibilityClient(cfg.Services.EligibilityURL, httpClient)
 
-	// Create API with endpoints
+	// Create API - we'll add endpoints in the next steps
 	api := rest.NewApi(
 		cfg.OpenApi.Title,
 		cfg.OpenApi.Version,
-		endpoint.ListOrders(dataSvc),
-		endpoint.PlaceOrder(restrictionSvc, eligibilitySvc, dataSvc),
 	)
 
 	return api, nil
@@ -78,9 +75,8 @@ func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
 
 Important aspects:
 - Use `otelhttp.NewTransport` to automatically instrument outgoing HTTP calls
-- Initialize services with URLs from config
-- Pass services to endpoints (dependency injection)
-- Register all endpoints in `rest.NewApi()`
+- Initialize services with URLs from config (currently unused, marked with `_`)
+- Create empty API - we'll register endpoints in the following steps
 
 ## Main Entry Point
 
@@ -119,6 +115,10 @@ otel:
   resource:
     service_name: orders-api
 
+openapi:
+  title: Orders API
+  version: v1.0.0
+
 http:
   port: {{env "HTTP_PORT" | default 8090}}
 
@@ -133,6 +133,7 @@ The config uses Go templating:
 - `| default "value"` provides fallbacks
 - All three service URLs point to a mock server (we'll set up Wiremock later)
 - OTel is minimal for now (logs go to stdout)
+- OpenAPI metadata defines the API title and version
 
 ## What's Next
 

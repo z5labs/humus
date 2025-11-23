@@ -142,6 +142,53 @@ The cursor is base64-encoded for:
 - **Safety** - Safe for URLs and JSON
 - **Flexibility** - Can contain any string (OrderID, timestamp, etc.)
 
+## Registering the Endpoint
+
+Now update `app/app.go` to register the endpoint:
+
+```go
+package app
+
+import (
+	"context"
+	"net/http"
+
+	"github.com/z5labs/humus/example/rest/orders-walkthrough/endpoint"
+	"github.com/z5labs/humus/example/rest/orders-walkthrough/service"
+	"github.com/z5labs/humus/rest"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+)
+
+// Init initializes the REST API with all endpoints and services.
+func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
+	// Create OTel-instrumented HTTP client for service calls
+	httpClient := &http.Client{
+		Transport: otelhttp.NewTransport(http.DefaultTransport),
+	}
+
+	// Initialize services
+	dataSvc := service.NewDataClient(cfg.Services.DataURL, httpClient)
+	_ = service.NewRestrictionClient(cfg.Services.RestrictionURL, httpClient)
+	_ = service.NewEligibilityClient(cfg.Services.EligibilityURL, httpClient)
+
+	// Create API with ListOrders endpoint
+	api := rest.NewApi(
+		cfg.OpenApi.Title,
+		cfg.OpenApi.Version,
+		endpoint.ListOrders(dataSvc),
+	)
+
+	return api, nil
+}
+```
+
+Changes:
+- Import the `endpoint` package
+- Remove `_` from `dataSvc` variable (now used)
+- Pass `dataSvc` to `endpoint.ListOrders()`
+- Register endpoint in `rest.NewApi()`
+
 ## Testing the Endpoint
 
 Start the application:
