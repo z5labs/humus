@@ -67,7 +67,7 @@ This ensures the API response matches the OpenAPI schema exactly.
 
 **Why in the Endpoint Package?** The model types are defined in the `endpoint` package because:
 1. **Consumer-defined interfaces** - Following idiomatic Go, the endpoint package defines both the interfaces it needs AND the types those interfaces use
-2. **No circular dependencies** - Service implementations import endpoint types, avoiding import cycles
+2. **No circular dependencies** - The endpoint package imports service implementations (not the other way around), avoiding import cycles
 3. **Clear ownership** - The endpoint package owns the contract (interfaces + types) that services must satisfy
 
 Only common types shared across multiple endpoints belong here.
