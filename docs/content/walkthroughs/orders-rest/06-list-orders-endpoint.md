@@ -319,4 +319,4 @@ curl -s "http://localhost:8090/v1/orders?accountNumber=ACC-001&after=T1JELTAwMw=
 
 Now let's implement the POST /v1/order endpoint with service orchestration.
 
-[Next: Place Order Endpoint →]({{< ref "/walkthroughs/orders-rest/08-place-order-endpoint" >}})
+[Next: Place Order Endpoint →]({{< ref "/walkthroughs/orders-rest/07-place-order-endpoint" >}})

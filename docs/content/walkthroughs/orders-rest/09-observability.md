@@ -115,4 +115,4 @@ func (h *handler) Handle(ctx context.Context) error {
 
 Let's run through complete end-to-end testing scenarios.
 
-[Next: Running & Testing →]({{< ref "/walkthroughs/orders-rest/11-running-testing" >}})
+[Next: Running & Testing →]({{< ref "/walkthroughs/orders-rest/10-running-testing" >}})

@@ -220,4 +220,4 @@ The framework automatically generates:
 
 With both endpoints complete, let's set up the full observability infrastructure to see traces, metrics, and logs in Grafana.
 
-[Next: Infrastructure & Observability →]({{< ref "/walkthroughs/orders-rest/09-infrastructure" >}})
+[Next: Infrastructure & Observability →]({{< ref "/walkthroughs/orders-rest/08-infrastructure" >}})

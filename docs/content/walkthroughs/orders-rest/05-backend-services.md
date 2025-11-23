@@ -257,6 +257,6 @@ See `service/*_test.go` for complete test suites covering success cases, errors,
 
 ## What's Next
 
-With all services implemented and tested, let's create the main application entry point.
+With all services implemented and tested, let's implement the first endpoint.
 
-[Next: Basic API →]({{< ref "/walkthroughs/orders-rest/06-basic-api" >}})
+[Next: List Orders Endpoint →]({{< ref "/walkthroughs/orders-rest/06-list-orders-endpoint" >}})

@@ -91,12 +91,11 @@ The complete source code is available at:
 3. **[Scaffolding Endpoints]({{< ref "/walkthroughs/orders-rest/03-scaffolding-endpoints" >}})** - Define domain types and scaffold endpoints with dummy responses
 4. **[Data Service]({{< ref "/walkthroughs/orders-rest/04-data-service" >}})** - Implement the storage service layer
 5. **[Backend Services]({{< ref "/walkthroughs/orders-rest/05-backend-services" >}})** - Add restriction and eligibility services
-6. **[Basic API]({{< ref "/walkthroughs/orders-rest/06-basic-api" >}})** - Create the application entry point
-7. **[List Orders Endpoint]({{< ref "/walkthroughs/orders-rest/07-list-orders-endpoint" >}})** - Implement GET /v1/orders with pagination
-8. **[Place Order Endpoint]({{< ref "/walkthroughs/orders-rest/08-place-order-endpoint" >}})** - Implement POST /v1/order with orchestration
-9. **[Infrastructure & Observability]({{< ref "/walkthroughs/orders-rest/09-infrastructure" >}})** - Set up Podman Compose with observability stack
-10. **[Exploring Traces & Metrics]({{< ref "/walkthroughs/orders-rest/10-observability" >}})** - Explore traces, logs, and metrics in Grafana
-11. **[Running & Testing]({{< ref "/walkthroughs/orders-rest/11-running-testing" >}})** - End-to-end testing scenarios
+6. **[List Orders Endpoint]({{< ref "/walkthroughs/orders-rest/06-list-orders-endpoint" >}})** - Implement GET /v1/orders with pagination
+7. **[Place Order Endpoint]({{< ref "/walkthroughs/orders-rest/07-place-order-endpoint" >}})** - Implement POST /v1/order with orchestration
+8. **[Infrastructure & Observability]({{< ref "/walkthroughs/orders-rest/08-infrastructure" >}})** - Set up Podman Compose with observability stack
+9. **[Exploring Traces & Metrics]({{< ref "/walkthroughs/orders-rest/09-observability" >}})** - Explore traces, logs, and metrics in Grafana
+10. **[Running & Testing]({{< ref "/walkthroughs/orders-rest/10-running-testing" >}})** - End-to-end testing scenarios
 
 Let's get started!
 

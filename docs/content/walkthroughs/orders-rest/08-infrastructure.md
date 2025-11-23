@@ -108,4 +108,4 @@ You should see 6 containers: wiremock, tempo, loki, mimir, otel-collector, and g
 
 Now let's explore the observability features and see our traces, logs, and metrics in Grafana.
 
-[Next: Exploring Traces & Metrics →]({{< ref "/walkthroughs/orders-rest/10-observability" >}})
+[Next: Exploring Traces & Metrics →]({{< ref "/walkthroughs/orders-rest/09-observability" >}})
