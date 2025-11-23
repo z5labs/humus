@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/require"
 	"github.com/swaggest/openapi-go/openapi3"
 )
@@ -234,9 +235,9 @@ func TestRequired(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		location     paramLocation
-		paramName    string
+		name           string
+		location       paramLocation
+		paramName      string
 		wantStatusCode int
 	}{
 		{"validates cookie parameter", locationCookie, "session", http.StatusBadRequest},
@@ -1304,5 +1305,55 @@ func TestOpenAPISpecGeneration(t *testing.T) {
 		}
 		// For now, just verify the operation exists since parameter
 		// registration in OpenAPI spec may not be fully implemented
+	})
+}
+
+// Category F: Path Parameter Value Extraction Tests
+
+func TestPathParamValue(t *testing.T) {
+	t.Parallel()
+
+	t.Run("retrieves path parameter value from context", func(t *testing.T) {
+		t.Parallel()
+
+		// Create a context with a path parameter value
+		ctx := context.WithValue(context.Background(), paramCtxKey("id"), "user-123")
+
+		value := PathParamValue(ctx, "id")
+		require.Equal(t, "user-123", value)
+	})
+
+	t.Run("retrieves multiple path parameters from context", func(t *testing.T) {
+		t.Parallel()
+
+		// Create a context with multiple path parameter values
+		ctx := context.Background()
+		ctx = context.WithValue(ctx, paramCtxKey("userId"), "user-789")
+		ctx = context.WithValue(ctx, paramCtxKey("postId"), "post-321")
+
+		userID := PathParamValue(ctx, "userId")
+		postID := PathParamValue(ctx, "postId")
+
+		require.Equal(t, "user-789", userID)
+		require.Equal(t, "post-321", postID)
+	})
+
+	t.Run("path parameter is injected via transformParam", func(t *testing.T) {
+		t.Parallel()
+
+		// Test that the injectParam function properly stores path params in context
+		transform := injectParam("id", openapi3.ParameterInPath)
+
+		req := httptest.NewRequest(http.MethodGet, "/users/user-456", nil)
+		// Simulate chi's URLParam by using chi's context
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", "user-456")
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+		transformedReq, err := transform(req)
+		require.NoError(t, err)
+
+		value := PathParamValue(transformedReq.Context(), "id")
+		require.Equal(t, "user-456", value)
 	})
 }
