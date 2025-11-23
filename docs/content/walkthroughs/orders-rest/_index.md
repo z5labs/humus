@@ -20,17 +20,40 @@ The API integrates with three backend services:
 
 ## Architecture Overview
 
+The API orchestrates calls to three backend services with different flows for each endpoint:
+
+### GET /v1/orders - List Orders Flow
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Orders API
+    participant Data Service
+
+    Client->>Orders API: GET /v1/orders?cursor=abc&limit=10
+    Orders API->>Data Service: Query orders with pagination
+    Data Service-->>Orders API: Return orders + next cursor
+    Orders API-->>Client: JSON response with orders array
 ```
-┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│   Client    │────→│   Orders API     │────→│   Restriction   │
-│             │     │   (This Example) │     │   Service       │
-└─────────────┘     └──────────────────┘     └─────────────────┘
-                            │
-                            ├───────────────────────→ Eligibility
-                            │                         Service
-                            │
-                            └───────────────────────→ Data
-                                                      Service
+
+### POST /v1/order - Place Order Flow
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Orders API
+    participant Restriction Service
+    participant Eligibility Service
+    participant Data Service
+
+    Client->>Orders API: POST /v1/order (order details)
+    Orders API->>Restriction Service: Check account restrictions
+    Restriction Service-->>Orders API: Restriction status
+    Orders API->>Eligibility Service: Validate order eligibility
+    Eligibility Service-->>Orders API: Eligibility status
+    Orders API->>Data Service: Save order
+    Data Service-->>Orders API: Order saved
+    Orders API-->>Client: Order confirmation
 ```
 
 ## Learning Objectives
