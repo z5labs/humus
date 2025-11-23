@@ -1,0 +1,180 @@
+{
+  "mappings": [
+    {
+      "name": "Query orders - first page",
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/data/orders",
+        "queryParameters": {
+          "account_id": {
+            "equalTo": "ACC-001"
+          },
+          "limit": {
+            "equalTo": "10"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "orders": [
+            {
+              "order_id": "ORD-001",
+              "account_id": "ACC-001",
+              "customer_id": "CUST-001",
+              "status": "completed"
+            },
+            {
+              "order_id": "ORD-002",
+              "account_id": "ACC-001",
+              "customer_id": "CUST-001",
+              "status": "pending"
+            },
+            {
+              "order_id": "ORD-003",
+              "account_id": "ACC-001",
+              "customer_id": "CUST-001",
+              "status": "processing"
+            }
+          ],
+          "has_more": true,
+          "next_cursor": "ORD-003"
+        }
+      }
+    },
+    {
+      "name": "Query orders - second page",
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/data/orders",
+        "queryParameters": {
+          "account_id": {
+            "equalTo": "ACC-001"
+          },
+          "limit": {
+            "equalTo": "10"
+          },
+          "cursor": {
+            "equalTo": "ORD-003"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "orders": [
+            {
+              "order_id": "ORD-004",
+              "account_id": "ACC-001",
+              "customer_id": "CUST-001",
+              "status": "completed"
+            },
+            {
+              "order_id": "ORD-005",
+              "account_id": "ACC-001",
+              "customer_id": "CUST-001",
+              "status": "failed"
+            }
+          ],
+          "has_more": false,
+          "next_cursor": ""
+        }
+      }
+    },
+    {
+      "name": "Query orders - with status filter",
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/data/orders",
+        "queryParameters": {
+          "account_id": {
+            "equalTo": "ACC-001"
+          },
+          "status": {
+            "equalTo": "completed"
+          },
+          "limit": {
+            "equalTo": "10"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "orders": [
+            {
+              "order_id": "ORD-001",
+              "account_id": "ACC-001",
+              "customer_id": "CUST-001",
+              "status": "completed"
+            },
+            {
+              "order_id": "ORD-004",
+              "account_id": "ACC-001",
+              "customer_id": "CUST-001",
+              "status": "completed"
+            }
+          ],
+          "has_more": false,
+          "next_cursor": ""
+        }
+      }
+    },
+    {
+      "name": "Query orders - empty account",
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/data/orders",
+        "queryParameters": {
+          "account_id": {
+            "equalTo": "ACC-EMPTY"
+          },
+          "limit": {
+            "equalTo": "10"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "orders": [],
+          "has_more": false,
+          "next_cursor": ""
+        }
+      }
+    },
+    {
+      "name": "Put order - success",
+      "request": {
+        "method": "POST",
+        "urlPath": "/data/orders",
+        "headers": {
+          "Content-Type": {
+            "equalTo": "application/json"
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "success": true
+        }
+      }
+    }
+  ]
+}
