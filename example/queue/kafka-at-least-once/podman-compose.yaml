@@ -108,6 +108,8 @@ services:
       - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor,correlations
     volumes:
       - ./grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:z
+      - ./grafana-dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml:z
+      - ./dashboard.json:/etc/grafana/provisioning/dashboards/dashboard.json:z
       - grafana-data:/var/lib/grafana
     ports:
       - "3000:3000"   # Grafana web UI
