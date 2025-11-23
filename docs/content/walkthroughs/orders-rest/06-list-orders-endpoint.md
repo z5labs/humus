@@ -1,12 +1,38 @@
 ---
 title: List Orders Endpoint
 description: Implement GET /v1/orders with cursor-based pagination
-weight: 7
+weight: 6
 type: docs
 slug: list-orders-endpoint
 ---
 
 Let's implement the GET /v1/orders endpoint with query parameters and pagination.
+
+## Configuration Structure
+
+First, create `app/config.go` to define the application configuration:
+
+```go
+package app
+
+import "github.com/z5labs/humus/rest"
+
+// Config defines the application configuration.
+type Config struct {
+	rest.Config `config:",squash"`
+
+	Services struct {
+		DataURL        string `config:"data_url"`
+		RestrictionURL string `config:"restriction_url"`
+		EligibilityURL string `config:"eligibility_url"`
+	} `config:"services"`
+}
+```
+
+Key points:
+- Embed `rest.Config` with `config:",squash"` to inherit HTTP server and OTel settings
+- Add custom `Services` struct for backend service URLs
+- Tags use `config:` not `json:` for bedrock configuration system
 
 ## Endpoint Registration
 
@@ -142,9 +168,9 @@ The cursor is base64-encoded for:
 - **Safety** - Safe for URLs and JSON
 - **Flexibility** - Can contain any string (OrderID, timestamp, etc.)
 
-## Registering the Endpoint
+## Application Initialization
 
-Now update `app/app.go` to register the endpoint:
+Create `app/app.go` to initialize the API and register the endpoint:
 
 ```go
 package app
@@ -169,8 +195,6 @@ func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
 
 	// Initialize services
 	dataSvc := service.NewDataClient(cfg.Services.DataURL, httpClient)
-	_ = service.NewRestrictionClient(cfg.Services.RestrictionURL, httpClient)
-	_ = service.NewEligibilityClient(cfg.Services.EligibilityURL, httpClient)
 
 	// Create API with ListOrders endpoint
 	api := rest.NewApi(
@@ -183,11 +207,68 @@ func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
 }
 ```
 
-Changes:
-- Import the `endpoint` package
-- Remove `_` from `dataSvc` variable (now used)
-- Pass `dataSvc` to `endpoint.ListOrders()`
+Important aspects:
+- Use `otelhttp.NewTransport` to automatically instrument outgoing HTTP calls
+- Initialize data service with URL from config
+- Pass service to endpoint via dependency injection
 - Register endpoint in `rest.NewApi()`
+
+## Main Entry Point
+
+Create `main.go` as the application entry point:
+
+```go
+package main
+
+import (
+	"bytes"
+	_ "embed"
+
+	"github.com/z5labs/humus/example/rest/orders-walkthrough/app"
+	"github.com/z5labs/humus/rest"
+)
+
+//go:embed config.yaml
+var configBytes []byte
+
+func main() {
+	rest.Run(bytes.NewReader(configBytes), app.Init)
+}
+```
+
+This is the standard Humus pattern:
+- Embed config.yaml at compile time
+- Call `rest.Run()` with config reader and init function
+- Framework handles OTel setup, server lifecycle, and graceful shutdown
+
+## Configuration File
+
+Create `config.yaml` with service URLs and OTel configuration:
+
+```yaml
+otel:
+  resource:
+    service_name: orders-api
+
+openapi:
+  title: Orders API
+  version: v1.0.0
+
+http:
+  port: {{env "HTTP_PORT" | default 8090}}
+
+services:
+  data_url: {{env "DATA_SERVICE_URL" | default "http://localhost:8080"}}
+  restriction_url: {{env "RESTRICTION_SERVICE_URL" | default "http://localhost:8080"}}
+  eligibility_url: {{env "ELIGIBILITY_SERVICE_URL" | default "http://localhost:8080"}}
+```
+
+The config uses Go templating:
+- `{{env "VAR"}}` reads environment variables
+- `| default "value"` provides fallbacks
+- All three service URLs point to a mock server (we'll set up Wiremock later)
+- OTel is minimal for now (logs go to stdout)
+- OpenAPI metadata defines the API title and version
 
 ## Testing the Endpoint
 

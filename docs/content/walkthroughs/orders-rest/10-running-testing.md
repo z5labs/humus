@@ -1,7 +1,7 @@
 ---
 title: Running & Testing
 description: Complete end-to-end testing scenarios
-weight: 11
+weight: 10
 type: docs
 slug: running-testing
 ---

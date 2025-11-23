@@ -1,7 +1,7 @@
 ---
 title: Place Order Endpoint
 description: Implement POST /v1/order with service orchestration
-weight: 8
+weight: 7
 type: docs
 slug: place-order-endpoint
 ---
@@ -153,48 +153,25 @@ The `github.com/sourcegraph/conc/pool` library provides:
 
 ## Registering the Endpoint
 
-Finally, update `app/app.go` to register the PlaceOrder endpoint:
+Update `app/app.go` to initialize the additional services and register the PlaceOrder endpoint:
 
 ```go
-package app
+// Initialize services
+dataSvc := service.NewDataClient(cfg.Services.DataURL, httpClient)
+restrictionSvc := service.NewRestrictionClient(cfg.Services.RestrictionURL, httpClient)
+eligibilitySvc := service.NewEligibilityClient(cfg.Services.EligibilityURL, httpClient)
 
-import (
-	"context"
-	"net/http"
-
-	"github.com/z5labs/humus/example/rest/orders-walkthrough/endpoint"
-	"github.com/z5labs/humus/example/rest/orders-walkthrough/service"
-	"github.com/z5labs/humus/rest"
-
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+// Create API with both endpoints
+api := rest.NewApi(
+	cfg.OpenApi.Title,
+	cfg.OpenApi.Version,
+	endpoint.ListOrders(dataSvc),
+	endpoint.PlaceOrder(restrictionSvc, eligibilitySvc, dataSvc),
 )
-
-// Init initializes the REST API with all endpoints and services.
-func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
-	// Create OTel-instrumented HTTP client for service calls
-	httpClient := &http.Client{
-		Transport: otelhttp.NewTransport(http.DefaultTransport),
-	}
-
-	// Initialize services
-	dataSvc := service.NewDataClient(cfg.Services.DataURL, httpClient)
-	restrictionSvc := service.NewRestrictionClient(cfg.Services.RestrictionURL, httpClient)
-	eligibilitySvc := service.NewEligibilityClient(cfg.Services.EligibilityURL, httpClient)
-
-	// Create API with both endpoints
-	api := rest.NewApi(
-		cfg.OpenApi.Title,
-		cfg.OpenApi.Version,
-		endpoint.ListOrders(dataSvc),
-		endpoint.PlaceOrder(restrictionSvc, eligibilitySvc, dataSvc),
-	)
-
-	return api, nil
-}
 ```
 
 Changes from the previous step:
-- Remove `_` from `restrictionSvc` and `eligibilitySvc` (now used)
+- Initialize `restrictionSvc` and `eligibilitySvc` (previously unused)
 - Add `endpoint.PlaceOrder()` to the API registration
 - All three services are now wired to their respective endpoints
 
