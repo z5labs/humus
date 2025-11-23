@@ -103,7 +103,7 @@ func ExamplePathParamValue_withMultipleParams() {
 	// Register endpoint with multiple path parameters
 	apiOpt := rest.Handle(
 		http.MethodGet,
-		rest.BasePath("/users").Param("userId").Segment("posts").Param("postId"),
+		rest.BasePath("/users").Param("userId", rest.Required()).Segment("posts").Param("postId", rest.Required()),
 		rpc.ProduceJson(handler),
 	)
 
