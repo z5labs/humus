@@ -119,6 +119,7 @@ func Handle(method string, path Path, h Handler, opts ...OperationOption) ApiOpt
 		var op openapi3.Operation
 		op.RequestBody = &reqBody
 		op.Responses = responses
+		op.Parameters = oo.parameters
 
 		endpoint := path.String()
 

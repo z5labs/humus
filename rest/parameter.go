@@ -76,6 +76,29 @@ func QueryParamValue(ctx context.Context, name string) []string {
 	return ctx.Value(paramCtxKey(name)).([]string)
 }
 
+// PathParamValue retrieves a path parameter value from the request context.
+// Path parameters are extracted from the URL path and injected into the context
+// during request processing when using [Path.Param].
+//
+// This function is useful when working with handlers that only receive context,
+// such as those using [rpc.ProduceJson] or [rpc.ConsumeOnlyJson].
+//
+// Example:
+//
+//	rest.Handle(
+//	    http.MethodGet,
+//	    rest.BasePath("/users").Param("id"),
+//	    rpc.ProduceJson(handler),
+//	)
+//
+//	func (h *handler) Produce(ctx context.Context) (*Response, error) {
+//	    userID := rest.PathParamValue(ctx, "id")
+//	    // use userID...
+//	}
+func PathParamValue(ctx context.Context, name string) string {
+	return ctx.Value(paramCtxKey(name)).(string)
+}
+
 type paramCtxKey string
 
 func injectParam(name string, in openapi3.ParameterIn) func(*http.Request) (*http.Request, error) {
