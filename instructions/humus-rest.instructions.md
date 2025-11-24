@@ -17,10 +17,13 @@ my-rest-service/
 ├── config.yaml          # Configuration
 ├── app/
 │   └── app.go          # Init function and Config type
-├── endpoint/           # Handler functions
+├── endpoint/           # REST endpoint handlers
 │   ├── create_user.go
 │   ├── get_user.go
 │   └── list_users.go
+├── service/            # Backend service clients
+│   ├── user.go         # User service client
+│   └── order.go        # Order service client
 ├── go.mod
 └── go.sum
 ```
@@ -92,6 +95,61 @@ func (c Config) Listener(ctx context.Context) (net.Listener, error) {
 ```
 
 See `humus-common.instructions.md` for general configuration patterns like using Go templates in YAML.
+
+## Backend Service Clients
+
+Define all backend service clients in a single `service` package. Each client should follow this pattern where methods have 2 arguments (`context.Context` and `*Request`) and 2 return values (`*Response` and `error`):
+
+```go
+// service/user.go
+package service
+
+import (
+    "context"
+    "net/http"
+)
+
+type UserClient struct {
+    httpClient *http.Client
+    baseURL    string
+}
+
+func NewUserClient(httpClient *http.Client, baseURL string) *UserClient {
+    return &UserClient{
+        httpClient: httpClient,
+        baseURL:    baseURL,
+    }
+}
+
+type GetUserRequest struct {
+    ID string
+}
+
+type GetUserResponse struct {
+    ID    string
+    Name  string
+    Email string
+}
+
+func (c *UserClient) GetUser(ctx context.Context, req *GetUserRequest) (*GetUserResponse, error) {
+    // Make HTTP request to backend service
+    return &GetUserResponse{}, nil
+}
+
+type CreateUserRequest struct {
+    Name  string
+    Email string
+}
+
+type CreateUserResponse struct {
+    ID string
+}
+
+func (c *UserClient) CreateUser(ctx context.Context, req *CreateUserRequest) (*CreateUserResponse, error) {
+    // Make HTTP request to backend service
+    return &CreateUserResponse{}, nil
+}
+```
 
 ## REST Service Patterns
 
