@@ -1,37 +1,32 @@
 ---
-title: Running & Testing
-description: Complete end-to-end testing scenarios
-weight: 9
+title: Comprehensive Testing
+description: Complete end-to-end testing scenarios with full observability
+weight: 10
 type: docs
-slug: running-testing
+slug: comprehensive-testing
 ---
 
-Let's run through comprehensive testing scenarios to validate the complete implementation.
+Now that you have the full observability stack running, let's run comprehensive end-to-end testing scenarios to validate the complete implementation and explore the telemetry data.
 
-## Starting the Stack
+## Prerequisites
 
-1. **Start infrastructure:**
+Before running these tests, ensure:
 
-```bash
-cd example/rest/orders-walkthrough
-podman-compose up -d
-```
-
-2. **Verify all containers:**
+1. **All containers are running** (from the Infrastructure Setup step):
 
 ```bash
 podman ps --format "table {{.Names}}\t{{.Status}}"
 ```
 
-You should see 6 running containers.
+You should see 6 running containers: wiremock, tempo, loki, mimir, otel-collector, and grafana.
 
-3. **Start the API:**
+2. **API is running** with observability enabled:
 
 ```bash
 go run .
 ```
 
-The API starts on port 8090.
+The API should connect to the OTel Collector at localhost:4317.
 
 ## Test Scenarios
 
@@ -121,26 +116,78 @@ curl -s http://localhost:8090/health/readiness
 
 ## Observability Validation
 
-After running test scenarios:
+After running the test scenarios above, validate that telemetry is being captured:
+
+### Traces in Tempo
 
 1. **Open Grafana**: http://localhost:3000
-2. **Check Tempo**: Should see traces for all API calls
-3. **Check Loki**: Should see correlated logs
-4. **Check Mimir**: Should see HTTP metrics
+2. **Go to Explore** (compass icon)
+3. **Select Tempo** as data source
+4. **Search for recent traces**
 
-## Validation Checklist
+You should see:
+- Traces for each API request
+- Distributed trace spans showing:
+  - Main HTTP request span
+  - Child spans for service calls (Restriction, Eligibility, Data)
+  - Timing information for each span
+  - HTTP status codes and attributes
 
+### Logs in Loki
+
+1. **In Grafana, go to Explore**
+2. **Select Loki** as data source
+3. **Query**: `{job="orders-api"}`
+
+You should see:
+- Application logs correlated with trace IDs
+- Request/response logs
+- Error logs (for failed scenarios)
+
+### Metrics in Mimir
+
+1. **In Grafana, go to Explore**
+2. **Select Mimir** as data source
+3. **Query examples**:
+   - `http_server_request_duration_seconds_bucket` - Request latency distribution
+   - `http_server_request_total` - Total request count by status code
+
+You should see:
+- HTTP request metrics by endpoint
+- Request duration histograms
+- Error rates
+
+## Complete Validation Checklist
+
+### Code & Build
 - [ ] All code builds: `go build ./...`
-- [ ] Infrastructure starts: `podman-compose up -d`
+- [ ] No lint errors: `go vet ./...`
+
+### Infrastructure
+- [ ] All 6 containers running: `podman ps`
+- [ ] Wiremock accessible: http://localhost:8080
+- [ ] Grafana accessible: http://localhost:3000
+
+### API Functionality
 - [ ] API starts without errors
+- [ ] Health checks respond: `/health/liveness`, `/health/readiness`
+- [ ] OpenAPI spec available: `/openapi.json`
+
+### Endpoint Testing
 - [ ] GET /v1/orders returns paginated results
-- [ ] POST /v1/order creates orders
+- [ ] Pagination cursors work correctly
+- [ ] Status filtering works
+- [ ] POST /v1/order creates orders successfully
 - [ ] Restrictions block orders correctly
-- [ ] Eligibility blocks orders correctly
-- [ ] Traces appear in Tempo
-- [ ] Logs appear in Loki
+- [ ] Eligibility blocks ineligible accounts
+
+### Observability
+- [ ] Traces appear in Tempo for all requests
+- [ ] Distributed traces show service call hierarchy
+- [ ] Logs appear in Loki with trace IDs
 - [ ] Metrics appear in Mimir
-- [ ] OpenAPI spec is correct
+- [ ] HTTP request metrics show correct counts
+- [ ] Latency histograms are populated
 
 ## Cleanup
 

@@ -92,9 +92,10 @@ The complete source code is available at:
 4. **[Backend Services]({{< ref "/walkthroughs/orders-rest/04-backend-services" >}})** - Implement data storage, restriction, and eligibility service clients
 5. **[List Orders Endpoint]({{< ref "/walkthroughs/orders-rest/06-list-orders-endpoint" >}})** - Implement GET /v1/orders with pagination
 6. **[Place Order Endpoint]({{< ref "/walkthroughs/orders-rest/07-place-order-endpoint" >}})** - Implement POST /v1/order with orchestration
-7. **[Infrastructure & Observability]({{< ref "/walkthroughs/orders-rest/08-infrastructure" >}})** - Set up Podman Compose with observability stack
-8. **[Exploring Traces & Metrics]({{< ref "/walkthroughs/orders-rest/09-observability" >}})** - Explore traces, logs, and metrics in Grafana
-9. **[Running & Testing]({{< ref "/walkthroughs/orders-rest/10-running-testing" >}})** - End-to-end testing scenarios
+7. **[Basic Testing]({{< ref "/walkthroughs/orders-rest/08-basic-testing" >}})** - Test your API endpoints with Wiremock
+8. **[Observability Infrastructure]({{< ref "/walkthroughs/orders-rest/09-infrastructure" >}})** - Add LGTM stack and OpenTelemetry Collector
+9. **[Exploring Observability]({{< ref "/walkthroughs/orders-rest/10-observability" >}})** - Explore traces, logs, and metrics in Grafana
+10. **[Comprehensive Testing]({{< ref "/walkthroughs/orders-rest/11-comprehensive-testing" >}})** - End-to-end testing with full observability validation
 
 Let's get started!
 

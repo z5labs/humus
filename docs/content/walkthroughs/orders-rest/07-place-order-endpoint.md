@@ -218,6 +218,6 @@ The framework automatically generates:
 
 ## What's Next
 
-With both endpoints complete, let's set up the full observability infrastructure to see traces, metrics, and logs in Grafana.
+With both endpoints complete, let's test them using Wiremock to mock the backend services.
 
-[Next: Infrastructure & Observability →]({{< ref "/walkthroughs/orders-rest/08-infrastructure" >}})
+[Next: Basic Testing →]({{< ref "/walkthroughs/orders-rest/08-basic-testing" >}})
