@@ -17,75 +17,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestPhase1_KafkaContainerSetup verifies that the Kafka container starts successfully.
-func TestPhase1_KafkaContainerSetup(t *testing.T) {
-	t.Run("will start Kafka container successfully", func(t *testing.T) {
-		brokers, cleanup := setupKafkaContainer(t)
-		defer cleanup()
-
-		require.NotEmpty(t, brokers, "brokers should not be empty")
-		require.Len(t, brokers, 1, "should have exactly one broker")
-	})
-}
-
-// TestPhase1_CreateTopic verifies that topics can be created.
-func TestPhase1_CreateTopic(t *testing.T) {
-	t.Run("will create topic successfully", func(t *testing.T) {
-		brokers, cleanup := setupKafkaContainer(t)
-		defer cleanup()
-
-		// Create topic with 1 partition
-		createTopic(t, brokers, "test-topic", 1)
-
-		// If we get here without error, the topic was created successfully
-	})
-
-	t.Run("will create topic with multiple partitions", func(t *testing.T) {
-		brokers, cleanup := setupKafkaContainer(t)
-		defer cleanup()
-
-		// Create topic with 3 partitions
-		createTopic(t, brokers, "test-topic-multi", 3)
-
-		// If we get here without error, the topic was created successfully
-	})
-}
-
-// TestPhase1_ProduceMessages verifies that messages can be produced.
-func TestPhase1_ProduceMessages(t *testing.T) {
-	t.Run("will produce messages successfully", func(t *testing.T) {
-		brokers, cleanup := setupKafkaContainer(t)
-		defer cleanup()
-
-		topic := "test-topic"
-		createTopic(t, brokers, topic, 1)
-
-		// Produce 5 test messages
-		messages := []Message{
-			testMessage("message-1"),
-			testMessage("message-2"),
-			testMessage("message-3"),
-			testMessage("message-4"),
-			testMessage("message-5"),
-		}
-
-		produceTestMessages(t, brokers, topic, messages)
-
-		// If we get here without error, messages were produced successfully
-	})
-}
-
 //
-// Phase 2: Core Functionality Tests
+// Core Functionality Tests
 //
 
-// TestPhase2_BasicConsumption verifies basic message consumption with at-least-once semantics.
-func TestPhase2_BasicConsumption(t *testing.T) {
+// TestBasicConsumption verifies basic message consumption with at-least-once semantics.
+func TestBasicConsumption(t *testing.T) {
+	// Start container once for all subtests
+	brokers, cleanup := setupKafkaContainer(t)
+	defer cleanup()
+
 	t.Run("will consume and process all messages in order", func(t *testing.T) {
-		brokers, cleanup := setupKafkaContainer(t)
-		defer cleanup()
-
-		topic := "test-topic"
+		topic := "basic-consumption-ordered"
 		createTopic(t, brokers, topic, 1)
 
 		// Produce 10 test messages
@@ -107,7 +50,7 @@ func TestPhase2_BasicConsumption(t *testing.T) {
 		})
 
 		// Create runtime with at-least-once semantics
-		runtime := newTestRuntime(t, brokers, "test-group", AtLeastOnce(topic, processor))
+		runtime := newTestRuntime(t, brokers, "basic-consumption-group", AtLeastOnce(topic, processor))
 
 		// Run runtime in background with timeout
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -149,22 +92,9 @@ func TestPhase2_BasicConsumption(t *testing.T) {
 			require.Equal(t, expected, actual, "message %d should be in order", i)
 		}
 	})
-}
 
-// ProcessorFunc is a function adapter for the Processor interface.
-type ProcessorFunc func(context.Context, Message) error
-
-func (f ProcessorFunc) Process(ctx context.Context, msg Message) error {
-	return f(ctx, msg)
-}
-
-// TestPhase2_MultiplePartitions verifies consumption from multiple partitions.
-func TestPhase2_MultiplePartitions(t *testing.T) {
 	t.Run("will consume messages from all partitions", func(t *testing.T) {
-		brokers, cleanup := setupKafkaContainer(t)
-		defer cleanup()
-
-		topic := "test-topic"
+		topic := "basic-consumption-partitions"
 		numPartitions := int32(3)
 		createTopic(t, brokers, topic, numPartitions)
 
@@ -193,7 +123,7 @@ func TestPhase2_MultiplePartitions(t *testing.T) {
 		})
 
 		// Create runtime with at-least-once semantics
-		runtime := newTestRuntime(t, brokers, "test-group", AtLeastOnce(topic, processor))
+		runtime := newTestRuntime(t, brokers, "partitions-group", AtLeastOnce(topic, processor))
 
 		// Run runtime in background with timeout
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -234,16 +164,10 @@ func TestPhase2_MultiplePartitions(t *testing.T) {
 			require.True(t, partitionsSeen[p], "partition %d should have been consumed from", p)
 		}
 	})
-}
 
-// TestPhase2_MultipleTopics verifies consumption from multiple topics with separate handlers.
-func TestPhase2_MultipleTopics(t *testing.T) {
 	t.Run("will route messages to correct topic handlers", func(t *testing.T) {
-		brokers, cleanup := setupKafkaContainer(t)
-		defer cleanup()
-
-		topic1 := "orders-topic"
-		topic2 := "events-topic"
+		topic1 := "basic-consumption-orders"
+		topic2 := "basic-consumption-events"
 		createTopic(t, brokers, topic1, 1)
 		createTopic(t, brokers, topic2, 1)
 
@@ -283,7 +207,7 @@ func TestPhase2_MultipleTopics(t *testing.T) {
 		})
 
 		// Create runtime with at-least-once semantics for both topics
-		runtime := newTestRuntime(t, brokers, "test-group",
+		runtime := newTestRuntime(t, brokers, "multi-topic-group",
 			AtLeastOnce(topic1, ordersProcessor),
 			AtLeastOnce(topic2, eventsProcessor),
 		)
@@ -335,12 +259,19 @@ func TestPhase2_MultipleTopics(t *testing.T) {
 	})
 }
 
+// ProcessorFunc is a function adapter for the Processor interface.
+type ProcessorFunc func(context.Context, Message) error
+
+func (f ProcessorFunc) Process(ctx context.Context, msg Message) error {
+	return f(ctx, msg)
+}
+
 //
-// Phase 3: Consumer Group Behavior
+// Consumer Group Behavior Tests
 //
 
-// TestPhase3_OffsetCommits verifies that consumer offsets are committed and resumed correctly.
-func TestPhase3_OffsetCommits(t *testing.T) {
+// TestOffsetCommits verifies that consumer offsets are committed and resumed correctly.
+func TestOffsetCommits(t *testing.T) {
 	t.Run("will resume from committed offset after restart", func(t *testing.T) {
 		brokers, cleanup := setupKafkaContainer(t)
 		defer cleanup()
@@ -460,8 +391,8 @@ func TestPhase3_OffsetCommits(t *testing.T) {
 	})
 }
 
-// TestPhase3_Rebalancing verifies consumer group rebalancing behavior.
-func TestPhase3_Rebalancing(t *testing.T) {
+// TestRebalancing verifies consumer group rebalancing behavior.
+func TestRebalancing(t *testing.T) {
 	t.Run("will rebalance partitions when second consumer joins", func(t *testing.T) {
 		brokers, cleanup := setupKafkaContainer(t)
 		defer cleanup()
@@ -617,16 +548,17 @@ func mapKeysToSlice(m map[int32]bool) []int32 {
 	return keys
 }
 
-// ==================== Phase 4: Error Handling & Recovery ====================
+// ==================== Error Handling & Recovery Tests ====================
 
-// TestPhase4_ProcessorErrors verifies that processor errors are handled correctly.
-func TestPhase4_ProcessorErrors(t *testing.T) {
+// TestErrorHandling verifies error handling and graceful shutdown behavior.
+func TestErrorHandling(t *testing.T) {
+	// Start container once for all subtests
+	brokers, cleanup := setupKafkaContainer(t)
+	defer cleanup()
+
 	t.Run("will continue processing after processor errors", func(t *testing.T) {
-		brokers, cleanup := setupKafkaContainer(t)
-		defer cleanup()
-
-		topic := "test-topic"
-		groupID := "test-error-group"
+		topic := "error-handling-continue"
+		groupID := "error-continue-group"
 		createTopic(t, brokers, topic, 1)
 
 		// Produce messages - some will trigger errors
@@ -710,11 +642,8 @@ func TestPhase4_ProcessorErrors(t *testing.T) {
 	})
 
 	t.Run("will commit all messages including failed ones", func(t *testing.T) {
-		brokers, cleanup := setupKafkaContainer(t)
-		defer cleanup()
-
-		topic := "test-topic"
-		groupID := "test-error-commit-group"
+		topic := "error-handling-commits"
+		groupID := "error-commits-group"
 		createTopic(t, brokers, topic, 1)
 
 		// Produce messages - all will trigger errors
@@ -805,16 +734,10 @@ func TestPhase4_ProcessorErrors(t *testing.T) {
 		t.Logf("First consumer attempted %d messages (all failed), second consumer received 0 messages (commits worked)",
 			firstConsumerAttempts)
 	})
-}
 
-// TestPhase4_GracefulShutdownDuringProcessing verifies graceful shutdown behavior.
-func TestPhase4_GracefulShutdownDuringProcessing(t *testing.T) {
 	t.Run("will stop gracefully after completing in-flight batch", func(t *testing.T) {
-		brokers, cleanup := setupKafkaContainer(t)
-		defer cleanup()
-
-		topic := "test-topic"
-		groupID := "test-shutdown-group"
+		topic := "error-handling-shutdown"
+		groupID := "shutdown-group"
 		createTopic(t, brokers, topic, 1)
 
 		// Produce messages
@@ -879,11 +802,8 @@ func TestPhase4_GracefulShutdownDuringProcessing(t *testing.T) {
 	})
 
 	t.Run("will handle context cancellation in processor", func(t *testing.T) {
-		brokers, cleanup := setupKafkaContainer(t)
-		defer cleanup()
-
-		topic := "test-topic"
-		groupID := "test-cancel-processor-group"
+		topic := "error-handling-cancel"
+		groupID := "cancel-processor-group"
 		createTopic(t, brokers, topic, 1)
 
 		// Produce messages
