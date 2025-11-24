@@ -43,6 +43,71 @@ podman ps
 
 You should see the minio container running. Access the console at http://localhost:9001 (login: minioadmin/minioadmin).
 
+## Add Configuration
+
+Update `config.yaml` to add MinIO settings:
+
+```yaml
+minio:
+  endpoint: {{env "MINIO_ENDPOINT" | default "localhost:9000"}}
+  access_key: {{env "MINIO_ACCESS_KEY" | default "minioadmin"}}
+  secret_key: {{env "MINIO_SECRET_KEY" | default "minioadmin"}}
+  bucket: {{env "MINIO_BUCKET" | default "onebrc"}}
+
+onebrc:
+  input_key: {{env "INPUT_KEY" | default "measurements.txt"}}
+  output_key: {{env "OUTPUT_KEY" | default "results.txt"}}
+```
+
+Update `app/app.go` to add the config fields:
+
+```go
+package app
+
+import (
+	"context"
+
+	"1brc-walkthrough/storage"
+	"github.com/z5labs/humus/job"
+)
+
+type Config struct {
+	Minio struct {
+		Endpoint  string `config:"endpoint"`
+		AccessKey string `config:"access_key"`
+		SecretKey string `config:"secret_key"`
+		Bucket    string `config:"bucket"`
+	} `config:"minio"`
+
+	OneBRC struct {
+		InputKey  string `config:"input_key"`
+		OutputKey string `config:"output_key"`
+	} `config:"onebrc"`
+}
+
+func Init(ctx context.Context, cfg Config) (*job.App, error) {
+	// Create MinIO client
+	minioClient, err := storage.NewClient(
+		cfg.Minio.Endpoint,
+		cfg.Minio.AccessKey,
+		cfg.Minio.SecretKey,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Update handler to use MinIO (we'll implement this next)
+	handler := NewHandler(
+		minioClient,
+		cfg.Minio.Bucket,
+		cfg.OneBRC.InputKey,
+		cfg.OneBRC.OutputKey,
+	)
+
+	return job.NewApp(handler), nil
+}
+```
+
 ## Storage Client Implementation
 
 Create `storage/minio.go`:
@@ -101,60 +166,74 @@ func (c *Client) PutObject(ctx context.Context, bucket, key string, reader io.Re
 - Enables cancellation and timeout
 - Ready for trace spans (we'll add later)
 
-## Updating the Init Function
+## Update Handler
 
-Now update `app/app.go` to create the MinIO client:
+Update `app/handler.go` to accept storage dependencies:
 
 ```go
-func Init(ctx context.Context, cfg Config) (*job.App, error) {
-	// 1. Create MinIO client
-	minioClient, err := storage.NewClient(
-		cfg.Minio.Endpoint,
-		cfg.Minio.AccessKey,
-		cfg.Minio.SecretKey,
-	)
-	if err != nil {
-		return nil, err
+package app
+
+import (
+	"context"
+	"io"
+	"log/slog"
+	"os"
+)
+
+type Storage interface {
+	GetObject(ctx context.Context, bucket, key string) (io.ReadCloser, error)
+	PutObject(ctx context.Context, bucket, key string, reader io.Reader, size int64) error
+}
+
+type Handler struct {
+	storage   Storage
+	bucket    string
+	inputKey  string
+	outputKey string
+	log       *slog.Logger
+}
+
+func NewHandler(storage Storage, bucket, inputKey, outputKey string) *Handler {
+	return &Handler{
+		storage:   storage,
+		bucket:    bucket,
+		inputKey:  inputKey,
+		outputKey: outputKey,
+		log:       slog.New(slog.NewJSONHandler(os.Stdout, nil)),
 	}
+}
 
-	// 2. Build handler (we'll implement this next)
-	// handler := onebrc.NewHandler(
-	//     minioClient,
-	//     cfg.Minio.Bucket,
-	//     cfg.OneBRC.InputKey,
-	//     cfg.OneBRC.OutputKey,
-	// )
+func (h *Handler) Handle(ctx context.Context) error {
+	h.log.InfoContext(ctx, "Job starting",
+		slog.String("bucket", h.bucket),
+		slog.String("input_key", h.inputKey),
+	)
 
-	// 3. Return job
-	return job.NewApp(nil), nil  // nil handler for now
+	// We'll implement the actual logic in the next section
+	// For now, just log that we have MinIO connectivity
+
+	h.log.InfoContext(ctx, "MinIO client initialized successfully")
+	h.log.InfoContext(ctx, "Job completed successfully")
+	return nil
 }
 ```
 
-Don't forget to add the import:
+## Run It
 
-```go
-import (
-	"context"
-
-	"1brc-walkthrough/storage"
-	"github.com/z5labs/humus/job"
-)
+```bash
+go mod tidy
+go run .
 ```
 
-## Usage Pattern
+You should see:
 
-The handler will use this client like this:
-
-```go
-// Read from S3
-rc, err := storage.GetObject(ctx, bucket, "measurements.txt")
-defer rc.Close()
-data := Parse(bufio.NewReader(rc))
-
-// Write to S3
-results := FormatResults(data)
-storage.PutObject(ctx, bucket, "results.txt", bytes.NewReader(results), int64(len(results)))
+```json
+{"time":"...","level":"INFO","msg":"Job starting","bucket":"onebrc","input_key":"measurements.txt"}
+{"time":"...","level":"INFO","msg":"MinIO client initialized successfully"}
+{"time":"...","level":"INFO","msg":"Job completed successfully"}
 ```
+
+Your job now has MinIO integration! In the next section, we'll implement the actual 1BRC parsing and calculation logic.
 
 ## What's Next
 

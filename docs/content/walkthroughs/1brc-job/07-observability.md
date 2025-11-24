@@ -50,7 +50,6 @@ package app
 import (
 	"context"
 
-	"1brc-walkthrough/onebrc"
 	"1brc-walkthrough/storage"
 	"github.com/z5labs/humus/job"
 )
@@ -82,7 +81,7 @@ func Init(ctx context.Context, cfg Config) (*job.App, error) {
 		return nil, err
 	}
 
-	handler := onebrc.NewHandler(
+	handler := NewHandler(
 		minioClient,
 		cfg.Minio.Bucket,
 		cfg.OneBRC.InputKey,
@@ -97,10 +96,10 @@ The `` `config:",squash"` `` tag flattens the `job.Config` fields into your conf
 
 ## Add Instrumentation to Handler
 
-Now update `onebrc/handler.go` to add traces, metrics, and logs:
+Now update `app/handler.go` to add traces, metrics, and logs:
 
 ```go
-package onebrc
+package app
 
 import (
 	"bufio"
@@ -110,6 +109,7 @@ import (
 	"io"
 	"log/slog"
 
+	"1brc-walkthrough/onebrc"
 	"github.com/z5labs/humus"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -169,7 +169,7 @@ func (h *Handler) Handle(ctx context.Context) error {
 
 	// 2. Parse (with span)
 	parseCtx, parseEnd := h.tracer(ctx, "parse")
-	cityStats, err := Parse(bufio.NewReader(rc))
+	cityStats, err := onebrc.Parse(bufio.NewReader(rc))
 	parseEnd()
 	if err != nil {
 		h.log.ErrorContext(parseCtx, "failed to parse temperature data", slog.Any("error", err))
@@ -187,12 +187,12 @@ func (h *Handler) Handle(ctx context.Context) error {
 
 	// 4. Calculate (with span)
 	_, calcEnd := h.tracer(ctx, "calculate")
-	results := Calculate(cityStats)
+	results := onebrc.Calculate(cityStats)
 	calcEnd()
 
 	// 5. Write results (with span)
 	writeCtx, writeEnd := h.tracer(ctx, "write_results")
-	output := FormatResults(results)
+	output := onebrc.FormatResults(results)
 	outputBytes := []byte(output)
 
 	err = h.storage.PutObject(writeCtx, h.bucket, h.outputKey,

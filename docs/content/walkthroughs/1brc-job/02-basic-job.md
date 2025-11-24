@@ -1,13 +1,58 @@
 ---
 title: Building a Basic Job
-description: Understanding the Config struct and Init function
+description: Create a minimal "hello world" job to verify setup
 weight: 2
 type: docs
 ---
 
-Let's build the core of your Humus job - just the essentials to get started.
+Let's create the simplest possible job to verify everything works.
 
-## The Config Struct
+## Minimal Configuration
+
+Create `config.yaml`:
+
+```yaml
+# Empty config for now - we'll add settings as we need them
+```
+
+That's it! No configuration needed yet.
+
+## Simple Handler
+
+Create `app/handler.go`:
+
+```go
+package app
+
+import (
+	"context"
+	"log/slog"
+	"os"
+)
+
+type Handler struct {
+	log *slog.Logger
+}
+
+func NewHandler() *Handler {
+	return &Handler{
+		log: slog.New(slog.NewJSONHandler(os.Stdout, nil)),
+	}
+}
+
+func (h *Handler) Handle(ctx context.Context) error {
+	h.log.InfoContext(ctx, "Hello from 1BRC job!")
+	h.log.InfoContext(ctx, "Job completed successfully")
+	return nil
+}
+```
+
+**Key points:**
+- Implements the `job.Handler` interface with a single `Handle(context.Context) error` method
+- Uses structured logging with `slog`
+- Returns `nil` to indicate success
+
+## Application Initialization
 
 Create `app/app.go`:
 
@@ -21,78 +66,19 @@ import (
 )
 
 type Config struct {
-	Minio struct {
-		Endpoint  string `config:"endpoint"`
-		AccessKey string `config:"access_key"`
-		SecretKey string `config:"secret_key"`
-		Bucket    string `config:"bucket"`
-	} `config:"minio"`
-
-	OneBRC struct {
-		InputKey  string `config:"input_key"`
-		OutputKey string `config:"output_key"`
-	} `config:"onebrc"`
+	// Empty for now - we'll add fields as needed
 }
-```
 
-**Key points:**
-- Custom fields map to `config.yaml`
-- No OpenTelemetry configuration yet - we'll add that later
-
-## Minimal Configuration File
-
-Create `config.yaml`:
-
-```yaml
-minio:
-  endpoint: {{env "MINIO_ENDPOINT" | default "localhost:9000"}}
-  access_key: {{env "MINIO_ACCESS_KEY" | default "minioadmin"}}
-  secret_key: {{env "MINIO_SECRET_KEY" | default "minioadmin"}}
-  bucket: {{env "MINIO_BUCKET" | default "onebrc"}}
-
-onebrc:
-  input_key: {{env "INPUT_KEY" | default "measurements.txt"}}
-  output_key: {{env "OUTPUT_KEY" | default "results.txt"}}
-```
-
-This minimal config just sets up MinIO connectivity. The `{{env "VAR" | default "value"}}` syntax uses Go templating to read environment variables with fallbacks.
-
-## The Init Function
-
-Add this to `app/app.go`:
-
-```go
 func Init(ctx context.Context, cfg Config) (*job.App, error) {
-	// 1. Create dependencies (we'll add MinIO client in next section)
-	// minioClient, err := storage.NewClient(...)
-
-	// 2. Build handler (we'll add this after MinIO integration)
-	// handler := onebrc.NewHandler(...)
-
-	// 3. Return job
-	return job.NewApp(nil), nil  // nil handler for now
+	handler := NewHandler()
+	return job.NewApp(handler), nil
 }
 ```
 
 **Responsibilities:**
-1. Dependency injection (create clients)
-2. Handler construction
-3. Error handling
-
-**DON'T:**
-- ❌ Start goroutines
-- ❌ Call `Run()` on the handler
-- ❌ Initialize OTel manually (Humus does this automatically)
-
-## The Handler Interface
-
-Your business logic will implement:
-
-```go
-type Handler interface {
-	Handle(context.Context) error
-}
-```
+- Define your config structure (empty for now)
+- Create and wire up dependencies
+- Return a `*job.App` with your handler
 
 ## Entry Point
 
@@ -117,23 +103,38 @@ func main() {
 }
 ```
 
-Key points:
+**How it works:**
 - `//go:embed` embeds config.yaml at compile time
-- `job.Run()` handles server lifecycle and graceful shutdown
-- Logs go to stdout by default (no external infrastructure needed yet)
+- `job.Run()` parses config, calls `Init`, runs the handler, and handles graceful shutdown
 
-## How job.Run Works
+## Run It
+
+```bash
+go mod tidy
+go run .
+```
+
+You should see output like:
+
+```json
+{"time":"2024-11-23T22:50:00Z","level":"INFO","msg":"Hello from 1BRC job!"}
+{"time":"2024-11-23T22:50:00Z","level":"INFO","msg":"Job completed successfully"}
+```
+
+The job runs, logs messages, and exits cleanly. Press Ctrl+C if you want to test graceful shutdown (though it exits immediately anyway).
+
+## Understanding job.Run
 
 When you call `job.Run(configReader, initFunc)`:
 
-1. Parses config (YAML templates → struct)
-2. Calls your `Init` function
-3. Wraps with middleware (panic recovery, signals)
-4. Runs `handler.Handle(ctx)`
-5. Graceful shutdown
+1. **Parse config** - Reads YAML and unmarshals into your `Config` struct
+2. **Call Init** - Invokes your initialization function with the parsed config
+3. **Wrap handler** - Adds middleware for panic recovery and OS signal handling
+4. **Execute** - Calls `handler.Handle(ctx)`
+5. **Graceful shutdown** - Ensures clean exit
 
 ## What's Next
 
-Now we'll add MinIO integration to read and write files.
+Now that we have a working job, let's add MinIO integration for reading and writing files.
 
 [Next: MinIO Integration →]({{< ref "03-minio-integration" >}})

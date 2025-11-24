@@ -173,18 +173,23 @@ Tokyo=-5.2/35.6/50.1
 
 One city per line: `city=min/mean/max`
 
-## Handler Implementation
+## Update Handler
 
-Create `onebrc/handler.go`:
+Now update `app/handler.go` to use the parsing and calculation logic:
 
 ```go
-package onebrc
+package app
 
 import (
 	"bufio"
 	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
+	"os"
+
+	"1brc-walkthrough/onebrc"
 )
 
 type Storage interface {
@@ -197,6 +202,7 @@ type Handler struct {
 	bucket    string
 	inputKey  string
 	outputKey string
+	log       *slog.Logger
 }
 
 func NewHandler(storage Storage, bucket, inputKey, outputKey string) *Handler {
@@ -205,95 +211,57 @@ func NewHandler(storage Storage, bucket, inputKey, outputKey string) *Handler {
 		bucket:    bucket,
 		inputKey:  inputKey,
 		outputKey: outputKey,
+		log:       slog.New(slog.NewJSONHandler(os.Stdout, nil)),
 	}
 }
 
 func (h *Handler) Handle(ctx context.Context) error {
+	h.log.InfoContext(ctx, "starting 1BRC processing",
+		slog.String("bucket", h.bucket),
+		slog.String("input_key", h.inputKey),
+	)
+
 	// 1. Fetch from S3
 	rc, err := h.storage.GetObject(ctx, h.bucket, h.inputKey)
 	if err != nil {
+		h.log.ErrorContext(ctx, "failed to fetch input object", slog.Any("error", err))
 		return fmt.Errorf("get object: %w", err)
 	}
 	defer rc.Close()
 
 	// 2. Parse
-	cityStats, err := Parse(bufio.NewReader(rc))
+	cityStats, err := onebrc.Parse(bufio.NewReader(rc))
 	if err != nil {
+		h.log.ErrorContext(ctx, "failed to parse temperature data", slog.Any("error", err))
 		return fmt.Errorf("parse: %w", err)
 	}
 
 	// 3. Calculate
-	results := Calculate(cityStats)
+	results := onebrc.Calculate(cityStats)
 
 	// 4. Write results
-	output := FormatResults(results)
+	output := onebrc.FormatResults(results)
 	outputBytes := []byte(output)
 
 	err = h.storage.PutObject(ctx, h.bucket, h.outputKey,
 		bytes.NewReader(outputBytes), int64(len(outputBytes)))
 	if err != nil {
+		h.log.ErrorContext(ctx, "failed to upload results", slog.Any("error", err))
 		return fmt.Errorf("put object: %w", err)
 	}
+
+	h.log.InfoContext(ctx, "1BRC processing completed successfully",
+		slog.Int("cities_processed", len(cityStats)),
+	)
 
 	return nil
 }
 ```
 
-Add the missing import at the top of the file:
-
-```go
-import (
-	"bufio"
-	"bytes"
-	"context"
-	"fmt"
-	"io"
-)
-```
-
-## Updating Init Function
-
-Now update `app/app.go` to use the handler:
-
-```go
-func Init(ctx context.Context, cfg Config) (*job.App, error) {
-	// 1. Create MinIO client
-	minioClient, err := storage.NewClient(
-		cfg.Minio.Endpoint,
-		cfg.Minio.AccessKey,
-		cfg.Minio.SecretKey,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	// 2. Build handler
-	handler := onebrc.NewHandler(
-		minioClient,
-		cfg.Minio.Bucket,
-		cfg.OneBRC.InputKey,
-		cfg.OneBRC.OutputKey,
-	)
-
-	// 3. Return job
-	return job.NewApp(handler), nil
-}
-```
-
-Update imports in `app/app.go`:
-
-```go
-import (
-	"context"
-
-	"1brc-walkthrough/onebrc"
-	"1brc-walkthrough/storage"
-	"github.com/z5labs/humus/job"
-)
-```
+No changes needed to `app/app.go` - it already wires everything together correctly!
 
 ## What's Next
 
-Now let's test the job with a simple dataset to verify everything works before adding observability.
+Now let's test the complete job with a simple dataset to verify everything works before adding observability.
 
 [Next: Running Without OTel →]({{< ref "05-running-without-otel" >}})
