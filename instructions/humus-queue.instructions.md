@@ -1,3 +1,8 @@
+---
+description: 'Patterns and best practices for queue processors using Humus (Kafka)'
+applyTo: '**/*.go'
+---
+
 # Humus Framework - Queue/Kafka Instructions
 
 This file provides patterns and best practices specific to queue processors using Humus (particularly Kafka). Use this file alongside `humus-common.instructions.md` for complete guidance.

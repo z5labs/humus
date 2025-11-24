@@ -1,3 +1,8 @@
+---
+description: 'Common patterns and best practices for all Humus application types (REST, gRPC, Queue, Job)'
+applyTo: '**/*.go'
+---
+
 # Humus Framework - Common Patterns
 
 This file provides common patterns and best practices applicable to all Humus application types (REST, gRPC, Queue, Job). Copy this file along with your application-type-specific instructions to your repository's `.github/` or `instructions/` directory.

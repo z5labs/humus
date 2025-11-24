@@ -1,3 +1,8 @@
+---
+description: 'Patterns and best practices for gRPC services using Humus'
+applyTo: '**/*.go'
+---
+
 # Humus Framework - gRPC Service Instructions
 
 This file provides patterns and best practices specific to gRPC services using Humus. Use this file alongside `humus-common.instructions.md` for complete guidance.

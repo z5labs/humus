@@ -1,3 +1,8 @@
+---
+description: 'Patterns and best practices for REST API applications using Humus'
+applyTo: '**/*.go'
+---
+
 # Humus Framework - REST Service Instructions
 
 This file provides patterns and best practices specific to REST API applications using Humus. Use this file alongside `humus-common.instructions.md` for complete guidance.

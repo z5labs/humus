@@ -1,3 +1,8 @@
+---
+description: 'Patterns and best practices for job executors using Humus'
+applyTo: '**/*.go'
+---
+
 # Humus Framework - Job Instructions
 
 This file provides patterns and best practices specific to one-off job executors using Humus. Use this file alongside `humus-common.instructions.md` for complete guidance.
