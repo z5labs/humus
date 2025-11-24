@@ -12,7 +12,7 @@ Let's start by creating the project structure for our 1BRC job.
 Create the following directory structure:
 
 ```bash
-mkdir -p 1brc-walkthrough/{app,storage,onebrc,tool}
+mkdir -p 1brc-walkthrough/{app,service,onebrc,tool}
 cd 1brc-walkthrough
 ```
 
@@ -25,7 +25,7 @@ The final structure will be:
 ├── go.mod                   # Module definition
 ├── app/
 │   └── app.go              # Job initialization and config
-├── storage/
+├── service/
 │   └── minio.go            # MinIO S3 client wrapper
 ├── onebrc/
 │   ├── handler.go          # Job orchestration
@@ -55,7 +55,7 @@ require (
 Each package has a specific responsibility:
 
 - **app/** - Job initialization and configuration (embeds `job.Config`)
-- **storage/** - MinIO S3 client wrapper for file operations
+- **service/** - Backend service clients (MinIO S3 wrapper for file operations)
 - **onebrc/** - Core business logic: orchestration, parsing, and calculation
 - **tool/** - Standalone utility to generate test data
 

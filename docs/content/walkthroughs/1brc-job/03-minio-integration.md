@@ -67,7 +67,8 @@ package app
 import (
 	"context"
 
-	"1brc-walkthrough/storage"
+	"1brc-walkthrough/onebrc"
+	"1brc-walkthrough/service"
 	"github.com/z5labs/humus/job"
 )
 
@@ -87,7 +88,7 @@ type Config struct {
 
 func Init(ctx context.Context, cfg Config) (*job.App, error) {
 	// Create MinIO client
-	minioClient, err := storage.NewClient(
+	minioClient, err := service.NewMinIOClient(
 		cfg.Minio.Endpoint,
 		cfg.Minio.AccessKey,
 		cfg.Minio.SecretKey,
@@ -96,8 +97,8 @@ func Init(ctx context.Context, cfg Config) (*job.App, error) {
 		return nil, err
 	}
 
-	// Update handler to use MinIO (we'll implement this next)
-	handler := NewHandler(
+	// Create handler with MinIO client
+	handler := onebrc.NewHandler(
 		minioClient,
 		cfg.Minio.Bucket,
 		cfg.OneBRC.InputKey,
@@ -108,12 +109,12 @@ func Init(ctx context.Context, cfg Config) (*job.App, error) {
 }
 ```
 
-## Storage Client Implementation
+## Service Client Implementation
 
-Create `storage/minio.go`:
+Create `service/minio.go`:
 
 ```go
-package storage
+package service
 
 import (
 	"context"
@@ -123,11 +124,11 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
-type Client struct {
+type MinIOClient struct {
 	mc *minio.Client
 }
 
-func NewClient(endpoint, accessKey, secretKey string) (*Client, error) {
+func NewMinIOClient(endpoint, accessKey, secretKey string) (*MinIOClient, error) {
 	mc, err := minio.New(endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
 		Secure: false,  // Use HTTP for local development
@@ -136,14 +137,14 @@ func NewClient(endpoint, accessKey, secretKey string) (*Client, error) {
 		return nil, err
 	}
 
-	return &Client{mc: mc}, nil
+	return &MinIOClient{mc: mc}, nil
 }
 
-func (c *Client) GetObject(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
+func (c *MinIOClient) GetObject(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
 	return c.mc.GetObject(ctx, bucket, key, minio.GetObjectOptions{})
 }
 
-func (c *Client) PutObject(ctx context.Context, bucket, key string, reader io.Reader, size int64) error {
+func (c *MinIOClient) PutObject(ctx context.Context, bucket, key string, reader io.Reader, size int64) error {
 	_, err := c.mc.PutObject(ctx, bucket, key, reader, size, minio.PutObjectOptions{})
 	return err
 }
@@ -168,10 +169,10 @@ func (c *Client) PutObject(ctx context.Context, bucket, key string, reader io.Re
 
 ## Update Handler
 
-Update `app/handler.go` to accept storage dependencies:
+Update `onebrc/handler.go` to accept storage dependencies:
 
 ```go
-package app
+package onebrc
 
 import (
 	"context"
