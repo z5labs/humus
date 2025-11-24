@@ -1,7 +1,7 @@
 ---
 title: Comprehensive Testing
 description: Complete end-to-end testing scenarios with full observability
-weight: 10
+weight: 9
 type: docs
 slug: comprehensive-testing
 ---

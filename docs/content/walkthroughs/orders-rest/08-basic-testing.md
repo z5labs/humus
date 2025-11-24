@@ -8,9 +8,293 @@ slug: basic-testing
 
 Great! You've implemented both API endpoints. Now let's test them with a real backend service using Wiremock.
 
+## Creating Wiremock Stubs
+
+Wiremock will mock all three backend services (data, restriction, and eligibility) using JSON stub files.
+
+Create the directory structure:
+
+```bash
+cd example/rest/orders-walkthrough
+mkdir -p wiremock/mappings
+```
+
+### Data Service Stubs
+
+Create `wiremock/mappings/data-service.json`:
+
+```json
+{
+  "mappings": [
+    {
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/data/orders",
+        "queryParameters": {
+          "accountNumber": {
+            "equalTo": "ACC-001"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "orders": [
+            {
+              "order_id": "order-001",
+              "account_id": "ACC-001",
+              "customer_id": "CUST-001",
+              "status": "completed"
+            },
+            {
+              "order_id": "order-002",
+              "account_id": "ACC-001",
+              "customer_id": "CUST-001",
+              "status": "pending"
+            }
+          ],
+          "page_info": {
+            "has_next_page": true,
+            "end_cursor": "b3JkZXItMDAy"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/data/orders",
+        "queryParameters": {
+          "accountNumber": {
+            "equalTo": "ACC-001"
+          },
+          "after": {
+            "equalTo": "b3JkZXItMDAy"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "orders": [
+            {
+              "order_id": "order-003",
+              "account_id": "ACC-001",
+              "customer_id": "CUST-001",
+              "status": "completed"
+            }
+          ],
+          "page_info": {
+            "has_next_page": false,
+            "end_cursor": ""
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/data/orders",
+        "queryParameters": {
+          "accountNumber": {
+            "equalTo": "ACC-001"
+          },
+          "status": {
+            "equalTo": "completed"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "orders": [
+            {
+              "order_id": "order-001",
+              "account_id": "ACC-001",
+              "customer_id": "CUST-001",
+              "status": "completed"
+            }
+          ],
+          "page_info": {
+            "has_next_page": false,
+            "end_cursor": ""
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "urlPathPattern": "/data/order"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "order_id": "649cfc69-8323-4c60-8745-c7071506943d"
+        }
+      }
+    }
+  ]
+}
+```
+
+### Restriction Service Stubs
+
+Create `wiremock/mappings/restriction-service.json`:
+
+```json
+{
+  "mappings": [
+    {
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/restrictions",
+        "queryParameters": {
+          "accountId": {
+            "equalTo": "ACC-001"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "restrictions": []
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/restrictions",
+        "queryParameters": {
+          "accountId": {
+            "equalTo": "ACC-FRAUD"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "restrictions": ["FRAUD"]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/restrictions",
+        "queryParameters": {
+          "accountId": {
+            "equalTo": "ACC-INELIGIBLE"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "restrictions": []
+        }
+      }
+    }
+  ]
+}
+```
+
+### Eligibility Service Stubs
+
+Create `wiremock/mappings/eligibility-service.json`:
+
+```json
+{
+  "mappings": [
+    {
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/eligibility",
+        "queryParameters": {
+          "accountId": {
+            "equalTo": "ACC-001"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "eligible": true
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/eligibility",
+        "queryParameters": {
+          "accountId": {
+            "equalTo": "ACC-FRAUD"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "eligible": true
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/eligibility",
+        "queryParameters": {
+          "accountId": {
+            "equalTo": "ACC-INELIGIBLE"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "eligible": false
+        }
+      }
+    }
+  ]
+}
+```
+
 ## Starting Wiremock
 
-Wiremock will mock all three backend services (data, restriction, and eligibility) using pre-configured stubs.
+Now that the stubs are configured, start Wiremock with the following setup.
 
 Create a minimal `podman-compose.yaml` (or use the existing one):
 

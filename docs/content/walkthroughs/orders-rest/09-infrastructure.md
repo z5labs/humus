@@ -257,6 +257,6 @@ The API will now send traces, logs, and metrics to the OTel Collector.
 
 ## What's Next
 
-Now let's explore the observability features and see your API's telemetry data in Grafana.
+Now let's run comprehensive end-to-end tests and explore the observability features to see your API's telemetry data in Grafana.
 
-[Next: Exploring Observability →]({{< ref "/walkthroughs/orders-rest/10-observability" >}})
+[Next: Comprehensive Testing →]({{< ref "/walkthroughs/orders-rest/11-comprehensive-testing" >}})
