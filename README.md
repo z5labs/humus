@@ -92,6 +92,10 @@ Check out the [examples directory](./example) for complete, runnable examples:
 - [REST Petstore](./example/rest/petstore) - Full REST API example
 - [gRPC Petstore](./example/grpc/petstore) - gRPC service with health monitoring
 
+## AI Coding Agent Instructions
+
+If you're using an AI coding agent (like GitHub Copilot, Cursor, etc.), copy the [instructions/humus.instructions.md](./instructions/humus.instructions.md) file to your project repository (e.g., `.github/humus.instructions.md`). This provides your AI assistant with Humus framework best practices, project structure patterns, and common pitfalls to avoid.
+
 ## Requirements
 
 - Go 1.24 or later
