@@ -94,8 +94,7 @@ The complete source code is available at:
 6. **[Place Order Endpoint]({{< ref "/walkthroughs/orders-rest/07-place-order-endpoint" >}})** - Implement POST /v1/order with orchestration
 7. **[Basic Testing]({{< ref "/walkthroughs/orders-rest/08-basic-testing" >}})** - Test your API endpoints with Wiremock
 8. **[Observability Infrastructure]({{< ref "/walkthroughs/orders-rest/09-infrastructure" >}})** - Add LGTM stack and OpenTelemetry Collector
-9. **[Exploring Observability]({{< ref "/walkthroughs/orders-rest/10-observability" >}})** - Explore traces, logs, and metrics in Grafana
-10. **[Comprehensive Testing]({{< ref "/walkthroughs/orders-rest/11-comprehensive-testing" >}})** - End-to-end testing with full observability validation
+9. **[Comprehensive Testing]({{< ref "/walkthroughs/orders-rest/11-comprehensive-testing" >}})** - End-to-end testing with full observability validation
 
 Let's get started!
 
