@@ -27,6 +27,28 @@ my-grpc-service/
 └── go.sum
 ```
 
+## Configuration
+
+**Custom Config with provider interface:**
+
+If you need to customize the gRPC server listener (e.g., custom port), implement the `ListenerProvider` interface:
+
+```go
+type Config struct {
+    grpc.Config `config:",squash"`
+    
+    GRPC struct {
+        Port uint `config:"port"`
+    } `config:"grpc"`
+}
+
+func (c Config) Listener(ctx context.Context) (net.Listener, error) {
+    return net.Listen("tcp", fmt.Sprintf(":%d", c.GRPC.Port))
+}
+```
+
+See `humus-common.instructions.md` for general configuration patterns like using Go templates in YAML.
+
 ## gRPC Service Patterns
 
 ### Entry Point

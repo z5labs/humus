@@ -29,13 +29,6 @@ type Config struct {
 }
 ```
 
-**Implement provider interfaces when needed:**
-```go
-func (c Config) Listener(ctx context.Context) (net.Listener, error) {
-    return net.Listen("tcp", fmt.Sprintf(":%d", c.HTTP.Port))
-}
-```
-
 **Use Go templates in config.yaml:**
 ```yaml
 openapi:
@@ -44,25 +37,6 @@ openapi:
 
 database:
   url: {{env "DATABASE_URL" | default "postgres://localhost/mydb"}}
-```
-
-## Error Handling
-
-**Runner-Level (applies to all service types):**
-```go
-runner := humus.NewRunner(builder, humus.OnError(humus.ErrorHandlerFunc(func(err error) {
-    log.Fatal(err)
-})))
-```
-
-**Operation-Level (REST-specific, see humus-rest.instructions.md):**
-```go
-rest.Handle(method, path, handler,
-    rest.OnError(rest.ErrorHandlerFunc(func(ctx context.Context, w http.ResponseWriter, err error) {
-        w.WriteHeader(http.StatusInternalServerError)
-        json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-    })),
-)
 ```
 
 ## Logging & Observability
@@ -113,56 +87,6 @@ func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
 }
 ```
 
-## Testing Patterns
-
-### Table-Driven Tests
-
-```go
-func TestCreateUser(t *testing.T) {
-    tests := []struct {
-        name    string
-        input   CreateUserRequest
-        want    *UserResponse
-        wantErr bool
-    }{
-        {
-            name:  "valid user",
-            input: CreateUserRequest{Name: "John"},
-            want:  &UserResponse{ID: "123", Name: "John"},
-        },
-        {
-            name:    "empty name",
-            input:   CreateUserRequest{Name: ""},
-            wantErr: true,
-        },
-    }
-    
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            got, err := handler(context.Background(), &tt.input)
-            if tt.wantErr {
-                require.Error(t, err)
-                return
-            }
-            require.NoError(t, err)
-            require.Equal(t, tt.want, got)
-        })
-    }
-}
-```
-
-### Use testify/require (not assert)
-
-❌ **Wrong:**
-```go
-assert.Equal(t, expected, actual)  // Test continues on failure
-```
-
-✅ **Correct:**
-```go
-require.Equal(t, expected, actual)  // Test stops immediately on failure
-```
-
 ## Best Practices
 
 ### DO ✅
@@ -173,10 +97,9 @@ require.Equal(t, expected, actual)  // Test stops immediately on failure
 4. **Embed humus.Config (or rest.Config/grpc.Config) in custom Config** - required for OpenTelemetry
 5. **Use Go templates in config.yaml** - `{{env "VAR" | default "value"}}`
 6. **Return early to reduce nesting** - keep the happy path left-aligned
-7. **Test with `-race` flag** - catch concurrency issues early
-8. **Use lifecycle hooks for cleanup** - ensures resources are released properly
-9. **Always handle errors** - don't ignore them
-10. **Use humus.Logger** - integrates automatically with OpenTelemetry
+7. **Use lifecycle hooks for cleanup** - ensures resources are released properly
+8. **Always handle errors** - don't ignore them
+9. **Use humus.Logger** - integrates automatically with OpenTelemetry
 
 ### DON'T ❌
 
@@ -184,12 +107,11 @@ require.Equal(t, expected, actual)  // Test stops immediately on failure
 2. **Don't put business logic in main.go** - use app/app.go and domain packages
 3. **Don't hardcode configuration** - use environment variables with templates
 4. **Don't duplicate package declarations** - each .go file has exactly ONE package line
-5. **Don't use assert in tests** - use require.* to fail fast
-6. **Don't forget to close resources** - use lifecycle hooks for cleanup
-7. **Don't ignore errors** - always handle or propagate them
-8. **Don't manually initialize OpenTelemetry** - Humus does this automatically
-9. **Don't create goroutines without cleanup** - know how they will exit
-10. **Don't share state without synchronization** - use mutexes or channels
+5. **Don't forget to close resources** - use lifecycle hooks for cleanup
+6. **Don't ignore errors** - always handle or propagate them
+7. **Don't manually initialize OpenTelemetry** - Humus does this automatically
+8. **Don't create goroutines without cleanup** - know how they will exit
+9. **Don't share state without synchronization** - use mutexes or channels
 
 ## Common Pitfalls
 
@@ -235,13 +157,6 @@ func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
     return api, nil
 }
 ```
-
-## Health Endpoints
-
-All services automatically include health endpoints:
-
-- **Liveness**: `/health/liveness` - Always returns 200 when server is running
-- **Readiness**: `/health/readiness` - Returns 200 when service is ready (checks monitors)
 
 ## Additional Resources
 

@@ -112,6 +112,28 @@ func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
 }
 ```
 
+## Configuration
+
+**Custom Config with provider interface:**
+
+If you need to customize the HTTP server listener (e.g., custom port), implement the `ListenerProvider` interface:
+
+```go
+type Config struct {
+    rest.Config `config:",squash"`
+    
+    HTTP struct {
+        Port uint `config:"port"`
+    } `config:"http"`
+}
+
+func (c Config) Listener(ctx context.Context) (net.Listener, error) {
+    return net.Listen("tcp", fmt.Sprintf(":%d", c.HTTP.Port))
+}
+```
+
+See `humus-common.instructions.md` for general configuration patterns like using Go templates in YAML.
+
 ## REST Service Patterns
 
 ### Entry Point
@@ -223,6 +245,13 @@ REST handlers automatically generate OpenAPI 3.0 specifications:
 - **Uses Go struct tags**: `json:"field_name"` tags define schema
 - **Supports validation**: Use parameter options for required fields, regex patterns
 - **Authentication**: Use `rest.JWTAuth()`, `rest.APIKeyAuth()`, `rest.BasicAuth()`
+
+## Health Endpoints
+
+All REST services automatically include health endpoints:
+
+- **Liveness**: `/health/liveness` - Always returns 200 when server is running
+- **Readiness**: `/health/readiness` - Returns 200 when service is ready (checks monitors)
 
 ## REST-Specific Best Practices
 
