@@ -15,9 +15,8 @@ my-grpc-service/
 ├── config.yaml
 ├── app/
 │   └── app.go          # Init function
-├── pet/                # Domain package
-│   └── registrar/
-│       └── registrar.go  # Service registration
+├── service/            # All gRPC service implementations
+│   └── pet.go          # Pet service implementation
 ├── proto/              # Proto definitions
 │   └── pet.proto
 ├── petpb/              # Generated protobuf code
@@ -80,7 +79,7 @@ package app
 
 import (
     "context"
-    "my-grpc-service/pet/registrar"
+    "my-grpc-service/service"
     "github.com/z5labs/humus/grpc"
 )
 
@@ -93,40 +92,49 @@ func Init(ctx context.Context, cfg Config) (*grpc.Api, error) {
     api := grpc.NewApi()
     
     // Register your gRPC services
-    registrar.Register(api, dependencies)
+    service.RegisterPetService(api, dependencies)
     
     return api, nil
 }
 ```
 
-### Service Registration
+### Service Implementation
 
-**pet/registrar/registrar.go:**
+All gRPC services are implemented in a single `service` package (similar to how REST uses `endpoint`):
+
+**service/pet.go:**
 ```go
-package registrar
+package service
 
 import (
     "context"
     "my-grpc-service/petpb"
-    "github.com/z5labs/humus/grpc"
+    "google.golang.org/grpc"
 )
 
-func Register(api *grpc.Api, store Store) {
-    svc := &service{store: store}
-    petpb.RegisterPetServiceServer(api, svc)
+type Store interface {
+    CreatePet(context.Context, *CreatePetRequest) (*Pet, error)
+    GetPet(context.Context, string) (*Pet, error)
 }
 
-type service struct {
+type petService struct {
     petpb.UnimplementedPetServiceServer
     store Store
 }
 
-func (s *service) CreatePet(ctx context.Context, req *petpb.CreatePetRequest) (*petpb.Pet, error) {
+func RegisterPetService(sr grpc.ServiceRegistrar, store Store) {
+    svc := &petService{
+        store: store,
+    }
+    petpb.RegisterPetServiceServer(sr, svc)
+}
+
+func (s *petService) CreatePet(ctx context.Context, req *petpb.CreatePetRequest) (*petpb.Pet, error) {
     // Implementation
     return &petpb.Pet{}, nil
 }
 
-func (s *service) GetPet(ctx context.Context, req *petpb.GetPetRequest) (*petpb.Pet, error) {
+func (s *petService) GetPet(ctx context.Context, req *petpb.GetPetRequest) (*petpb.Pet, error) {
     // Implementation
     return &petpb.Pet{}, nil
 }
@@ -185,15 +193,15 @@ make proto
 
 ### DO ✅
 
-1. **Organize services in domain packages** - one package per domain (e.g., pet/, user/)
-2. **Use registrar pattern** - keep service registration separate from implementation
+1. **Organize all services in a single `service` package** - similar to REST's `endpoint` package
+2. **Use a Register function per service** - keeps service registration clean and testable
 3. **Embed UnimplementedServer** - ensures forward compatibility with proto updates
 4. **Generate code with protoc** - use Makefile for reproducible builds
-5. **Pass dependencies to registrar** - keeps services testable and decoupled
+5. **Pass dependencies to Register function** - keeps services testable and decoupled
 
 ### DON'T ❌
 
-1. **Don't implement services directly in app.go** - use the registrar pattern
+1. **Don't implement services directly in app.go** - use the service package pattern
 2. **Don't forget UnimplementedServer** - helps with forward compatibility
 3. **Don't manually register health service** - Humus does this automatically
 4. **Don't bypass the grpc.Api** - it provides automatic instrumentation

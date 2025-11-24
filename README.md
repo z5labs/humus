@@ -100,7 +100,7 @@ If you're using an AI coding agent (like GitHub Copilot, Cursor, etc.), copy the
 - [humus-common.instructions.md](./instructions/humus-common.instructions.md) - Common patterns for all service types (required)
 - [humus-rest.instructions.md](./instructions/humus-rest.instructions.md) - REST API specific patterns
 - [humus-grpc.instructions.md](./instructions/humus-grpc.instructions.md) - gRPC service specific patterns
-- [humus-queue.instructions.md](./instructions/humus-queue.instructions.md) - Queue/Kafka processor specific patterns
+- [humus-kafka.instructions.md](./instructions/humus-kafka.instructions.md) - Kafka queue processor specific patterns
 - [humus-job.instructions.md](./instructions/humus-job.instructions.md) - Job executor specific patterns
 
 Copy `humus-common.instructions.md` along with the file(s) specific to your application type.

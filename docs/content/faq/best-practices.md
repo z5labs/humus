@@ -16,7 +16,7 @@ Copy the relevant instruction files to your project's `.github/` directory (or s
 - **[humus-common.instructions.md](https://github.com/z5labs/humus/blob/main/instructions/humus-common.instructions.md)** - Common patterns for all service types (required)
 - **[humus-rest.instructions.md](https://github.com/z5labs/humus/blob/main/instructions/humus-rest.instructions.md)** - REST API specific patterns
 - **[humus-grpc.instructions.md](https://github.com/z5labs/humus/blob/main/instructions/humus-grpc.instructions.md)** - gRPC service specific patterns
-- **[humus-queue.instructions.md](https://github.com/z5labs/humus/blob/main/instructions/humus-queue.instructions.md)** - Queue/Kafka processor specific patterns
+- **[humus-kafka.instructions.md](https://github.com/z5labs/humus/blob/main/instructions/humus-kafka.instructions.md)** - Kafka queue processor specific patterns
 - **[humus-job.instructions.md](https://github.com/z5labs/humus/blob/main/instructions/humus-job.instructions.md)** - Job executor specific patterns
 
 **What's included:**

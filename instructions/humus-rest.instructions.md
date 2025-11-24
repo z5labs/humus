@@ -9,47 +9,6 @@ This file provides patterns and best practices specific to REST API applications
 
 ## Project Structure
 
-### Simple Service (Single File)
-
-Use for small services with minimal complexity:
-
-```
-my-rest-service/
-├── main.go              # Entry point with Run() call and Init function
-├── config.yaml          # Configuration file
-├── go.mod
-├── go.sum
-└── README.md
-```
-
-**main.go example:**
-```go
-package main
-
-import (
-    "context"
-    "net/http"
-    "github.com/z5labs/humus/rest"
-    "github.com/z5labs/humus/rest/rpc"
-)
-
-type Config struct {
-    rest.Config `config:",squash"`
-}
-
-func main() {
-    rest.Run(rest.YamlSource("config.yaml"), Init)
-}
-
-func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
-    api := rest.NewApi("My Service", "1.0.0")
-    // Register handlers...
-    return api, nil
-}
-```
-
-### Organized Service (Recommended)
-
 Use this structure for production services. This matches the examples in the Humus repository:
 
 ```
@@ -138,68 +97,183 @@ See `humus-common.instructions.md` for general configuration patterns like using
 
 ### Entry Point
 
+The entry point should use embedded config bytes (see main.go in Project Structure above):
+
 ```go
+package main
+
+import (
+    "bytes"
+    _ "embed"
+    "github.com/z5labs/humus/rest"
+    "my-service/app"
+)
+
+//go:embed config.yaml
+var configBytes []byte
+
 func main() {
-    rest.Run(rest.YamlSource("config.yaml"), app.Init)
+    rest.Run(bytes.NewReader(configBytes), app.Init)
 }
 ```
 
 ### Handler Types
 
+Handlers should be implemented as struct types that implement the specific interface (`rpc.Producer`, `rpc.Consumer`, or `rpc.Handler`).
+
 #### 1. Producer (GET endpoints - no request body)
 
+Implement the `rpc.Producer` interface with a `Produce` method:
+
 ```go
-// endpoint/get_user.go
-func GetUser(db *sql.DB) rest.Operation {
-    handler := rpc.ProducerFunc[UserResponse](func(ctx context.Context) (*UserResponse, error) {
-        // Fetch and return data
-        return &UserResponse{ID: "123", Name: "John"}, nil
-    })
-    
+// endpoint/list_users.go
+package endpoint
+
+import (
+    "context"
+    "database/sql"
+    "log/slog"
+    "net/http"
+
+    "github.com/z5labs/bedrock/lifecycle"
+    "github.com/z5labs/humus"
+    "github.com/z5labs/humus/rest"
+    "github.com/z5labs/humus/rest/rpc"
+    "go.opentelemetry.io/otel"
+    "go.opentelemetry.io/otel/trace"
+)
+
+type listUsersHandler struct {
+    tracer        trace.Tracer
+    log           *slog.Logger
+    listUsersStmt *sql.Stmt
+}
+
+type ListUsersResponse []*User
+
+func ListUsers(ctx context.Context, db *sql.DB) rest.ApiOption {
+    stmt, err := db.Prepare("SELECT id, name FROM users LIMIT ?")
+    if err != nil {
+        panic(err)
+    }
+
+    lc, ok := lifecycle.FromContext(ctx)
+    if !ok {
+        panic("lifecycle must be present in context")
+    }
+    lc.OnPostRun(lifecycle.HookFunc(func(ctx context.Context) error {
+        return stmt.Close()
+    }))
+
+    h := &listUsersHandler{
+        tracer:        otel.Tracer("my-service/endpoint"),
+        log:           humus.Logger("my-service/endpoint"),
+        listUsersStmt: stmt,
+    }
+
     return rest.Handle(
         http.MethodGet,
-        rest.BasePath("/users").Param("id"),
-        rpc.ProduceJson(handler),
-        rest.PathParam("id", rest.Required()),
+        rest.BasePath("/users"),
+        rpc.ProduceJson(h),
     )
+}
+
+func (h *listUsersHandler) Produce(ctx context.Context) (*ListUsersResponse, error) {
+    // Implement query logic
+    return nil, nil
 }
 ```
 
 #### 2. Consumer (POST webhooks - no response body)
 
+Implement the `rpc.Consumer` interface with a `Consume` method:
+
 ```go
 // endpoint/webhook.go
-func Webhook() rest.Operation {
-    handler := rpc.ConsumerFunc[WebhookRequest](func(ctx context.Context, req *WebhookRequest) error {
-        // Process request
-        return nil
-    })
-    
+package endpoint
+
+type webhookHandler struct {
+    tracer trace.Tracer
+    log    *slog.Logger
+}
+
+type WebhookRequest struct {
+    Event string `json:"event"`
+    Data  any    `json:"data"`
+}
+
+func Webhook(ctx context.Context) rest.ApiOption {
+    h := &webhookHandler{
+        tracer: otel.Tracer("my-service/endpoint"),
+        log:    humus.Logger("my-service/endpoint"),
+    }
+
     return rest.Handle(
         http.MethodPost,
         rest.BasePath("/webhook"),
-        rpc.ConsumeOnlyJson(handler),
+        rpc.ConsumeOnlyJson(h),
     )
+}
+
+func (h *webhookHandler) Consume(ctx context.Context, req *WebhookRequest) error {
+    // Process webhook
+    return nil
 }
 ```
 
 #### 3. Handler (full request/response)
 
+Implement the `rpc.Handler` interface with a `Handle` method:
+
 ```go
 // endpoint/create_user.go
-func CreateUser(db *sql.DB) rest.Operation {
-    handler := rpc.HandlerFunc[CreateUserRequest, UserResponse](
-        func(ctx context.Context, req *CreateUserRequest) (*UserResponse, error) {
-            // Create user
-            return &UserResponse{ID: "123", Name: req.Name}, nil
-        },
-    )
-    
+package endpoint
+
+type createUserHandler struct {
+    tracer         trace.Tracer
+    log            *slog.Logger
+    createUserStmt *sql.Stmt
+}
+
+type CreateUserRequest struct {
+    Name  string `json:"name"`
+    Email string `json:"email"`
+}
+
+type CreateUserResponse struct {
+    ID string `json:"id"`
+}
+
+func CreateUser(ctx context.Context, db *sql.DB) rest.ApiOption {
+    stmt, err := db.Prepare("INSERT INTO users (name, email) VALUES (?, ?)")
+    if err != nil {
+        panic(err)
+    }
+
+    lc, ok := lifecycle.FromContext(ctx)
+    if !ok {
+        panic("lifecycle must be present in context")
+    }
+    lc.OnPostRun(lifecycle.HookFunc(func(ctx context.Context) error {
+        return stmt.Close()
+    }))
+
+    h := &createUserHandler{
+        tracer:         otel.Tracer("my-service/endpoint"),
+        log:            humus.Logger("my-service/endpoint"),
+        createUserStmt: stmt,
+    }
+
     return rest.Handle(
         http.MethodPost,
         rest.BasePath("/users"),
-        rpc.HandleJson(handler),  // Shorthand for ConsumeJson(ReturnJson(handler))
+        rpc.HandleJson(h),
     )
+}
+
+func (h *createUserHandler) Handle(ctx context.Context, req *CreateUserRequest) (*CreateUserResponse, error) {
+    // Create user
+    return &CreateUserResponse{ID: "123"}, nil
 }
 ```
 

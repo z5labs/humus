@@ -1,11 +1,13 @@
 ---
-description: 'Patterns and best practices for queue processors using Humus (Kafka)'
+description: 'Patterns and best practices for Kafka queue processors using Humus (queue/kafka package)'
 applyTo: '**/*.go'
 ---
 
-# Humus Framework - Queue/Kafka Instructions
+# Humus Framework - Kafka Queue Instructions
 
-This file provides patterns and best practices specific to queue processors using Humus (particularly Kafka). Use this file alongside `humus-common.instructions.md` for complete guidance.
+This file provides patterns and best practices specific to Kafka queue processors using the `github.com/z5labs/humus/queue/kafka` package. Use this file alongside `humus-common.instructions.md` for complete guidance.
+
+Note: The `queue` package provides abstractions but no runtime implementations. All runtime functionality is provided by `queue/kafka`.
 
 ## Project Structure
 
