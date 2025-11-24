@@ -19,10 +19,10 @@ That's it! No configuration needed yet.
 
 ## Simple Handler
 
-Create `app/handler.go`:
+Create `onebrc/handler.go`:
 
 ```go
-package app
+package onebrc
 
 import (
 	"context"
@@ -62,6 +62,7 @@ package app
 import (
 	"context"
 
+	"1brc-walkthrough/onebrc"
 	"github.com/z5labs/humus/job"
 )
 
@@ -70,7 +71,7 @@ type Config struct {
 }
 
 func Init(ctx context.Context, cfg Config) (*job.App, error) {
-	handler := NewHandler()
+	handler := onebrc.NewHandler()
 	return job.NewApp(handler), nil
 }
 ```
