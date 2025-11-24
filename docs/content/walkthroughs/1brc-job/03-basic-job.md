@@ -94,4 +94,4 @@ When you call `job.Run(configReader, initFunc)`:
 
 ## Next Steps
 
-Continue to: [MinIO Integration]({{< ref "minio-integration" >}})
+Continue to: [MinIO Integration]({{< ref "04-minio-integration" >}})

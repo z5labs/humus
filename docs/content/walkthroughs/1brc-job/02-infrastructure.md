@@ -125,4 +125,4 @@ ports:
 
 ## Next Steps
 
-Continue to: [Building a Basic Job]({{< ref "basic-job" >}})
+Continue to: [Building a Basic Job]({{< ref "03-basic-job" >}})

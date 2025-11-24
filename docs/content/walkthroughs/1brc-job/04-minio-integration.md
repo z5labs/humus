@@ -80,4 +80,4 @@ storage.PutObject(ctx, bucket, "results.txt", bytes.NewReader(results), int64(le
 
 ## Next Steps
 
-Continue to: [1BRC Algorithm]({{< ref "1brc-algorithm" >}})
+Continue to: [1BRC Algorithm]({{< ref "05-1brc-algorithm" >}})

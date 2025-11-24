@@ -138,4 +138,4 @@ func (h *Handler) Handle(ctx context.Context) error {
 
 ## Next Steps
 
-Continue to: [Running and Monitoring]({{< ref "running-monitoring" >}})
+Continue to: [Running and Monitoring]({{< ref "07-running-monitoring" >}})

@@ -158,4 +158,4 @@ One city per line: `city=min/mean/max`
 
 ## Next Steps
 
-Continue to: [Observability]({{< ref "observability" >}})
+Continue to: [Observability]({{< ref "06-observability" >}})

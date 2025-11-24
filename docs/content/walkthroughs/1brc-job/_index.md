@@ -61,13 +61,13 @@ A complete job application that:
 
 ## Walkthrough Sections
 
-1. [Project Setup]({{< ref "project-setup" >}}) - Directory structure and dependencies
-2. [Infrastructure Setup]({{< ref "infrastructure" >}}) - Running the observability stack
-3. [Building a Basic Job]({{< ref "basic-job" >}}) - Core job structure
-4. [MinIO Integration]({{< ref "minio-integration" >}}) - S3 storage client
-5. [1BRC Algorithm]({{< ref "1brc-algorithm" >}}) - Parsing and calculating statistics
-6. [Observability]({{< ref "observability" >}}) - Adding traces, metrics, and logs
-7. [Running and Monitoring]({{< ref "running-monitoring" >}}) - Execute and view telemetry
+1. [Project Setup]({{< ref "01-project-setup" >}}) - Directory structure and dependencies
+2. [Infrastructure Setup]({{< ref "02-infrastructure" >}}) - Running the observability stack
+3. [Building a Basic Job]({{< ref "03-basic-job" >}}) - Core job structure
+4. [MinIO Integration]({{< ref "04-minio-integration" >}}) - S3 storage client
+5. [1BRC Algorithm]({{< ref "05-1brc-algorithm" >}}) - Parsing and calculating statistics
+6. [Observability]({{< ref "06-observability" >}}) - Adding traces, metrics, and logs
+7. [Running and Monitoring]({{< ref "07-running-monitoring" >}}) - Execute and view telemetry
 
 ## Source Code
 
@@ -78,4 +78,4 @@ github.com/z5labs/humus/example/job/1brc-walkthrough
 
 ## Next Steps
 
-Begin with [Project Setup]({{< ref "project-setup" >}}) to understand the code structure.
+Begin with [Project Setup]({{< ref "01-project-setup" >}}) to understand the code structure.
