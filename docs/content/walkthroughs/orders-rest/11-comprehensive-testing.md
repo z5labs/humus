@@ -88,32 +88,6 @@ curl -s -X POST http://localhost:8090/v1/order \
 
 Expected: Error (ACC-INELIGIBLE is ineligible).
 
-## OpenAPI Validation
-
-Check the auto-generated OpenAPI specification:
-
-```bash
-curl -s http://localhost:8090/openapi.json | jq '.info'
-```
-
-Verify endpoints:
-
-```bash
-curl -s http://localhost:8090/openapi.json | jq '.paths | keys'
-```
-
-Expected: `["/v1/order", "/v1/orders"]`
-
-## Health Checks
-
-```bash
-# Liveness probe
-curl -s http://localhost:8090/health/liveness
-
-# Readiness probe
-curl -s http://localhost:8090/health/readiness
-```
-
 ## Observability Validation
 
 After running the test scenarios above, validate that telemetry is being captured:
