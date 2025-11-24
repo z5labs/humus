@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>1BRC Job Walkthrough on Humus</title><link>https://z5labs.github.io/humus/pr-preview/pr-334/walkthroughs/1brc-job/</link><description>Recent content in 1BRC Job Walkthrough on Humus</description><generator>Hugo</generator><language>en-us</language><atom:link href="https://z5labs.github.io/humus/pr-preview/pr-334/walkthroughs/1brc-job/index.xml" rel="self" type="application/rss+xml"/><item><title>Project Setup</title><link>https://z5labs.github.io/humus/pr-preview/pr-334/walkthroughs/1brc-job/01-project-setup/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/pr-preview/pr-334/walkthroughs/1brc-job/01-project-setup/</guid><description>&lt;p&gt;Let&amp;rsquo;s start by creating the project structure for our 1BRC job.&lt;/p&gt;
 &lt;h2 id="directory-structure"&gt;Directory Structure&lt;/h2&gt;
 &lt;p&gt;Create the following directory structure:&lt;/p&gt;
-&lt;div class="highlight"&gt;&lt;pre tabindex="0" style="background-color:#f8f8f8;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"&gt;&lt;code class="language-bash" data-lang="bash"&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;mkdir -p 1brc-walkthrough/&lt;span style="color:#ce5c00;font-weight:bold"&gt;{&lt;/span&gt;app,storage,onebrc,tool&lt;span style="color:#ce5c00;font-weight:bold"&gt;}&lt;/span&gt;
+&lt;div class="highlight"&gt;&lt;pre tabindex="0" style="background-color:#f8f8f8;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"&gt;&lt;code class="language-bash" data-lang="bash"&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;mkdir -p 1brc-walkthrough/&lt;span style="color:#ce5c00;font-weight:bold"&gt;{&lt;/span&gt;app,service,onebrc,tool&lt;span style="color:#ce5c00;font-weight:bold"&gt;}&lt;/span&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#204a87"&gt;cd&lt;/span&gt; 1brc-walkthrough
 &lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;p&gt;The final structure will be:&lt;/p&gt;
 &lt;pre tabindex="0"&gt;&lt;code&gt;1brc-walkthrough/
@@ -10,7 +10,7 @@
 ├── go.mod # Module definition
 ├── app/
 │ └── app.go # Job initialization and config
-├── storage/
+├── service/
 │ └── minio.go # MinIO S3 client wrapper
 ├── onebrc/
 │ ├── handler.go # Job orchestration
