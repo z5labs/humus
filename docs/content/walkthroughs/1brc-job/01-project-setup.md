@@ -61,6 +61,6 @@ Each package has a specific responsibility:
 
 ## What's Next
 
-In the next section, we'll set up the infrastructure (MinIO) needed to run the job.
+In the next section, we'll build the core job structure with minimal configuration.
 
-[Next: Infrastructure Setup →]({{< ref "02-infrastructure" >}})
+[Next: Building a Basic Job →]({{< ref "02-basic-job" >}})

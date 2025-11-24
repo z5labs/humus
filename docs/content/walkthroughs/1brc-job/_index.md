@@ -11,9 +11,12 @@ This walkthrough teaches you how to build a production-ready job application usi
 
 - Build a job that processes large datasets from S3-compatible storage
 - Parse and aggregate 1 billion temperature measurements
-- Automatically instrument your code with OpenTelemetry (traces, metrics, logs)
+- **Test your job with minimal infrastructure before adding observability**
+- Retrofit OpenTelemetry instrumentation (traces, metrics, logs) to working code
 - Monitor your job in Grafana with distributed tracing
 - Use Humus patterns for configuration, error handling, and graceful shutdown
+
+This walkthrough follows a **practical development workflow**: get your business logic working first with minimal setup, then add the full observability stack later.
 
 ## What You'll Build
 
@@ -62,12 +65,13 @@ A complete job application that:
 ## Walkthrough Sections
 
 1. [Project Setup]({{< ref "01-project-setup" >}}) - Directory structure and dependencies
-2. [Infrastructure Setup]({{< ref "02-infrastructure" >}}) - Running the observability stack
-3. [Building a Basic Job]({{< ref "03-basic-job" >}}) - Core job structure
-4. [MinIO Integration]({{< ref "04-minio-integration" >}}) - S3 storage client
-5. [1BRC Algorithm]({{< ref "05-1brc-algorithm" >}}) - Parsing and calculating statistics
-6. [Observability]({{< ref "06-observability" >}}) - Adding traces, metrics, and logs
-7. [Running and Monitoring]({{< ref "07-running-monitoring" >}}) - Execute and view telemetry
+2. [Building a Basic Job]({{< ref "02-basic-job" >}}) - Core job structure with minimal config
+3. [MinIO Integration]({{< ref "03-minio-integration" >}}) - S3 storage client and local MinIO setup
+4. [1BRC Algorithm]({{< ref "04-1brc-algorithm" >}}) - Parsing and calculating statistics
+5. [Running Without OTel]({{< ref "05-running-without-otel" >}}) - Test your job with minimal infrastructure
+6. [Infrastructure Setup]({{< ref "06-infrastructure" >}}) - Adding the LGTM observability stack
+7. [Adding Observability]({{< ref "07-observability" >}}) - Retrofitting traces, metrics, and logs
+8. [Running and Monitoring]({{< ref "08-running-monitoring" >}}) - Execute and view telemetry in Grafana
 
 ## Source Code
 
