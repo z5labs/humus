@@ -1,0 +1,58 @@
+{
+  "mappings": [
+    {
+      "name": "Check eligibility - eligible",
+      "request": {
+        "method": "GET",
+        "urlPath": "/eligibility/ACC-001"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "account_id": "ACC-001",
+          "eligible": true,
+          "reason": ""
+        }
+      }
+    },
+    {
+      "name": "Check eligibility - ineligible due to account type",
+      "request": {
+        "method": "GET",
+        "urlPath": "/eligibility/ACC-INELIGIBLE"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "account_id": "ACC-INELIGIBLE",
+          "eligible": false,
+          "reason": "Account type does not support order placement"
+        }
+      }
+    },
+    {
+      "name": "Check eligibility - ineligible due to insufficient funds",
+      "request": {
+        "method": "GET",
+        "urlPath": "/eligibility/ACC-NOFUNDS"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "account_id": "ACC-NOFUNDS",
+          "eligible": false,
+          "reason": "Insufficient funds in account"
+        }
+      }
+    }
+  ]
+}
