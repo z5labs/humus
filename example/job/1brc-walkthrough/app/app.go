@@ -9,7 +9,7 @@ import (
 	"context"
 
 	"github.com/z5labs/humus/example/job/1brc-walkthrough/onebrc"
-	"github.com/z5labs/humus/example/job/1brc-walkthrough/storage"
+	"github.com/z5labs/humus/example/job/1brc-walkthrough/service"
 	"github.com/z5labs/humus/job"
 )
 
@@ -32,7 +32,7 @@ type Config struct {
 
 // Init initializes the job application.
 func Init(ctx context.Context, cfg Config) (*job.App, error) {
-	minioClient, err := storage.NewClient(cfg.Minio.Endpoint, cfg.Minio.AccessKey, cfg.Minio.SecretKey)
+	minioClient, err := service.NewMinIOClient(cfg.Minio.Endpoint, cfg.Minio.AccessKey, cfg.Minio.SecretKey)
 	if err != nil {
 		return nil, err
 	}
