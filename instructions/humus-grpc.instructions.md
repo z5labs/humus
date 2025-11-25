@@ -1,0 +1,246 @@
+---
+description: 'Patterns and best practices for gRPC services using Humus'
+applyTo: '**/*.go'
+---
+
+# Humus Framework - gRPC Service Instructions
+
+This file provides patterns and best practices specific to gRPC services using Humus. Use this file alongside `humus-common.instructions.md` for complete guidance.
+
+## Project Structure
+
+```
+my-grpc-service/
+├── main.go
+├── config.yaml
+├── app/
+│   └── app.go          # Init function
+├── service/            # All gRPC service implementations
+│   └── pet.go          # Pet service implementation
+├── proto/              # Proto definitions
+│   └── pet.proto
+├── petpb/              # Generated protobuf code
+│   ├── pet.pb.go
+│   └── pet_grpc.pb.go
+├── go.mod
+└── go.sum
+```
+
+## Configuration
+
+**Custom Config with provider interface:**
+
+If you need to customize the gRPC server listener (e.g., custom port), implement the `ListenerProvider` interface:
+
+```go
+type Config struct {
+    grpc.Config `config:",squash"`
+    
+    GRPC struct {
+        Port uint `config:"port"`
+    } `config:"grpc"`
+}
+
+func (c Config) Listener(ctx context.Context) (net.Listener, error) {
+    return net.Listen("tcp", fmt.Sprintf(":%d", c.GRPC.Port))
+}
+```
+
+See `humus-common.instructions.md` for general configuration patterns like using Go templates in YAML.
+
+## gRPC Service Patterns
+
+### Entry Point
+
+**main.go:**
+```go
+package main
+
+import (
+    "bytes"
+    _ "embed"
+    "github.com/z5labs/humus/grpc"
+    "my-grpc-service/app"
+)
+
+//go:embed config.yaml
+var configBytes []byte
+
+func main() {
+    grpc.Run(bytes.NewReader(configBytes), app.Init)
+}
+```
+
+### Init Function
+
+**app/app.go:**
+```go
+package app
+
+import (
+    "context"
+    "my-grpc-service/service"
+    "github.com/z5labs/humus/grpc"
+)
+
+type Config struct {
+    grpc.Config `config:",squash"`
+    // Add service-specific config here
+}
+
+func Init(ctx context.Context, cfg Config) (*grpc.Api, error) {
+    api := grpc.NewApi()
+    
+    // Register your gRPC services
+    service.RegisterPetService(api, dependencies)
+    
+    return api, nil
+}
+```
+
+### Service Implementation
+
+All gRPC services are implemented in a single `service` package (similar to how REST uses `endpoint`):
+
+**service/pet.go:**
+```go
+package service
+
+import (
+    "context"
+    "my-grpc-service/petpb"
+    "google.golang.org/grpc"
+)
+
+type Store interface {
+    CreatePet(context.Context, *CreatePetRequest) (*Pet, error)
+    GetPet(context.Context, string) (*Pet, error)
+}
+
+type petService struct {
+    petpb.UnimplementedPetServiceServer
+    store Store
+}
+
+func RegisterPetService(sr grpc.ServiceRegistrar, store Store) {
+    svc := &petService{
+        store: store,
+    }
+    petpb.RegisterPetServiceServer(sr, svc)
+}
+
+func (s *petService) CreatePet(ctx context.Context, req *petpb.CreatePetRequest) (*petpb.Pet, error) {
+    // Implementation
+    return &petpb.Pet{}, nil
+}
+
+func (s *petService) GetPet(ctx context.Context, req *petpb.GetPetRequest) (*petpb.Pet, error) {
+    // Implementation
+    return &petpb.Pet{}, nil
+}
+```
+
+## Protocol Buffers
+
+### Proto Definition
+
+**proto/pet.proto:**
+```proto
+syntax = "proto3";
+
+package pet;
+
+option go_package = "my-grpc-service/petpb";
+
+service PetService {
+  rpc CreatePet(CreatePetRequest) returns (Pet);
+  rpc GetPet(GetPetRequest) returns (Pet);
+}
+
+message CreatePetRequest {
+  string name = 1;
+  string species = 2;
+}
+
+message GetPetRequest {
+  string id = 1;
+}
+
+message Pet {
+  string id = 1;
+  string name = 2;
+  string species = 3;
+}
+```
+
+### Code Generation
+
+**Makefile:**
+```makefile
+.PHONY: proto
+proto:
+    protoc --go_out=. --go_opt=paths=source_relative \
+           --go-grpc_out=. --go-grpc_opt=paths=source_relative \
+           proto/**/*.proto
+```
+
+Run with:
+```bash
+make proto
+```
+
+## gRPC-Specific Best Practices
+
+### DO ✅
+
+1. **Organize all services in a single `service` package** - similar to REST's `endpoint` package
+2. **Use a Register function per service** - keeps service registration clean and testable
+3. **Embed UnimplementedServer** - ensures forward compatibility with proto updates
+4. **Generate code with protoc** - use Makefile for reproducible builds
+5. **Pass dependencies to Register function** - keeps services testable and decoupled
+
+### DON'T ❌
+
+1. **Don't implement services directly in app.go** - use the service package pattern
+2. **Don't forget UnimplementedServer** - helps with forward compatibility
+3. **Don't manually register health service** - Humus does this automatically
+4. **Don't bypass the grpc.Api** - it provides automatic instrumentation
+5. **Don't hardcode server addresses** - use configuration
+
+## Health Service
+
+The gRPC health service is automatically registered by Humus. You can use health monitors to control readiness:
+
+```go
+func Init(ctx context.Context, cfg Config) (*grpc.Api, error) {
+    api := grpc.NewApi()
+    
+    // Create a health monitor
+    dbMonitor := new(health.Binary)
+    
+    // Check database connection
+    if err := checkDatabase(); err != nil {
+        dbMonitor.MarkUnhealthy()
+    } else {
+        dbMonitor.MarkHealthy()
+    }
+    
+    // Register with API (health endpoints use this)
+    api.SetHealthMonitor(dbMonitor)
+    
+    return api, nil
+}
+```
+
+## Example Project
+
+Study this example in the Humus repository:
+
+- **gRPC Service**: `example/grpc/petstore/` - gRPC with health monitoring
+
+## Additional Resources
+
+- **gRPC Documentation**: https://z5labs.dev/humus/features/grpc/
+- **Protocol Buffers**: https://protobuf.dev/
+- **gRPC Go**: https://grpc.io/docs/languages/go/
+- **Common patterns**: See `humus-common.instructions.md`
