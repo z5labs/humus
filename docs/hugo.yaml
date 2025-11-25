@@ -2,6 +2,9 @@ title: Humus
 languageCode: en-us
 
 module:
+  hugoVersion:
+      extended: true
+      min: 0.152.2
   imports:
     - path: github.com/google/docsy
       disable: false
@@ -45,10 +48,10 @@ params:
 
   # UI
   ui:
-    sidebar_menu_compact: true
+    sidebar_menu_compact: false
     breadcrumb_disable: false
     sidebar_search_disable: false
-    navbar_logo: true
+    navbar_logo: false
     footer_about_disable: false
 
   # Links

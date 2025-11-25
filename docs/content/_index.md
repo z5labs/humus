@@ -1,6 +1,9 @@
 ---
 title: Humus
-type: docs
+cascade:
+  - type: "docs"
+    _target:
+        path: "/**"
 ---
 
 
