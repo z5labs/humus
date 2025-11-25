@@ -1,11 +1,11 @@
 ---
-title: 1BRC Algorithm
-description: Parsing and calculating temperature statistics
-weight: 4
+title: 1BRC Algorithm with Local Files
+description: Implement the core parsing and calculation logic using local file I/O
+weight: 3
 type: docs
 ---
 
-The `onebrc` package implements the core challenge logic: parse temperature data and calculate statistics.
+Let's implement the core 1BRC algorithm using simple local file operations. This allows you to get the business logic working quickly before adding cloud storage.
 
 ## Parser Implementation
 
@@ -98,9 +98,10 @@ func parseLine(line string, stats map[string]*CityStats) error {
 ```
 
 **Streaming approach:**
-- Reads line-by-line, never loading entire file
+- Reads line-by-line, never loading entire file into memory
 - Aggregates on-the-fly in a map
 - Handles EOF properly
+- Memory-efficient even for billion-row files
 
 ## Calculator Implementation
 
@@ -135,7 +136,7 @@ func Calculate(stats map[string]*CityStats) []CityResult {
 		})
 	}
 
-	// Sort alphabetically
+	// Sort alphabetically by city name
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].City < results[j].City
 	})
@@ -173,81 +174,107 @@ Tokyo=-5.2/35.6/50.1
 
 One city per line: `city=min/mean/max`
 
-## Update Handler
+## Configuration
 
-Now update `app/handler.go` to use the parsing and calculation logic:
+Update `config.yaml` to add file paths:
+
+```yaml
+onebrc:
+  input_file: {{env "INPUT_FILE" | default "measurements.txt"}}
+  output_file: {{env "OUTPUT_FILE" | default "results.txt"}}
+```
+
+## Update Config Struct
+
+Update `app/app.go`:
 
 ```go
 package app
 
 import (
-	"bufio"
-	"bytes"
 	"context"
-	"fmt"
-	"io"
-	"log/slog"
-	"os"
 
 	"1brc-walkthrough/onebrc"
+	"github.com/z5labs/humus/job"
 )
 
-type Storage interface {
-	GetObject(ctx context.Context, bucket, key string) (io.ReadCloser, error)
-	PutObject(ctx context.Context, bucket, key string, reader io.Reader, size int64) error
+type Config struct {
+	OneBRC struct {
+		InputFile  string `config:"input_file"`
+		OutputFile string `config:"output_file"`
+	} `config:"onebrc"`
 }
+
+func Init(ctx context.Context, cfg Config) (*job.App, error) {
+	handler := onebrc.NewHandler(
+		cfg.OneBRC.InputFile,
+		cfg.OneBRC.OutputFile,
+	)
+
+	return job.NewApp(handler), nil
+}
+```
+
+## Implement Handler with Local File I/O
+
+Update `onebrc/handler.go`:
+
+```go
+package onebrc
+
+import (
+	"bufio"
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
+)
 
 type Handler struct {
-	storage   Storage
-	bucket    string
-	inputKey  string
-	outputKey string
-	log       *slog.Logger
+	inputFile  string
+	outputFile string
+	log        *slog.Logger
 }
 
-func NewHandler(storage Storage, bucket, inputKey, outputKey string) *Handler {
+func NewHandler(inputFile, outputFile string) *Handler {
 	return &Handler{
-		storage:   storage,
-		bucket:    bucket,
-		inputKey:  inputKey,
-		outputKey: outputKey,
-		log:       slog.New(slog.NewJSONHandler(os.Stdout, nil)),
+		inputFile:  inputFile,
+		outputFile: outputFile,
+		log:        slog.New(slog.NewJSONHandler(os.Stdout, nil)),
 	}
 }
 
 func (h *Handler) Handle(ctx context.Context) error {
 	h.log.InfoContext(ctx, "starting 1BRC processing",
-		slog.String("bucket", h.bucket),
-		slog.String("input_key", h.inputKey),
+		slog.String("input_file", h.inputFile),
+		slog.String("output_file", h.outputFile),
 	)
 
-	// 1. Fetch from S3
-	rc, err := h.storage.GetObject(ctx, h.bucket, h.inputKey)
+	// 1. Open input file
+	f, err := os.Open(h.inputFile)
 	if err != nil {
-		h.log.ErrorContext(ctx, "failed to fetch input object", slog.Any("error", err))
-		return fmt.Errorf("get object: %w", err)
+		h.log.ErrorContext(ctx, "failed to open input file", slog.Any("error", err))
+		return fmt.Errorf("open input file: %w", err)
 	}
-	defer rc.Close()
+	defer f.Close()
 
 	// 2. Parse
-	cityStats, err := onebrc.Parse(bufio.NewReader(rc))
+	cityStats, err := Parse(bufio.NewReader(f))
 	if err != nil {
 		h.log.ErrorContext(ctx, "failed to parse temperature data", slog.Any("error", err))
 		return fmt.Errorf("parse: %w", err)
 	}
 
 	// 3. Calculate
-	results := onebrc.Calculate(cityStats)
+	results := Calculate(cityStats)
 
 	// 4. Write results
-	output := onebrc.FormatResults(results)
-	outputBytes := []byte(output)
+	output := FormatResults(results)
 
-	err = h.storage.PutObject(ctx, h.bucket, h.outputKey,
-		bytes.NewReader(outputBytes), int64(len(outputBytes)))
+	err = os.WriteFile(h.outputFile, []byte(output), 0644)
 	if err != nil {
-		h.log.ErrorContext(ctx, "failed to upload results", slog.Any("error", err))
-		return fmt.Errorf("put object: %w", err)
+		h.log.ErrorContext(ctx, "failed to write results", slog.Any("error", err))
+		return fmt.Errorf("write results: %w", err)
 	}
 
 	h.log.InfoContext(ctx, "1BRC processing completed successfully",
@@ -258,10 +285,15 @@ func (h *Handler) Handle(ctx context.Context) error {
 }
 ```
 
-No changes needed to `app/app.go` - it already wires everything together correctly!
+**Why local files first?**
+- No external dependencies (MinIO, S3)
+- Fast iteration cycle
+- Easy to test and debug
+- Proves the algorithm works
+- Can refactor to cloud storage later
 
 ## What's Next
 
-Now let's test the complete job with a simple dataset to verify everything works before adding observability.
+Now let's test the complete job with local files to verify everything works.
 
-[Next: Running Without OTel →]({{< ref "05-running-without-otel" >}})
+[Next: Running Without OTel →]({{< ref "04-running-without-otel" >}})

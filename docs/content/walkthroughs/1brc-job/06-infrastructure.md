@@ -5,7 +5,7 @@ weight: 6
 type: docs
 ---
 
-Your job is working! Now let's add the full observability stack to see traces, logs, and metrics in Grafana.
+Your job is working with MinIO! Now let's add the full observability stack to see traces, logs, and metrics in Grafana.
 
 ## Understanding the LGTM Stack
 
@@ -47,13 +47,7 @@ We'll also add the **OpenTelemetry Collector** to receive and route telemetry da
 
 ## Updating Podman Compose
 
-Stop MinIO first:
-
-```bash
-podman-compose down
-```
-
-Update your `podman-compose.yaml` to add the observability stack:
+Update your `podman-compose.yaml` to add the observability stack (keeping MinIO):
 
 ```yaml
 services:

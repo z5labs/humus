@@ -21,12 +21,10 @@ The final structure will be:
 ```
 1brc-walkthrough/
 ├── main.go                  # Entry point
-├── config.yaml              # Configuration with OTel settings
+├── config.yaml              # Configuration
 ├── go.mod                   # Module definition
 ├── app/
 │   └── app.go              # Job initialization and config
-├── service/
-│   └── minio.go            # MinIO S3 client wrapper
 ├── onebrc/
 │   ├── handler.go          # Job orchestration
 │   ├── parser.go           # Parse "city;temp" format
@@ -44,23 +42,21 @@ module 1brc-walkthrough
 
 go 1.24.0
 
-require (
-	github.com/z5labs/humus v0.20.2
-	github.com/minio/minio-go/v7 v7.0.97
-)
+require github.com/z5labs/humus v0.20.2
 ```
 
 ## Package Organization
 
 Each package has a specific responsibility:
 
-- **app/** - Job initialization and configuration (embeds `job.Config`)
-- **service/** - Backend service clients (MinIO S3 wrapper for file operations)
+- **app/** - Job initialization and configuration
 - **onebrc/** - Core business logic: orchestration, parsing, and calculation
 - **tool/** - Standalone utility to generate test data
 
+We'll start simple with local file I/O, then add cloud storage integration later.
+
 ## What's Next
 
-In the next section, we'll build the core job structure with minimal configuration.
+In the next section, we'll build a basic "hello world" job to verify everything works.
 
 [Next: Building a Basic Job →]({{< ref "02-basic-job" >}})

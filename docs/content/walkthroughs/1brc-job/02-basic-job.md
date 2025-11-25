@@ -136,6 +136,6 @@ When you call `job.Run(configReader, initFunc)`:
 
 ## What's Next
 
-Now that we have a working job, let's add MinIO integration for reading and writing files.
+Now that we have a working job, let's implement the core 1BRC algorithm with local file I/O.
 
-[Next: MinIO Integration →]({{< ref "03-minio-integration" >}})
+[Next: 1BRC Algorithm →]({{< ref "03-1brc-algorithm" >}})
