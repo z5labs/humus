@@ -2,7 +2,7 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/z5labs/humus.svg)](https://pkg.go.dev/github.com/z5labs/humus)
 [![Go Report Card](https://goreportcard.com/badge/github.com/z5labs/humus)](https://goreportcard.com/report/github.com/z5labs/humus)
-![Coverage](https://img.shields.io/badge/Coverage-33.2%25-yellow)
+![Coverage](https://img.shields.io/badge/Coverage-33.1%25-yellow)
 [![build](https://github.com/z5labs/humus/actions/workflows/build.yaml/badge.svg)](https://github.com/z5labs/humus/actions/workflows/build.yaml)
 
 A modular Go framework for building production-ready REST APIs, gRPC services, and batch jobs with built-in observability, health checks, and graceful shutdown.
