@@ -43,6 +43,64 @@ podman ps
 
 You should see the minio container running. Access the console at http://localhost:9001 (login: minioadmin/minioadmin).
 
+## Service Client Implementation
+
+Create `service/minio.go`:
+
+```go
+package service
+
+import (
+	"context"
+	"io"
+
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
+)
+
+type MinIOClient struct {
+	mc *minio.Client
+}
+
+func NewMinIOClient(endpoint, accessKey, secretKey string) (*MinIOClient, error) {
+	mc, err := minio.New(endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
+		Secure: false,  // Use HTTP for local development
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &MinIOClient{mc: mc}, nil
+}
+
+func (c *MinIOClient) GetObject(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
+	return c.mc.GetObject(ctx, bucket, key, minio.GetObjectOptions{})
+}
+
+func (c *MinIOClient) PutObject(ctx context.Context, bucket, key string, reader io.Reader, size int64) error {
+	_, err := c.mc.PutObject(ctx, bucket, key, reader, size, minio.PutObjectOptions{})
+	return err
+}
+```
+
+## Key Design Decisions
+
+**Wrapper pattern:**
+- Hides MinIO-specific details
+- Makes testing easier (mock the interface)
+- Provides only needed methods
+
+**Streaming I/O:**
+- `GetObject` returns `io.ReadCloser` for streaming reads
+- `PutObject` accepts `io.Reader` to stream uploads
+- No buffering of entire files in memory
+
+**Context propagation:**
+- All methods accept `context.Context`
+- Enables cancellation and timeout
+- Ready for trace spans (we'll add later)
+
 ## Add Configuration
 
 Update `config.yaml` to add MinIO settings:
@@ -108,64 +166,6 @@ func Init(ctx context.Context, cfg Config) (*job.App, error) {
 	return job.NewApp(handler), nil
 }
 ```
-
-## Service Client Implementation
-
-Create `service/minio.go`:
-
-```go
-package service
-
-import (
-	"context"
-	"io"
-
-	"github.com/minio/minio-go/v7"
-	"github.com/minio/minio-go/v7/pkg/credentials"
-)
-
-type MinIOClient struct {
-	mc *minio.Client
-}
-
-func NewMinIOClient(endpoint, accessKey, secretKey string) (*MinIOClient, error) {
-	mc, err := minio.New(endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
-		Secure: false,  // Use HTTP for local development
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return &MinIOClient{mc: mc}, nil
-}
-
-func (c *MinIOClient) GetObject(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
-	return c.mc.GetObject(ctx, bucket, key, minio.GetObjectOptions{})
-}
-
-func (c *MinIOClient) PutObject(ctx context.Context, bucket, key string, reader io.Reader, size int64) error {
-	_, err := c.mc.PutObject(ctx, bucket, key, reader, size, minio.PutObjectOptions{})
-	return err
-}
-```
-
-## Key Design Decisions
-
-**Wrapper pattern:**
-- Hides MinIO-specific details
-- Makes testing easier (mock the interface)
-- Provides only needed methods
-
-**Streaming I/O:**
-- `GetObject` returns `io.ReadCloser` for streaming reads
-- `PutObject` accepts `io.Reader` to stream uploads
-- No buffering of entire files in memory
-
-**Context propagation:**
-- All methods accept `context.Context`
-- Enables cancellation and timeout
-- Ready for trace spans (we'll add later)
 
 ## Update Handler
 
