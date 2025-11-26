@@ -28,7 +28,23 @@ Build a production-ready REST API with service orchestration, cursor-based pagin
 
 [Start the Orders REST Walkthrough →]({{< ref "orders-rest" >}})
 
----
+### [1 Billion Row Challenge Job]({{< ref "1brc-job" >}})
+
+Build a high-performance job application that processes 1 billion temperature measurements using MinIO for storage and OpenTelemetry for observability.
+
+**Topics covered:**
+- Job framework architecture
+- S3 storage integration
+- Streaming large datasets
+- OpenTelemetry instrumentation (traces, metrics, logs)
+- Viewing telemetry in Grafana
+
+**Difficulty:** Intermediate  
+**Time:** 60 minutes
+
+**Prerequisites:**
+- Go 1.24+
+- Podman or Docker
 
 ## About Walkthroughs
 
@@ -39,3 +55,8 @@ Each walkthrough is designed to:
 - **Match Code to Docs** - Source code and documentation are always in sync
 
 The source code for each walkthrough is available in the `example/` directory of the repository.
+=======
+
+## Contributing
+
+Have an idea for a walkthrough? See our [Contributing Guide]({{< ref "/contributing" >}}).

@@ -1,0 +1,41 @@
+# Grafana Tempo Configuration
+# Distributed tracing backend running in monolithic mode
+
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+ingester:
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    block_retention: 48h
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /tmp/tempo/wal
+    local:
+      path: /tmp/tempo/blocks
+
+# Enable search and query capabilities
+query_frontend:
+  search:
+    duration_slo: 5s
+    throughput_bytes_slo: 1.073741824e+09
+  trace_by_id:
+    duration_slo: 5s
+
+# Metrics generation from traces is handled by the OpenTelemetry Collector
+# spanmetricsconnector instead of Tempo's built-in metrics_generator.
+# This provides better OTel standards compliance and vendor neutrality.
