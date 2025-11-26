@@ -6,7 +6,7 @@
 &lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;p&gt;The final structure will be:&lt;/p&gt;
 &lt;pre tabindex="0"&gt;&lt;code&gt;1brc-walkthrough/
 ├── main.go # Entry point
-├── config.yaml # Configuration
+├── config.yaml # Application configuration
 ├── go.mod # Module definition
 ├── app/
 │ └── app.go # Job initialization and config
@@ -14,8 +14,16 @@
 │ ├── handler.go # Job orchestration
 │ ├── parser.go # Parse &amp;#34;city;temp&amp;#34; format
 │ └── calculator.go # Compute statistics
-└── tool/
- └── main.go # Generate test data
+├── service/
+│ └── minio.go # MinIO/S3 storage abstraction
+├── tool/
+│ └── main.go # Generate test data
+├── podman-compose.yaml # Infrastructure orchestration
+├── tempo-config.yaml # Tempo trace backend config
+├── mimir-config.yaml # Mimir metrics backend config
+├── loki-config.yaml # Loki logs backend config
+├── otel-collector-config.yaml # OpenTelemetry collector config
+└── grafana-datasources.yaml # Grafana datasource definitions
 &lt;/code&gt;&lt;/pre&gt;&lt;h2 id="initialize-go-module"&gt;Initialize Go Module&lt;/h2&gt;
 &lt;p&gt;Create &lt;code&gt;go.mod&lt;/code&gt;:&lt;/p&gt;</description></item><item><title>Project Setup</title><link>https://z5labs.github.io/humus/pr-preview/pr-334/walkthroughs/orders-rest/project-setup/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/pr-preview/pr-334/walkthroughs/orders-rest/project-setup/</guid><description>&lt;p&gt;Let&amp;rsquo;s start by creating the project structure for our orders REST API.&lt;/p&gt;
 &lt;h2 id="directory-structure"&gt;Directory Structure&lt;/h2&gt;
@@ -306,7 +314,7 @@
 &lt;p&gt;First, we need MinIO running. Create &lt;code&gt;podman-compose.yaml&lt;/code&gt;:&lt;/p&gt;
 &lt;div class="highlight"&gt;&lt;pre tabindex="0" style="background-color:#f8f8f8;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"&gt;&lt;code class="language-yaml" data-lang="yaml"&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#204a87;font-weight:bold"&gt;services&lt;/span&gt;&lt;span style="color:#000;font-weight:bold"&gt;:&lt;/span&gt;&lt;span style="color:#f8f8f8;text-decoration:underline"&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f8f8f8;text-decoration:underline"&gt; &lt;/span&gt;&lt;span style="color:#204a87;font-weight:bold"&gt;minio&lt;/span&gt;&lt;span style="color:#000;font-weight:bold"&gt;:&lt;/span&gt;&lt;span style="color:#f8f8f8;text-decoration:underline"&gt;
-&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f8f8f8;text-decoration:underline"&gt; &lt;/span&gt;&lt;span style="color:#204a87;font-weight:bold"&gt;image&lt;/span&gt;&lt;span style="color:#000;font-weight:bold"&gt;:&lt;/span&gt;&lt;span style="color:#f8f8f8;text-decoration:underline"&gt; &lt;/span&gt;&lt;span style="color:#000"&gt;docker.io/minio/minio:RELEASE.2024-11-07T00-52-20Z&lt;/span&gt;&lt;span style="color:#f8f8f8;text-decoration:underline"&gt;
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f8f8f8;text-decoration:underline"&gt; &lt;/span&gt;&lt;span style="color:#204a87;font-weight:bold"&gt;image&lt;/span&gt;&lt;span style="color:#000;font-weight:bold"&gt;:&lt;/span&gt;&lt;span style="color:#f8f8f8;text-decoration:underline"&gt; &lt;/span&gt;&lt;span style="color:#000"&gt;docker.io/minio/minio:latest&lt;/span&gt;&lt;span style="color:#f8f8f8;text-decoration:underline"&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f8f8f8;text-decoration:underline"&gt; &lt;/span&gt;&lt;span style="color:#204a87;font-weight:bold"&gt;command&lt;/span&gt;&lt;span style="color:#000;font-weight:bold"&gt;:&lt;/span&gt;&lt;span style="color:#f8f8f8;text-decoration:underline"&gt; &lt;/span&gt;&lt;span style="color:#000"&gt;server /data --console-address &amp;#34;:9001&amp;#34;&lt;/span&gt;&lt;span style="color:#f8f8f8;text-decoration:underline"&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f8f8f8;text-decoration:underline"&gt; &lt;/span&gt;&lt;span style="color:#204a87;font-weight:bold"&gt;environment&lt;/span&gt;&lt;span style="color:#000;font-weight:bold"&gt;:&lt;/span&gt;&lt;span style="color:#f8f8f8;text-decoration:underline"&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span style="display:flex;"&gt;&lt;span&gt;&lt;span style="color:#f8f8f8;text-decoration:underline"&gt; &lt;/span&gt;- &lt;span style="color:#000"&gt;MINIO_ROOT_USER=minioadmin&lt;/span&gt;&lt;span style="color:#f8f8f8;text-decoration:underline"&gt;
