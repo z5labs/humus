@@ -55,8 +55,7 @@ func main() {
 
 ```bash
 # Generate test data (10K measurements for quick testing)
-cd tool
-go run . -count 10000 -output ../measurements.txt
+go run tool/main.go -count 10000 -output measurements.txt
 ```
 
 You should see:
@@ -71,7 +70,6 @@ Generated measurements.txt successfully
 Check the generated file:
 
 ```bash
-cd ..
 head -5 measurements.txt
 ```
 
@@ -137,9 +135,10 @@ Each line shows: `city=min/mean/max`
 Try a larger dataset to see performance:
 
 ```bash
-cd tool
-go run . -count 1000000 -output ../measurements.txt  # 1 million measurements
-cd ..
+# Generate 1 million measurements
+go run tool/main.go -count 1000000 -output measurements.txt
+
+# Run the job and measure execution time
 time go run .
 ```
 
