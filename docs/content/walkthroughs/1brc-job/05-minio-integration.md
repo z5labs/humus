@@ -127,24 +127,6 @@ require (
 
 Run `go mod tidy` to download the dependency.
 
-## Update Configuration
-
-Update `config.yaml` to add MinIO settings:
-
-```yaml
-minio:
-  endpoint: {{env "MINIO_ENDPOINT" | default "localhost:9000"}}
-  access_key: {{env "MINIO_ACCESS_KEY" | default "minioadmin"}}
-  secret_key: {{env "MINIO_SECRET_KEY" | default "minioadmin"}}
-  bucket: {{env "MINIO_BUCKET" | default "onebrc"}}
-
-onebrc:
-  input_key: {{env "INPUT_KEY" | default "measurements.txt"}}
-  output_key: {{env "OUTPUT_KEY" | default "results.txt"}}
-```
-
-Note: We changed `input_file`/`output_file` to `input_key`/`output_key` to reflect S3 terminology.
-
 ## Refactor Handler to Use Storage Interface
 
 Update `onebrc/handler.go` to accept a storage interface instead of file paths:
@@ -234,6 +216,24 @@ func (h *Handler) Handle(ctx context.Context) error {
 - Uses `GetObject` instead of `os.Open`
 - Uses `PutObject` instead of `os.WriteFile`
 - Core parsing/calculation logic unchanged (that's the beauty of interfaces!)
+
+## Update Configuration
+
+Update `config.yaml` to add MinIO settings:
+
+```yaml
+minio:
+  endpoint: {{env "MINIO_ENDPOINT" | default "localhost:9000"}}
+  access_key: {{env "MINIO_ACCESS_KEY" | default "minioadmin"}}
+  secret_key: {{env "MINIO_SECRET_KEY" | default "minioadmin"}}
+  bucket: {{env "MINIO_BUCKET" | default "onebrc"}}
+
+onebrc:
+  input_key: {{env "INPUT_KEY" | default "measurements.txt"}}
+  output_key: {{env "OUTPUT_KEY" | default "results.txt"}}
+```
+
+Note: We changed `input_file`/`output_file` to `input_key`/`output_key` to reflect S3 terminology.
 
 ## Update App Initialization
 
@@ -367,11 +367,9 @@ func main() {
 podman ps
 
 # Generate test data
-cd tool
-go run . -count 10000
-cd ..
+go run tool/main.go -count 10000
 
-# Install new dependencies
+# Ensure dependencies are installed
 go mod tidy
 
 # Run the job
