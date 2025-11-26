@@ -52,7 +52,7 @@ Update your `podman-compose.yaml` to add the observability stack (keeping MinIO)
 ```yaml
 services:
   minio:
-    image: docker.io/minio/minio:RELEASE.2024-11-07T00-52-20Z
+    image: docker.io/minio/minio:latest
     command: server /data --console-address ":9001"
     environment:
       - MINIO_ROOT_USER=minioadmin
@@ -64,29 +64,29 @@ services:
       - minio-data:/data:z
 
   tempo:
-    image: docker.io/grafana/tempo:2.6.1
+    image: docker.io/grafana/tempo:latest
     command: ["-config.file=/etc/tempo.yaml"]
     volumes:
-      - ./tempo.yaml:/etc/tempo.yaml:ro,z
+      - ./tempo-config.yaml:/etc/tempo.yaml:ro,z
     ports:
       - "3200:3200"
 
   loki:
-    image: docker.io/grafana/loki:3.3.2
+    image: docker.io/grafana/loki:latest
     ports:
       - "3100:3100"
     command: -config.file=/etc/loki/local-config.yaml
 
   mimir:
-    image: docker.io/grafana/mimir:2.14.2
+    image: docker.io/grafana/mimir:latest
     command: ["-config.file=/etc/mimir.yaml"]
     volumes:
-      - ./mimir.yaml:/etc/mimir.yaml:ro,z
+      - ./mimir-config.yaml:/etc/mimir.yaml:ro,z
     ports:
       - "9009:9009"
 
   otel-collector:
-    image: docker.io/otel/opentelemetry-collector-contrib:0.115.1
+    image: docker.io/otel/opentelemetry-collector-contrib:latest
     command: ["--config=/etc/otel-collector-config.yaml"]
     volumes:
       - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro,z
@@ -98,7 +98,7 @@ services:
       - mimir
 
   grafana:
-    image: docker.io/grafana/grafana:11.4.0
+    image: docker.io/grafana/grafana:latest
     environment:
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin

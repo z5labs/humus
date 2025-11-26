@@ -215,7 +215,11 @@ func (h *Handler) Handle(ctx context.Context) error {
 		h.log.ErrorContext(ctx, "failed to open input file", slog.Any("error", err))
 		return fmt.Errorf("open input file: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			h.log.WarnContext(ctx, "failed to close input file", slog.Any("error", cerr))
+		}
+	}()
 
 	// 2. Parse
 	cityStats, err := Parse(bufio.NewReader(f))

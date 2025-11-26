@@ -173,7 +173,11 @@ func (h *Handler) Handle(ctx context.Context) error {
 		h.log.ErrorContext(ctx, "failed to fetch input object", slog.Any("error", err))
 		return fmt.Errorf("get object: %w", err)
 	}
-	defer rc.Close()
+	defer func() {
+		if cerr := rc.Close(); cerr != nil {
+			h.log.WarnContext(ctx, "failed to close input object", slog.Any("error", cerr))
+		}
+	}()
 
 	// 2. Parse (with span)
 	parseCtx, parseEnd := h.tracer(ctx, "parse")

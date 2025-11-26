@@ -20,17 +20,25 @@ The final structure will be:
 
 ```
 1brc-walkthrough/
-├── main.go                  # Entry point
-├── config.yaml              # Configuration
-├── go.mod                   # Module definition
+├── main.go                     # Entry point
+├── config.yaml                 # Application configuration
+├── go.mod                      # Module definition
 ├── app/
-│   └── app.go              # Job initialization and config
+│   └── app.go                 # Job initialization and config
 ├── onebrc/
-│   ├── handler.go          # Job orchestration
-│   ├── parser.go           # Parse "city;temp" format
-│   └── calculator.go       # Compute statistics
-└── tool/
-    └── main.go             # Generate test data
+│   ├── handler.go             # Job orchestration
+│   ├── parser.go              # Parse "city;temp" format
+│   └── calculator.go          # Compute statistics
+├── service/
+│   └── minio.go               # MinIO/S3 storage abstraction
+├── tool/
+│   └── main.go                # Generate test data
+├── podman-compose.yaml         # Infrastructure orchestration
+├── tempo-config.yaml           # Tempo trace backend config
+├── mimir-config.yaml           # Mimir metrics backend config
+├── loki-config.yaml            # Loki logs backend config
+├── otel-collector-config.yaml  # OpenTelemetry collector config
+└── grafana-datasources.yaml    # Grafana datasource definitions
 ```
 
 ## Initialize Go Module
@@ -51,9 +59,10 @@ Each package has a specific responsibility:
 
 - **app/** - Job initialization and configuration
 - **onebrc/** - Core business logic: orchestration, parsing, and calculation
+- **service/** - Storage abstraction layer (MinIO/S3 client)
 - **tool/** - Standalone utility to generate test data
 
-We'll start simple with local file I/O, then add cloud storage integration later.
+The infrastructure YAML files will be created in later sections as we add observability.
 
 ## What's Next
 

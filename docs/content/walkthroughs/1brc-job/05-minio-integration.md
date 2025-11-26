@@ -23,7 +23,7 @@ First, we need MinIO running. Create `podman-compose.yaml`:
 ```yaml
 services:
   minio:
-    image: docker.io/minio/minio:RELEASE.2024-11-07T00-52-20Z
+    image: docker.io/minio/minio:latest
     command: server /data --console-address ":9001"
     environment:
       - MINIO_ROOT_USER=minioadmin
@@ -54,7 +54,15 @@ You should see the minio container running. Access the console at http://localho
 
 ## Add Storage Package
 
-Create a new package for the storage abstraction. Create `service/minio.go`:
+We'll create a new `service` package to abstract our storage operations.
+
+First, create the service directory:
+
+```bash
+mkdir service
+```
+
+Then create `service/minio.go`:
 
 ```go
 package service
@@ -180,7 +188,11 @@ func (h *Handler) Handle(ctx context.Context) error {
 		h.log.ErrorContext(ctx, "failed to fetch input object", slog.Any("error", err))
 		return fmt.Errorf("get object: %w", err)
 	}
-	defer rc.Close()
+	defer func() {
+		if cerr := rc.Close(); cerr != nil {
+			h.log.WarnContext(ctx, "failed to close input object", slog.Any("error", cerr))
+		}
+	}()
 
 	// 2. Parse
 	cityStats, err := Parse(bufio.NewReader(rc))
