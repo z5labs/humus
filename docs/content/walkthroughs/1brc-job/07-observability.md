@@ -14,30 +14,38 @@ First, update `config.yaml` to add OTel settings:
 ```yaml
 # OpenTelemetry configuration
 otel:
-  service_name: {{env "OTEL_SERVICE_NAME" | default "1brc-job-walkthrough"}}
-  resource_attributes:
-    deployment.environment: {{env "OTEL_ENVIRONMENT" | default "development"}}
-
-  sdk:
-    disabled: {{env "OTEL_SDK_DISABLED" | default false}}
-
-  exporter:
-    otlp:
-      protocol: {{env "OTEL_EXPORTER_OTLP_PROTOCOL" | default "grpc"}}
-      endpoint: {{env "OTEL_EXPORTER_OTLP_ENDPOINT" | default "localhost:4317"}}
-      insecure: {{env "OTEL_EXPORTER_OTLP_INSECURE" | default true}}
+  resource:
+    service_name: 1brc-job-walkthrough
+  trace:
+    exporter:
+      type: {{env "OTEL_TRACE_EXPORTER" | default "otlp"}}
+      otlp:
+        type: grpc
+        target: {{env "OTEL_OTLP_TARGET" | default "localhost:4317"}}
+  metric:
+    exporter:
+      type: {{env "OTEL_METRIC_EXPORTER" | default "otlp"}}
+      otlp:
+        type: grpc
+        target: {{env "OTEL_OTLP_TARGET" | default "localhost:4317"}}
+  log:
+    exporter:
+      type: {{env "OTEL_LOG_EXPORTER" | default "otlp"}}
+      otlp:
+        type: grpc
+        target: {{env "OTEL_OTLP_TARGET" | default "localhost:4317"}}
 
 # MinIO configuration (unchanged)
 minio:
-  endpoint: {{env "MINIO_ENDPOINT" | default "localhost:9000"}}
-  access_key: {{env "MINIO_ACCESS_KEY" | default "minioadmin"}}
-  secret_key: {{env "MINIO_SECRET_KEY" | default "minioadmin"}}
-  bucket: {{env "MINIO_BUCKET" | default "onebrc"}}
+  endpoint: "{{env "MINIO_ENDPOINT" | default "localhost:9000"}}"
+  access_key: "{{env "MINIO_ACCESS_KEY" | default "minioadmin"}}"
+  secret_key: "{{env "MINIO_SECRET_KEY" | default "minioadmin"}}"
+  bucket: "{{env "MINIO_BUCKET" | default "onebrc"}}"
 
 # 1BRC configuration (unchanged)
 onebrc:
-  input_key: {{env "INPUT_KEY" | default "measurements.txt"}}
-  output_key: {{env "OUTPUT_KEY" | default "results.txt"}}
+  input_key: "{{env "ONEBRC_INPUT_KEY" | default "measurements.txt"}}"
+  output_key: "{{env "ONEBRC_OUTPUT_KEY" | default "results.txt"}}"
 ```
 
 ## Update Config Struct
