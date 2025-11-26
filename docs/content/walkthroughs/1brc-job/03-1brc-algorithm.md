@@ -184,40 +184,9 @@ onebrc:
   output_file: {{env "OUTPUT_FILE" | default "results.txt"}}
 ```
 
-## Update Config Struct
-
-Update `app/app.go`:
-
-```go
-package app
-
-import (
-	"context"
-
-	"1brc-walkthrough/onebrc"
-	"github.com/z5labs/humus/job"
-)
-
-type Config struct {
-	OneBRC struct {
-		InputFile  string `config:"input_file"`
-		OutputFile string `config:"output_file"`
-	} `config:"onebrc"`
-}
-
-func Init(ctx context.Context, cfg Config) (*job.App, error) {
-	handler := onebrc.NewHandler(
-		cfg.OneBRC.InputFile,
-		cfg.OneBRC.OutputFile,
-	)
-
-	return job.NewApp(handler), nil
-}
-```
-
 ## Implement Handler with Local File I/O
 
-Update `onebrc/handler.go`:
+Create `onebrc/handler.go`:
 
 ```go
 package onebrc
@@ -291,6 +260,37 @@ func (h *Handler) Handle(ctx context.Context) error {
 - Easy to test and debug
 - Proves the algorithm works
 - Can refactor to cloud storage later
+
+## Update Config Struct
+
+Now that the handler is implemented, update `app/app.go` to use it:
+
+```go
+package app
+
+import (
+	"context"
+
+	"1brc-walkthrough/onebrc"
+	"github.com/z5labs/humus/job"
+)
+
+type Config struct {
+	OneBRC struct {
+		InputFile  string `config:"input_file"`
+		OutputFile string `config:"output_file"`
+	} `config:"onebrc"`
+}
+
+func Init(ctx context.Context, cfg Config) (*job.App, error) {
+	handler := onebrc.NewHandler(
+		cfg.OneBRC.InputFile,
+		cfg.OneBRC.OutputFile,
+	)
+
+	return job.NewApp(handler), nil
+}
+```
 
 ## What's Next
 
