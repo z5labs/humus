@@ -174,16 +174,6 @@ Tokyo=-5.2/35.6/50.1
 
 One city per line: `city=min/mean/max`
 
-## Configuration
-
-Update `config.yaml` to add file paths:
-
-```yaml
-onebrc:
-  input_file: {{env "INPUT_FILE" | default "measurements.txt"}}
-  output_file: {{env "OUTPUT_FILE" | default "results.txt"}}
-```
-
 ## Implement Handler with Local File I/O
 
 Create `onebrc/handler.go`:
@@ -261,9 +251,19 @@ func (h *Handler) Handle(ctx context.Context) error {
 - Proves the algorithm works
 - Can refactor to cloud storage later
 
-## Update Config Struct
+## Update Configuration
 
-Now that the handler is implemented, update `app/app.go` to use it:
+Now that the handler is implemented, let's wire it up through the configuration system.
+
+First, update `config.yaml` to add the file paths:
+
+```yaml
+onebrc:
+  input_file: {{env "INPUT_FILE" | default "measurements.txt"}}
+  output_file: {{env "OUTPUT_FILE" | default "results.txt"}}
+```
+
+Then update `app/app.go` to define the Config struct and use the handler:
 
 ```go
 package app
@@ -291,6 +291,11 @@ func Init(ctx context.Context, cfg Config) (*job.App, error) {
 	return job.NewApp(handler), nil
 }
 ```
+
+**How config mapping works:**
+- The `onebrc:` key in YAML maps to the `OneBRC` struct field via the `config:"onebrc"` tag
+- The `input_file:` and `output_file:` keys map to `InputFile` and `OutputFile` fields
+- Template expressions like `{{env "INPUT_FILE"}}` allow environment variable overrides
 
 ## What's Next
 
