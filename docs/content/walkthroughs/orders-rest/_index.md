@@ -62,7 +62,7 @@ By the end of this walkthrough, you will:
 
 1. **Structure a Humus REST application** - Understand the endpoint/service/app pattern where endpoints define interfaces
 2. **Implement service interfaces** - Create HTTP client wrappers with proper error handling
-3. **Use RPC patterns** - Apply `rpc.ProduceJson` for GET and `rpc.HandleJson` for POST
+3. **Use RPC patterns** - Apply `rest.ProduceJson` for GET and `rest.HandleJson` for POST
 4. **Add query parameters** - Use `rest.QueryParam` with validation
 5. **Implement cursor-based pagination** - Build scalable pagination with base64 cursors
 6. **Orchestrate services** - Chain multiple service calls with error handling

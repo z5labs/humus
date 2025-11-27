@@ -49,7 +49,6 @@ import (
 
 	"github.com/z5labs/humus/example/rest/orders-walkthrough/service"
 	"github.com/z5labs/humus/rest"
-	"github.com/z5labs/humus/rest/rpc"
 )
 
 // ListOrders creates the GET /v1/orders endpoint.
@@ -59,7 +58,7 @@ func ListOrders(dataSvc DataService) rest.ApiOption {
 	return rest.Handle(
 		http.MethodGet,
 		rest.BasePath("/v1").Segment("orders"),
-		rpc.ProduceJson(handler),
+		rest.ProduceJson(handler),
 		rest.QueryParam("accountNumber", rest.Required()),
 		rest.QueryParam("after"),
 		rest.QueryParam("limit"),
@@ -71,7 +70,7 @@ func ListOrders(dataSvc DataService) rest.ApiOption {
 Key components:
 - `rest.Handle()` registers the endpoint
 - `rest.BasePath("/v1").Segment("orders")` creates path `/v1/orders`
-- `rpc.ProduceJson()` returns JSON responses (GET pattern)
+- `rest.ProduceJson()` returns JSON responses (GET pattern)
 - `rest.QueryParam()` defines query parameters
 - `rest.Required()` marks parameter as mandatory
 

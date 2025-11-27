@@ -9,17 +9,18 @@ import (
 
 	"github.com/z5labs/humus/example/rest/orders-walkthrough/service"
 	"github.com/z5labs/humus/rest"
-	"github.com/z5labs/humus/rest/rpc"
 )
 
 // ListOrders creates the GET /v1/orders endpoint.
 func ListOrders(dataSvc DataService) rest.ApiOption {
 	handler := &listOrdersHandler{dataSvc: dataSvc}
 
-	return rest.Handle(
+	return rest.Operation(
 		http.MethodGet,
 		rest.BasePath("/v1").Segment("orders"),
-		rpc.ProduceJson(handler),
+		rest.ReturnJson(
+			rest.ConsumeNothing(handler),
+		),
 		rest.QueryParam("accountNumber", rest.Required()),
 		rest.QueryParam("after"),
 		rest.QueryParam("limit", rest.Regex(regexp.MustCompile(`^[0-9]+$`))),

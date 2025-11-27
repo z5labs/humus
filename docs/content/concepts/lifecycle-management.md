@@ -165,16 +165,17 @@ func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
         return nil, err
     }
 
-    api := rest.NewApi("My Service", "1.0.0")
+    handler := rest.HandlerFunc[Request, Response](func(ctx context.Context, req *Request) (*Response, error) {
+        // Handler automatically respects context cancellation
+        resp, err := processRequest(ctx, db, req)
+        return &resp, err
+    })
 
-    handler := rpc.NewOperation(
-        rpc.Handle(func(ctx context.Context, req Request) (Response, error) {
-            // Handler automatically respects context cancellation
-            return processRequest(ctx, db, req)
-        }),
+    api := rest.NewApi(
+        "My Service",
+        "1.0.0",
+        rest.Handle(http.MethodPost, rest.BasePath("/process"), rest.HandleJson(handler)),
     )
-
-    rest.Handle(http.MethodPost, rest.BasePath("/process"), handler)
     return api, nil
 }
 

@@ -10,7 +10,6 @@ import (
 
 	"github.com/z5labs/humus/example/rest/orders-walkthrough/service"
 	"github.com/z5labs/humus/rest"
-	"github.com/z5labs/humus/rest/rpc"
 )
 
 // PlaceOrderRequest is the request body for placing an order.
@@ -38,10 +37,12 @@ func PlaceOrder(restrictionSvc RestrictionService, eligibilitySvc EligibilitySer
 		dataSvc:        dataSvc,
 	}
 
-	return rest.Handle(
+	return rest.Operation(
 		http.MethodPost,
 		rest.BasePath("/v1").Segment("order"),
-		rpc.HandleJson(handler),
+		rest.ReturnJson(
+			rest.ConsumeJson(handler),
+		),
 	)
 }
 

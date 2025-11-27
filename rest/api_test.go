@@ -6,6 +6,7 @@
 package rest
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -138,18 +139,19 @@ func TestMethodNotAllowed(t *testing.T) {
 		})
 
 		// Create a simple test handler using mockHandler
-		testHandler := mockHandler{
-			handler: func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusOK)
-				w.Write([]byte("ok"))
-			},
-		}
+		testHandler := HandlerFunc[EmptyRequest, EmptyResponse](func(ctx context.Context, r *EmptyRequest) (*EmptyResponse, error) {
+			return &EmptyResponse{}, nil
+		})
 
 		// Register a GET handler at /test, then try a POST request
 		api := NewApi(
 			"Test",
 			"v1",
-			Handle(http.MethodGet, BasePath("/test"), testHandler),
+			Operation(
+				http.MethodGet,
+				BasePath("/test"),
+				testHandler,
+			),
 			MethodNotAllowed(customHandler),
 		)
 

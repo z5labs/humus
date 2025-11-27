@@ -90,7 +90,6 @@ import (
 	"net/http"
 
 	"github.com/z5labs/humus/rest"
-	"github.com/z5labs/humus/rest/rpc"
 )
 
 // ListOrdersResponse is the response for listing orders with pagination.
@@ -101,7 +100,7 @@ type ListOrdersResponse struct {
 
 // ListOrders creates the GET /v1/orders endpoint.
 func ListOrders() rest.ApiOption {
-	handler := rpc.ProducerFunc[ListOrdersResponse](func(ctx context.Context) (*ListOrdersResponse, error) {
+	handler := rest.ProducerFunc[ListOrdersResponse](func(ctx context.Context) (*ListOrdersResponse, error) {
 		// Return empty list for now
 		return &ListOrdersResponse{
 			Orders: []Order{},
@@ -114,7 +113,7 @@ func ListOrders() rest.ApiOption {
 	return rest.Handle(
 		http.MethodGet,
 		rest.BasePath("/v1").Segment("orders"),
-		rpc.ProduceJson(handler),
+		rest.ProduceJson(handler),
 	)
 }
 ```
@@ -133,7 +132,6 @@ import (
 	"net/http"
 
 	"github.com/z5labs/humus/rest"
-	"github.com/z5labs/humus/rest/rpc"
 )
 
 // PlaceOrderRequest is the request body for placing an order.
@@ -149,7 +147,7 @@ type PlaceOrderResponse struct {
 
 // PlaceOrder creates the POST /v1/order endpoint.
 func PlaceOrder() rest.ApiOption {
-	handler := rpc.HandlerFunc[PlaceOrderRequest, PlaceOrderResponse](
+	handler := rest.HandlerFunc[PlaceOrderRequest, PlaceOrderResponse](
 		func(ctx context.Context, req *PlaceOrderRequest) (*PlaceOrderResponse, error) {
 			// Return dummy success response
 			return &PlaceOrderResponse{
@@ -161,7 +159,7 @@ func PlaceOrder() rest.ApiOption {
 	return rest.Handle(
 		http.MethodPost,
 		rest.BasePath("/v1").Segment("order"),
-		rpc.HandleJson(handler),
+		rest.HandleJson(handler),
 	)
 }
 ```
@@ -202,8 +200,8 @@ func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
 
 Key patterns demonstrated here:
 - **Separation of concerns** - Endpoints and app logic are in separate packages
-- **GET endpoint** - Uses `rpc.ProducerFunc` (no request body) with `rpc.ProduceJson`
-- **POST endpoint** - Uses `rpc.HandlerFunc` (request + response) with `rpc.HandleJson`
+- **GET endpoint** - Uses `rest.ProducerFunc` (no request body) with `rest.ProduceJson`
+- **POST endpoint** - Uses `rest.HandlerFunc` (request + response) with `rest.HandleJson`
 - **Dummy responses** - Hardcoded values allow immediate testing
 - **No dependencies** - No services or database needed yet
 - **Type organization** - Common types in `model.go`, endpoint-specific types alongside their handlers

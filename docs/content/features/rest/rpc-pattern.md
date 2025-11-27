@@ -6,7 +6,7 @@ type: docs
 ---
 
 
-The `rest/rpc` package provides a type-safe abstraction for HTTP handlers with automatic OpenAPI schema generation.
+The `rest` package provides a type-safe abstraction for HTTP handlers with automatic OpenAPI schema generation.
 
 ## Overview
 
@@ -39,7 +39,7 @@ type ListUsersResponse struct {
     Users []User `json:"users"`
 }
 
-handler := rpc.ProducerFunc[ListUsersResponse](func(ctx context.Context) (*ListUsersResponse, error) {
+handler := rest.ProducerFunc[ListUsersResponse](func(ctx context.Context) (*ListUsersResponse, error) {
     users, err := getUsers(ctx)
     if err != nil {
         return nil, err
@@ -47,7 +47,7 @@ handler := rpc.ProducerFunc[ListUsersResponse](func(ctx context.Context) (*ListU
     return &ListUsersResponse{Users: users}, nil
 })
 
-rest.Handle(http.MethodGet, rest.BasePath("/users"), rpc.ProduceJson(handler))
+rest.Handle(http.MethodGet, rest.BasePath("/users"), rest.ProduceJson(handler))
 ```
 
 ### ConsumeOnlyJson - Webhook Endpoints
@@ -60,12 +60,12 @@ type WebhookPayload struct {
     Data  string `json:"data"`
 }
 
-handler := rpc.ConsumerFunc[WebhookPayload](func(ctx context.Context, req *WebhookPayload) error {
+handler := rest.ConsumerFunc[WebhookPayload](func(ctx context.Context, req *WebhookPayload) error {
     // Process webhook
     return processWebhook(ctx, req.Event, req.Data)
 })
 
-rest.Handle(http.MethodPost, rest.BasePath("/webhooks"), rpc.ConsumeOnlyJson(handler))
+rest.Handle(http.MethodPost, rest.BasePath("/webhooks"), rest.ConsumeOnlyJson(handler))
 ```
 
 ### HandleJson - Full CRUD Endpoints
@@ -84,7 +84,7 @@ type User struct {
     Email string `json:"email"`
 }
 
-handler := rpc.HandlerFunc[CreateUserRequest, User](func(ctx context.Context, req *CreateUserRequest) (*User, error) {
+handler := rest.HandlerFunc[CreateUserRequest, User](func(ctx context.Context, req *CreateUserRequest) (*User, error) {
     user := &User{
         ID:    generateID(),
         Name:  req.Name,
@@ -93,7 +93,7 @@ handler := rpc.HandlerFunc[CreateUserRequest, User](func(ctx context.Context, re
     return user, nil
 })
 
-rest.Handle(http.MethodPost, rest.BasePath("/users"), rpc.HandleJson(handler))
+rest.Handle(http.MethodPost, rest.BasePath("/users"), rest.HandleJson(handler))
 ```
 
 ## Handler Interfaces
@@ -126,7 +126,7 @@ func (s *UserService) Handle(ctx context.Context, req *CreateUserRequest) (*User
 
 // Register
 service := &UserService{db: database}
-rest.Handle(http.MethodPost, rest.BasePath("/users"), rpc.HandleJson(service))
+rest.Handle(http.MethodPost, rest.BasePath("/users"), rest.HandleJson(service))
 ```
 
 ### Producer[T]
@@ -156,7 +156,7 @@ func (s *ListUsersService) Produce(ctx context.Context) (*ListUsersResponse, err
 
 // Register
 service := &ListUsersService{db: database}
-rest.Handle(http.MethodGet, rest.BasePath("/users"), rpc.ProduceJson(service))
+rest.Handle(http.MethodGet, rest.BasePath("/users"), rest.ProduceJson(service))
 ```
 
 ### Consumer[T]
@@ -182,7 +182,7 @@ func (s *WebhookService) Consume(ctx context.Context, req *WebhookPayload) error
 
 // Register
 service := &WebhookService{processor: eventProcessor}
-rest.Handle(http.MethodPost, rest.BasePath("/webhooks"), rpc.ConsumeOnlyJson(service))
+rest.Handle(http.MethodPost, rest.BasePath("/webhooks"), rest.ConsumeOnlyJson(service))
 ```
 
 ### Adapter Functions
@@ -195,17 +195,17 @@ For simple cases, use adapter functions instead of implementing interfaces:
 
 ```go
 // Handler adapter
-h := rpc.HandlerFunc[Request, Response](func(ctx context.Context, req *Request) (*Response, error) {
+h := rest.HandlerFunc[Request, Response](func(ctx context.Context, req *Request) (*Response, error) {
     return &Response{}, nil
 })
 
 // Producer adapter
-p := rpc.ProducerFunc[Response](func(ctx context.Context) (*Response, error) {
+p := rest.ProducerFunc[Response](func(ctx context.Context) (*Response, error) {
     return &Response{}, nil
 })
 
 // Consumer adapter
-c := rpc.ConsumerFunc[Request](func(ctx context.Context, req *Request) error {
+c := rest.ConsumerFunc[Request](func(ctx context.Context, req *Request) error {
     return nil
 })
 ```
@@ -231,7 +231,7 @@ func (v *SimpleJWTVerifier) Verify(ctx context.Context, token string) (context.C
 operation := rest.Handle(
     http.MethodPost,
     rest.BasePath("/users"),
-    rpc.HandleJson(handler),
+    rest.HandleJson(handler),
     rest.QueryParam("format"),
     rest.Header("Authorization", rest.Required(), rest.JWTAuth("jwt", &SimpleJWTVerifier{})),
 )
@@ -253,7 +253,7 @@ type CreateUserRequest struct {
     Email string `json:"email"`
 }
 
-handler := rpc.HandlerFunc[CreateUserRequest, User](func(ctx context.Context, req *CreateUserRequest) (*User, error) {
+handler := rest.HandlerFunc[CreateUserRequest, User](func(ctx context.Context, req *CreateUserRequest) (*User, error) {
     return createUser(ctx, req.Name, req.Email)
 })
 ```
@@ -263,7 +263,7 @@ handler := rpc.HandlerFunc[CreateUserRequest, User](func(ctx context.Context, re
 Query parameters are accessed using the `rest` package, not through struct tags:
 
 ```go
-handler := rpc.ProducerFunc[ListUsersResponse](func(ctx context.Context) (*ListUsersResponse, error) {
+handler := rest.ProducerFunc[ListUsersResponse](func(ctx context.Context) (*ListUsersResponse, error) {
     // Access query parameter
     limitValues := rest.QueryParamValue(ctx, "limit")
     limit, err := strconv.Atoi(limitValues[0])
@@ -277,7 +277,7 @@ handler := rpc.ProducerFunc[ListUsersResponse](func(ctx context.Context) (*ListU
 rest.Handle(
     http.MethodGet,
     rest.BasePath("/users"),
-    rpc.ProduceJson(handler),
+    rest.ProduceJson(handler),
     rest.QueryParam("limit", rest.Required(), rest.Regex(regexp.MustCompile(`^\d+$`))),
 )
 ```
@@ -287,7 +287,7 @@ rest.Handle(
 Path parameters are also accessed via the `rest` package:
 
 ```go
-handler := rpc.ProducerFunc[User](func(ctx context.Context) (*User, error) {
+handler := rest.ProducerFunc[User](func(ctx context.Context) (*User, error) {
     // Access path parameter
     id := rest.PathParamValue(ctx, "id")
     return getUserByID(ctx, id)
@@ -296,7 +296,7 @@ handler := rpc.ProducerFunc[User](func(ctx context.Context) (*User, error) {
 rest.Handle(
     http.MethodGet,
     rest.BasePath("/users").Param("id"),
-    rpc.ProduceJson(handler),
+    rest.ProduceJson(handler),
 )
 ```
 
@@ -321,7 +321,7 @@ func (v *MyVerifier) Verify(ctx context.Context, token string) (context.Context,
 }
 
 // Handler accesses verified claims from context
-handler := rpc.ProducerFunc[Response](func(ctx context.Context) (*Response, error) {
+handler := rest.ProducerFunc[Response](func(ctx context.Context) (*Response, error) {
     // Extract user ID from context (already verified by JWTAuth)
     userID, ok := ctx.Value(userIDKey).(string)
     if !ok {
@@ -333,7 +333,7 @@ handler := rpc.ProducerFunc[Response](func(ctx context.Context) (*Response, erro
 rest.Handle(
     http.MethodGet,
     rest.BasePath("/data"),
-    rpc.ProduceJson(handler),
+    rest.ProduceJson(handler),
     rest.Header("Authorization", rest.Required(), rest.JWTAuth("jwt", &MyVerifier{})),
 )
 ```
@@ -353,7 +353,7 @@ type UserResponse struct {
     CreatedAt time.Time `json:"created_at"`
 }
 
-handler := rpc.ProducerFunc[UserResponse](func(ctx context.Context) (*UserResponse, error) {
+handler := rest.ProducerFunc[UserResponse](func(ctx context.Context) (*UserResponse, error) {
     return &UserResponse{
         ID:        "user-123",
         Name:      "John Doe",
@@ -374,7 +374,7 @@ type User struct {
 
 type ListUsersResponse []User
 
-handler := rpc.ProducerFunc[ListUsersResponse](func(ctx context.Context) (*ListUsersResponse, error) {
+handler := rest.ProducerFunc[ListUsersResponse](func(ctx context.Context) (*ListUsersResponse, error) {
     users := &ListUsersResponse{
         {ID: "1", Name: "Alice"},
         {ID: "2", Name: "Bob"},
@@ -392,11 +392,11 @@ type DeleteRequest struct {
     ID string `json:"id"`
 }
 
-handler := rpc.ConsumerFunc[DeleteRequest](func(ctx context.Context, req *DeleteRequest) error {
+handler := rest.ConsumerFunc[DeleteRequest](func(ctx context.Context, req *DeleteRequest) error {
     return deleteUser(ctx, req.ID)
 })
 
-rest.Handle(http.MethodDelete, rest.BasePath("/users"), rpc.ConsumeOnlyJson(handler))
+rest.Handle(http.MethodDelete, rest.BasePath("/users"), rest.ConsumeOnlyJson(handler))
 ```
 
 This returns HTTP 200 OK with an empty response body.
@@ -418,14 +418,14 @@ type User struct {
 }
 ```
 
-The RPC package uses reflection to generate JSON schemas that are included in the OpenAPI specification. Struct tags like `description` and `format` are automatically recognized.
+The RPC pattern uses reflection to generate JSON schemas that are included in the OpenAPI specification. Struct tags like `description` and `format` are automatically recognized.
 
 ## Error Handling
 
 Errors returned from handlers are automatically handled by the `rest` package:
 
 ```go
-handler := rpc.HandlerFunc[Request, Response](func(ctx context.Context, req *Request) (*Response, error) {
+handler := rest.HandlerFunc[Request, Response](func(ctx context.Context, req *Request) (*Response, error) {
     if req.Invalid {
         return nil, fmt.Errorf("invalid request")
     }
@@ -455,7 +455,7 @@ errorHandler := func(ctx context.Context, w http.ResponseWriter, err error) {
 rest.Handle(
     http.MethodPost,
     rest.BasePath("/users"),
-    rpc.HandleJson(handler),
+    rest.HandleJson(handler),
     rest.OnError(errorHandler),
 )
 ```
@@ -471,7 +471,7 @@ verifier := &MyJWTVerifier{}
 operation := rest.Handle(
     http.MethodPost,
     rest.BasePath("/users"),
-    rpc.HandleJson(handler),
+    rest.HandleJson(handler),
     rest.WithOperationID("createUser"),
     rest.WithDescription("Creates a new user"),
     rest.WithTags("users"),

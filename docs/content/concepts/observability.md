@@ -29,13 +29,13 @@ HTTP handlers are automatically instrumented with:
 ```go
 // No extra code needed - automatic instrumentation!
 func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
-    api := rest.NewApi("My Service", "1.0.0")
+    handler := rest.ProducerFunc[Response](handleRequest)  // Automatically traced
 
-    handler := rpc.NewOperation(
-        rpc.Handle(handleRequest),  // Automatically traced
+    api := rest.NewApi(
+        "My Service",
+        "1.0.0",
+        rest.Handle(http.MethodGet, rest.BasePath("/users"), rest.ProduceJson(handler)),
     )
-
-    rest.Handle(http.MethodGet, rest.BasePath("/users"), handler)
     return api, nil
 }
 ```
