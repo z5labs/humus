@@ -104,7 +104,7 @@ rest.Handle(
 Access the API key in your handler:
 
 ```go
-handler := rpc.ProducerFunc[Response](func(ctx context.Context) (*Response, error) {
+handler := rest.ProducerFunc[Response](func(ctx context.Context) (*Response, error) {
     apiKey := rest.HeaderValue(ctx, "X-API-Key")
     // Validate API key against your database
     if !isValidAPIKey(apiKey[0]) {
@@ -130,7 +130,7 @@ rest.Handle(
 Parse Basic auth credentials in your handler:
 
 ```go
-handler := rpc.ProducerFunc[Response](func(ctx context.Context) (*Response, error) {
+handler := rest.ProducerFunc[Response](func(ctx context.Context) (*Response, error) {
     authHeader := rest.HeaderValue(ctx, "Authorization")[0]
 
     // Parse "Basic <base64>" format
@@ -296,7 +296,7 @@ func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
     verifier := NewJWTVerifier(publicKey)
 
     // Protected endpoint
-    handler := rpc.ProducerFunc[UserProfile](func(ctx context.Context) (*UserProfile, error) {
+    handler := rest.ProducerFunc[UserProfile](func(ctx context.Context) (*UserProfile, error) {
         // Extract user info from context
         userID, ok := GetUserID(ctx)
         if !ok {
@@ -316,7 +316,7 @@ func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
     rest.Handle(
         http.MethodGet,
         rest.BasePath("/profile"),
-        rpc.ProduceJson(handler),
+        rest.ProduceJson(handler),
         rest.Header("Authorization", rest.Required(), rest.JWTAuth("jwt", verifier)),
     )
 
@@ -570,8 +570,8 @@ func (v *MyJWTVerifier) Verify(ctx context.Context, token string) (context.Conte
 Combine JWT authentication with role checking:
 
 ```go
-func requireRole(requiredRole string) rpc.OperationOption {
-    return func(oo *rpc.OperationOptions) {
+func requireRole(requiredRole string) rest.OperationOption {
+    return func(oo *rest.OperationOptions) {
         oo.transforms = append(oo.transforms, func(r *http.Request) (*http.Request, error) {
             roles, ok := GetRoles(r.Context())
             if !ok {
@@ -621,7 +621,7 @@ rest.Handle(
 Check in handler:
 
 ```go
-handler := rpc.ProducerFunc[Response](func(ctx context.Context) (*Response, error) {
+handler := rest.ProducerFunc[Response](func(ctx context.Context) (*Response, error) {
     if userID, ok := GetUserID(ctx); ok {
         // Authenticated user - return personalized response
         return getPersonalizedResponse(ctx, userID)

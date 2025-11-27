@@ -25,7 +25,6 @@ import (
 
 	"github.com/z5labs/humus/example/rest/orders-walkthrough/service"
 	"github.com/z5labs/humus/rest"
-	"github.com/z5labs/humus/rest/rpc"
 )
 
 // PlaceOrderRequest is the request body for placing an order.
@@ -62,14 +61,14 @@ func PlaceOrder(restrictionSvc RestrictionService, eligibilitySvc EligibilitySer
 	return rest.Handle(
 		http.MethodPost,
 		rest.BasePath("/v1").Segment("order"),
-		rpc.HandleJson(handler),
+		rest.HandleJson(handler),
 	)
 }
 ```
 
 Key differences from GET:
 - Uses `http.MethodPost`
-- Uses `rpc.HandleJson()` which consumes request body AND returns response
+- Uses `rest.HandleJson()` which consumes request body AND returns response
 - No query parameters needed
 - Interfaces defined locally (see `endpoint/interfaces.go`)
 

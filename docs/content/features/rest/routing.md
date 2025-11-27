@@ -42,7 +42,7 @@ rest.Handle(
 Access path parameters in your handler:
 
 ```go
-handler := rpc.ProducerFunc[User](func(ctx context.Context) (*User, error) {
+handler := rest.ProducerFunc[User](func(ctx context.Context) (*User, error) {
     userID := rest.PathParamValue(ctx, "id")
     return getUserByID(ctx, userID)
 })
@@ -157,7 +157,7 @@ rest.Handle(
 Access in handler:
 
 ```go
-handler := rpc.ProducerFunc[Results](func(ctx context.Context) (*Results, error) {
+handler := rest.ProducerFunc[Results](func(ctx context.Context) (*Results, error) {
     query := rest.QueryParamValue(ctx, "q")[0]
     limit := rest.QueryParamValue(ctx, "limit")[0]
 
@@ -181,7 +181,7 @@ rest.Handle(
 Request: `GET /filter?tag=go&tag=rest&tag=api`
 
 ```go
-handler := rpc.ProducerFunc[Results](func(ctx context.Context) (*Results, error) {
+handler := rest.ProducerFunc[Results](func(ctx context.Context) (*Results, error) {
     tags := rest.QueryParamValue(ctx, "tag")
     // tags = []string{"go", "rest", "api"}
 
@@ -220,7 +220,7 @@ rest.Handle(
 Access in handler:
 
 ```go
-handler := rpc.ProducerFunc[Data](func(ctx context.Context) (*Data, error) {
+handler := rest.ProducerFunc[Data](func(ctx context.Context) (*Data, error) {
     language := rest.HeaderValue(ctx, "Accept-Language")[0]
     requestID := rest.HeaderValue(ctx, "X-Request-ID")[0]
 
@@ -272,7 +272,7 @@ rest.Handle(
 Access in handler:
 
 ```go
-handler := rpc.ProducerFunc[Dashboard](func(ctx context.Context) (*Dashboard, error) {
+handler := rest.ProducerFunc[Dashboard](func(ctx context.Context) (*Dashboard, error) {
     cookies := rest.CookieValue(ctx, "session")
     sessionID := cookies[0].Value
 

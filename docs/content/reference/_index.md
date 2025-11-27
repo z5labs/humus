@@ -29,8 +29,9 @@ Quick reference guides for Humus packages. For complete API documentation, see [
 ### REST Services
 - [rest.NewApi](https://pkg.go.dev/github.com/z5labs/humus/rest#NewApi)
 - [rest.Handle](https://pkg.go.dev/github.com/z5labs/humus/rest#Handle)
-- [rpc.NewOperation](https://pkg.go.dev/github.com/z5labs/humus/rest/rpc#NewOperation)
-- [rpc.Handle](https://pkg.go.dev/github.com/z5labs/humus/rest/rpc#Handle)
+- [rest.ProduceJson](https://pkg.go.dev/github.com/z5labs/humus/rest#ProduceJson)
+- [rest.HandleJson](https://pkg.go.dev/github.com/z5labs/humus/rest#HandleJson)
+- [rest.ConsumeOnlyJson](https://pkg.go.dev/github.com/z5labs/humus/rest#ConsumeOnlyJson)
 
 ### gRPC Services
 - [grpc.NewApi](https://pkg.go.dev/github.com/z5labs/humus/grpc#NewApi)

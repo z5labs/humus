@@ -39,7 +39,7 @@ Thank you for your interest in contributing to Humus! This guide will help you g
 go test -race -cover ./...
 
 # Run tests for a specific package
-go test -race -cover ./rest/rpc
+go test -race -cover ./rest
 
 # Run a specific test
 go test -race -run TestName ./path/to/package

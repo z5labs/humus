@@ -51,7 +51,6 @@ import (
     "sync"
 
     "github.com/z5labs/humus/rest"
-    "github.com/z5labs/humus/rest/rpc"
 )
 
 type Todo struct {
@@ -141,92 +140,64 @@ func main() {
 
 ```go
 func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
-    api := rest.NewApi("Todo API", "1.0.0")
-
     store := NewTodoStore()
 
-    // Register handlers
-    registerHandlers(api, store)
+    // Create todo handler
+    createHandler := rest.HandlerFunc[Todo, Todo](func(ctx context.Context, req *Todo) (*Todo, error) {
+        if req.ID == "" {
+            req.ID = fmt.Sprintf("todo-%d", len(store.todos)+1)
+        }
+        store.Create(*req)
+        return req, nil
+    })
+
+    // List todos handler
+    listHandler := rest.ProducerFunc[[]Todo](func(ctx context.Context) (*[]Todo, error) {
+        todos := store.List()
+        return &todos, nil
+    })
+
+    // Get todo handler
+    getHandler := rest.ProducerFunc[Todo](func(ctx context.Context) (*Todo, error) {
+        id := rest.PathParamValue(ctx, "id")
+        todo, ok := store.Get(id)
+        if !ok {
+            return nil, fmt.Errorf("todo not found")
+        }
+        return &todo, nil
+    })
+
+    // Update todo handler
+    updateHandler := rest.HandlerFunc[Todo, Todo](func(ctx context.Context, req *Todo) (*Todo, error) {
+        id := rest.PathParamValue(ctx, "id")
+        req.ID = id
+        if !store.Update(*req) {
+            return nil, fmt.Errorf("todo not found")
+        }
+        return req, nil
+    })
+
+    // Delete todo handler
+    deleteHandler := rest.ConsumerFunc[struct{}](func(ctx context.Context, req *struct{}) error {
+        id := rest.PathParamValue(ctx, "id")
+        if !store.Delete(id) {
+            return fmt.Errorf("todo not found")
+        }
+        return nil
+    })
+
+    // Create API with all endpoints
+    api := rest.NewApi(
+        "Todo API",
+        "1.0.0",
+        rest.Handle(http.MethodPost, rest.BasePath("/todos"), rest.HandleJson(createHandler)),
+        rest.Handle(http.MethodGet, rest.BasePath("/todos"), rest.ProduceJson(listHandler)),
+        rest.Handle(http.MethodGet, rest.BasePath("/todos").Param("id"), rest.ProduceJson(getHandler)),
+        rest.Handle(http.MethodPut, rest.BasePath("/todos").Param("id"), rest.HandleJson(updateHandler)),
+        rest.Handle(http.MethodDelete, rest.BasePath("/todos").Param("id"), rest.ConsumeOnlyJson(deleteHandler)),
+    )
 
     return api, nil
-}
-
-func registerHandlers(api *rest.Api, store *TodoStore) {
-    // Create todo
-    createHandler := rpc.NewOperation(
-        rpc.ConsumeJson(
-            rpc.ReturnJson(
-                rpc.Handle(func(ctx context.Context, req Todo) (Todo, error) {
-                    if req.ID == "" {
-                        req.ID = fmt.Sprintf("todo-%d", len(store.todos)+1)
-                    }
-                    store.Create(req)
-                    return req, nil
-                }),
-            ),
-        ),
-    )
-    rest.Handle(http.MethodPost, rest.BasePath("/todos"), createHandler)
-
-    // List todos
-    listHandler := rpc.NewOperation(
-        rpc.ReturnJson(
-            rpc.Handle(func(ctx context.Context, _ any) ([]Todo, error) {
-                return store.List(), nil
-            }),
-        ),
-    )
-    rest.Handle(http.MethodGet, rest.BasePath("/todos"), listHandler)
-
-    // Get todo
-    getHandler := rpc.NewOperation(
-        rpc.ReturnJson(
-            rpc.Handle(func(ctx context.Context, req PathParams) (Todo, error) {
-                todo, ok := store.Get(req.ID)
-                if !ok {
-                    return Todo{}, fmt.Errorf("todo not found")
-                }
-                return todo, nil
-            }),
-        ),
-    )
-    rest.Handle(http.MethodGet, rest.BasePath("/todos").Param("id"), getHandler)
-
-    // Update todo
-    updateHandler := rpc.NewOperation(
-        rpc.ConsumeJson(
-            rpc.ReturnJson(
-                rpc.Handle(func(ctx context.Context, req UpdateRequest) (Todo, error) {
-                    req.Todo.ID = req.ID
-                    if !store.Update(req.Todo) {
-                        return Todo{}, fmt.Errorf("todo not found")
-                    }
-                    return req.Todo, nil
-                }),
-            ),
-        ),
-    )
-    rest.Handle(http.MethodPut, rest.BasePath("/todos").Param("id"), updateHandler)
-
-    // Delete todo
-    deleteHandler := rpc.NewOperation(
-        rpc.Handle(func(ctx context.Context, req PathParams) (string, error) {
-            if !store.Delete(req.ID) {
-                return "", fmt.Errorf("todo not found")
-            }
-            return "deleted", nil
-        }),
-    )
-    rest.Handle(http.MethodDelete, rest.BasePath("/todos").Param("id"), deleteHandler)
-}
-
-type PathParams struct {
-    ID string `path:"id"`
-}
-
-type UpdateRequest struct {
-    ID   string `path:"id"`
-    Todo Todo   `json:",inline"`
 }
 ```
 
@@ -244,7 +215,6 @@ import (
     "sync"
 
     "github.com/z5labs/humus/rest"
-    "github.com/z5labs/humus/rest/rpc"
 )
 
 type Todo struct {
@@ -321,85 +291,64 @@ func main() {
 }
 
 func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
-    api := rest.NewApi("Todo API", "1.0.0")
-
     store := NewTodoStore()
-    registerHandlers(api, store)
+
+    // Create todo handler
+    createHandler := rest.HandlerFunc[Todo, Todo](func(ctx context.Context, req *Todo) (*Todo, error) {
+        if req.ID == "" {
+            req.ID = fmt.Sprintf("todo-%d", len(store.todos)+1)
+        }
+        store.Create(*req)
+        return req, nil
+    })
+
+    // List todos handler
+    listHandler := rest.ProducerFunc[[]Todo](func(ctx context.Context) (*[]Todo, error) {
+        todos := store.List()
+        return &todos, nil
+    })
+
+    // Get todo handler
+    getHandler := rest.ProducerFunc[Todo](func(ctx context.Context) (*Todo, error) {
+        id := rest.PathParamValue(ctx, "id")
+        todo, ok := store.Get(id)
+        if !ok {
+            return nil, fmt.Errorf("todo not found")
+        }
+        return &todo, nil
+    })
+
+    // Update todo handler
+    updateHandler := rest.HandlerFunc[Todo, Todo](func(ctx context.Context, req *Todo) (*Todo, error) {
+        id := rest.PathParamValue(ctx, "id")
+        req.ID = id
+        if !store.Update(*req) {
+            return nil, fmt.Errorf("todo not found")
+        }
+        return req, nil
+    })
+
+    // Delete todo handler
+    deleteHandler := rest.ConsumerFunc[struct{}](func(ctx context.Context, req *struct{}) error {
+        id := rest.PathParamValue(ctx, "id")
+        if !store.Delete(id) {
+            return fmt.Errorf("todo not found")
+        }
+        return nil
+    })
+
+    // Create API with all endpoints
+    api := rest.NewApi(
+        "Todo API",
+        "1.0.0",
+        rest.Handle(http.MethodPost, rest.BasePath("/todos"), rest.HandleJson(createHandler)),
+        rest.Handle(http.MethodGet, rest.BasePath("/todos"), rest.ProduceJson(listHandler)),
+        rest.Handle(http.MethodGet, rest.BasePath("/todos").Param("id"), rest.ProduceJson(getHandler)),
+        rest.Handle(http.MethodPut, rest.BasePath("/todos").Param("id"), rest.HandleJson(updateHandler)),
+        rest.Handle(http.MethodDelete, rest.BasePath("/todos").Param("id"), rest.ConsumeOnlyJson(deleteHandler)),
+    )
 
     return api, nil
-}
-
-func registerHandlers(api *rest.Api, store *TodoStore) {
-    createHandler := rpc.NewOperation(
-        rpc.ConsumeJson(
-            rpc.ReturnJson(
-                rpc.Handle(func(ctx context.Context, req Todo) (Todo, error) {
-                    if req.ID == "" {
-                        req.ID = fmt.Sprintf("todo-%d", len(store.todos)+1)
-                    }
-                    store.Create(req)
-                    return req, nil
-                }),
-            ),
-        ),
-    )
-    rest.Handle(http.MethodPost, rest.BasePath("/todos"), createHandler)
-
-    listHandler := rpc.NewOperation(
-        rpc.ReturnJson(
-            rpc.Handle(func(ctx context.Context, _ any) ([]Todo, error) {
-                return store.List(), nil
-            }),
-        ),
-    )
-    rest.Handle(http.MethodGet, rest.BasePath("/todos"), listHandler)
-
-    getHandler := rpc.NewOperation(
-        rpc.ReturnJson(
-            rpc.Handle(func(ctx context.Context, req PathParams) (Todo, error) {
-                todo, ok := store.Get(req.ID)
-                if !ok {
-                    return Todo{}, fmt.Errorf("todo not found")
-                }
-                return todo, nil
-            }),
-        ),
-    )
-    rest.Handle(http.MethodGet, rest.BasePath("/todos").Param("id"), getHandler)
-
-    updateHandler := rpc.NewOperation(
-        rpc.ConsumeJson(
-            rpc.ReturnJson(
-                rpc.Handle(func(ctx context.Context, req UpdateRequest) (Todo, error) {
-                    req.Todo.ID = req.ID
-                    if !store.Update(req.Todo) {
-                        return Todo{}, fmt.Errorf("todo not found")
-                    }
-                    return req.Todo, nil
-                }),
-            ),
-        ),
-    )
-    rest.Handle(http.MethodPut, rest.BasePath("/todos").Param("id"), updateHandler)
-
-    deleteHandler := rpc.NewOperation(
-        rpc.Handle(func(ctx context.Context, req PathParams) (string, error) {
-            if !store.Delete(req.ID) {
-                return "", fmt.Errorf("todo not found")
-            }
-            return "deleted", nil
-        }),
-    )
-    rest.Handle(http.MethodDelete, rest.BasePath("/todos").Param("id"), deleteHandler)
-}
-
-type PathParams struct {
-    ID string `path:"id"`
-}
-
-type UpdateRequest struct {
-    ID   string `path:"id"`
-    Todo Todo   `json:",inline"`
 }
 ```
 
@@ -439,8 +388,8 @@ curl http://localhost:8080/openapi.json
 
 1. **rest.Run()** loads config and calls Init
 2. **rest.NewApi()** creates the API with name and version
-3. **rpc.NewOperation()** wraps handlers with type-safe serialization
-4. **rest.Handle()** registers handlers at specific paths
+3. **rest.HandleJson/ProduceJson/ConsumeOnlyJson** wrap handlers with type-safe serialization
+4. **rest.Handle()** registers handlers at specific paths as API options
 5. **Automatic instrumentation** traces all requests
 6. **OpenAPI generation** creates `/openapi.json` from your types
 
@@ -478,33 +427,24 @@ func registerHandlers(api *rest.Api, store *TodoStore) {
     verifier := &SimpleJWTVerifier{}
 
     // Public endpoint - no auth required
-    listHandler := rpc.NewOperation(
-        rpc.ReturnJson(
-            rpc.Handle(func(ctx context.Context, _ any) ([]Todo, error) {
-                return store.List(), nil
-            }),
-        ),
-    )
-    rest.Handle(http.MethodGet, rest.BasePath("/todos"), listHandler)
+    listHandler := rest.ProducerFunc[[]Todo](func(ctx context.Context) (*[]Todo, error) {
+        todos := store.List()
+        return &todos, nil
+    })
+    rest.Handle(http.MethodGet, rest.BasePath("/todos"), rest.ProduceJson(listHandler))
 
     // Protected endpoint - JWT required
-    createHandler := rpc.NewOperation(
-        rpc.ConsumeJson(
-            rpc.ReturnJson(
-                rpc.Handle(func(ctx context.Context, req Todo) (Todo, error) {
-                    if req.ID == "" {
-                        req.ID = fmt.Sprintf("todo-%d", len(store.todos)+1)
-                    }
-                    store.Create(req)
-                    return req, nil
-                }),
-            ),
-        ),
-    )
+    createHandler := rest.HandlerFunc[Todo, Todo](func(ctx context.Context, req *Todo) (*Todo, error) {
+        if req.ID == "" {
+            req.ID = fmt.Sprintf("todo-%d", len(store.todos)+1)
+        }
+        store.Create(*req)
+        return req, nil
+    })
     rest.Handle(
         http.MethodPost,
         rest.BasePath("/todos"),
-        createHandler,
+        rest.HandleJson(createHandler),
         rest.Header("Authorization", rest.Required(), rest.JWTAuth("jwt", verifier)),
     )
 

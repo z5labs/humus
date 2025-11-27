@@ -51,7 +51,6 @@ import (
     "net/http"
 
     "github.com/z5labs/humus/rest"
-    "github.com/z5labs/humus/rest/rpc"
 )
 
 // Config embeds rest.Config to get HTTP server configuration
@@ -66,18 +65,22 @@ func main() {
 
 // Init is called with the loaded configuration and returns the API
 func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
-    // Create a new API with name and version
-    api := rest.NewApi("Hello Service", "1.0.0")
-
     // Create a simple handler that returns "Hello, World!"
-    handler := rpc.NewOperation(
-        rpc.Handle(func(ctx context.Context, req any) (string, error) {
-            return "Hello, World!", nil
-        }),
-    )
+    handler := rest.ProducerFunc[string](func(ctx context.Context) (*string, error) {
+        msg := "Hello, World!"
+        return &msg, nil
+    })
 
-    // Register the handler at GET /hello
-    rest.Handle(http.MethodGet, rest.BasePath("/hello"), handler)
+    // Create a new API with name and version and register the handler at GET /hello
+    api := rest.NewApi(
+        "Hello Service",
+        "1.0.0",
+        rest.Handle(
+            http.MethodGet,
+            rest.BasePath("/hello"),
+            rest.ProduceJson(handler),
+        ),
+    )
 
     return api, nil
 }
@@ -149,7 +152,7 @@ Let's break down what's happening:
    - Register handlers with HTTP methods and paths
    - Return the configured API
 
-4. **Handler Pattern**: The `rpc.Handle()` function creates a type-safe handler. In this example, it takes no input (using `any`) and returns a `string`.
+4. **Handler Pattern**: The `rest.ProducerFunc` creates a type-safe handler. In this example, it produces a `string` response with no request body.
 
 ## Next Steps
 

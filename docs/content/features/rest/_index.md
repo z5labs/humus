@@ -27,7 +27,6 @@ import (
     "net/http"
 
     "github.com/z5labs/humus/rest"
-    "github.com/z5labs/humus/rest/rpc"
 )
 
 type Config struct {
@@ -43,17 +42,19 @@ func main() {
 }
 
 func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
-    api := rest.NewApi("Hello Service", "1.0.0")
+    handler := rest.ProducerFunc[HelloResponse](func(ctx context.Context) (*HelloResponse, error) {
+        return &HelloResponse{Message: "Hello, World!"}, nil
+    })
 
-    handler := rpc.NewOperation(
-        rpc.ReturnJson(
-            rpc.Handle(func(ctx context.Context, _ any) (HelloResponse, error) {
-                return HelloResponse{Message: "Hello, World!"}, nil
-            }),
+    api := rest.NewApi(
+        "Hello Service",
+        "1.0.0",
+        rest.Handle(
+            http.MethodGet,
+            rest.BasePath("/hello"),
+            rest.ProduceJson(handler),
         ),
     )
-
-    rest.Handle(http.MethodGet, rest.BasePath("/hello"), handler)
     return api, nil
 }
 ```
@@ -68,10 +69,10 @@ The main API object that combines:
 - Health check endpoints
 - Middleware management
 
-### rest/rpc Pattern
+### RPC Pattern
 
-Type-safe handler abstraction:
-- `rpc.Handler[Req, Resp]` - Business logic interface
+Type-safe handler abstraction in the rest package:
+- `rest.Handler[Req, Resp]` - Business logic interface
 - Request deserialization (JSON, XML, etc.)
 - Response serialization
 - OpenAPI schema generation

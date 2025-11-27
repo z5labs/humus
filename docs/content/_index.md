@@ -54,7 +54,6 @@ import (
     "net/http"
 
     "github.com/z5labs/humus/rest"
-    "github.com/z5labs/humus/rest/rpc"
 )
 
 type Config struct {
@@ -66,15 +65,20 @@ func main() {
 }
 
 func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
-    api := rest.NewApi("My Service", "v1.0.0")
+    handler := rest.ProducerFunc[string](func(ctx context.Context) (*string, error) {
+        msg := "Hello, World!"
+        return &msg, nil
+    })
 
-    handler := rpc.NewOperation(
-        rpc.Handle(func(ctx context.Context, req any) (string, error) {
-            return "Hello, World!", nil
-        }),
+    api := rest.NewApi(
+        "My Service",
+        "v1.0.0",
+        rest.Handle(
+            http.MethodGet,
+            rest.BasePath("/hello"),
+            rest.ProduceJson(handler),
+        ),
     )
-
-    rest.Handle(http.MethodGet, rest.BasePath("/hello"), handler)
     return api, nil
 }
 ```
