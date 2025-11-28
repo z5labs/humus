@@ -7,7 +7,7 @@ replace github.com/z5labs/humus => ../../../
 require (
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/z5labs/bedrock v0.20.2
-	github.com/z5labs/humus v0.13.0
+	github.com/z5labs/humus v0.14.1
 	go.opentelemetry.io/otel v1.38.0
 	go.opentelemetry.io/otel/trace v1.38.0
 )
