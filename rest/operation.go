@@ -183,7 +183,7 @@ func Operation[I, O any, Req TypedRequest[I], Resp TypedResponse[O]](method stri
 
 func (o *operation[I, O, Req, Resp]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
+	
 	var err error
 	defer func() {
 		if err == nil {
@@ -199,6 +199,7 @@ func (o *operation[I, O, Req, Resp]) ServeHTTP(w http.ResponseWriter, r *http.Re
 		if err != nil {
 			return
 		}
+		ctx = r.Context()
 	}
 
 	req, err := o.readRequest(ctx, r)
