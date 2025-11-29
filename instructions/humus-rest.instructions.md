@@ -7,6 +7,15 @@ applyTo: '**/*.go'
 
 This file provides patterns and best practices specific to REST API applications using Humus. Use this file alongside `humus-common.instructions.md` for complete guidance.
 
+## Important: Package Merge (2025)
+
+**The `rest/rpc` package has been merged into the `rest` package.** All handler types, interfaces, and functions are now directly in the `rest` package:
+
+- Import `github.com/z5labs/humus/rest` (not `rest/rpc`)
+- Use `rest.Operation()` instead of `rest.Handle()`
+- Use `rest.ProduceJson()`, `rest.HandleJson()`, etc. (not `rpc.*`)
+- Use `rest.Producer`, `rest.Consumer`, `rest.Handler` interfaces
+
 ## Project Structure
 
 Use this structure for production services. This matches the examples in the Humus repository:
@@ -66,9 +75,9 @@ func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
     api := rest.NewApi(
         cfg.OpenApi.Title,
         cfg.OpenApi.Version,
-        endpoint.CreateUser(),
-        endpoint.GetUser(),
-        endpoint.ListUsers(),
+        endpoint.CreateUser(ctx),
+        endpoint.GetUser(ctx),
+        endpoint.ListUsers(ctx),
     )
     return api, nil
 }
@@ -122,11 +131,11 @@ func main() {
 
 ### Handler Types
 
-Handlers should be implemented as struct types that implement the specific interface (`rpc.Producer`, `rpc.Consumer`, or `rpc.Handler`).
+Handlers should be implemented as struct types that implement the specific interface (`rest.Producer`, `rest.Consumer`, or `rest.Handler`).
 
 #### 1. Producer (GET endpoints - no request body)
 
-Implement the `rpc.Producer` interface with a `Produce` method:
+Implement the `rest.Producer` interface with a `Produce` method:
 
 ```go
 // endpoint/list_users.go
@@ -141,7 +150,6 @@ import (
     "github.com/z5labs/bedrock/lifecycle"
     "github.com/z5labs/humus"
     "github.com/z5labs/humus/rest"
-    "github.com/z5labs/humus/rest/rpc"
     "go.opentelemetry.io/otel"
     "go.opentelemetry.io/otel/trace"
 )
@@ -174,10 +182,10 @@ func ListUsers(ctx context.Context, db *sql.DB) rest.ApiOption {
         listUsersStmt: stmt,
     }
 
-    return rest.Handle(
+    return rest.Operation(
         http.MethodGet,
         rest.BasePath("/users"),
-        rpc.ProduceJson(h),
+        rest.ProduceJson(h),
     )
 }
 
@@ -189,7 +197,7 @@ func (h *listUsersHandler) Produce(ctx context.Context) (*ListUsersResponse, err
 
 #### 2. Consumer (POST webhooks - no response body)
 
-Implement the `rpc.Consumer` interface with a `Consume` method:
+Implement the `rest.Consumer` interface with a `Consume` method:
 
 ```go
 // endpoint/webhook.go
@@ -211,10 +219,10 @@ func Webhook(ctx context.Context) rest.ApiOption {
         log:    humus.Logger("my-service/endpoint"),
     }
 
-    return rest.Handle(
+    return rest.Operation(
         http.MethodPost,
         rest.BasePath("/webhook"),
-        rpc.ConsumeOnlyJson(h),
+        rest.ConsumeOnlyJson(h),
     )
 }
 
@@ -226,7 +234,7 @@ func (h *webhookHandler) Consume(ctx context.Context, req *WebhookRequest) error
 
 #### 3. Handler (full request/response)
 
-Implement the `rpc.Handler` interface with a `Handle` method:
+Implement the `rest.Handler` interface with a `Handle` method:
 
 ```go
 // endpoint/create_user.go
@@ -267,10 +275,10 @@ func CreateUser(ctx context.Context, db *sql.DB) rest.ApiOption {
         createUserStmt: stmt,
     }
 
-    return rest.Handle(
+    return rest.Operation(
         http.MethodPost,
         rest.BasePath("/users"),
-        rpc.HandleJson(h),
+        rest.HandleJson(h),
     )
 }
 
@@ -296,7 +304,7 @@ rest.BasePath("/users").Param("id")  // /users/{id}
 ### Parameter Options
 
 ```go
-rest.Handle(method, path, handler,
+rest.Operation(method, path, handler,
     rest.QueryParam("format", rest.Required()),
     rest.PathParam("id", rest.Required()),
     rest.Header("Authorization", rest.Required(), rest.JWTAuth("jwt")),
@@ -306,7 +314,7 @@ rest.Handle(method, path, handler,
 ### Operation-Level Error Handling
 
 ```go
-rest.Handle(method, path, handler,
+rest.Operation(method, path, handler,
     rest.OnError(rest.ErrorHandlerFunc(func(ctx context.Context, w http.ResponseWriter, err error) {
         w.WriteHeader(http.StatusInternalServerError)
         json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -335,7 +343,7 @@ All REST services automatically include health endpoints:
 ### DO ✅
 
 1. **Organize handlers in endpoint/ package** - one file per endpoint/operation
-2. **Use rpc.HandleJson for full request/response** - it's shorthand for ConsumeJson(ReturnJson(handler))
+2. **Use rest.HandleJson for full request/response** - it's shorthand for ConsumeJson(ReturnJson(handler))
 3. **Use proper handler types** - Producer for GET, Consumer for webhooks, Handler for full request/response
 4. **Leverage OpenAPI generation** - your handlers automatically generate documentation
 5. **Use path building helpers** - `BasePath().Segment().Param()` for clarity
@@ -343,8 +351,8 @@ All REST services automatically include health endpoints:
 ### DON'T ❌
 
 1. **Don't change handler signatures** without understanding OpenAPI generation
-2. **Don't mix raw http.Handler with rest.Handle** - use the rpc wrappers
-3. **Don't bypass the rpc helpers** - they provide type safety and OpenAPI generation
+2. **Don't mix raw http.Handler with rest.Operation** - use the typed handler wrappers
+3. **Don't bypass the handler wrappers** - they provide type safety and OpenAPI generation
 4. **Don't hardcode paths** - use the path building helpers
 5. **Don't ignore parameter validation** - use Required(), regex patterns, etc.
 
@@ -352,7 +360,7 @@ All REST services automatically include health endpoints:
 
 ### Wrong Handler Pattern
 
-❌ **Wrong (mixing raw http.Handler with rest.Handle):**
+❌ **Wrong (mixing raw http.Handler):**
 ```go
 api.HandleFunc("/users", func(w http.ResponseWriter, r *http.Request) {
     // Manual JSON marshaling, no OpenAPI generation
@@ -361,13 +369,13 @@ api.HandleFunc("/users", func(w http.ResponseWriter, r *http.Request) {
 
 ✅ **Correct:**
 ```go
-func CreateUser() rest.Operation {
-    handler := rpc.HandlerFunc[CreateUserRequest, UserResponse](
+func CreateUser() rest.ApiOption {
+    handler := rest.HandlerFunc[CreateUserRequest, UserResponse](
         func(ctx context.Context, req *CreateUserRequest) (*UserResponse, error) {
             return &UserResponse{}, nil
         },
     )
-    return rest.Handle(http.MethodPost, rest.BasePath("/users"), rpc.HandleJson(handler))
+    return rest.Operation(http.MethodPost, rest.BasePath("/users"), rest.HandleJson(handler))
 }
 ```
 
@@ -375,19 +383,20 @@ func CreateUser() rest.Operation {
 
 | Pattern | Code |
 |---------|------|
+| REST operation | `rest.Operation(method, path, handler, ...options)` |
 | REST path | `rest.BasePath("/api").Segment("v1").Param("id")` |
 | Query param | `rest.QueryParam("name", rest.Required())` |
 | Path param | `rest.PathParam("id", rest.Required())` |
 | Header | `rest.Header("Authorization", rest.JWTAuth("jwt"))` |
-| Producer handler | `rpc.ProduceJson(rpc.ProducerFunc[Response](...))` |
-| Consumer handler | `rpc.ConsumeOnlyJson(rpc.ConsumerFunc[Request](...))` |
-| Full handler | `rpc.HandleJson(rpc.HandlerFunc[Req, Resp](...))` |
+| Producer handler | `rest.ProduceJson(rest.ProducerFunc[Response](...))` |
+| Consumer handler | `rest.ConsumeOnlyJson(rest.ConsumerFunc[Request](...))` |
+| Full handler | `rest.HandleJson(rest.HandlerFunc[Req, Resp](...))` |
 
 ## Example Project
 
-Study this example in the Humus repository:
+Study this production-ready example in the Humus repository:
 
-- **REST API**: `example/rest/petstore/` - Complete REST service structure
+- **REST API**: [orders-walkthrough](https://github.com/z5labs/humus/tree/main/example/rest/orders-walkthrough) - Production-ready REST service structure with comprehensive patterns
 
 ## Additional Resources
 
