@@ -15,7 +15,6 @@ import (
 	"github.com/z5labs/bedrock/lifecycle"
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/rest"
-	"github.com/z5labs/humus/rest/rpc"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -51,10 +50,10 @@ func AdoptPet(ctx context.Context, db StmtPreparer) rest.ApiOption {
 		adoptPetStmt: stmt,
 	}
 
-	return rest.Handle(
+	return rest.Operation(
 		http.MethodPost,
 		rest.BasePath("/pet").Param("id", rest.Required()),
-		rpc.HandleJson(h),
+		rest.HandleJson(h),
 	)
 }
 
