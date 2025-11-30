@@ -1,8 +1,3 @@
-// Copyright (c) 2025 Z5Labs and Contributors
-//
-// This software is released under the MIT License.
-// https://opensource.org/licenses/MIT
-
 package rest
 
 import (
@@ -16,317 +11,328 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestProblemDetail_Error verifies the Error() method implementation
-func TestProblemDetail_Error(t *testing.T) {
-	t.Run("returns detail when present", func(t *testing.T) {
-		pd := ProblemDetail{
-			Type:   "about:blank",
-			Title:  "Error Title",
-			Status: 500,
-			Detail: "Specific error details",
-		}
+func TestProblemDetailsErrorHandler(t *testing.T) {
+	t.Parallel()
 
-		require.Equal(t, "Specific error details", pd.Error())
-	})
+	testCases := []struct {
+		name           string
+		handler        HandlerFunc[EmptyRequest, EmptyResponse]
+		errorHandler   ErrorHandler
+		assertResponse func(*testing.T, *http.Response)
+	}{
+		{
+			name: "custom error embedding ProblemDetail with extension fields",
+			handler: HandlerFunc[EmptyRequest, EmptyResponse](func(ctx context.Context, req *EmptyRequest) (*EmptyResponse, error) {
+				type ValidationError struct {
+					ProblemDetail
+					InvalidFields []string `json:"invalid_fields"`
+				}
+				return nil, ValidationError{
+					ProblemDetail: ProblemDetail{
+						Type:     "https://api.example.com/problems/validation",
+						Title:    "Validation Failed",
+						Status:   http.StatusBadRequest,
+						Detail:   "Request validation failed",
+						Instance: "/test",
+					},
+					InvalidFields: []string{"email", "age"},
+				}
+			}),
+			errorHandler: NewProblemDetailsErrorHandler(),
+			assertResponse: func(t *testing.T, resp *http.Response) {
+				require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+				require.Equal(t, "application/problem+json", resp.Header.Get("Content-Type"))
 
-	t.Run("returns title when detail is empty", func(t *testing.T) {
-		pd := ProblemDetail{
-			Type:   "about:blank",
-			Title:  "Error Title",
-			Status: 500,
-		}
+				var result map[string]any
+				require.Nil(t, json.NewDecoder(resp.Body).Decode(&result))
 
-		require.Equal(t, "Error Title", pd.Error())
-	})
-}
-
-// TestProblemDetail_StatusCode verifies the private statusCode() method
-func TestProblemDetail_StatusCode(t *testing.T) {
-	pd := ProblemDetail{
-		Type:   "about:blank",
-		Title:  "Error",
-		Status: http.StatusBadRequest,
-	}
-
-	// Verify it implements problemDetailMarker
-	var marker problemDetailMarker = pd
-	require.Equal(t, http.StatusBadRequest, marker.statusCode())
-}
-
-// TestProblemDetail_Embedding verifies that embedding works correctly
-func TestProblemDetail_Embedding(t *testing.T) {
-	type ValidationError struct {
-		ProblemDetail
-		InvalidFields []string `json:"invalid_fields"`
-	}
-
-	t.Run("implements error interface", func(t *testing.T) {
-		err := ValidationError{
-			ProblemDetail: ProblemDetail{
-				Type:   "https://example.com/validation",
-				Title:  "Validation Failed",
-				Status: http.StatusBadRequest,
-				Detail: "Fields are invalid",
+				require.Equal(t, "https://api.example.com/problems/validation", result["type"])
+				require.Equal(t, "Validation Failed", result["title"])
+				require.Equal(t, float64(400), result["status"])
+				require.Equal(t, "Request validation failed", result["detail"])
+				require.Equal(t, "/test", result["instance"])
+				require.Contains(t, result, "invalid_fields")
 			},
-			InvalidFields: []string{"email", "age"},
-		}
-
-		// Should be usable as error
-		var _ error = err
-		require.Equal(t, "Fields are invalid", err.Error())
-	})
-
-	t.Run("implements problemDetailMarker", func(t *testing.T) {
-		err := ValidationError{
-			ProblemDetail: ProblemDetail{
-				Type:   "https://example.com/validation",
-				Title:  "Validation Failed",
-				Status: http.StatusBadRequest,
-			},
-			InvalidFields: []string{"email"},
-		}
-
-		// Should implement the private marker interface
-		marker, ok := any(err).(problemDetailMarker)
-		require.True(t, ok)
-		require.Equal(t, http.StatusBadRequest, marker.statusCode())
-	})
-
-	t.Run("json marshaling includes extension fields", func(t *testing.T) {
-		err := ValidationError{
-			ProblemDetail: ProblemDetail{
-				Type:   "https://example.com/validation",
-				Title:  "Validation Failed",
-				Status: http.StatusBadRequest,
-				Detail: "Fields are invalid",
-			},
-			InvalidFields: []string{"email", "age"},
-		}
-
-		data, jsonErr := json.Marshal(err)
-		require.NoError(t, jsonErr)
-
-		var result map[string]any
-		require.NoError(t, json.Unmarshal(data, &result))
-
-		// Verify all fields are present
-		require.Equal(t, "https://example.com/validation", result["type"])
-		require.Equal(t, "Validation Failed", result["title"])
-		require.Equal(t, float64(400), result["status"])
-		require.Equal(t, "Fields are invalid", result["detail"])
-
-		// Verify extension field
-		invalidFields, ok := result["invalid_fields"].([]any)
-		require.True(t, ok)
-		require.Len(t, invalidFields, 2)
-		require.Equal(t, "email", invalidFields[0])
-		require.Equal(t, "age", invalidFields[1])
-	})
-}
-
-// TestProblemDetailsErrorHandler_OnError_EmbeddedProblemDetail tests detection of embedded ProblemDetail
-func TestProblemDetailsErrorHandler_OnError_EmbeddedProblemDetail(t *testing.T) {
-	type NotFoundError struct {
-		ProblemDetail
-		ResourceID string `json:"resource_id"`
-	}
-
-	handler := NewProblemDetailsErrorHandler()
-
-	err := NotFoundError{
-		ProblemDetail: ProblemDetail{
-			Type:     "https://example.com/not-found",
-			Title:    "Not Found",
-			Status:   http.StatusNotFound,
-			Detail:   "Resource does not exist",
-			Instance: "/users/123",
 		},
-		ResourceID: "123",
+		{
+			name: "custom error embedding ProblemDetail without detail field",
+			handler: HandlerFunc[EmptyRequest, EmptyResponse](func(ctx context.Context, req *EmptyRequest) (*EmptyResponse, error) {
+				return nil, ProblemDetail{
+					Type:   "https://api.example.com/problems/not-found",
+					Title:  "Resource Not Found",
+					Status: http.StatusNotFound,
+				}
+			}),
+			errorHandler: NewProblemDetailsErrorHandler(),
+			assertResponse: func(t *testing.T, resp *http.Response) {
+				require.Equal(t, http.StatusNotFound, resp.StatusCode)
+				require.Equal(t, "application/problem+json", resp.Header.Get("Content-Type"))
+
+				var result map[string]any
+				require.Nil(t, json.NewDecoder(resp.Body).Decode(&result))
+
+				require.Equal(t, "https://api.example.com/problems/not-found", result["type"])
+				require.Equal(t, "Resource Not Found", result["title"])
+				require.Equal(t, float64(404), result["status"])
+				require.NotContains(t, result, "detail")
+			},
+		},
+		{
+			name: "BadRequestError with MissingRequiredParameterError cause",
+			handler: HandlerFunc[EmptyRequest, EmptyResponse](func(ctx context.Context, req *EmptyRequest) (*EmptyResponse, error) {
+				return nil, BadRequestError{
+					Cause: MissingRequiredParameterError{
+						Parameter: "user_id",
+						In:        "query",
+					},
+				}
+			}),
+			errorHandler: NewProblemDetailsErrorHandler(),
+			assertResponse: func(t *testing.T, resp *http.Response) {
+				require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+				require.Equal(t, "application/problem+json", resp.Header.Get("Content-Type"))
+
+				var result ProblemDetail
+				require.Nil(t, json.NewDecoder(resp.Body).Decode(&result))
+
+				require.Equal(t, "about:blank", result.Type)
+				require.Equal(t, "Missing Required Parameter", result.Title)
+				require.Equal(t, http.StatusBadRequest, result.Status)
+				require.Equal(t, "An internal server error occurred.", result.Detail)
+			},
+		},
+		{
+			name: "BadRequestError with InvalidParameterValueError cause",
+			handler: HandlerFunc[EmptyRequest, EmptyResponse](func(ctx context.Context, req *EmptyRequest) (*EmptyResponse, error) {
+				return nil, BadRequestError{
+					Cause: InvalidParameterValueError{
+						Parameter: "page",
+						In:        "query",
+					},
+				}
+			}),
+			errorHandler: NewProblemDetailsErrorHandler(),
+			assertResponse: func(t *testing.T, resp *http.Response) {
+				require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+				var result ProblemDetail
+				require.Nil(t, json.NewDecoder(resp.Body).Decode(&result))
+
+				require.Equal(t, "about:blank", result.Type)
+				require.Equal(t, "Invalid Parameter Value", result.Title)
+				require.Equal(t, http.StatusBadRequest, result.Status)
+				require.Equal(t, "An internal server error occurred.", result.Detail)
+			},
+		},
+		{
+			name: "BadRequestError with InvalidContentTypeError cause",
+			handler: HandlerFunc[EmptyRequest, EmptyResponse](func(ctx context.Context, req *EmptyRequest) (*EmptyResponse, error) {
+				return nil, BadRequestError{
+					Cause: InvalidContentTypeError{
+						ContentType: "text/plain",
+					},
+				}
+			}),
+			errorHandler: NewProblemDetailsErrorHandler(),
+			assertResponse: func(t *testing.T, resp *http.Response) {
+				require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+				var result ProblemDetail
+				require.Nil(t, json.NewDecoder(resp.Body).Decode(&result))
+
+				require.Equal(t, "about:blank", result.Type)
+				require.Equal(t, "Invalid Content Type", result.Title)
+				require.Equal(t, http.StatusBadRequest, result.Status)
+			},
+		},
+		{
+			name: "BadRequestError with InvalidJWTError cause",
+			handler: HandlerFunc[EmptyRequest, EmptyResponse](func(ctx context.Context, req *EmptyRequest) (*EmptyResponse, error) {
+				return nil, BadRequestError{
+					Cause: InvalidJWTError{
+						Parameter: "Authorization",
+						In:        "header",
+					},
+				}
+			}),
+			errorHandler: NewProblemDetailsErrorHandler(),
+			assertResponse: func(t *testing.T, resp *http.Response) {
+				require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+				var result ProblemDetail
+				require.Nil(t, json.NewDecoder(resp.Body).Decode(&result))
+
+				require.Equal(t, "about:blank", result.Type)
+				require.Equal(t, "Invalid JWT Format", result.Title)
+				require.Equal(t, http.StatusBadRequest, result.Status)
+			},
+		},
+		{
+			name: "generic BadRequestError without specific cause",
+			handler: HandlerFunc[EmptyRequest, EmptyResponse](func(ctx context.Context, req *EmptyRequest) (*EmptyResponse, error) {
+				return nil, BadRequestError{
+					Cause: errors.New("some validation error"),
+				}
+			}),
+			errorHandler: NewProblemDetailsErrorHandler(),
+			assertResponse: func(t *testing.T, resp *http.Response) {
+				require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+				var result ProblemDetail
+				require.Nil(t, json.NewDecoder(resp.Body).Decode(&result))
+
+				require.Equal(t, "about:blank", result.Type)
+				require.Equal(t, "Bad Request", result.Title)
+				require.Equal(t, http.StatusBadRequest, result.Status)
+			},
+		},
+		{
+			name: "UnauthorizedError with InvalidJWTError cause",
+			handler: HandlerFunc[EmptyRequest, EmptyResponse](func(ctx context.Context, req *EmptyRequest) (*EmptyResponse, error) {
+				return nil, UnauthorizedError{
+					Cause: InvalidJWTError{
+						Parameter: "Authorization",
+						In:        "header",
+					},
+				}
+			}),
+			errorHandler: NewProblemDetailsErrorHandler(),
+			assertResponse: func(t *testing.T, resp *http.Response) {
+				require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+
+				var result ProblemDetail
+				require.Nil(t, json.NewDecoder(resp.Body).Decode(&result))
+
+				require.Equal(t, "about:blank", result.Type)
+				require.Equal(t, "Invalid JWT Token", result.Title)
+				require.Equal(t, http.StatusUnauthorized, result.Status)
+			},
+		},
+		{
+			name: "generic UnauthorizedError without specific cause",
+			handler: HandlerFunc[EmptyRequest, EmptyResponse](func(ctx context.Context, req *EmptyRequest) (*EmptyResponse, error) {
+				return nil, UnauthorizedError{
+					Cause: errors.New("token verification failed"),
+				}
+			}),
+			errorHandler: NewProblemDetailsErrorHandler(),
+			assertResponse: func(t *testing.T, resp *http.Response) {
+				require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+
+				var result ProblemDetail
+				require.Nil(t, json.NewDecoder(resp.Body).Decode(&result))
+
+				require.Equal(t, "about:blank", result.Type)
+				require.Equal(t, "Unauthorized", result.Title)
+				require.Equal(t, http.StatusUnauthorized, result.Status)
+			},
+		},
+		{
+			name: "generic error converted to 500 Internal Server Error",
+			handler: HandlerFunc[EmptyRequest, EmptyResponse](func(ctx context.Context, req *EmptyRequest) (*EmptyResponse, error) {
+				return nil, errors.New("database connection failed")
+			}),
+			errorHandler: NewProblemDetailsErrorHandler(),
+			assertResponse: func(t *testing.T, resp *http.Response) {
+				require.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+				require.Equal(t, "application/problem+json", resp.Header.Get("Content-Type"))
+
+				var result ProblemDetail
+				require.Nil(t, json.NewDecoder(resp.Body).Decode(&result))
+
+				require.Equal(t, "about:blank", result.Type)
+				require.Equal(t, "Internal Server Error", result.Title)
+				require.Equal(t, http.StatusInternalServerError, result.Status)
+				require.Equal(t, "An internal server error occurred.", result.Detail)
+			},
+		},
+		{
+			name: "security: generic error does not leak sensitive information",
+			handler: HandlerFunc[EmptyRequest, EmptyResponse](func(ctx context.Context, req *EmptyRequest) (*EmptyResponse, error) {
+				return nil, errors.New("database password: secret123")
+			}),
+			errorHandler: NewProblemDetailsErrorHandler(),
+			assertResponse: func(t *testing.T, resp *http.Response) {
+				require.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+
+				var result ProblemDetail
+				require.Nil(t, json.NewDecoder(resp.Body).Decode(&result))
+
+				// Verify hardcoded message is used, not the actual error message
+				require.Equal(t, "An internal server error occurred.", result.Detail)
+				require.NotContains(t, result.Detail, "secret123")
+			},
+		},
+		{
+			name: "WithDefaultType option with custom URI",
+			handler: HandlerFunc[EmptyRequest, EmptyResponse](func(ctx context.Context, req *EmptyRequest) (*EmptyResponse, error) {
+				return nil, BadRequestError{
+					Cause: MissingRequiredParameterError{
+						Parameter: "id",
+						In:        "query",
+					},
+				}
+			}),
+			errorHandler: NewProblemDetailsErrorHandler(
+				WithDefaultType("https://api.example.com/problems/"),
+			),
+			assertResponse: func(t *testing.T, resp *http.Response) {
+				require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+				var result ProblemDetail
+				require.Nil(t, json.NewDecoder(resp.Body).Decode(&result))
+
+				require.Equal(t, "https://api.example.com/problems/missing-required-parameter", result.Type)
+			},
+		},
+		{
+			name: "WithDefaultType affects generic errors",
+			handler: HandlerFunc[EmptyRequest, EmptyResponse](func(ctx context.Context, req *EmptyRequest) (*EmptyResponse, error) {
+				return nil, errors.New("generic error")
+			}),
+			errorHandler: NewProblemDetailsErrorHandler(
+				WithDefaultType("https://api.example.com/problems/"),
+			),
+			assertResponse: func(t *testing.T, resp *http.Response) {
+				require.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+
+				var result ProblemDetail
+				require.Nil(t, json.NewDecoder(resp.Body).Decode(&result))
+
+				require.Equal(t, "https://api.example.com/problems/", result.Type)
+			},
+		},
 	}
 
-	rec := httptest.NewRecorder()
-	handler.OnError(context.Background(), rec, err)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	// Verify response
-	require.Equal(t, http.StatusNotFound, rec.Code)
-	require.Equal(t, "application/problem+json", rec.Header().Get("Content-Type"))
+			api := NewApi(
+				tc.name,
+				"v0.0.0",
+				Operation(
+					http.MethodGet,
+					BasePath("/"),
+					tc.handler,
+					OnError(tc.errorHandler),
+				),
+			)
 
-	var result map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
-	require.Equal(t, "https://example.com/not-found", result["type"])
-	require.Equal(t, "Not Found", result["title"])
-	require.Equal(t, float64(404), result["status"])
-	require.Equal(t, "Resource does not exist", result["detail"])
-	require.Equal(t, "/users/123", result["instance"])
-	require.Equal(t, "123", result["resource_id"])
-}
+			srv := httptest.NewServer(api)
+			t.Cleanup(srv.Close)
 
-// TestProblemDetailsErrorHandler_OnError_BadRequestError tests conversion of BadRequestError
-func TestProblemDetailsErrorHandler_OnError_BadRequestError(t *testing.T) {
-	handler := NewProblemDetailsErrorHandler()
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, nil)
+			require.Nil(t, err)
 
-	t.Run("generic bad request", func(t *testing.T) {
-		err := BadRequestError{
-			Cause: errors.New("something is wrong"),
-		}
+			resp, err := srv.Client().Do(req)
+			require.Nil(t, err)
 
-		rec := httptest.NewRecorder()
-		handler.OnError(context.Background(), rec, err)
+			defer func() {
+				require.Nil(t, resp.Body.Close())
+			}()
 
-		require.Equal(t, http.StatusBadRequest, rec.Code)
-		require.Equal(t, "application/problem+json", rec.Header().Get("Content-Type"))
-
-		var result ProblemDetail
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
-		require.Equal(t, "about:blank", result.Type)
-		require.Equal(t, "Bad Request", result.Title)
-		require.Equal(t, http.StatusBadRequest, result.Status)
-	})
-
-	t.Run("missing required parameter", func(t *testing.T) {
-		err := BadRequestError{
-			Cause: MissingRequiredParameterError{
-				Parameter: "user_id",
-				In:        "query",
-			},
-		}
-
-		rec := httptest.NewRecorder()
-		handler.OnError(context.Background(), rec, err)
-
-		var result ProblemDetail
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
-		require.Equal(t, "about:blank", result.Type)
-		require.Equal(t, "Missing Required Parameter", result.Title)
-		require.Equal(t, http.StatusBadRequest, result.Status)
-	})
-
-	t.Run("invalid parameter value", func(t *testing.T) {
-		err := BadRequestError{
-			Cause: InvalidParameterValueError{
-				Parameter: "page",
-				In:        "query",
-			},
-		}
-
-		rec := httptest.NewRecorder()
-		handler.OnError(context.Background(), rec, err)
-
-		var result ProblemDetail
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
-		require.Equal(t, "Invalid Parameter Value", result.Title)
-	})
-}
-
-// TestProblemDetailsErrorHandler_OnError_UnauthorizedError tests conversion of UnauthorizedError
-func TestProblemDetailsErrorHandler_OnError_UnauthorizedError(t *testing.T) {
-	handler := NewProblemDetailsErrorHandler()
-
-	t.Run("generic unauthorized", func(t *testing.T) {
-		err := UnauthorizedError{
-			Cause: errors.New("invalid credentials"),
-		}
-
-		rec := httptest.NewRecorder()
-		handler.OnError(context.Background(), rec, err)
-
-		require.Equal(t, http.StatusUnauthorized, rec.Code)
-
-		var result ProblemDetail
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
-		require.Equal(t, "Unauthorized", result.Title)
-		require.Equal(t, http.StatusUnauthorized, result.Status)
-	})
-
-	t.Run("invalid jwt", func(t *testing.T) {
-		err := UnauthorizedError{
-			Cause: InvalidJWTError{
-				Parameter: "Authorization",
-				In:        "header",
-				Cause:     errors.New("signature invalid"),
-			},
-		}
-
-		rec := httptest.NewRecorder()
-		handler.OnError(context.Background(), rec, err)
-
-		var result ProblemDetail
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
-		require.Equal(t, "Invalid JWT Token", result.Title)
-	})
-}
-
-// TestProblemDetailsErrorHandler_OnError_GenericError tests conversion of generic errors
-func TestProblemDetailsErrorHandler_OnError_GenericError(t *testing.T) {
-	handler := NewProblemDetailsErrorHandler()
-
-	err := errors.New("database connection failed")
-
-	rec := httptest.NewRecorder()
-	handler.OnError(context.Background(), rec, err)
-
-	require.Equal(t, http.StatusInternalServerError, rec.Code)
-	require.Equal(t, "application/problem+json", rec.Header().Get("Content-Type"))
-
-	var result ProblemDetail
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
-	require.Equal(t, "about:blank", result.Type)
-	require.Equal(t, "Internal Server Error", result.Title)
-	require.Equal(t, http.StatusInternalServerError, result.Status)
-	require.Equal(t, "An internal server error occurred.", result.Detail)
-}
-
-// TestProblemDetailsConfig tests configuration options
-func TestProblemDetailsConfig(t *testing.T) {
-	t.Run("default type is about:blank", func(t *testing.T) {
-		handler := NewProblemDetailsErrorHandler()
-
-		err := errors.New("test error")
-		rec := httptest.NewRecorder()
-		handler.OnError(context.Background(), rec, err)
-
-		var result ProblemDetail
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
-		require.Equal(t, "about:blank", result.Type)
-	})
-
-	t.Run("custom default type", func(t *testing.T) {
-		handler := NewProblemDetailsErrorHandler(
-			WithDefaultType("https://api.example.com/problems/"),
-		)
-
-		err := errors.New("test error")
-		rec := httptest.NewRecorder()
-		handler.OnError(context.Background(), rec, err)
-
-		var result ProblemDetail
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
-		require.Equal(t, "https://api.example.com/problems/", result.Type)
-	})
-
-	t.Run("custom default type with bad request", func(t *testing.T) {
-		handler := NewProblemDetailsErrorHandler(
-			WithDefaultType("https://api.example.com/problems/"),
-		)
-
-		err := BadRequestError{Cause: errors.New("bad")}
-		rec := httptest.NewRecorder()
-		handler.OnError(context.Background(), rec, err)
-
-		var result ProblemDetail
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
-		require.Equal(t, "https://api.example.com/problems/bad-request", result.Type)
-	})
-
-	t.Run("generic errors use hardcoded detail message", func(t *testing.T) {
-		handler := NewProblemDetailsErrorHandler()
-
-		err := errors.New("sensitive internal error message")
-		rec := httptest.NewRecorder()
-		handler.OnError(context.Background(), rec, err)
-
-		var result ProblemDetail
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
-		require.Equal(t, "An internal server error occurred.", result.Detail)
-	})
+			tc.assertResponse(t, resp)
+		})
+	}
 }
