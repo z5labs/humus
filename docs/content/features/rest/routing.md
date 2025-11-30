@@ -507,6 +507,6 @@ rest.Handle(
 ## Next Steps
 
 - Learn about [Authentication]({{< ref "authentication" >}}) for securing your routes
-- Explore [RPC Pattern]({{< ref "rpc-pattern" >}}) for type-safe handlers
+- Explore [Handler Helpers]({{< ref "handler-helpers" >}}) for type-safe handlers
 - See [OpenAPI]({{< ref "openapi" >}}) for customizing generated documentation
 - Read [Error Handling]({{< ref "error-handling" >}}) for parameter validation errors

@@ -11,7 +11,6 @@ import (
 	"github.com/z5labs/bedrock/lifecycle"
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/rest"
-	"github.com/z5labs/humus/rest/rpc"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -42,10 +41,10 @@ func ListPets(ctx context.Context, db StmtPreparer) rest.ApiOption {
 		listPetsStmt: stmt,
 	}
 
-	return rest.Handle(
+	return rest.Operation(
 		http.MethodGet,
 		rest.BasePath("/pets"),
-		rpc.ProduceJson(h),
+		rest.ProduceJson(h),
 		rest.QueryParam(
 			"limit",
 			rest.Regex(regexp.MustCompile(`^\d+$`)),
