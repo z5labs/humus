@@ -204,6 +204,94 @@ rest.Handle(
 )
 ```
 
+**RFC 7807 Problem Details:**
+
+Humus supports [RFC 7807 Problem Details](https://tools.ietf.org/html/rfc7807) for standardized HTTP API error responses. This is an opt-in feature configured per operation using `rest.OnError()`.
+
+```go
+// Basic Problem Details error handler
+handler := rest.NewProblemDetailsErrorHandler(rest.ProblemDetailsConfig{
+    DefaultType:    "https://example.com/errors",
+    IncludeDetails: nil, // nil = include (default), set to &false to exclude in production
+})
+
+rest.Handle(
+    http.MethodPost,
+    rest.BasePath("/users"),
+    rpc.HandleJson(createUserHandler),
+    rest.OnError(handler),
+)
+```
+
+**Custom errors with extension fields:**
+
+Embed `rest.ProblemDetail` to create type-safe custom errors with additional fields:
+
+```go
+type ValidationError struct {
+    rest.ProblemDetail
+    ValidationErrors []FieldError `json:"validation_errors"`
+}
+
+type FieldError struct {
+    Field   string `json:"field"`
+    Message string `json:"message"`
+}
+
+func (e ValidationError) Error() string {
+    return e.Detail
+}
+
+// Return from handler
+func createUser(ctx context.Context, req *CreateUserRequest) (*User, error) {
+    if req.Email == "" {
+        return nil, ValidationError{
+            ProblemDetail: rest.ProblemDetail{
+                Type:     "https://example.com/errors/validation",
+                Title:    "Validation Failed",
+                Status:   http.StatusBadRequest,
+                Detail:   "Request validation failed",
+                Instance: "/users",
+            },
+            ValidationErrors: []FieldError{
+                {Field: "email", Message: "Email is required"},
+            },
+        }
+    }
+    // ...
+}
+```
+
+**Error detection hierarchy:**
+
+The `ProblemDetailsErrorHandler` detects errors in this order:
+
+1. **Custom errors embedding ProblemDetail** - Serialized directly with all fields (including extensions)
+2. **Framework errors** (`rest.BadRequestError`, `rest.UnauthorizedError`, etc.) - Converted to standard Problem Details
+3. **Generic errors** - Wrapped as 500 Internal Server Error
+
+**Configuration options:**
+
+```go
+config := rest.ProblemDetailsConfig{
+    // Base URI for error types (appended to Status if error doesn't set Type)
+    DefaultType: "https://api.example.com/errors",
+
+    // Include error details in response (use &false in production to hide internal errors)
+    IncludeDetails: nil, // nil defaults to true
+
+    // Custom logger for error logging
+    Logger: slog.New(slog.NewJSONHandler(os.Stderr, nil)),
+}
+
+// Production configuration - hide internal error details
+includeDetails := false
+productionConfig := rest.ProblemDetailsConfig{
+    DefaultType:    "https://api.example.com/errors",
+    IncludeDetails: &includeDetails,
+}
+```
+
 #### gRPC Services
 
 **grpc.Api** - gRPC service registrar
@@ -425,7 +513,7 @@ func Init(ctx context.Context, cfg Config) (*queue.App, error) {
 - Error handling patterns and propagation
 - Concurrency guidelines
 
-1. **Error Handling** - Use `rpc.ErrorHandler` interface for custom error responses in REST operations; set via `OnError()` operation option
+1. **Error Handling** - Use `rpc.ErrorHandler` interface for custom error responses in REST operations; set via `OnError()` operation option. For RFC 7807 compliant errors, use `rest.ProblemDetailsErrorHandler` with custom errors embedding `rest.ProblemDetail`
 2. **Error Naming (ENFORCED)** - All error variables must follow the `ErrFoo` naming pattern (enforced by golangci-lint staticcheck ST1012):
    ```go
    // Correct
@@ -480,6 +568,7 @@ When writing tests:
 
 The `example/` directory contains reference implementations:
 - `example/rest/petstore/` - REST API example with OpenAPI generation
+- `example/rest/problem-details/` - RFC 7807 Problem Details error handling
 - `example/grpc/petstore/` - gRPC service example with health monitoring
 - `example/queue/kafka-at-most-once/` - Kafka queue with at-most-once semantics
 - `example/queue/kafka-at-least-once/` - Kafka queue with at-least-once semantics

@@ -474,7 +474,6 @@ For production JWT implementation with proper signature verification, see [Authe
 ## Next Steps
 
 - Learn about [Authentication]({{< ref "authentication" >}}) for production-ready JWT verification
-- Explore [REST API]({{< ref "rest-api" >}}) for advanced API configuration
-- Read [RPC Pattern]({{< ref "rpc-pattern" >}}) for type-safe handlers
+- Read [Handler Helpers]({{< ref "handler-helpers" >}}) for type-safe handlers and serialization
 - See [Routing]({{< ref "routing" >}}) for path parameters and validation
 - Understand [Error Handling]({{< ref "error-handling" >}}) for custom error responses
