@@ -105,19 +105,19 @@ func (p ProblemDetail) statusCode() int {
 //	    rest.OnError(handler),
 //	)
 type ProblemDetailsErrorHandler struct {
-	config problemDetailsConfig
+	config ProblemDetailsConfig
 	log    *slog.Logger
 }
 
-// problemDetailsConfig configures the Problem Details error handler.
-type problemDetailsConfig struct {
-	// DefaultType is the default type URI for errors that don't specify one.
+// ProblemDetailsConfig configures the Problem Details error handler.
+type ProblemDetailsConfig struct {
+	// defaultType is the default type URI for errors that don't specify one.
 	// Defaults to "about:blank" per RFC 7807.
-	DefaultType string
+	defaultType string
 }
 
 // ProblemDetailsOption configures a ProblemDetailsErrorHandler.
-type ProblemDetailsOption func(*problemDetailsConfig)
+type ProblemDetailsOption func(*ProblemDetailsConfig)
 
 // WithDefaultType sets the default type URI for errors that don't specify one.
 // Defaults to "about:blank" per RFC 7807.
@@ -125,8 +125,8 @@ type ProblemDetailsOption func(*problemDetailsConfig)
 // For custom problem types, provide a base URI like:
 // "https://api.example.com/problems/"
 func WithDefaultType(uri string) ProblemDetailsOption {
-	return func(c *problemDetailsConfig) {
-		c.DefaultType = uri
+	return func(c *ProblemDetailsConfig) {
+		c.defaultType = uri
 	}
 }
 
@@ -142,12 +142,10 @@ func WithDefaultType(uri string) ProblemDetailsOption {
 //	    rest.WithDefaultType("https://api.example.com/problems/"),
 //	)
 func NewProblemDetailsErrorHandler(opts ...ProblemDetailsOption) *ProblemDetailsErrorHandler {
-	// Apply defaults
-	config := problemDetailsConfig{
-		DefaultType: "about:blank",
+	config := ProblemDetailsConfig{
+		defaultType: "about:blank",
 	}
 
-	// Apply options
 	for _, opt := range opts {
 		opt(&config)
 	}
@@ -165,7 +163,7 @@ func (h *ProblemDetailsErrorHandler) OnError(ctx context.Context, w http.Respons
 
 	w.Header().Set("Content-Type", "application/problem+json")
 
-	pd := mapErrorToProblemDetail(h.config.DefaultType, err)
+	pd := mapErrorToProblemDetail(h.config.defaultType, err)
 	w.WriteHeader(pd.statusCode())
 
 	enc := json.NewEncoder(w)
