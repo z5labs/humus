@@ -110,13 +110,13 @@ rest.Operation(
 )
 ```
 
-**Example error response:**
+**Example generic error response:**
 ```json
 {
-  "type": "https://api.example.com/errors/400",
-  "title": "Bad Request",
-  "status": 400,
-  "detail": "Invalid email format"
+  "type": "https://api.example.com/errors",
+  "title": "Internal Server Error",
+  "status": 500,
+  "detail": "An internal server error occurred."
 }
 ```
 
@@ -179,13 +179,14 @@ func createUser(ctx context.Context, req *CreateUserRequest) (*User, error) {
 
 #### WithDefaultType
 
-Base URI for error types. Appended to the status code if the error doesn't set a Type:
+Base URI for error types used when the error doesn't set a Type:
 
 ```go
 handler := rest.NewProblemDetailsErrorHandler(
     rest.WithDefaultType("https://api.example.com/errors"),
 )
-// Error without Type field will become: "https://api.example.com/errors/500"
+// Generic errors without Type field will use: "https://api.example.com/errors"
+// Framework errors always use "about:blank" regardless of this setting
 ```
 
 ### Security: Error Detail Protection
@@ -193,7 +194,9 @@ handler := rest.NewProblemDetailsErrorHandler(
 For security, the Problem Details handler automatically protects against leaking sensitive internal error information:
 
 - **Errors embedding `ProblemDetail`** - Include the actual error details you explicitly set
-- **Framework errors** - Use hardcoded detail message: "An internal server error occurred."
+- **Framework errors** - Use hardcoded detail messages:
+  - `BadRequestError`: "A bad request was sent to the API"
+  - `UnauthorizedError`: "An unauthorized request was sent to the API"
 - **Generic errors** - Use hardcoded detail message: "An internal server error occurred."
 
 This prevents accidentally exposing sensitive information like database connection strings, internal paths, or stack traces to API clients.
@@ -237,7 +240,7 @@ return nil, ValidationError{
 
 // Priority 2: Framework error (converted to Problem Details with hardcoded detail)
 return nil, rest.BadRequestError{Message: "Invalid input"}
-// Returns: {"type":"about:blank","title":"Bad Request","status":400,"detail":"An internal server error occurred."}
+// Returns: {"type":"about:blank","title":"Bad Request","status":400,"detail":"A bad request was sent to the API"}
 
 // Priority 3: Generic error (wrapped as 500 with hardcoded detail)
 return nil, errors.New("database connection failed")
