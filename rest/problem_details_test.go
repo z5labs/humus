@@ -96,9 +96,9 @@ func TestProblemDetailsErrorHandler(t *testing.T) {
 				require.Nil(t, json.NewDecoder(resp.Body).Decode(&result))
 
 				require.Equal(t, "about:blank", result.Type)
-				require.Equal(t, "Missing Required Parameter", result.Title)
+				require.Equal(t, "Bad Request", result.Title)
 				require.Equal(t, http.StatusBadRequest, result.Status)
-				require.Equal(t, "An internal server error occurred.", result.Detail)
+				require.Equal(t, "A bad request was sent to the API", result.Detail)
 			},
 		},
 		{
@@ -119,9 +119,9 @@ func TestProblemDetailsErrorHandler(t *testing.T) {
 				require.Nil(t, json.NewDecoder(resp.Body).Decode(&result))
 
 				require.Equal(t, "about:blank", result.Type)
-				require.Equal(t, "Invalid Parameter Value", result.Title)
+				require.Equal(t, "Bad Request", result.Title)
 				require.Equal(t, http.StatusBadRequest, result.Status)
-				require.Equal(t, "An internal server error occurred.", result.Detail)
+				require.Equal(t, "A bad request was sent to the API", result.Detail)
 			},
 		},
 		{
@@ -141,8 +141,9 @@ func TestProblemDetailsErrorHandler(t *testing.T) {
 				require.Nil(t, json.NewDecoder(resp.Body).Decode(&result))
 
 				require.Equal(t, "about:blank", result.Type)
-				require.Equal(t, "Invalid Content Type", result.Title)
+				require.Equal(t, "Bad Request", result.Title)
 				require.Equal(t, http.StatusBadRequest, result.Status)
+				require.Equal(t, "A bad request was sent to the API", result.Detail)
 			},
 		},
 		{
@@ -163,8 +164,9 @@ func TestProblemDetailsErrorHandler(t *testing.T) {
 				require.Nil(t, json.NewDecoder(resp.Body).Decode(&result))
 
 				require.Equal(t, "about:blank", result.Type)
-				require.Equal(t, "Invalid JWT Format", result.Title)
+				require.Equal(t, "Bad Request", result.Title)
 				require.Equal(t, http.StatusBadRequest, result.Status)
+				require.Equal(t, "A bad request was sent to the API", result.Detail)
 			},
 		},
 		{
@@ -204,8 +206,9 @@ func TestProblemDetailsErrorHandler(t *testing.T) {
 				require.Nil(t, json.NewDecoder(resp.Body).Decode(&result))
 
 				require.Equal(t, "about:blank", result.Type)
-				require.Equal(t, "Invalid JWT Token", result.Title)
+				require.Equal(t, "Unauthorized", result.Title)
 				require.Equal(t, http.StatusUnauthorized, result.Status)
+				require.Equal(t, "An unauthorized request was sent to the API", result.Detail)
 			},
 		},
 		{
@@ -264,7 +267,7 @@ func TestProblemDetailsErrorHandler(t *testing.T) {
 			},
 		},
 		{
-			name: "WithDefaultType option with custom URI",
+			name: "WithDefaultType does not affect framework errors",
 			handler: HandlerFunc[EmptyRequest, EmptyResponse](func(ctx context.Context, req *EmptyRequest) (*EmptyResponse, error) {
 				return nil, BadRequestError{
 					Cause: MissingRequiredParameterError{
@@ -282,7 +285,11 @@ func TestProblemDetailsErrorHandler(t *testing.T) {
 				var result ProblemDetail
 				require.Nil(t, json.NewDecoder(resp.Body).Decode(&result))
 
-				require.Equal(t, "https://api.example.com/problems/missing-required-parameter", result.Type)
+				// Framework errors always use "about:blank", not the default type
+				require.Equal(t, "about:blank", result.Type)
+				require.Equal(t, "Bad Request", result.Title)
+				require.Equal(t, http.StatusBadRequest, result.Status)
+				require.Equal(t, "A bad request was sent to the API", result.Detail)
 			},
 		},
 		{

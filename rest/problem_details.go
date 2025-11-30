@@ -163,130 +163,70 @@ func NewProblemDetailsErrorHandler(opts ...ProblemDetailsOption) *ProblemDetails
 func (h *ProblemDetailsErrorHandler) OnError(ctx context.Context, w http.ResponseWriter, err error) {
 	h.log.ErrorContext(ctx, "sending error response", slog.Any("error", err))
 
-	// Strategy 1: Check if error embeds ProblemDetail (via private marker interface)
-	if pd, ok := err.(problemDetailMarker); ok {
-		// Error embeds ProblemDetail - marshal the full struct with all extension fields
-		w.Header().Set("Content-Type", "application/problem+json")
-		w.WriteHeader(pd.statusCode())
-		if encodeErr := json.NewEncoder(w).Encode(err); encodeErr != nil {
-			h.log.ErrorContext(ctx, "failed to encode problem details", slog.Any("error", encodeErr))
-		}
-		return
-	}
-
-	// Strategy 2: Check if error implements HttpResponseWriter (existing framework errors)
-	if _, ok := err.(HttpResponseWriter); ok {
-		problemDetail := h.convertHttpResponseWriterToProblemDetail(err)
-		w.Header().Set("Content-Type", "application/problem+json")
-		w.WriteHeader(problemDetail.Status)
-		if encodeErr := json.NewEncoder(w).Encode(problemDetail); encodeErr != nil {
-			h.log.ErrorContext(ctx, "failed to encode problem details", slog.Any("error", encodeErr))
-		}
-		return
-	}
-
-	// Strategy 3: Generic error - convert to basic ProblemDetail
-	problemDetail := h.convertGenericErrorToProblemDetail(err)
 	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(problemDetail.Status)
-	if encodeErr := json.NewEncoder(w).Encode(problemDetail); encodeErr != nil {
-		h.log.ErrorContext(ctx, "failed to encode problem details", slog.Any("error", encodeErr))
+
+	pd := mapErrorToProblemDetail(h.config.DefaultType, err)
+	w.WriteHeader(pd.statusCode())
+
+	enc := json.NewEncoder(w)
+	err = enc.Encode(pd)
+	if err != nil {
+		h.log.ErrorContext(ctx, "failed to encode problem details", slog.Any("error", err))
 	}
 }
 
-// convertHttpResponseWriterToProblemDetail converts existing framework errors
-// to Problem Details format by unwrapping and checking for specific error types.
-func (h *ProblemDetailsErrorHandler) convertHttpResponseWriterToProblemDetail(err error) ProblemDetail {
-	var status int
-	var typeURI string
-	var title string
-
-	// Check for BadRequestError and its causes
-	var badRequest BadRequestError
-	if errors.As(err, &badRequest) {
-		status = http.StatusBadRequest
-		typeURI = h.buildTypeURI("bad-request")
-		title = "Bad Request"
-
-		// Check for more specific error types in the cause chain
-		var missingParam MissingRequiredParameterError
-		if errors.As(badRequest.Cause, &missingParam) {
-			typeURI = h.buildTypeURI("missing-required-parameter")
-			title = "Missing Required Parameter"
-		}
-
-		var invalidParam InvalidParameterValueError
-		if errors.As(badRequest.Cause, &invalidParam) {
-			typeURI = h.buildTypeURI("invalid-parameter-value")
-			title = "Invalid Parameter Value"
-		}
-
-		var invalidContentType InvalidContentTypeError
-		if errors.As(badRequest.Cause, &invalidContentType) {
-			typeURI = h.buildTypeURI("invalid-content-type")
-			title = "Invalid Content Type"
-		}
-
-		var invalidJWT InvalidJWTError
-		if errors.As(badRequest.Cause, &invalidJWT) {
-			typeURI = h.buildTypeURI("invalid-jwt-format")
-			title = "Invalid JWT Format"
-		}
+func mapErrorToProblemDetail(defaultType string, err error) problemDetailMarker {
+	mappers := []func(error) (problemDetailMarker, bool){
+		mapProblemDetailMarker,
+		mapBadRequestError,
+		mapUnauthorizedError,
 	}
 
-	// Check for UnauthorizedError and its causes
-	var unauthorized UnauthorizedError
-	if errors.As(err, &unauthorized) {
-		status = http.StatusUnauthorized
-		typeURI = h.buildTypeURI("unauthorized")
-		title = "Unauthorized"
-
-		var invalidJWT InvalidJWTError
-		if errors.As(unauthorized.Cause, &invalidJWT) {
-			typeURI = h.buildTypeURI("invalid-jwt")
-			title = "Invalid JWT Token"
+	for _, mapper := range mappers {
+		if pd, ok := mapper(err); ok {
+			return pd
 		}
-	}
-
-	// Fallback if not recognized
-	if status == 0 {
-		status = http.StatusInternalServerError
-		typeURI = h.buildTypeURI("internal-error")
-		title = "Internal Server Error"
 	}
 
 	return ProblemDetail{
-		Type:   typeURI,
-		Title:  title,
-		Status: status,
-		Detail: h.getDetailMessage(err),
-	}
-}
-
-// convertGenericErrorToProblemDetail converts any error to a basic ProblemDetail
-// with a 500 Internal Server Error status.
-func (h *ProblemDetailsErrorHandler) convertGenericErrorToProblemDetail(err error) ProblemDetail {
-	return ProblemDetail{
-		Type:   h.config.DefaultType,
+		Type:   defaultType,
 		Title:  "Internal Server Error",
 		Status: http.StatusInternalServerError,
-		Detail: h.getDetailMessage(err),
+		Detail: "An internal server error occurred.",
 	}
 }
 
-// buildTypeURI constructs a type URI from a problem type identifier.
-// If DefaultType is "about:blank", returns "about:blank" for all types.
-// Otherwise, appends the problem type to the base URI.
-func (h *ProblemDetailsErrorHandler) buildTypeURI(problemType string) string {
-	if h.config.DefaultType == "about:blank" {
-		return "about:blank"
-	}
-	// If custom base URI, append problem type
-	return h.config.DefaultType + problemType
+func mapProblemDetailMarker(err error) (problemDetailMarker, bool) {
+	pd, ok := err.(problemDetailMarker)
+	return pd, ok
 }
 
-// getDetailMessage returns a hardcoded security message.
-// This prevents leaking sensitive internal error information to API clients.
-func (h *ProblemDetailsErrorHandler) getDetailMessage(err error) string {
-	return "An internal server error occurred."
+func mapBadRequestError(err error) (problemDetailMarker, bool) {
+	var bre BadRequestError
+	if !errors.As(err, &bre) {
+		return nil, false
+	}
+
+	pd := ProblemDetail{
+		Type:   "about:blank",
+		Title:  "Bad Request",
+		Status: http.StatusBadRequest,
+		Detail: "A bad request was sent to the API",
+	}
+	return pd, true
+}
+
+func mapUnauthorizedError(err error) (problemDetailMarker, bool) {
+	var ue UnauthorizedError
+	if !errors.As(err, &ue) {
+		return nil, false
+	}
+
+	pd := ProblemDetail{
+		Type:   "about:blank",
+		Title:  "Unauthorized",
+		Status: http.StatusUnauthorized,
+		Detail: "An unauthorized request was sent to the API",
+	}
+	return pd, true
 }
