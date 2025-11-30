@@ -131,7 +131,7 @@ func TestProblemDetailsErrorHandler_OnError_EmbeddedProblemDetail(t *testing.T) 
 		ResourceID string `json:"resource_id"`
 	}
 
-	handler := NewProblemDetailsErrorHandler(ProblemDetailsConfig{})
+	handler := NewProblemDetailsErrorHandler()
 
 	err := NotFoundError{
 		ProblemDetail: ProblemDetail{
@@ -163,7 +163,7 @@ func TestProblemDetailsErrorHandler_OnError_EmbeddedProblemDetail(t *testing.T) 
 
 // TestProblemDetailsErrorHandler_OnError_BadRequestError tests conversion of BadRequestError
 func TestProblemDetailsErrorHandler_OnError_BadRequestError(t *testing.T) {
-	handler := NewProblemDetailsErrorHandler(ProblemDetailsConfig{})
+	handler := NewProblemDetailsErrorHandler()
 
 	t.Run("generic bad request", func(t *testing.T) {
 		err := BadRequestError{
@@ -220,7 +220,7 @@ func TestProblemDetailsErrorHandler_OnError_BadRequestError(t *testing.T) {
 
 // TestProblemDetailsErrorHandler_OnError_UnauthorizedError tests conversion of UnauthorizedError
 func TestProblemDetailsErrorHandler_OnError_UnauthorizedError(t *testing.T) {
-	handler := NewProblemDetailsErrorHandler(ProblemDetailsConfig{})
+	handler := NewProblemDetailsErrorHandler()
 
 	t.Run("generic unauthorized", func(t *testing.T) {
 		err := UnauthorizedError{
@@ -258,7 +258,7 @@ func TestProblemDetailsErrorHandler_OnError_UnauthorizedError(t *testing.T) {
 
 // TestProblemDetailsErrorHandler_OnError_GenericError tests conversion of generic errors
 func TestProblemDetailsErrorHandler_OnError_GenericError(t *testing.T) {
-	handler := NewProblemDetailsErrorHandler(ProblemDetailsConfig{})
+	handler := NewProblemDetailsErrorHandler()
 
 	err := errors.New("database connection failed")
 
@@ -273,20 +273,27 @@ func TestProblemDetailsErrorHandler_OnError_GenericError(t *testing.T) {
 	require.Equal(t, "about:blank", result.Type)
 	require.Equal(t, "Internal Server Error", result.Title)
 	require.Equal(t, http.StatusInternalServerError, result.Status)
-	require.Equal(t, "database connection failed", result.Detail)
+	require.Equal(t, "An internal server error occurred.", result.Detail)
 }
 
 // TestProblemDetailsConfig tests configuration options
 func TestProblemDetailsConfig(t *testing.T) {
 	t.Run("default type is about:blank", func(t *testing.T) {
-		handler := NewProblemDetailsErrorHandler(ProblemDetailsConfig{})
-		require.Equal(t, "about:blank", handler.config.DefaultType)
+		handler := NewProblemDetailsErrorHandler()
+
+		err := errors.New("test error")
+		rec := httptest.NewRecorder()
+		handler.OnError(context.Background(), rec, err)
+
+		var result ProblemDetail
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
+		require.Equal(t, "about:blank", result.Type)
 	})
 
 	t.Run("custom default type", func(t *testing.T) {
-		handler := NewProblemDetailsErrorHandler(ProblemDetailsConfig{
-			DefaultType: "https://api.example.com/problems/",
-		})
+		handler := NewProblemDetailsErrorHandler(
+			WithDefaultType("https://api.example.com/problems/"),
+		)
 
 		err := errors.New("test error")
 		rec := httptest.NewRecorder()
@@ -298,9 +305,9 @@ func TestProblemDetailsConfig(t *testing.T) {
 	})
 
 	t.Run("custom default type with bad request", func(t *testing.T) {
-		handler := NewProblemDetailsErrorHandler(ProblemDetailsConfig{
-			DefaultType: "https://api.example.com/problems/",
-		})
+		handler := NewProblemDetailsErrorHandler(
+			WithDefaultType("https://api.example.com/problems/"),
+		)
 
 		err := BadRequestError{Cause: errors.New("bad")}
 		rec := httptest.NewRecorder()
@@ -311,33 +318,15 @@ func TestProblemDetailsConfig(t *testing.T) {
 		require.Equal(t, "https://api.example.com/problems/bad-request", result.Type)
 	})
 
-	t.Run("include details true includes error message", func(t *testing.T) {
-		includeDetails := true
-		handler := NewProblemDetailsErrorHandler(ProblemDetailsConfig{
-			IncludeDetails: &includeDetails,
-		})
+	t.Run("generic errors use hardcoded detail message", func(t *testing.T) {
+		handler := NewProblemDetailsErrorHandler()
 
-		err := errors.New("detailed error message")
+		err := errors.New("sensitive internal error message")
 		rec := httptest.NewRecorder()
 		handler.OnError(context.Background(), rec, err)
 
 		var result ProblemDetail
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
-		require.Equal(t, "detailed error message", result.Detail)
-	})
-
-	t.Run("include details false omits error message", func(t *testing.T) {
-		includeDetails := false
-		handler := NewProblemDetailsErrorHandler(ProblemDetailsConfig{
-			IncludeDetails: &includeDetails,
-		})
-
-		err := errors.New("sensitive error message")
-		rec := httptest.NewRecorder()
-		handler.OnError(context.Background(), rec, err)
-
-		var result ProblemDetail
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
-		require.Empty(t, result.Detail)
+		require.Equal(t, "An internal server error occurred.", result.Detail)
 	})
 }

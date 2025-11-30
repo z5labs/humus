@@ -34,7 +34,7 @@ func ExampleNewProblemDetailsErrorHandler() {
 			http.MethodPost,
 			rest.BasePath("/example"),
 			rest.HandleJson(handler),
-			rest.OnError(rest.NewProblemDetailsErrorHandler(rest.ProblemDetailsConfig{})),
+			rest.OnError(rest.NewProblemDetailsErrorHandler()),
 		),
 	)
 
@@ -65,13 +65,11 @@ func ExampleProblemDetail() {
 	_ = handler
 }
 
-// ExampleProblemDetailsConfig_productionMode demonstrates production configuration
-func ExampleProblemDetailsConfig_productionMode() {
-	// Production configuration - don't leak error details
-	includeDetails := false
-
+// ExampleNewProblemDetailsErrorHandler_secureByDefault demonstrates that generic errors are secure by default
+func ExampleNewProblemDetailsErrorHandler_secureByDefault() {
+	// Generic errors are automatically secured with hardcoded detail messages
 	handler := rest.HandlerFunc[SimpleRequest, SimpleResponse](func(ctx context.Context, req *SimpleRequest) (*SimpleResponse, error) {
-		return nil, errors.New("internal database connection failed")
+		return nil, errors.New("internal database connection failed with password: secret123")
 	})
 
 	api := rest.NewApi(
@@ -81,13 +79,14 @@ func ExampleProblemDetailsConfig_productionMode() {
 			http.MethodPost,
 			rest.BasePath("/example"),
 			rest.HandleJson(handler),
-			rest.OnError(rest.NewProblemDetailsErrorHandler(rest.ProblemDetailsConfig{
-				DefaultType:    "https://api.example.com/problems/",
-				IncludeDetails: &includeDetails, // Security: hide internal errors
-			})),
+			rest.OnError(rest.NewProblemDetailsErrorHandler(
+				rest.WithDefaultType("https://api.example.com/problems/"),
+			)),
 		),
 	)
 
+	// Response will have: "detail": "An internal server error occurred."
+	// The sensitive password in the error message is never exposed
 	_ = api
 }
 

@@ -56,7 +56,7 @@ func TestProblemDetails_Integration_CustomErrorWithExtensions(t *testing.T) {
 			http.MethodPost,
 			BasePath("/test"),
 			HandleJson(handler),
-			OnError(NewProblemDetailsErrorHandler(ProblemDetailsConfig{})),
+			OnError(NewProblemDetailsErrorHandler()),
 		),
 	)
 
@@ -138,7 +138,7 @@ func TestProblemDetails_Integration_ValidationErrorWithMultipleFields(t *testing
 			http.MethodPost,
 			BasePath("/validate"),
 			HandleJson(handler),
-			OnError(NewProblemDetailsErrorHandler(ProblemDetailsConfig{})),
+			OnError(NewProblemDetailsErrorHandler()),
 		),
 	)
 
@@ -208,7 +208,7 @@ func TestProblemDetails_Integration_ExistingFrameworkErrors(t *testing.T) {
 				http.MethodPost,
 				BasePath("/test"),
 				HandleJson(handler),
-				OnError(NewProblemDetailsErrorHandler(ProblemDetailsConfig{})),
+				OnError(NewProblemDetailsErrorHandler()),
 			),
 		)
 
@@ -249,7 +249,7 @@ func TestProblemDetails_Integration_ExistingFrameworkErrors(t *testing.T) {
 				http.MethodPost,
 				BasePath("/test"),
 				HandleJson(handler),
-				OnError(NewProblemDetailsErrorHandler(ProblemDetailsConfig{})),
+				OnError(NewProblemDetailsErrorHandler()),
 			),
 		)
 
@@ -273,7 +273,7 @@ func TestProblemDetails_Integration_ExistingFrameworkErrors(t *testing.T) {
 }
 
 // TestProblemDetails_Integration_GenericError tests that generic errors are converted
-// to 500 Internal Server Error Problem Details
+// to 500 Internal Server Error with hardcoded detail message for security
 func TestProblemDetails_Integration_GenericError(t *testing.T) {
 	type Request struct {
 		ID string `json:"id"`
@@ -284,7 +284,7 @@ func TestProblemDetails_Integration_GenericError(t *testing.T) {
 	}
 
 	handler := HandlerFunc[Request, Response](func(ctx context.Context, req *Request) (*Response, error) {
-		return nil, errors.New("database connection failed")
+		return nil, errors.New("database connection failed with password: secret123")
 	})
 
 	api := NewApi(
@@ -294,7 +294,7 @@ func TestProblemDetails_Integration_GenericError(t *testing.T) {
 			http.MethodPost,
 			BasePath("/test"),
 			HandleJson(handler),
-			OnError(NewProblemDetailsErrorHandler(ProblemDetailsConfig{})),
+			OnError(NewProblemDetailsErrorHandler()),
 		),
 	)
 
@@ -316,52 +316,5 @@ func TestProblemDetails_Integration_GenericError(t *testing.T) {
 	require.Equal(t, "about:blank", problem.Type)
 	require.Equal(t, "Internal Server Error", problem.Title)
 	require.Equal(t, http.StatusInternalServerError, problem.Status)
-	require.Equal(t, "database connection failed", problem.Detail)
-}
-
-// TestProblemDetails_Integration_ProductionConfig tests that production configuration
-// properly hides error details
-func TestProblemDetails_Integration_ProductionConfig(t *testing.T) {
-	type Request struct {
-		ID string `json:"id"`
-	}
-
-	type Response struct {
-		Data string `json:"data"`
-	}
-
-	handler := HandlerFunc[Request, Response](func(ctx context.Context, req *Request) (*Response, error) {
-		return nil, errors.New("internal database error: connection string contains password")
-	})
-
-	includeDetails := false
-	api := NewApi(
-		"Test API",
-		"v1.0.0",
-		Operation(
-			http.MethodPost,
-			BasePath("/test"),
-			HandleJson(handler),
-			OnError(NewProblemDetailsErrorHandler(ProblemDetailsConfig{
-				IncludeDetails: &includeDetails,
-			})),
-		),
-	)
-
-	srv := httptest.NewServer(api)
-	defer srv.Close()
-
-	body := bytes.NewReader([]byte(`{"id":"123"}`))
-	resp, err := http.Post(srv.URL+"/test", "application/json", body)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	require.Equal(t, http.StatusInternalServerError, resp.StatusCode)
-
-	var problem ProblemDetail
-	bodyBytes, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal(bodyBytes, &problem))
-	require.Equal(t, "Internal Server Error", problem.Title)
-	require.Empty(t, problem.Detail, "Detail should be empty in production mode")
+	require.Equal(t, "An internal server error occurred.", problem.Detail, "Generic errors should use hardcoded detail message for security")
 }

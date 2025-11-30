@@ -98,10 +98,9 @@ Humus provides built-in support for [RFC 7807 Problem Details](https://tools.iet
 ### Basic Usage
 
 ```go
-handler := rest.NewProblemDetailsErrorHandler(rest.ProblemDetailsConfig{
-    DefaultType:    "https://api.example.com/errors",
-    IncludeDetails: nil, // nil = include details (default)
-})
+handler := rest.NewProblemDetailsErrorHandler(
+    rest.WithDefaultType("https://api.example.com/errors"),
+)
 
 rest.Operation(
     http.MethodPost,
@@ -178,73 +177,71 @@ func createUser(ctx context.Context, req *CreateUserRequest) (*User, error) {
 
 ### Configuration Options
 
-#### DefaultType
+#### WithDefaultType
 
 Base URI for error types. Appended to the status code if the error doesn't set a Type:
 
 ```go
-config := rest.ProblemDetailsConfig{
-    DefaultType: "https://api.example.com/errors",
-}
+handler := rest.NewProblemDetailsErrorHandler(
+    rest.WithDefaultType("https://api.example.com/errors"),
+)
 // Error without Type field will become: "https://api.example.com/errors/500"
 ```
 
-#### IncludeDetails
+### Security: Error Detail Protection
 
-Control whether to include error details in the response. Use `nil` (default true) for development, `&false` for production:
+For security, the Problem Details handler automatically protects against leaking sensitive internal error information:
 
-```go
-// Development - include error details
-devConfig := rest.ProblemDetailsConfig{
-    DefaultType:    "https://api.example.com/errors",
-    IncludeDetails: nil, // nil defaults to true
-}
+- **Errors embedding `ProblemDetail`** - Include the actual error details you explicitly set
+- **Framework errors** - Use hardcoded detail message: "An internal server error occurred."
+- **Generic errors** - Use hardcoded detail message: "An internal server error occurred."
 
-// Production - hide internal error details
-includeDetails := false
-prodConfig := rest.ProblemDetailsConfig{
-    DefaultType:    "https://api.example.com/errors",
-    IncludeDetails: &includeDetails,
-}
-```
-
-#### Logger
-
-Custom logger for error logging:
+This prevents accidentally exposing sensitive information like database connection strings, internal paths, or stack traces to API clients.
 
 ```go
-logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-    Level: slog.LevelError,
-}))
-
-config := rest.ProblemDetailsConfig{
-    DefaultType: "https://api.example.com/errors",
-    Logger:      logger,
+// Custom errors with ProblemDetail will include your explicit details
+type ValidationError struct {
+    rest.ProblemDetail
+    Errors map[string][]string `json:"errors"`
 }
+
+return nil, ValidationError{
+    ProblemDetail: rest.ProblemDetail{
+        Detail: "Request validation failed", // This detail IS included
+    },
+}
+
+// Generic errors are automatically secured
+return nil, errors.New("database failed: password=secret123")
+// Response detail will be: "An internal server error occurred."
+// The password is NOT leaked to the client
 ```
 
 ### Error Detection Hierarchy
 
 The `ProblemDetailsErrorHandler` detects errors in this order:
 
-1. **Custom errors embedding ProblemDetail** - Serialized directly with all fields
-2. **Framework errors** (`rest.BadRequestError`, `rest.UnauthorizedError`, etc.) - Converted to standard Problem Details
-3. **Generic errors** - Wrapped as 500 Internal Server Error
+1. **Custom errors embedding ProblemDetail** - Serialized directly with all fields (includes your explicit detail message)
+2. **Framework errors** (`rest.BadRequestError`, `rest.UnauthorizedError`, etc.) - Converted to standard Problem Details with hardcoded detail
+3. **Generic errors** - Wrapped as 500 Internal Server Error with hardcoded detail
 
 ```go
-// Priority 1: Custom error with ProblemDetail (returns full object with extensions)
+// Priority 1: Custom error with ProblemDetail (returns full object with extensions and your explicit detail)
 return nil, ValidationError{
-    ProblemDetail: rest.ProblemDetail{...},
+    ProblemDetail: rest.ProblemDetail{
+        Detail: "Request validation failed", // Your explicit detail IS included
+        ...
+    },
     ValidationErrors: []FieldError{...},
 }
 
-// Priority 2: Framework error (converted to Problem Details)
+// Priority 2: Framework error (converted to Problem Details with hardcoded detail)
 return nil, rest.BadRequestError{Message: "Invalid input"}
-// Returns: {"type":"about:blank","title":"Bad Request","status":400,"detail":"Invalid input"}
+// Returns: {"type":"about:blank","title":"Bad Request","status":400,"detail":"An internal server error occurred."}
 
-// Priority 3: Generic error (wrapped as 500)
+// Priority 3: Generic error (wrapped as 500 with hardcoded detail)
 return nil, errors.New("database connection failed")
-// Returns: {"type":"about:blank","title":"Internal Server Error","status":500}
+// Returns: {"type":"about:blank","title":"Internal Server Error","status":500,"detail":"An internal server error occurred."}
 ```
 
 ## Framework Error Types
@@ -444,23 +441,30 @@ func (e ValidationError) Error() string {
 }
 ```
 
-### Hide Internal Errors in Production
+### Use Explicit ProblemDetail for User-Facing Errors
 
-Use `IncludeDetails: &false` in production to prevent leaking internal error messages:
+For errors that should provide meaningful details to users, always use custom errors embedding `ProblemDetail`:
 
 ```go
-// Development
-devHandler := rest.NewProblemDetailsErrorHandler(rest.ProblemDetailsConfig{
-    DefaultType:    "https://api.example.com/errors",
-    IncludeDetails: nil, // Include details
-})
+// Good - explicit, controlled error details
+type ValidationError struct {
+    rest.ProblemDetail
+    Errors map[string][]string `json:"errors"`
+}
 
-// Production
-includeDetails := false
-prodHandler := rest.NewProblemDetailsErrorHandler(rest.ProblemDetailsConfig{
-    DefaultType:    "https://api.example.com/errors",
-    IncludeDetails: &includeDetails, // Hide internal details
-})
+return nil, ValidationError{
+    ProblemDetail: rest.ProblemDetail{
+        Type:   "https://api.example.com/errors/validation",
+        Title:  "Validation Failed",
+        Status: http.StatusBadRequest,
+        Detail: "Request validation failed", // Explicit, safe detail
+    },
+    Errors: validationErrors,
+}
+
+// Bad - generic error may contain sensitive info
+return nil, fmt.Errorf("validation failed: %v", internalError)
+// Response: "detail": "An internal server error occurred."
 ```
 
 ### Use Extension Fields for Structured Data
@@ -518,11 +522,9 @@ func CreateUser(ctx context.Context) rest.ApiOption {
     handler := &createUserHandler{}
 
     // Configure Problem Details error handler
-    includeDetails := false // Production mode
-    errorHandler := rest.NewProblemDetailsErrorHandler(rest.ProblemDetailsConfig{
-        DefaultType:    "https://api.example.com/errors",
-        IncludeDetails: &includeDetails,
-    })
+    errorHandler := rest.NewProblemDetailsErrorHandler(
+        rest.WithDefaultType("https://api.example.com/errors"),
+    )
 
     return rest.Operation(
         http.MethodPost,

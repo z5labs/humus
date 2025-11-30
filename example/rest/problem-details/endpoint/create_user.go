@@ -44,11 +44,9 @@ func CreateUser(ctx context.Context, store *UserStore) rest.ApiOption {
 	}
 
 	// Configure Problem Details error handler
-	includeDetails := true // Development mode - set to false in production
-	errorHandler := rest.NewProblemDetailsErrorHandler(rest.ProblemDetailsConfig{
-		DefaultType:    "https://api.example.com/errors",
-		IncludeDetails: &includeDetails,
-	})
+	errorHandler := rest.NewProblemDetailsErrorHandler(
+		rest.WithDefaultType("https://api.example.com/errors"),
+	)
 
 	return rest.Operation(
 		http.MethodPost,

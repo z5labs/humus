@@ -172,10 +172,9 @@ By embedding `rest.ProblemDetail`, the error type automatically implements:
 Each endpoint configures the Problem Details error handler:
 
 ```go
-errorHandler := rest.NewProblemDetailsErrorHandler(rest.ProblemDetailsConfig{
-    DefaultType:    "https://api.example.com/errors",
-    IncludeDetails: &includeDetails, // Set to false in production
-})
+errorHandler := rest.NewProblemDetailsErrorHandler(
+    rest.WithDefaultType("https://api.example.com/errors"),
+)
 
 return rest.Operation(
     http.MethodPost,
@@ -184,6 +183,8 @@ return rest.Operation(
     rest.OnError(errorHandler),
 )
 ```
+
+**Security Note**: Generic errors (not embedding `rest.ProblemDetail`) automatically use a hardcoded detail message to prevent leaking sensitive information. Only custom errors with explicit `ProblemDetail` fields will include your specified error details.
 
 ### Constructor Functions
 
@@ -212,7 +213,7 @@ The `endpoint/store.go` file provides a simple in-memory user store with:
 
 ## Production Considerations
 
-1. **Hide Error Details**: Set `IncludeDetails: &false` in production to prevent leaking internal error messages
+1. **Use Explicit ProblemDetail Errors**: Always use custom errors embedding `rest.ProblemDetail` for user-facing errors with controlled detail messages
 2. **Use a Real Database**: Replace the in-memory store with a proper database
 3. **Add Authentication**: Implement JWT or API key authentication
 4. **Add Rate Limiting**: Protect endpoints from abuse

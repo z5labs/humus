@@ -210,10 +210,9 @@ Humus supports [RFC 7807 Problem Details](https://tools.ietf.org/html/rfc7807) f
 
 ```go
 // Basic Problem Details error handler
-handler := rest.NewProblemDetailsErrorHandler(rest.ProblemDetailsConfig{
-    DefaultType:    "https://example.com/errors",
-    IncludeDetails: nil, // nil = include (default), set to &false to exclude in production
-})
+handler := rest.NewProblemDetailsErrorHandler(
+    rest.WithDefaultType("https://example.com/errors"),
+)
 
 rest.Handle(
     http.MethodPost,
@@ -266,31 +265,41 @@ func createUser(ctx context.Context, req *CreateUserRequest) (*User, error) {
 
 The `ProblemDetailsErrorHandler` detects errors in this order:
 
-1. **Custom errors embedding ProblemDetail** - Serialized directly with all fields (including extensions)
-2. **Framework errors** (`rest.BadRequestError`, `rest.UnauthorizedError`, etc.) - Converted to standard Problem Details
-3. **Generic errors** - Wrapped as 500 Internal Server Error
+1. **Custom errors embedding ProblemDetail** - Serialized directly with all fields (including extensions and explicit detail message)
+2. **Framework errors** (`rest.BadRequestError`, `rest.UnauthorizedError`, etc.) - Converted to standard Problem Details with hardcoded detail message
+3. **Generic errors** - Wrapped as 500 Internal Server Error with hardcoded detail message
+
+**Security: Error Detail Protection**
+
+For security, only errors embedding `ProblemDetail` include the actual error details. All other errors (framework errors and generic errors) use the hardcoded message "An internal server error occurred." to prevent leaking sensitive information like database connection strings, internal paths, or stack traces.
+
+```go
+// Custom errors with ProblemDetail include your explicit details
+return nil, ValidationError{
+    ProblemDetail: rest.ProblemDetail{
+        Detail: "Request validation failed", // This detail IS included
+        ...
+    },
+}
+
+// Generic errors are automatically secured
+return nil, errors.New("database failed: password=secret123")
+// Response detail: "An internal server error occurred."
+// The password is NOT leaked to the client
+```
 
 **Configuration options:**
 
 ```go
-config := rest.ProblemDetailsConfig{
-    // Base URI for error types (appended to Status if error doesn't set Type)
-    DefaultType: "https://api.example.com/errors",
-
-    // Include error details in response (use &false in production to hide internal errors)
-    IncludeDetails: nil, // nil defaults to true
-
-    // Custom logger for error logging
-    Logger: slog.New(slog.NewJSONHandler(os.Stderr, nil)),
-}
-
-// Production configuration - hide internal error details
-includeDetails := false
-productionConfig := rest.ProblemDetailsConfig{
-    DefaultType:    "https://api.example.com/errors",
-    IncludeDetails: &includeDetails,
-}
+handler := rest.NewProblemDetailsErrorHandler(
+    rest.WithDefaultType("https://api.example.com/errors"),
+)
 ```
+
+Available options:
+- `rest.WithDefaultType(uri)` - Base URI for error types (defaults to "about:blank")
+
+The logger is always set to `humus.Logger("rest")` and cannot be customized.
 
 #### gRPC Services
 
