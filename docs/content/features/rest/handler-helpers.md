@@ -10,11 +10,12 @@ Humus provides handler helpers that simplify common REST API patterns by combini
 
 ## Overview
 
-The REST package provides three categories of handler helpers:
+The REST package provides four categories of handler helpers:
 
 1. **JSON Handlers** - For endpoints that consume and/or produce JSON
-2. **Producer/Consumer Patterns** - For endpoints with only request or only response
-3. **Low-level Wrappers** - For building custom serialization formats
+2. **HTML Template Handlers** - For endpoints that render server-side HTML
+3. **Producer/Consumer Patterns** - For endpoints with only request or only response
+4. **Low-level Wrappers** - For building custom serialization formats
 
 ## Core Interfaces
 
@@ -183,6 +184,354 @@ Content-Type: application/json
 HTTP/1.1 200 OK
 Content-Length: 0
 ```
+
+## HTML Template Handlers
+
+HTML template handlers enable server-side rendering of HTML pages using Go's `html/template` package. These handlers automatically set the correct content type and provide built-in XSS protection through context-aware HTML escaping.
+
+### ProduceHTML - GET Endpoints
+
+Use `ProduceHTML` for GET endpoints that return server-rendered HTML pages:
+
+```go
+import "html/template"
+
+// Define your template
+tmpl := template.Must(template.New("user").Parse(`
+<!DOCTYPE html>
+<html>
+<head><title>{{.Name}}'s Profile</title></head>
+<body>
+    <h1>{{.Name}}</h1>
+    <p>Email: {{.Email}}</p>
+    <p>Joined: {{.CreatedAt}}</p>
+</body>
+</html>
+`))
+
+// Define your producer
+producer := rest.ProducerFunc[User](
+    func(ctx context.Context) (*User, error) {
+        userID := rest.PathParamValue(ctx, "id")
+        user := getUserFromDB(ctx, userID)
+        return user, nil
+    },
+)
+
+// Wrap with HTML template rendering
+rest.Handle(
+    http.MethodGet,
+    rest.BasePath("/users").Param("id"),
+    rest.ProduceHTML(producer, tmpl),
+)
+```
+
+**What happens automatically:**
+- Response rendered using the provided HTML template
+- Content-Type set to `text/html; charset=utf-8`
+- XSS protection via automatic HTML escaping
+- OpenAPI response schema generated with `text/html` content type
+
+**OpenAPI Output:**
+```json
+{
+  "responses": {
+    "200": {
+      "content": {
+        "text/html": {
+          "schema": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+### ReturnHTML - Full Request and Response
+
+Use `ReturnHTML` when your endpoint processes JSON requests but returns HTML responses:
+
+```go
+// Define your handler logic
+handler := rest.HandlerFunc[SearchRequest, SearchResults](
+    func(ctx context.Context, req *SearchRequest) (*SearchResults, error) {
+        results := performSearch(ctx, req.Query, req.Filters)
+        return results, nil
+    },
+)
+
+// Define your template
+tmpl := template.Must(template.New("results").Parse(`
+<div class="search-results">
+    <h2>Results for "{{.Query}}"</h2>
+    <ul>
+    {{range .Items}}
+        <li>{{.Title}} - {{.Description}}</li>
+    {{end}}
+    </ul>
+</div>
+`))
+
+// Wrap with JSON consumption and HTML rendering
+rest.Handle(
+    http.MethodPost,
+    rest.BasePath("/search"),
+    rest.ConsumeJson(rest.ReturnHTML(handler, tmpl)),
+)
+```
+
+**What happens automatically:**
+- Request body parsed as JSON (via `ConsumeJson`)
+- Response rendered as HTML using the template
+- Content-Type set to `text/html; charset=utf-8`
+- HTML entities automatically escaped for security
+
+### Template Data and Path Parameters
+
+Access path and query parameters within your producer:
+
+```go
+type PageData struct {
+    Title   string
+    Content string
+    UserID  string
+}
+
+tmpl := template.Must(template.New("page").Parse(`
+<!DOCTYPE html>
+<html>
+<head><title>{{.Title}}</title></head>
+<body>
+    <h1>{{.Title}}</h1>
+    <p>User ID: {{.UserID}}</p>
+    <div>{{.Content}}</div>
+</body>
+</html>
+`))
+
+producer := rest.ProducerFunc[PageData](
+    func(ctx context.Context) (*PageData, error) {
+        userID := rest.PathParamValue(ctx, "id")
+        format := rest.QueryParamValue(ctx, "format")
+
+        data := &PageData{
+            Title:   "User Profile",
+            Content: getFormattedContent(ctx, userID, format),
+            UserID:  userID,
+        }
+        return data, nil
+    },
+)
+
+rest.Handle(
+    http.MethodGet,
+    rest.BasePath("/users").Param("id").Path("/profile"),
+    rest.ProduceHTML(producer, tmpl),
+    rest.QueryParam("format"),
+)
+```
+
+### Nested Data Structures
+
+HTML templates support complex nested data:
+
+```go
+type Dashboard struct {
+    User    User
+    Stats   Statistics
+    Recent  []Activity
+}
+
+tmpl := template.Must(template.New("dashboard").Parse(`
+<!DOCTYPE html>
+<html>
+<head><title>Dashboard - {{.User.Name}}</title></head>
+<body>
+    <h1>Welcome, {{.User.Name}}</h1>
+
+    <section class="stats">
+        <p>Total Orders: {{.Stats.TotalOrders}}</p>
+        <p>Revenue: ${{.Stats.Revenue}}</p>
+    </section>
+
+    <section class="activity">
+        <h2>Recent Activity</h2>
+        <ul>
+        {{range .Recent}}
+            <li>{{.Timestamp}} - {{.Description}}</li>
+        {{end}}
+        </ul>
+    </section>
+</body>
+</html>
+`))
+
+producer := rest.ProducerFunc[Dashboard](
+    func(ctx context.Context) (*Dashboard, error) {
+        return getDashboardData(ctx), nil
+    },
+)
+
+rest.Handle(
+    http.MethodGet,
+    rest.BasePath("/dashboard"),
+    rest.ProduceHTML(producer, tmpl),
+)
+```
+
+### XSS Protection
+
+HTML templates automatically escape HTML entities to prevent XSS attacks:
+
+```go
+type Message struct {
+    Content string
+}
+
+// Template with user-generated content
+tmpl := template.Must(template.New("message").Parse(`
+<div class="message">
+    <p>{{.Content}}</p>
+</div>
+`))
+
+producer := rest.ProducerFunc[Message](
+    func(ctx context.Context) (*Message, error) {
+        // User input containing script tags
+        return &Message{
+            Content: `<script>alert('XSS')</script>`,
+        }, nil
+    },
+)
+
+rest.Handle(
+    http.MethodGet,
+    rest.BasePath("/message"),
+    rest.ProduceHTML(producer, tmpl),
+)
+
+// Rendered output (safe):
+// <div class="message">
+//     <p>&lt;script&gt;alert(&#39;XSS&#39;)&lt;/script&gt;</p>
+// </div>
+```
+
+**Security Note:** The `html/template` package provides automatic context-aware escaping. Use `html/template` (not `text/template`) to ensure XSS protection.
+
+### Template Reuse
+
+Pre-parse and reuse templates across multiple endpoints:
+
+```go
+// Parse templates once at initialization
+var (
+    layoutTmpl = template.Must(template.ParseFiles(
+        "templates/layout.html",
+        "templates/header.html",
+        "templates/footer.html",
+    ))
+
+    homeTmpl = template.Must(layoutTmpl.Clone()).Must(
+        template.ParseFiles("templates/home.html"),
+    )
+
+    aboutTmpl = template.Must(layoutTmpl.Clone()).Must(
+        template.ParseFiles("templates/about.html"),
+    )
+)
+
+func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
+    homeProducer := rest.ProducerFunc[HomeData](getHomeData)
+    aboutProducer := rest.ProducerFunc[AboutData](getAboutData)
+
+    api := rest.NewApi(
+        "Website",
+        "1.0.0",
+        rest.Handle(
+            http.MethodGet,
+            rest.BasePath("/"),
+            rest.ProduceHTML(homeProducer, homeTmpl),
+        ),
+        rest.Handle(
+            http.MethodGet,
+            rest.BasePath("/about"),
+            rest.ProduceHTML(aboutProducer, aboutTmpl),
+        ),
+    )
+
+    return api, nil
+}
+```
+
+### Combining JSON and HTML Endpoints
+
+Serve both API and web pages from the same service:
+
+```go
+type Product struct {
+    ID    string  `json:"id"`
+    Name  string  `json:"name"`
+    Price float64 `json:"price"`
+}
+
+// JSON API endpoint
+producer := rest.ProducerFunc[Product](getProduct)
+rest.Handle(
+    http.MethodGet,
+    rest.BasePath("/api/products").Param("id"),
+    rest.ProduceJSON(producer),
+)
+
+// HTML page endpoint
+tmpl := template.Must(template.New("product").Parse(`
+<!DOCTYPE html>
+<html>
+<head><title>{{.Name}}</title></head>
+<body>
+    <h1>{{.Name}}</h1>
+    <p>Price: ${{.Price}}</p>
+</body>
+</html>
+`))
+
+rest.Handle(
+    http.MethodGet,
+    rest.BasePath("/products").Param("id"),
+    rest.ProduceHTML(producer, tmpl),
+)
+```
+
+### Error Handling
+
+HTML handlers propagate errors like other handlers:
+
+```go
+producer := rest.ProducerFunc[PageData](
+    func(ctx context.Context) (*PageData, error) {
+        userID := rest.PathParamValue(ctx, "id")
+
+        user, err := getUserFromDB(ctx, userID)
+        if err != nil {
+            // Return appropriate error for HTTP status code
+            return nil, rest.NotFoundError{
+                Cause: fmt.Errorf("user %s not found", userID),
+            }
+        }
+
+        return &PageData{User: user}, nil
+    },
+)
+
+rest.Handle(
+    http.MethodGet,
+    rest.BasePath("/users").Param("id"),
+    rest.ProduceHTML(producer, tmpl),
+)
+```
+
+See [Error Handling]({{< ref "error-handling" >}}) for complete error handling patterns.
 
 ## Function Adapters
 
@@ -516,14 +865,20 @@ func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
 Match the helper to your endpoint's behavior:
 
 ```go
-// GET endpoints - ProduceJson
+// GET endpoints returning JSON - ProduceJson
 rest.ProduceJson(producer)
+
+// GET endpoints returning HTML pages - ProduceHTML
+rest.ProduceHTML(producer, tmpl)
 
 // Webhooks - ConsumeOnlyJson
 rest.ConsumeOnlyJson(consumer)
 
 // Full CRUD operations - HandleJson
 rest.HandleJson(handler)
+
+// Mixed JSON request / HTML response - ReturnHTML
+rest.ConsumeJson(rest.ReturnHTML(handler, tmpl))
 ```
 
 ### 2. Keep Handlers Focused
