@@ -161,6 +161,45 @@ rest.Handle(http.MethodPost, rest.BasePath("/webhook"), rpc.ConsumeOnlyJson(cons
 rest.Handle(http.MethodPost, rest.BasePath("/users"), rpc.HandleJson(handlerFunc))
 ```
 
+**HTML Template Helpers:**
+
+For server-rendered HTML pages (use with HTMX or traditional forms):
+- `rest.ProduceHTML[Resp](producer, template)` - Wraps a Producer to return HTML responses
+- `rest.ReturnHTML[Req, Resp](handler, template)` - Wraps handler to return HTML responses
+- `rest.ConsumeForm[Req, Resp](handler)` - Wraps handler to consume form data
+- `rest.ConsumeOnlyForm[Req](consumer)` - Consumes form data without response body
+- `rest.HandleForm[Req, Resp](handler)` - Consumes form data and returns JSON
+
+Form data binding uses struct tags:
+```go
+type MyFormRequest struct {
+    Name  string `form:"name"`
+    Email string `form:"email"`
+    Age   int    `form:"age"`
+}
+```
+
+Example:
+```go
+// GET endpoint returning HTML
+tmpl := template.Must(template.New("page").Parse("<h1>{{.Message}}</h1>"))
+producer := rest.ProducerFunc[PageData](func(ctx context.Context) (*PageData, error) {
+    return &PageData{Message: "Hello"}, nil
+})
+rest.Handle(http.MethodGet, rest.BasePath("/"), rest.ProduceHTML(producer, tmpl))
+
+// POST endpoint consuming form data and returning HTML fragment
+itemTmpl := template.Must(template.New("item").Parse("<li>{{.Text}}</li>"))
+handler := rest.HandlerFunc[FormRequest, ItemResponse](func(ctx context.Context, req *FormRequest) (*ItemResponse, error) {
+    return &ItemResponse{Text: req.Text}, nil
+})
+rest.Handle(
+    http.MethodPost,
+    rest.BasePath("/add"),
+    rest.ConsumeForm(rest.ReturnHTML(handler, itemTmpl)),
+)
+```
+
 **Path Building:**
 ```go
 rest.BasePath("/users")              // Static path: /users
@@ -578,6 +617,7 @@ When writing tests:
 The `example/` directory contains reference implementations:
 - `example/rest/petstore/` - REST API example with OpenAPI generation
 - `example/rest/problem-details/` - RFC 7807 Problem Details error handling
+- `example/rest/htmx/` - HTMX todo list with HTML templates and form handling
 - `example/grpc/petstore/` - gRPC service example with health monitoring
 - `example/queue/kafka-at-most-once/` - Kafka queue with at-most-once semantics
 - `example/queue/kafka-at-least-once/` - Kafka queue with at-least-once semantics

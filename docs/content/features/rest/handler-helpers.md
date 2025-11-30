@@ -10,12 +10,13 @@ Humus provides handler helpers that simplify common REST API patterns by combini
 
 ## Overview
 
-The REST package provides four categories of handler helpers:
+The REST package provides five categories of handler helpers:
 
 1. **JSON Handlers** - For endpoints that consume and/or produce JSON
 2. **HTML Template Handlers** - For endpoints that render server-side HTML
-3. **Producer/Consumer Patterns** - For endpoints with only request or only response
-4. **Low-level Wrappers** - For building custom serialization formats
+3. **Form Handlers** - For endpoints that process HTML form submissions
+4. **Producer/Consumer Patterns** - For endpoints with only request or only response
+5. **Low-level Wrappers** - For building custom serialization formats
 
 ## Core Interfaces
 
@@ -532,6 +533,474 @@ rest.Handle(
 ```
 
 See [Error Handling]({{< ref "error-handling" >}}) for complete error handling patterns.
+
+## Form Handlers
+
+Form handlers enable processing of HTML form submissions using `application/x-www-form-urlencoded` content type. These handlers automatically parse form data into Go structs and provide OpenAPI schema generation for form-based endpoints.
+
+### ConsumeForm - Processing Form Submissions
+
+Use `ConsumeForm` to wrap any handler to consume form-encoded request data:
+
+```go
+type CreateUserRequest struct {
+    Name  string `form:"name"`
+    Email string `form:"email"`
+    Age   int    `form:"age"`
+}
+
+type User struct {
+    ID    string `json:"id"`
+    Name  string `json:"name"`
+    Email string `json:"email"`
+    Age   int    `json:"age"`
+}
+
+// Define handler that processes the form data
+handler := rest.HandlerFunc[CreateUserRequest, User](
+    func(ctx context.Context, req *CreateUserRequest) (*User, error) {
+        user := &User{
+            ID:    generateID(),
+            Name:  req.Name,
+            Email: req.Email,
+            Age:   req.Age,
+        }
+        return user, nil
+    },
+)
+
+// Wrap with form consumption
+rest.Handle(
+    http.MethodPost,
+    rest.BasePath("/users"),
+    rest.ConsumeForm(handler),
+)
+```
+
+**What happens automatically:**
+- Form data parsed from request body
+- Fields mapped to struct using `form` tags
+- Type conversion for basic types (string, int, uint, bool, float)
+- OpenAPI request schema generated with `application/x-www-form-urlencoded` content type
+
+### Form Struct Tags
+
+The `form` struct tag specifies the form field name to bind to each struct field:
+
+```go
+type ContactForm struct {
+    Name    string `form:"name"`      // Binds to form field "name"
+    Email   string `form:"email"`     // Binds to form field "email"
+    Message string `form:"message"`   // Binds to form field "message"
+    NoTag   string                    // Uses lowercase field name "notag"
+}
+```
+
+**Tag Rules:**
+- If `form` tag is present, use the tag value as the form field name
+- If `form` tag is absent, use the lowercase field name
+- Unexported fields are always skipped
+
+**Supported Field Types:**
+- `string` - Direct string value
+- `int`, `int8`, `int16`, `int32`, `int64` - Signed integers
+- `uint`, `uint8`, `uint16`, `uint32`, `uint64` - Unsigned integers
+- `bool` - Boolean values (`true`, `false`, `1`, `0`)
+- `float32`, `float64` - Floating-point numbers
+
+### ConsumeOnlyForm - Form Webhooks
+
+Use `ConsumeOnlyForm` for endpoints that process form submissions without returning a response body:
+
+```go
+type WebhookForm struct {
+    Event    string `form:"event"`
+    UserID   string `form:"user_id"`
+    Action   string `form:"action"`
+}
+
+// Define consumer
+consumer := rest.ConsumerFunc[WebhookForm](
+    func(ctx context.Context, form *WebhookForm) error {
+        processWebhookEvent(ctx, form.Event, form.UserID, form.Action)
+        return nil
+    },
+)
+
+// Wrap with form consumption
+rest.Handle(
+    http.MethodPost,
+    rest.BasePath("/webhooks/form"),
+    rest.ConsumeOnlyForm(consumer),
+)
+```
+
+**Response behavior:**
+```http
+POST /webhooks/form HTTP/1.1
+Content-Type: application/x-www-form-urlencoded
+
+event=user.created&user_id=123&action=signup
+
+HTTP/1.1 200 OK
+Content-Length: 0
+```
+
+### HandleForm - Form with JSON Response
+
+Use `HandleForm` for endpoints that consume form data but return JSON responses:
+
+```go
+type SearchForm struct {
+    Query   string `form:"q"`
+    Filter  string `form:"filter"`
+    Page    int    `form:"page"`
+}
+
+type SearchResults struct {
+    Results []Result `json:"results"`
+    Total   int      `json:"total"`
+    Page    int      `json:"page"`
+}
+
+// Define handler
+handler := rest.HandlerFunc[SearchForm, SearchResults](
+    func(ctx context.Context, form *SearchForm) (*SearchResults, error) {
+        results := performSearch(ctx, form.Query, form.Filter, form.Page)
+        return results, nil
+    },
+)
+
+// Wrap with form consumption and JSON response
+rest.Handle(
+    http.MethodPost,
+    rest.BasePath("/search"),
+    rest.HandleForm(handler),
+)
+```
+
+**What happens automatically:**
+- Request parsed as `application/x-www-form-urlencoded`
+- Response serialized as JSON with `Content-Type: application/json`
+- OpenAPI spec includes both form request and JSON response schemas
+
+### Combining Forms with HTML Templates
+
+Form handlers work seamlessly with HTML template responses for HTMX-style applications:
+
+```go
+type TodoForm struct {
+    Text      string `form:"text"`
+    Completed bool   `form:"completed"`
+}
+
+type TodoItem struct {
+    ID        string
+    Text      string
+    Completed bool
+}
+
+// Template for rendering a single todo item
+tmpl := template.Must(template.New("todo-item").Parse(`
+<li id="todo-{{.ID}}" class="{{if .Completed}}completed{{end}}">
+    <span>{{.Text}}</span>
+</li>
+`))
+
+// Handler that processes form and returns HTML fragment
+handler := rest.HandlerFunc[TodoForm, TodoItem](
+    func(ctx context.Context, form *TodoForm) (*TodoItem, error) {
+        item := &TodoItem{
+            ID:        generateID(),
+            Text:      form.Text,
+            Completed: form.Completed,
+        }
+        saveTodo(ctx, item)
+        return item, nil
+    },
+)
+
+// Combine form consumption with HTML template response
+rest.Handle(
+    http.MethodPost,
+    rest.BasePath("/todos"),
+    rest.ConsumeForm(rest.ReturnHTML(handler, tmpl)),
+)
+```
+
+**HTML Form Example:**
+```html
+<form hx-post="/todos" hx-target="#todo-list" hx-swap="beforeend">
+    <input type="text" name="text" placeholder="New todo" required>
+    <input type="checkbox" name="completed" value="true">
+    <button type="submit">Add</button>
+</form>
+
+<ul id="todo-list">
+    <!-- New todo items appear here -->
+</ul>
+```
+
+### Error Handling
+
+Form parsing errors are automatically wrapped as `BadRequestError`:
+
+```go
+handler := rest.HandlerFunc[TodoForm, TodoItem](
+    func(ctx context.Context, form *TodoForm) (*TodoItem, error) {
+        // Validate form data
+        if form.Text == "" {
+            return nil, rest.BadRequestError{
+                Cause: errors.New("text field is required"),
+            }
+        }
+
+        // Business logic
+        return createTodo(ctx, form)
+    },
+)
+```
+
+**Error scenarios:**
+- **Invalid percent encoding** - Returns `400 Bad Request` if form data is malformed
+- **Type conversion failure** - Returns `400 Bad Request` if a field can't be parsed (e.g., "abc" for an `int` field)
+- **Unsupported field types** - Returns `400 Bad Request` if a struct field has an unsupported type
+
+### Form Validation Patterns
+
+Validate form data in your handler before processing:
+
+```go
+type RegistrationForm struct {
+    Username string `form:"username"`
+    Email    string `form:"email"`
+    Age      int    `form:"age"`
+}
+
+handler := rest.HandlerFunc[RegistrationForm, User](
+    func(ctx context.Context, form *RegistrationForm) (*User, error) {
+        // Validation logic
+        if len(form.Username) < 3 {
+            return nil, rest.BadRequestError{
+                Cause: errors.New("username must be at least 3 characters"),
+            }
+        }
+
+        if !strings.Contains(form.Email, "@") {
+            return nil, rest.BadRequestError{
+                Cause: errors.New("invalid email format"),
+            }
+        }
+
+        if form.Age < 18 {
+            return nil, rest.BadRequestError{
+                Cause: errors.New("must be 18 or older"),
+            }
+        }
+
+        // Process valid form
+        return createUser(ctx, form)
+    },
+)
+```
+
+### OpenAPI Schema Generation
+
+Form handlers automatically generate OpenAPI schemas:
+
+```go
+type ProductForm struct {
+    Name     string  `form:"name"`
+    Price    float64 `form:"price"`
+    Quantity int     `form:"quantity"`
+}
+```
+
+**Generated OpenAPI:**
+```json
+{
+  "requestBody": {
+    "required": true,
+    "content": {
+      "application/x-www-form-urlencoded": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "price": {
+              "type": "number"
+            },
+            "quantity": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+### Complete HTMX Example
+
+Building a complete HTMX todo list application:
+
+```go
+type TodoForm struct {
+    Text string `form:"text"`
+}
+
+type TodoList struct {
+    Items []TodoItem
+}
+
+type TodoItem struct {
+    ID   string
+    Text string
+}
+
+// Template for the full todo list page
+pageTmpl := template.Must(template.New("page").Parse(`
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Todo List</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+</head>
+<body>
+    <h1>My Todos</h1>
+
+    <form hx-post="/todos" hx-target="#todo-list" hx-swap="beforeend">
+        <input type="text" name="text" placeholder="New todo" required>
+        <button type="submit">Add</button>
+    </form>
+
+    <ul id="todo-list">
+        {{range .Items}}
+        <li id="todo-{{.ID}}">
+            {{.Text}}
+            <button hx-delete="/todos/{{.ID}}" hx-target="#todo-{{.ID}}" hx-swap="outerHTML">
+                Delete
+            </button>
+        </li>
+        {{end}}
+    </ul>
+</body>
+</html>
+`))
+
+// Template for a single todo item
+itemTmpl := template.Must(template.New("item").Parse(`
+<li id="todo-{{.ID}}">
+    {{.Text}}
+    <button hx-delete="/todos/{{.ID}}" hx-target="#todo-{{.ID}}" hx-swap="outerHTML">
+        Delete
+    </button>
+</li>
+`))
+
+func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
+    store := NewTodoStore()
+
+    // GET / - Show full page
+    pageProducer := rest.ProducerFunc[TodoList](
+        func(ctx context.Context) (*TodoList, error) {
+            items := store.List(ctx)
+            return &TodoList{Items: items}, nil
+        },
+    )
+
+    // POST /todos - Add new todo (returns HTML fragment)
+    addHandler := rest.HandlerFunc[TodoForm, TodoItem](
+        func(ctx context.Context, form *TodoForm) (*TodoItem, error) {
+            item := &TodoItem{
+                ID:   generateID(),
+                Text: form.Text,
+            }
+            store.Add(ctx, item)
+            return item, nil
+        },
+    )
+
+    // DELETE /todos/{id} - Delete todo (returns empty response)
+    deleteConsumer := rest.ConsumerFunc[struct{}](
+        func(ctx context.Context, _ *struct{}) error {
+            id := rest.PathParamValue(ctx, "id")
+            return store.Delete(ctx, id)
+        },
+    )
+
+    api := rest.NewApi(
+        "Todo List",
+        "1.0.0",
+        rest.Handle(
+            http.MethodGet,
+            rest.BasePath("/"),
+            rest.ProduceHTML(pageProducer, pageTmpl),
+        ),
+        rest.Handle(
+            http.MethodPost,
+            rest.BasePath("/todos"),
+            rest.ConsumeForm(rest.ReturnHTML(addHandler, itemTmpl)),
+        ),
+        rest.Handle(
+            http.MethodDelete,
+            rest.BasePath("/todos").Param("id"),
+            rest.ConsumeOnlyJson(deleteConsumer),
+        ),
+    )
+
+    return api, nil
+}
+```
+
+### Best Practices
+
+**1. Use appropriate struct tags:**
+```go
+// Good - explicit form field names
+type Form struct {
+    UserName string `form:"username"`
+    Email    string `form:"email"`
+}
+
+// Avoid - relying on lowercase field names
+type Form struct {
+    UserName string  // Will bind to "username" (lowercase)
+    Email    string  // Will bind to "email"
+}
+```
+
+**2. Validate early:**
+```go
+// Good - validate immediately in handler
+func(ctx context.Context, form *Form) (*Response, error) {
+    if form.Email == "" {
+        return nil, rest.BadRequestError{...}
+    }
+    // Process valid form
+}
+
+// Avoid - processing invalid data
+func(ctx context.Context, form *Form) (*Response, error) {
+    result := process(form)  // May fail later
+    validate(result)         // Too late
+}
+```
+
+**3. Use the right helper for your use case:**
+```go
+// Form-only endpoint (no response body)
+rest.ConsumeOnlyForm(consumer)
+
+// Form with JSON response (API endpoint)
+rest.HandleForm(handler)
+
+// Form with HTML response (HTMX fragment)
+rest.ConsumeForm(rest.ReturnHTML(handler, tmpl))
+```
 
 ## Function Adapters
 
