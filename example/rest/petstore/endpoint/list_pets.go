@@ -63,18 +63,23 @@ type Pet struct {
 
 type ListPetsResponse []*Pet
 
-func (h *listPetsHandler) Produce(ctx context.Context) (*ListPetsResponse, error) {
+func (h *listPetsHandler) Produce(ctx context.Context) (resp *ListPetsResponse, err error) {
 	limitStr := rest.QueryParamValue(ctx, "limit")
-	limit, err := strconv.Atoi(limitStr[0])
-	if err != nil {
-		return nil, err
+	limit, parseErr := strconv.Atoi(limitStr[0])
+	if parseErr != nil {
+		return nil, parseErr
 	}
 
-	rows, err := h.listPetsStmt.QueryContext(ctx, limit)
-	if err != nil {
-		return nil, err
+	rows, queryErr := h.listPetsStmt.QueryContext(ctx, limit)
+	if queryErr != nil {
+		return nil, queryErr
 	}
-	defer rows.Close()
+	defer func() {
+		closeErr := rows.Close()
+		if err == nil {
+			err = closeErr
+		}
+	}()
 
 	var i int
 	pets := make(ListPetsResponse, limit)
@@ -85,9 +90,9 @@ func (h *listPetsHandler) Produce(ctx context.Context) (*ListPetsResponse, error
 			kind string
 		}
 
-		err := rows.Scan(&record.id, &record.name, &record.kind)
-		if err != nil {
-			return nil, err
+		scanErr := rows.Scan(&record.id, &record.name, &record.kind)
+		if scanErr != nil {
+			return nil, scanErr
 		}
 
 		pets[i] = &Pet{
@@ -95,6 +100,11 @@ func (h *listPetsHandler) Produce(ctx context.Context) (*ListPetsResponse, error
 			Name: record.name,
 			Kind: PetKind(record.kind),
 		}
+		i++
+	}
+
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return nil, rowsErr
 	}
 
 	return &pets, nil
