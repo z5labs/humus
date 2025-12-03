@@ -1,52 +1,30 @@
 ---
 title: Handler Helpers
-description: Type-safe handler creation with built-in serialization
+description: Quick reference for REST handler helpers
 weight: 30
 type: docs
 ---
 
-
-Humus provides handler helpers that simplify common REST API patterns by combining type-safe request/response handling with automatic serialization and OpenAPI schema generation.
-
-## Overview
-
-The REST package provides three categories of handler helpers:
-
-1. **JSON Handlers** - For endpoints that consume and/or produce JSON
-2. **Producer/Consumer Patterns** - For endpoints with only request or only response
-3. **Low-level Wrappers** - For building custom serialization formats
-
-## Core Interfaces
-
-All handler helpers build on these core interfaces:
-
-```go
-// Handler processes a request and returns a response
-type Handler[Req, Resp any] interface {
-    Handle(context.Context, *Req) (*Resp, error)
-}
-
-// Producer returns a response without consuming a request
-type Producer[T any] interface {
-    Produce(context.Context) (*T, error)
-}
-
-// Consumer consumes a request without returning a response
-type Consumer[T any] interface {
-    Consume(context.Context, *T) error
-}
-```
+Humus provides handler helpers that simplify REST API development through type-safe request/response handling, automatic serialization, and OpenAPI schema generation. This quick reference shows how to use each helper function with complete, copy-paste-ready code examples.
 
 ## JSON Handlers
 
-The most common handlers work with JSON payloads. These provide automatic serialization, content-type validation, and OpenAPI schema generation.
+### HandleJson
 
-### HandleJson - Full Request and Response
-
-Use `HandleJson` when your endpoint consumes and produces JSON:
+Consume JSON request and produce JSON response - ideal for POST/PUT endpoints with request and response bodies.
 
 ```go
-// Define your handler logic
+type CreateUserRequest struct {
+    Name  string `json:"name"`
+    Email string `json:"email"`
+}
+
+type User struct {
+    ID    string `json:"id"`
+    Name  string `json:"name"`
+    Email string `json:"email"`
+}
+
 handler := rest.HandlerFunc[CreateUserRequest, User](
     func(ctx context.Context, req *CreateUserRequest) (*User, error) {
         user := &User{
@@ -58,7 +36,6 @@ handler := rest.HandlerFunc[CreateUserRequest, User](
     },
 )
 
-// Wrap with JSON serialization
 rest.Handle(
     http.MethodPost,
     rest.BasePath("/users"),
@@ -66,74 +43,23 @@ rest.Handle(
 )
 ```
 
-**What happens automatically:**
-- Request body parsed as JSON
-- Content-Type validation (requires `application/json`)
-- Response serialized as JSON with `Content-Type: application/json`
-- OpenAPI request/response schemas generated from types
+### ProduceJson
 
-**OpenAPI Output:**
-```json
-{
-  "requestBody": {
-    "required": true,
-    "content": {
-      "application/json": {
-        "schema": {
-          "$ref": "#/components/schemas/CreateUserRequest"
-        }
-      }
-    }
-  },
-  "responses": {
-    "200": {
-      "content": {
-        "application/json": {
-          "schema": {
-            "$ref": "#/components/schemas/User"
-          }
-        }
-      }
-    }
-  }
+Produce JSON response without consuming a request body - ideal for GET endpoints.
+
+```go
+type User struct {
+    ID    string `json:"id"`
+    Name  string `json:"name"`
+    Email string `json:"email"`
 }
-```
 
-### ProduceJson - GET Endpoints
-
-Use `ProduceJson` for GET endpoints that return data without consuming a request body:
-
-```go
-// Define your producer
-producer := rest.ProducerFunc[[]User](
-    func(ctx context.Context) (*[]User, error) {
-        users := getUsersFromDB(ctx)
-        return &users, nil
-    },
-)
-
-// Wrap with JSON serialization
-rest.Handle(
-    http.MethodGet,
-    rest.BasePath("/users"),
-    rest.ProduceJson(producer),
-)
-```
-
-**What happens automatically:**
-- No request body parsing
-- Response serialized as JSON
-- OpenAPI response schema generated
-
-**Accessing Path/Query Parameters:**
-```go
 producer := rest.ProducerFunc[User](
     func(ctx context.Context) (*User, error) {
-        // Extract parameters from context
+        // Extract path parameter
         userID := rest.PathParamValue(ctx, "id")
-        include := rest.QueryParamValue(ctx, "include")
 
-        user := getUserByID(ctx, userID, include)
+        user := getUserByID(ctx, userID)
         return user, nil
     },
 )
@@ -142,16 +68,19 @@ rest.Handle(
     http.MethodGet,
     rest.BasePath("/users").Param("id"),
     rest.ProduceJson(producer),
-    rest.QueryParam("include"),
 )
 ```
 
-### ConsumeOnlyJson - Webhook Endpoints
+### ConsumeOnlyJson
 
-Use `ConsumeOnlyJson` for POST/PUT webhooks that process data but don't return content:
+Consume JSON request without producing a response body - ideal for webhook endpoints.
 
 ```go
-// Define your consumer
+type WebhookPayload struct {
+    Event      string `json:"event"`
+    Repository string `json:"repository"`
+}
+
 consumer := rest.ConsumerFunc[WebhookPayload](
     func(ctx context.Context, payload *WebhookPayload) error {
         processWebhook(ctx, payload)
@@ -159,7 +88,6 @@ consumer := rest.ConsumerFunc[WebhookPayload](
     },
 )
 
-// Wrap with JSON deserialization
 rest.Handle(
     http.MethodPost,
     rest.BasePath("/webhooks/github"),
@@ -167,529 +95,518 @@ rest.Handle(
 )
 ```
 
-**What happens automatically:**
-- Request body parsed as JSON
-- Content-Type validation
-- Returns `200 OK` with empty body on success
-- Returns appropriate error status on failure
+### ConsumeJson
 
-**Response behavior:**
-```http
-POST /webhooks/github HTTP/1.1
-Content-Type: application/json
-
-{"event": "push", "repository": "myrepo"}
-
-HTTP/1.1 200 OK
-Content-Length: 0
-```
-
-## Function Adapters
-
-Handler helpers provide function adapters for inline handler definitions:
-
-### HandlerFunc
-
-Convert a function to a `Handler`:
+Low-level helper that wraps a handler to add JSON request parsing.
 
 ```go
-handler := rest.HandlerFunc[Request, Response](
-    func(ctx context.Context, req *Request) (*Response, error) {
-        // Process request and return response
-        return &Response{}, nil
-    },
-)
-```
-
-### ProducerFunc
-
-Convert a function to a `Producer`:
-
-```go
-producer := rest.ProducerFunc[Response](
-    func(ctx context.Context) (*Response, error) {
-        // Generate and return response
-        return &Response{}, nil
-    },
-)
-```
-
-### ConsumerFunc
-
-Convert a function to a `Consumer`:
-
-```go
-consumer := rest.ConsumerFunc[Request](
-    func(ctx context.Context, req *Request) error {
-        // Process request
-        return nil
-    },
-)
-```
-
-## Composition Patterns
-
-Handler helpers are designed to compose together, allowing you to build complex handlers from simple pieces.
-
-### Adding Custom Middleware
-
-Wrap handlers with additional behavior:
-
-```go
-// Base handler
-baseHandler := rest.HandlerFunc[Request, Response](businessLogic)
-
-// Add validation layer
-validatingHandler := rest.HandlerFunc[Request, Response](
-    func(ctx context.Context, req *Request) (*Response, error) {
-        if err := validateRequest(req); err != nil {
-            return nil, err
-        }
-        return baseHandler.Handle(ctx, req)
-    },
-)
-
-// Wrap with JSON serialization
-rest.Handle(
-    http.MethodPost,
-    rest.BasePath("/api"),
-    rest.HandleJson(validatingHandler),
-)
-```
-
-### Transforming Responses
-
-Chain transformations before serialization:
-
-```go
-// Handler returns internal type
-handler := rest.HandlerFunc[Request, InternalResponse](getInternalData)
-
-// Transform to API response
-transformer := rest.HandlerFunc[Request, ApiResponse](
-    func(ctx context.Context, req *Request) (*ApiResponse, error) {
-        internal, err := handler.Handle(ctx, req)
-        if err != nil {
-            return nil, err
-        }
-        return toApiResponse(internal), nil
-    },
-)
-
-rest.Handle(
-    http.MethodPost,
-    rest.BasePath("/api"),
-    rest.HandleJson(transformer),
-)
-```
-
-## Low-Level Building Blocks
-
-For custom serialization formats, use the underlying wrappers directly.
-
-### ConsumeJson - Custom Request Deserialization
-
-Wrap any handler to consume JSON requests:
-
-```go
-handler := rest.HandlerFunc[MyRequest, MyResponse](businessLogic)
-
-// Add JSON request deserialization
-jsonHandler := rest.ConsumeJson(handler)
-
-rest.Handle(
-    http.MethodPost,
-    rest.BasePath("/api"),
-    jsonHandler,
-)
-```
-
-### ReturnJson - Custom Response Serialization
-
-Wrap any handler to return JSON responses:
-
-```go
-handler := rest.HandlerFunc[MyRequest, MyResponse](businessLogic)
-
-// Add JSON response serialization
-jsonHandler := rest.ReturnJson(handler)
-
-rest.Handle(
-    http.MethodPost,
-    rest.BasePath("/api"),
-    jsonHandler,
-)
-```
-
-### ConsumeNothing and ProduceNothing
-
-Build handlers without request or response bodies:
-
-```go
-// Producer - generates response without request body
-producer := rest.ProducerFunc[Response](generateData)
-handler := rest.ConsumeNothing(producer)
-
-// Consumer - processes request without response body
-consumer := rest.ConsumerFunc[Request](processData)
-handler := rest.ProduceNothing(consumer)
-```
-
-## Advanced Patterns
-
-### Conditional Response Types
-
-Return different response types based on business logic:
-
-```go
-handler := rest.HandlerFunc[Request, Response](
-    func(ctx context.Context, req *Request) (*Response, error) {
-        // Return different status codes via custom error types
-        if !isAuthorized(ctx) {
-            return nil, rest.UnauthorizedError{
-                Cause: errors.New("invalid credentials"),
-            }
-        }
-
-        if !exists(req.ID) {
-            return nil, rest.NotFoundError{
-                Cause: errors.New("resource not found"),
-            }
-        }
-
-        return &Response{Data: getData(req.ID)}, nil
-    },
-)
-```
-
-See [Error Handling]({{< ref "error-handling" >}}) for complete error handling patterns.
-
-### Streaming Responses
-
-For streaming responses, implement custom `TypedResponse`:
-
-```go
-type StreamingResponse struct {
-    data chan []byte
-}
-
-func (sr *StreamingResponse) WriteResponse(ctx context.Context, w http.ResponseWriter) error {
-    w.Header().Set("Content-Type", "application/x-ndjson")
-    w.WriteHeader(http.StatusOK)
-
-    for data := range sr.data {
-        if _, err := w.Write(data); err != nil {
-            return err
-        }
-        if f, ok := w.(http.Flusher); ok {
-            f.Flush()
-        }
-    }
-    return nil
-}
-
-func (sr *StreamingResponse) Spec() (int, openapi3.ResponseOrRef, error) {
-    // Define OpenAPI spec for streaming response
-    return http.StatusOK, openapi3.ResponseOrRef{}, nil
-}
-```
-
-### Custom Content Types
-
-Implement handlers for other content types:
-
-```go
-// XML request type
-type XMLRequest[T any] struct {
-    inner T
-}
-
-func (xr *XMLRequest[T]) ReadRequest(ctx context.Context, r *http.Request) error {
-    contentType := r.Header.Get("Content-Type")
-    if contentType != "application/xml" {
-        return rest.BadRequestError{
-            Cause: rest.InvalidContentTypeError{
-                ContentType: contentType,
-            },
-        }
-    }
-
-    dec := xml.NewDecoder(r.Body)
-    return dec.Decode(&xr.inner)
-}
-
-func (xr *XMLRequest[T]) Spec() (openapi3.RequestBodyOrRef, error) {
-    // Define OpenAPI spec for XML request
-    return openapi3.RequestBodyOrRef{}, nil
-}
-```
-
-## Complete Example
-
-Putting it all together in a CRUD API:
-
-```go
-type UserStore interface {
-    Create(ctx context.Context, user User) error
-    Get(ctx context.Context, id string) (*User, error)
-    List(ctx context.Context) ([]User, error)
-    Update(ctx context.Context, user User) error
-    Delete(ctx context.Context, id string) error
-}
-
-func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
-    store := NewUserStore()
-
-    // POST /users - Create user
-    createHandler := rest.HandlerFunc[CreateUserRequest, User](
-        func(ctx context.Context, req *CreateUserRequest) (*User, error) {
-            user := User{
-                ID:    generateID(),
-                Name:  req.Name,
-                Email: req.Email,
-            }
-            if err := store.Create(ctx, user); err != nil {
-                return nil, err
-            }
-            return &user, nil
-        },
-    )
-
-    // GET /users - List all users
-    listProducer := rest.ProducerFunc[[]User](
-        func(ctx context.Context) (*[]User, error) {
-            users, err := store.List(ctx)
-            return &users, err
-        },
-    )
-
-    // GET /users/{id} - Get single user
-    getProducer := rest.ProducerFunc[User](
-        func(ctx context.Context) (*User, error) {
-            id := rest.PathParamValue(ctx, "id")
-            return store.Get(ctx, id)
-        },
-    )
-
-    // PUT /users/{id} - Update user
-    updateHandler := rest.HandlerFunc[UpdateUserRequest, User](
-        func(ctx context.Context, req *UpdateUserRequest) (*User, error) {
-            id := rest.PathParamValue(ctx, "id")
-            user := User{
-                ID:    id,
-                Name:  req.Name,
-                Email: req.Email,
-            }
-            if err := store.Update(ctx, user); err != nil {
-                return nil, err
-            }
-            return &user, nil
-        },
-    )
-
-    // DELETE /users/{id} - Delete user
-    deleteConsumer := rest.ConsumerFunc[struct{}](
-        func(ctx context.Context, _ *struct{}) error {
-            id := rest.PathParamValue(ctx, "id")
-            return store.Delete(ctx, id)
-        },
-    )
-
-    api := rest.NewApi(
-        "User API",
-        "1.0.0",
-        rest.Handle(http.MethodPost, rest.BasePath("/users"), rest.HandleJson(createHandler)),
-        rest.Handle(http.MethodGet, rest.BasePath("/users"), rest.ProduceJson(listProducer)),
-        rest.Handle(http.MethodGet, rest.BasePath("/users").Param("id"), rest.ProduceJson(getProducer)),
-        rest.Handle(http.MethodPut, rest.BasePath("/users").Param("id"), rest.HandleJson(updateHandler)),
-        rest.Handle(http.MethodDelete, rest.BasePath("/users").Param("id"), rest.ConsumeOnlyJson(deleteConsumer)),
-    )
-
-    return api, nil
-}
-```
-
-## Best Practices
-
-### 1. Choose the Right Helper
-
-Match the helper to your endpoint's behavior:
-
-```go
-// GET endpoints - ProduceJson
-rest.ProduceJson(producer)
-
-// Webhooks - ConsumeOnlyJson
-rest.ConsumeOnlyJson(consumer)
-
-// Full CRUD operations - HandleJson
-rest.HandleJson(handler)
-```
-
-### 2. Keep Handlers Focused
-
-Each handler should have a single responsibility:
-
-```go
-// Good - focused handler
-handler := rest.HandlerFunc[CreateUserRequest, User](createUser)
-
-// Avoid - handler doing too much
-handler := rest.HandlerFunc[Request, Response](
-    func(ctx context.Context, req *Request) (*Response, error) {
-        validate(req)      // Should be middleware
-        log(req)           // Should be middleware
-        transform(req)     // Should be separate transformer
-        return process(req), nil
-    },
-)
-```
-
-### 3. Use Type Parameters Effectively
-
-Define clear request/response types:
-
-```go
-// Good - explicit types
 type CreateUserRequest struct {
     Name  string `json:"name"`
     Email string `json:"email"`
 }
 
-type UserResponse struct {
-    ID        string    `json:"id"`
-    Name      string    `json:"name"`
-    Email     string    `json:"email"`
-    CreatedAt time.Time `json:"created_at"`
+type User struct {
+    ID    string `json:"id"`
+    Name  string `json:"name"`
+    Email string `json:"email"`
 }
 
-// Avoid - using map[string]interface{}
-handler := rest.HandlerFunc[map[string]interface{}, map[string]interface{}](...)
+handler := rest.HandlerFunc[CreateUserRequest, User](
+    func(ctx context.Context, req *CreateUserRequest) (*User, error) {
+        user := &User{
+            ID:    generateID(),
+            Name:  req.Name,
+            Email: req.Email,
+        }
+        return user, nil
+    },
+)
+
+// Wrap handler to add JSON request parsing
+jsonHandler := rest.ConsumeJson(handler)
+
+rest.Handle(
+    http.MethodPost,
+    rest.BasePath("/users"),
+    jsonHandler,
+)
 ```
 
-### 4. Leverage Function Adapters
+### ReturnJson
 
-Use function adapters for inline handlers:
+Low-level helper that wraps a handler to add JSON response serialization.
 
 ```go
-// Good - inline with adapter
-rest.ProduceJson(rest.ProducerFunc[Response](
-    func(ctx context.Context) (*Response, error) {
-        return &Response{}, nil
-    },
-))
-
-// Verbose - defining separate type
-type MyProducer struct{}
-func (p *MyProducer) Produce(ctx context.Context) (*Response, error) {
-    return &Response{}, nil
+type CreateUserRequest struct {
+    Name  string `json:"name"`
+    Email string `json:"email"`
 }
-rest.ProduceJson(&MyProducer{})
+
+type User struct {
+    ID    string `json:"id"`
+    Name  string `json:"name"`
+    Email string `json:"email"`
+}
+
+handler := rest.HandlerFunc[CreateUserRequest, User](
+    func(ctx context.Context, req *CreateUserRequest) (*User, error) {
+        user := &User{
+            ID:    generateID(),
+            Name:  req.Name,
+            Email: req.Email,
+        }
+        return user, nil
+    },
+)
+
+// Wrap handler to add JSON response serialization
+jsonHandler := rest.ReturnJson(handler)
+
+rest.Handle(
+    http.MethodPost,
+    rest.BasePath("/users"),
+    jsonHandler,
+)
 ```
 
-### 5. Document with JSON Tags
+## Form Handlers
 
-Use JSON tags to control serialization and OpenAPI schema generation:
+### ConsumeForm
+
+Wrap a handler to consume form-encoded request data.
+
+```go
+type CreateUserRequest struct {
+    Name  string `form:"name"`
+    Email string `form:"email"`
+    Age   int    `form:"age"`
+}
+
+type User struct {
+    ID    string `json:"id"`
+    Name  string `json:"name"`
+    Email string `json:"email"`
+    Age   int    `json:"age"`
+}
+
+handler := rest.HandlerFunc[CreateUserRequest, User](
+    func(ctx context.Context, req *CreateUserRequest) (*User, error) {
+        user := &User{
+            ID:    generateID(),
+            Name:  req.Name,
+            Email: req.Email,
+            Age:   req.Age,
+        }
+        return user, nil
+    },
+)
+
+rest.Handle(
+    http.MethodPost,
+    rest.BasePath("/users"),
+    rest.ConsumeForm(handler),
+)
+```
+
+### ConsumeOnlyForm
+
+Consume form-encoded data without producing a response body - ideal for form webhooks.
+
+```go
+type WebhookForm struct {
+    Event  string `form:"event"`
+    UserID string `form:"user_id"`
+    Action string `form:"action"`
+}
+
+consumer := rest.ConsumerFunc[WebhookForm](
+    func(ctx context.Context, form *WebhookForm) error {
+        processWebhookEvent(ctx, form.Event, form.UserID, form.Action)
+        return nil
+    },
+)
+
+rest.Handle(
+    http.MethodPost,
+    rest.BasePath("/webhooks/form"),
+    rest.ConsumeOnlyForm(consumer),
+)
+```
+
+### HandleForm
+
+Consume form-encoded request and produce JSON response.
+
+```go
+type SearchForm struct {
+    Query  string `form:"q"`
+    Filter string `form:"filter"`
+    Page   int    `form:"page"`
+}
+
+type SearchResults struct {
+    Results []Result `json:"results"`
+    Total   int      `json:"total"`
+    Page    int      `json:"page"`
+}
+
+handler := rest.HandlerFunc[SearchForm, SearchResults](
+    func(ctx context.Context, form *SearchForm) (*SearchResults, error) {
+        results := performSearch(ctx, form.Query, form.Filter, form.Page)
+        return results, nil
+    },
+)
+
+rest.Handle(
+    http.MethodPost,
+    rest.BasePath("/search"),
+    rest.HandleForm(handler),
+)
+```
+
+## HTML Template Handlers
+
+### ProduceHTML
+
+Produce HTML response using a template - ideal for GET endpoints rendering pages. Use this when your template for each request is independent of the request data. If you need to specify a response template dynamically, implement your own Handler which returns a `rest.HTMLTemplateResponse` with the `Template` field set based on the request.
+
+```go
+import "html/template"
+
+type User struct {
+    ID    string
+    Name  string
+    Email string
+}
+
+// Define template
+tmpl := template.Must(template.New("user").Parse(`
+<!DOCTYPE html>
+<html>
+<head><title>{{.Name}}'s Profile</title></head>
+<body>
+    <h1>{{.Name}}</h1>
+    <p>Email: {{.Email}}</p>
+</body>
+</html>
+`))
+
+// Create producer
+producer := rest.ProducerFunc[User](
+    func(ctx context.Context) (*User, error) {
+        userID := rest.PathParamValue(ctx, "id")
+        user := getUserFromDB(ctx, userID)
+        return user, nil
+    },
+)
+
+rest.Handle(
+    http.MethodGet,
+    rest.BasePath("/users").Param("id"),
+    rest.ProduceHTML(producer, tmpl),
+)
+```
+
+### ReturnHTML
+
+Wrap a handler to return HTML responses using a template. Use this when your template for each request is independent of the request data. If you need to specify a response template dynamically, implement your own Handler which returns a `rest.HTMLTemplateResponse` with the `Template` field set based on the request.
+
+```go
+import "html/template"
+
+type SearchRequest struct {
+    Query   string `json:"query"`
+    Filters string `json:"filters"`
+}
+
+type SearchResults struct {
+    Query string
+    Items []Item
+}
+
+// Define template
+tmpl := template.Must(template.New("results").Parse(`
+<div class="search-results">
+    <h2>Results for "{{.Query}}"</h2>
+    <ul>
+    {{range .Items}}
+        <li>{{.Title}} - {{.Description}}</li>
+    {{end}}
+    </ul>
+</div>
+`))
+
+// Create handler
+handler := rest.HandlerFunc[SearchRequest, SearchResults](
+    func(ctx context.Context, req *SearchRequest) (*SearchResults, error) {
+        results := performSearch(ctx, req.Query, req.Filters)
+        return results, nil
+    },
+)
+
+rest.Handle(
+    http.MethodPost,
+    rest.BasePath("/search"),
+    rest.ConsumeJson(rest.ReturnHTML(handler, tmpl)),
+)
+```
+
+## Core Interfaces
+
+### Handler
+
+Core interface for handlers that consume a request and produce a response.
+
+```go
+type CreateUserRequest struct {
+    Name  string `json:"name"`
+    Email string `json:"email"`
+}
+
+type User struct {
+    ID    string `json:"id"`
+    Name  string `json:"name"`
+    Email string `json:"email"`
+}
+
+// Implement Handler interface with a custom struct
+type UserHandler struct {
+    store UserStore
+}
+
+func (h *UserHandler) Handle(ctx context.Context, req *CreateUserRequest) (*User, error) {
+    user := &User{
+        ID:    generateID(),
+        Name:  req.Name,
+        Email: req.Email,
+    }
+
+    if err := h.store.Create(ctx, user); err != nil {
+        return nil, err
+    }
+
+    return user, nil
+}
+
+// Use with HandleJson
+handler := &UserHandler{store: myStore}
+
+rest.Handle(
+    http.MethodPost,
+    rest.BasePath("/users"),
+    rest.HandleJson(handler),
+)
+```
+
+### Producer
+
+Interface for producers that generate a response without consuming a request.
 
 ```go
 type User struct {
-    ID        string    `json:"id"`                    // Required field
-    Name      string    `json:"name"`                  // Required field
-    Email     string    `json:"email,omitempty"`       // Optional field
-    Internal  string    `json:"-"`                     // Excluded from JSON
-    CreatedAt time.Time `json:"created_at"`            // Snake case in JSON
+    ID    string `json:"id"`
+    Name  string `json:"name"`
+    Email string `json:"email"`
 }
+
+// Implement Producer interface with a custom struct
+type UserProducer struct {
+    store UserStore
+}
+
+func (p *UserProducer) Produce(ctx context.Context) (*User, error) {
+    userID := rest.PathParamValue(ctx, "id")
+    user, err := p.store.Get(ctx, userID)
+    if err != nil {
+        return nil, err
+    }
+    return user, nil
+}
+
+// Use with ProduceJson
+producer := &UserProducer{store: myStore}
+
+rest.Handle(
+    http.MethodGet,
+    rest.BasePath("/users").Param("id"),
+    rest.ProduceJson(producer),
+)
 ```
 
-## Performance Considerations
+### Consumer
 
-### Request Body Size
-
-JSON handlers buffer the entire request body in memory. For large uploads, consider:
+Interface for consumers that consume a request without producing a response.
 
 ```go
-// Set max request size at the HTTP server level
-config := rest.Config{
-    HTTP: rest.HTTPConfig{
-        MaxRequestBodySize: 10 * 1024 * 1024, // 10 MB
+type WebhookPayload struct {
+    Event      string `json:"event"`
+    Repository string `json:"repository"`
+}
+
+// Implement Consumer interface with a custom struct
+type WebhookConsumer struct {
+    processor WebhookProcessor
+}
+
+func (c *WebhookConsumer) Consume(ctx context.Context, payload *WebhookPayload) error {
+    return c.processor.Process(ctx, payload)
+}
+
+// Use with ConsumeOnlyJson
+consumer := &WebhookConsumer{processor: myProcessor}
+
+rest.Handle(
+    http.MethodPost,
+    rest.BasePath("/webhooks/github"),
+    rest.ConsumeOnlyJson(consumer),
+)
+```
+
+## Function Adapters
+
+### HandlerFunc
+
+Function adapter that implements the Handler interface - use for inline handler definitions.
+
+```go
+type CreateUserRequest struct {
+    Name  string `json:"name"`
+    Email string `json:"email"`
+}
+
+type User struct {
+    ID    string `json:"id"`
+    Name  string `json:"name"`
+    Email string `json:"email"`
+}
+
+// Define handler inline using HandlerFunc
+handler := rest.HandlerFunc[CreateUserRequest, User](
+    func(ctx context.Context, req *CreateUserRequest) (*User, error) {
+        user := &User{
+            ID:    generateID(),
+            Name:  req.Name,
+            Email: req.Email,
+        }
+        return user, nil
     },
-}
+)
+
+rest.Handle(
+    http.MethodPost,
+    rest.BasePath("/users"),
+    rest.HandleJson(handler),
+)
 ```
 
-### Response Streaming
+### ProducerFunc
 
-For large responses, use custom streaming responses instead of buffering:
+Function adapter that implements the Producer interface - use for inline producer definitions.
 
 ```go
-// Avoid - buffers entire response
-type LargeResponse struct {
-    Data []LargeItem `json:"data"` // Could be GBs
+type User struct {
+    ID    string `json:"id"`
+    Name  string `json:"name"`
+    Email string `json:"email"`
 }
 
-// Prefer - streams data
-type StreamingHandler struct{}
+// Define producer inline using ProducerFunc
+producer := rest.ProducerFunc[User](
+    func(ctx context.Context) (*User, error) {
+        userID := rest.PathParamValue(ctx, "id")
+        user := getUserByID(ctx, userID)
+        return user, nil
+    },
+)
 
-func (h *StreamingHandler) Handle(ctx context.Context, req *Request) (*StreamingResponse, error) {
-    return &StreamingResponse{
-        data: generateDataStream(ctx),
-    }, nil
-}
+rest.Handle(
+    http.MethodGet,
+    rest.BasePath("/users").Param("id"),
+    rest.ProduceJson(producer),
+)
 ```
 
-## Troubleshooting
+### ConsumerFunc
 
-### Content-Type Errors
-
-If you see `400 Bad Request` with "invalid content type":
-
-```json
-{
-  "error": "invalid content type: text/plain"
-}
-```
-
-Ensure your client sends `Content-Type: application/json`:
-
-```bash
-curl -X POST http://localhost:8080/api \
-  -H "Content-Type: application/json" \
-  -d '{"key": "value"}'
-```
-
-### JSON Parsing Errors
-
-If you see JSON unmarshal errors, verify your request structure matches the type:
+Function adapter that implements the Consumer interface - use for inline consumer definitions.
 
 ```go
-// Handler expects
-type Request struct {
-    Name string `json:"name"`
+type WebhookPayload struct {
+    Event      string `json:"event"`
+    Repository string `json:"repository"`
 }
 
-// Client must send
-{"name": "value"}
+// Define consumer inline using ConsumerFunc
+consumer := rest.ConsumerFunc[WebhookPayload](
+    func(ctx context.Context, payload *WebhookPayload) error {
+        processWebhook(ctx, payload)
+        return nil
+    },
+)
 
-// Not
-{"Name": "value"}  // Wrong - Go field name instead of JSON tag
+rest.Handle(
+    http.MethodPost,
+    rest.BasePath("/webhooks/github"),
+    rest.ConsumeOnlyJson(consumer),
+)
 ```
 
-### Empty Response Body
+## Low-Level Building Blocks
 
-`ConsumeOnlyJson` returns an empty response body by design:
+### ConsumeNothing
+
+Low-level helper that wraps a Producer to create a handler that ignores the request body.
 
 ```go
-// This is correct behavior
-rest.ConsumeOnlyJson(consumer)
-// Returns: 200 OK with empty body
+type User struct {
+    ID    string `json:"id"`
+    Name  string `json:"name"`
+    Email string `json:"email"`
+}
 
-// To return data, use HandleJson instead
-rest.HandleJson(handler)
-// Returns: 200 OK with JSON response
+// Create a producer
+producer := rest.ProducerFunc[User](
+    func(ctx context.Context) (*User, error) {
+        userID := rest.PathParamValue(ctx, "id")
+        user := getUserByID(ctx, userID)
+        return user, nil
+    },
+)
+
+// Wrap producer to create a handler that consumes nothing
+handler := rest.ConsumeNothing(producer)
+
+rest.Handle(
+    http.MethodGet,
+    rest.BasePath("/users").Param("id"),
+    handler,
+)
 ```
 
-## Next Steps
+### ProduceNothing
 
-- Learn about [Error Handling]({{< ref "error-handling" >}}) for custom error responses
-- Explore [Routing]({{< ref "routing" >}}) for path parameters and query strings
-- See [OpenAPI]({{< ref "openapi" >}}) for customizing generated schemas
-- Read [Authentication]({{< ref "authentication" >}}) for securing endpoints
+Low-level helper that wraps a Consumer to create a handler that produces no response body.
+
+```go
+type WebhookPayload struct {
+    Event      string `json:"event"`
+    Repository string `json:"repository"`
+}
+
+// Create a consumer
+consumer := rest.ConsumerFunc[WebhookPayload](
+    func(ctx context.Context, payload *WebhookPayload) error {
+        processWebhook(ctx, payload)
+        return nil
+    },
+)
+
+// Wrap consumer to create a handler that produces nothing
+handler := rest.ProduceNothing(consumer)
+
+rest.Handle(
+    http.MethodPost,
+    rest.BasePath("/webhooks/github"),
+    handler,
+)
+```
