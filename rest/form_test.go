@@ -7,11 +7,13 @@ package rest
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -374,5 +376,204 @@ func TestSetField_UintNegative(t *testing.T) {
 		err := decodeForm(formData, &result)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to set field Value")
+	})
+}
+
+// Test type aliases
+type UserID string
+type Age int
+type Score float64
+
+func TestSetField_TypeAliases(t *testing.T) {
+	t.Run("should decode type aliased primitives", func(t *testing.T) {
+		type aliasForm struct {
+			UserID UserID `form:"user_id"`
+			Age    Age    `form:"age"`
+			Score  Score  `form:"score"`
+		}
+
+		formData := map[string][]string{
+			"user_id": {"user-123"},
+			"age":     {"25"},
+			"score":   {"98.5"},
+		}
+
+		var result aliasForm
+		err := decodeForm(formData, &result)
+		require.NoError(t, err)
+		require.Equal(t, UserID("user-123"), result.UserID)
+		require.Equal(t, Age(25), result.Age)
+		require.Equal(t, Score(98.5), result.Score)
+	})
+}
+
+func TestSetField_TimeTime(t *testing.T) {
+	t.Run("should decode time.Time from RFC3339 format", func(t *testing.T) {
+		type timeForm struct {
+			Timestamp time.Time `form:"timestamp"`
+		}
+
+		expectedTime := time.Date(2025, 12, 2, 15, 30, 0, 0, time.UTC)
+		formData := map[string][]string{
+			"timestamp": {expectedTime.Format(time.RFC3339)},
+		}
+
+		var result timeForm
+		err := decodeForm(formData, &result)
+		require.NoError(t, err)
+		require.True(t, expectedTime.Equal(result.Timestamp))
+	})
+
+	t.Run("should return error for invalid time format", func(t *testing.T) {
+		type timeForm struct {
+			Timestamp time.Time `form:"timestamp"`
+		}
+
+		formData := map[string][]string{
+			"timestamp": {"not-a-valid-time"},
+		}
+
+		var result timeForm
+		err := decodeForm(formData, &result)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "failed to set field Timestamp")
+	})
+}
+
+func TestSetField_TimeDuration(t *testing.T) {
+	t.Run("should decode time.Duration from string", func(t *testing.T) {
+		type durationForm struct {
+			Timeout time.Duration `form:"timeout"`
+		}
+
+		formData := map[string][]string{
+			"timeout": {"5m30s"},
+		}
+
+		var result durationForm
+		err := decodeForm(formData, &result)
+		require.NoError(t, err)
+		require.Equal(t, 5*time.Minute+30*time.Second, result.Timeout)
+	})
+
+	t.Run("should decode various duration formats", func(t *testing.T) {
+		type durationForm struct {
+			D1 time.Duration `form:"d1"`
+			D2 time.Duration `form:"d2"`
+			D3 time.Duration `form:"d3"`
+		}
+
+		formData := map[string][]string{
+			"d1": {"1h"},
+			"d2": {"500ms"},
+			"d3": {"1h30m45s"},
+		}
+
+		var result durationForm
+		err := decodeForm(formData, &result)
+		require.NoError(t, err)
+		require.Equal(t, time.Hour, result.D1)
+		require.Equal(t, 500*time.Millisecond, result.D2)
+		require.Equal(t, time.Hour+30*time.Minute+45*time.Second, result.D3)
+	})
+
+	t.Run("should return error for invalid duration format", func(t *testing.T) {
+		type durationForm struct {
+			Timeout time.Duration `form:"timeout"`
+		}
+
+		formData := map[string][]string{
+			"timeout": {"invalid-duration"},
+		}
+
+		var result durationForm
+		err := decodeForm(formData, &result)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "failed to set field Timeout")
+	})
+}
+
+// Custom type implementing encoding.TextUnmarshaler
+type CustomID struct {
+	Prefix string
+	ID     int
+}
+
+func (c *CustomID) UnmarshalText(text []byte) error {
+	// Parse format: "prefix:123"
+	parts := strings.Split(string(text), ":")
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid CustomID format: %s", text)
+	}
+	c.Prefix = parts[0]
+	var err error
+	_, err = fmt.Sscanf(parts[1], "%d", &c.ID)
+	return err
+}
+
+func TestSetField_TextUnmarshaler(t *testing.T) {
+	t.Run("should use TextUnmarshaler interface when available", func(t *testing.T) {
+		type customForm struct {
+			ID CustomID `form:"id"`
+		}
+
+		formData := map[string][]string{
+			"id": {"user:12345"},
+		}
+
+		var result customForm
+		err := decodeForm(formData, &result)
+		require.NoError(t, err)
+		require.Equal(t, "user", result.ID.Prefix)
+		require.Equal(t, 12345, result.ID.ID)
+	})
+
+	t.Run("should return error from TextUnmarshaler", func(t *testing.T) {
+		type customForm struct {
+			ID CustomID `form:"id"`
+		}
+
+		formData := map[string][]string{
+			"id": {"invalid-format"},
+		}
+
+		var result customForm
+		err := decodeForm(formData, &result)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "failed to set field ID")
+	})
+}
+
+func TestSetField_MixedAdvancedTypes(t *testing.T) {
+	t.Run("should decode form with mixed advanced types", func(t *testing.T) {
+		type complexForm struct {
+			UserID    UserID        `form:"user_id"`
+			CreatedAt time.Time     `form:"created_at"`
+			Timeout   time.Duration `form:"timeout"`
+			CustomID  CustomID      `form:"custom_id"`
+			Name      string        `form:"name"`
+			Age       int           `form:"age"`
+		}
+
+		timestamp := time.Date(2025, 12, 2, 15, 30, 0, 0, time.UTC)
+		formData := map[string][]string{
+			"user_id":    {"user-456"},
+			"created_at": {timestamp.Format(time.RFC3339)},
+			"timeout":    {"10m"},
+			"custom_id":  {"order:789"},
+			"name":       {"John Doe"},
+			"age":        {"30"},
+		}
+
+		var result complexForm
+		err := decodeForm(formData, &result)
+		require.NoError(t, err)
+		require.Equal(t, UserID("user-456"), result.UserID)
+		require.True(t, timestamp.Equal(result.CreatedAt))
+		require.Equal(t, 10*time.Minute, result.Timeout)
+		require.Equal(t, "order", result.CustomID.Prefix)
+		require.Equal(t, 789, result.CustomID.ID)
+		require.Equal(t, "John Doe", result.Name)
+		require.Equal(t, 30, result.Age)
 	})
 }

@@ -7,12 +7,14 @@ package rest
 
 import (
 	"context"
+	"encoding"
 	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/swaggest/jsonschema-go"
 	"github.com/swaggest/openapi-go/openapi3"
@@ -164,7 +166,42 @@ func decodeForm(form map[string][]string, dst any) error {
 }
 
 // setField sets a reflect.Value to a string value, converting types as needed.
+// It supports:
+// - encoding.TextUnmarshaler interface (highest priority)
+// - time.Time and time.Duration
+// - Primitive types (string, int, uint, bool, float)
+// - Type aliases of primitives
 func setField(field reflect.Value, value string) error {
+	// First, check if the field implements encoding.TextUnmarshaler
+	// We need to check both the field itself and a pointer to it
+	if field.CanAddr() {
+		ptrToField := field.Addr()
+		if unmarshaler, ok := ptrToField.Interface().(encoding.TextUnmarshaler); ok {
+			return unmarshaler.UnmarshalText([]byte(value))
+		}
+	}
+
+	// Handle time.Time specially (it implements TextUnmarshaler but we want RFC3339 parsing)
+	if field.Type() == reflect.TypeOf(time.Time{}) {
+		t, err := time.Parse(time.RFC3339, value)
+		if err != nil {
+			return err
+		}
+		field.Set(reflect.ValueOf(t))
+		return nil
+	}
+
+	// Handle time.Duration (it's an int64 alias, but we want to parse duration strings)
+	if field.Type() == reflect.TypeOf(time.Duration(0)) {
+		d, err := time.ParseDuration(value)
+		if err != nil {
+			return err
+		}
+		field.Set(reflect.ValueOf(d))
+		return nil
+	}
+
+	// Fall back to kind-based type handling for primitives
 	switch field.Kind() {
 	case reflect.String:
 		field.SetString(value)
