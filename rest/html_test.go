@@ -295,9 +295,9 @@ func TestReturnHTML(t *testing.T) {
 
 		require.NoError(t, err)
 		require.NotNil(t, resp)
-		require.NotNil(t, resp.tmpl)
-		require.NotNil(t, resp.data)
-		assert.Equal(t, "wrapped", resp.data.Message)
+		require.NotNil(t, resp.Template)
+		require.NotNil(t, resp.Data)
+		assert.Equal(t, "wrapped", resp.Data.Message)
 	})
 
 	t.Run("propagates handler errors correctly", func(t *testing.T) {
@@ -329,7 +329,7 @@ func TestReturnHTML(t *testing.T) {
 
 		require.NoError(t, err)
 		require.NotNil(t, resp)
-		assert.Equal(t, tmpl, resp.tmpl)
+		assert.Equal(t, tmpl, resp.Template)
 	})
 }
 

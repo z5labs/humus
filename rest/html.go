@@ -20,6 +20,9 @@ type ReturnHTMLHandler[Req, Resp any] struct {
 }
 
 // ReturnHTML initializes a [ReturnHTMLHandler] that renders responses using the provided template.
+// Use this when your template for each request is independent of the request data.
+// If you need to specify a response template dynamically, implement your own Handler
+// which returns a [HTMLTemplateResponse] with the Template field set based on the request.
 func ReturnHTML[Req, Resp any](h Handler[Req, Resp], tmpl *template.Template) *ReturnHTMLHandler[Req, Resp] {
 	return &ReturnHTMLHandler[Req, Resp]{
 		inner: h,
@@ -29,8 +32,8 @@ func ReturnHTML[Req, Resp any](h Handler[Req, Resp], tmpl *template.Template) *R
 
 // HTMLTemplateResponse represents an HTML response that renders data using a template.
 type HTMLTemplateResponse[T any] struct {
-	tmpl *template.Template
-	data *T
+	Template *template.Template
+	Data     *T
 }
 
 // Spec implements the [TypedResponse] interface.
@@ -60,7 +63,7 @@ func (hr *HTMLTemplateResponse[T]) WriteResponse(ctx context.Context, w http.Res
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 
-	return hr.tmpl.Execute(w, hr.data)
+	return hr.Template.Execute(w, hr.Data)
 }
 
 // Handle implements the [Handler] interface.
@@ -70,13 +73,16 @@ func (h *ReturnHTMLHandler[Req, Resp]) Handle(ctx context.Context, req *Req) (*H
 		return nil, err
 	}
 	return &HTMLTemplateResponse[Resp]{
-		tmpl: h.tmpl,
-		data: resp,
+		Template: h.tmpl,
+		Data:     resp,
 	}, nil
 }
 
 // ProduceHTML creates a handler that returns HTML responses without consuming a request body.
-// Use this for GET endpoints that return server-rendered HTML pages.
+// Use this for GET endpoints that return server-rendered HTML pages when your template
+// for each request is independent of the request data. If you need to specify a response
+// template dynamically, implement your own Handler which returns a [HTMLTemplateResponse]
+// with the Template field set based on the request.
 //
 // Example:
 //

@@ -268,7 +268,7 @@ rest.Handle(
 
 ### ProduceHTML
 
-Produce HTML response using a template - ideal for GET endpoints rendering pages.
+Produce HTML response using a template - ideal for GET endpoints rendering pages. Use this when your template for each request is independent of the request data. If you need to specify a response template dynamically, implement your own Handler which returns a `rest.HTMLTemplateResponse` with the `Template` field set based on the request.
 
 ```go
 import "html/template"
@@ -309,7 +309,7 @@ rest.Handle(
 
 ### ReturnHTML
 
-Wrap a handler to return HTML responses using a template.
+Wrap a handler to return HTML responses using a template. Use this when your template for each request is independent of the request data. If you need to specify a response template dynamically, implement your own Handler which returns a `rest.HTMLTemplateResponse` with the `Template` field set based on the request.
 
 ```go
 import "html/template"
