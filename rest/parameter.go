@@ -101,82 +101,56 @@ func PathParamValue(ctx context.Context, name string) string {
 
 type paramCtxKey string
 
-func injectParam(name string, in openapi3.ParameterIn) func(*http.Request) (*http.Request, error) {
+func injectParamInterceptor(name string, in openapi3.ParameterIn) ServerInterceptor {
 	ctxKey := paramCtxKey(name)
 
-	return transformParam(
-		name,
-		in,
-		func(ctx context.Context, c []*http.Cookie) (context.Context, error) {
-			return context.WithValue(ctx, ctxKey, c), nil
-		},
-		func(ctx context.Context, s []string) (context.Context, error) {
-			return context.WithValue(ctx, ctxKey, s), nil
-		},
-		func(ctx context.Context, s string) (context.Context, error) {
-			return context.WithValue(ctx, ctxKey, s), nil
-		},
-		func(ctx context.Context, s []string) (context.Context, error) {
-			return context.WithValue(ctx, ctxKey, s), nil
-		},
-	)
+	return ServerInterceptorFunc(func(next func(http.ResponseWriter, *http.Request) error) func(http.ResponseWriter, *http.Request) error {
+		return func(w http.ResponseWriter, r *http.Request) error {
+			ctx := r.Context()
+
+			switch in {
+			case openapi3.ParameterInCookie:
+				cookies := r.CookiesNamed(name)
+				ctx = context.WithValue(ctx, ctxKey, cookies)
+			case openapi3.ParameterInHeader:
+				values := r.Header.Values(name)
+				ctx = context.WithValue(ctx, ctxKey, values)
+			case openapi3.ParameterInPath:
+				value := chi.URLParam(r, name)
+				ctx = context.WithValue(ctx, ctxKey, value)
+			case openapi3.ParameterInQuery:
+				values := r.URL.Query()[name]
+				ctx = context.WithValue(ctx, ctxKey, values)
+			}
+
+			return next(w, r.WithContext(ctx))
+		}
+	})
 }
 
 func param(name string, in openapi3.ParameterIn, opts ...ParameterOption) OperationOption {
 	return func(oo *OperationOptions) {
-		oo.transforms = append(oo.transforms, injectParam(name, in))
+		injectionInterceptor := injectParamInterceptor(name, in)
 
 		po := &ParameterOptions{
-			operationOptions: oo,
-			def: &openapi3.Parameter{
-				Name: name,
-				In:   in,
-			},
+			operationOptions:     oo,
+			def:                  &openapi3.Parameter{Name: name, In: in},
+			injectionInterceptor: injectionInterceptor,
+			injectionRegistered:  false,
 		}
+
 		for _, opt := range opts {
 			opt(po)
+		}
+
+		// If no validation options registered the injection interceptor, register it now
+		if !po.injectionRegistered {
+			oo.interceptors = append(oo.interceptors, injectionInterceptor)
 		}
 
 		oo.parameters = append(oo.parameters, openapi3.ParameterOrRef{
 			Parameter: po.def,
 		})
-	}
-}
-
-type contextTransformer[T any] func(context.Context, T) (context.Context, error)
-
-func transformRequestContext[T any](f func(*http.Request) T, ct contextTransformer[T]) func(*http.Request) (*http.Request, error) {
-	return func(r *http.Request) (*http.Request, error) {
-		ctx, err := ct(r.Context(), f(r))
-		if err != nil {
-			return nil, err
-		}
-
-		return r.WithContext(ctx), nil
-	}
-}
-
-func extractCookie(name string) func(*http.Request) []*http.Cookie {
-	return func(r *http.Request) []*http.Cookie {
-		return r.CookiesNamed(name)
-	}
-}
-
-func extractHeader(name string) func(*http.Request) []string {
-	return func(r *http.Request) []string {
-		return r.Header.Values(name)
-	}
-}
-
-func extractPathParam(name string) func(*http.Request) string {
-	return func(r *http.Request) string {
-		return chi.URLParam(r, name)
-	}
-}
-
-func extractQueryParam(name string) func(*http.Request) []string {
-	return func(r *http.Request) []string {
-		return r.URL.Query()[name]
 	}
 }
 
@@ -209,46 +183,14 @@ func extractBearerToken(headerValues []string) (string, error) {
 	return token, nil
 }
 
-func transformParam(
-	name string,
-	in openapi3.ParameterIn,
-	transformCookie contextTransformer[[]*http.Cookie],
-	transformHeader contextTransformer[[]string],
-	transformPathParam contextTransformer[string],
-	transformQueryParam contextTransformer[[]string],
-) func(*http.Request) (*http.Request, error) {
-	switch in {
-	case openapi3.ParameterInCookie:
-		return transformRequestContext(
-			extractCookie(name),
-			transformCookie,
-		)
-	case openapi3.ParameterInHeader:
-		return transformRequestContext(
-			extractHeader(name),
-			transformHeader,
-		)
-	case openapi3.ParameterInPath:
-		return transformRequestContext(
-			extractPathParam(name),
-			transformPathParam,
-		)
-	case openapi3.ParameterInQuery:
-		return transformRequestContext(
-			extractQueryParam(name),
-			transformQueryParam,
-		)
-	default:
-		panic("unsupported parameter type: " + in)
-	}
-}
-
 // ParameterOptions holds configuration for a parameter being added to an operation.
 // This includes the OpenAPI parameter definition and a reference to the parent
 // operation options for registering validators.
 type ParameterOptions struct {
-	operationOptions *OperationOptions
-	def              *openapi3.Parameter
+	operationOptions     *OperationOptions
+	def                  *openapi3.Parameter
+	injectionInterceptor ServerInterceptor
+	injectionRegistered  bool
 }
 
 // ParameterOption configures a parameter created by [Cookie], [Header], [QueryParam], or [PathParam].
@@ -279,61 +221,65 @@ func Required() ParameterOption {
 	return func(po *ParameterOptions) {
 		po.def.Required = ptr.Ref(true)
 
-		po.operationOptions.transforms = append(
-			po.operationOptions.transforms,
-			transformParam(
-				po.def.Name,
-				po.def.In,
-				func(ctx context.Context, c []*http.Cookie) (context.Context, error) {
-					if len(c) == 0 {
-						return nil, BadRequestError{
-							Cause: MissingRequiredParameterError{
-								Parameter: po.def.Name,
-								In:        string(po.def.In),
-							},
-						}
-					}
+		validationInterceptor := ServerInterceptorFunc(func(next func(http.ResponseWriter, *http.Request) error) func(http.ResponseWriter, *http.Request) error {
+			return func(w http.ResponseWriter, r *http.Request) error {
+				ctx := r.Context()
+				ctxKey := paramCtxKey(po.def.Name)
 
-					return ctx, nil
-				},
-				func(ctx context.Context, ss []string) (context.Context, error) {
-					if len(ss) == 0 {
-						return nil, BadRequestError{
-							Cause: MissingRequiredParameterError{
-								Parameter: po.def.Name,
-								In:        string(po.def.In),
-							},
-						}
+				var isEmpty bool
+				switch po.def.In {
+				case openapi3.ParameterInCookie:
+					val := ctx.Value(ctxKey)
+					if val == nil {
+						isEmpty = true
+					} else {
+						cookies := val.([]*http.Cookie)
+						isEmpty = len(cookies) == 0
 					}
-
-					return ctx, nil
-				},
-				func(ctx context.Context, s string) (context.Context, error) {
-					if len(s) == 0 {
-						return nil, BadRequestError{
-							Cause: MissingRequiredParameterError{
-								Parameter: po.def.Name,
-								In:        string(po.def.In),
-							},
-						}
+				case openapi3.ParameterInHeader:
+					val := ctx.Value(ctxKey)
+					if val == nil {
+						isEmpty = true
+					} else {
+						values := val.([]string)
+						isEmpty = len(values) == 0
 					}
-
-					return ctx, nil
-				},
-				func(ctx context.Context, ss []string) (context.Context, error) {
-					if len(ss) == 0 {
-						return nil, BadRequestError{
-							Cause: MissingRequiredParameterError{
-								Parameter: po.def.Name,
-								In:        string(po.def.In),
-							},
-						}
+				case openapi3.ParameterInPath:
+					val := ctx.Value(ctxKey)
+					if val == nil {
+						isEmpty = true
+					} else {
+						value := val.(string)
+						isEmpty = len(value) == 0
 					}
+				case openapi3.ParameterInQuery:
+					val := ctx.Value(ctxKey)
+					if val == nil {
+						isEmpty = true
+					} else {
+						values := val.([]string)
+						isEmpty = len(values) == 0
+					}
+				}
 
-					return ctx, nil
-				},
-			),
-		)
+				if isEmpty {
+					return BadRequestError{
+						Cause: MissingRequiredParameterError{
+							Parameter: po.def.Name,
+							In:        string(po.def.In),
+						},
+					}
+				}
+
+				return next(w, r)
+			}
+		})
+
+		if !po.injectionRegistered {
+			po.operationOptions.interceptors = append(po.operationOptions.interceptors, po.injectionInterceptor)
+			po.injectionRegistered = true
+		}
+		po.operationOptions.validationInterceptors = append(po.operationOptions.validationInterceptors, validationInterceptor)
 	}
 }
 
@@ -411,65 +357,59 @@ func Regex(re *regexp.Regexp) ParameterOption {
 			}
 		}
 
-		po.operationOptions.transforms = append(
-			po.operationOptions.transforms,
-			transformParam(
-				po.def.Name,
-				po.def.In,
-				func(ctx context.Context, cs []*http.Cookie) (context.Context, error) {
-					matches := func(c *http.Cookie) bool {
-						return re.MatchString(c.Value)
-					}
+		validationInterceptor := ServerInterceptorFunc(func(next func(http.ResponseWriter, *http.Request) error) func(http.ResponseWriter, *http.Request) error {
+			return func(w http.ResponseWriter, r *http.Request) error {
+				ctx := r.Context()
+				ctxKey := paramCtxKey(po.def.Name)
 
-					if slices.ContainsFunc(cs, matches) {
-						return ctx, nil
+				var matches bool
+				switch po.def.In {
+				case openapi3.ParameterInCookie:
+					val := ctx.Value(ctxKey)
+					if val != nil {
+						cookies := val.([]*http.Cookie)
+						matches = slices.ContainsFunc(cookies, func(c *http.Cookie) bool {
+							return re.MatchString(c.Value)
+						})
 					}
+				case openapi3.ParameterInHeader:
+					val := ctx.Value(ctxKey)
+					if val != nil {
+						values := val.([]string)
+						matches = slices.ContainsFunc(values, re.MatchString)
+					}
+				case openapi3.ParameterInPath:
+					val := ctx.Value(ctxKey)
+					if val != nil {
+						value := val.(string)
+						matches = re.MatchString(value)
+					}
+				case openapi3.ParameterInQuery:
+					val := ctx.Value(ctxKey)
+					if val != nil {
+						values := val.([]string)
+						matches = slices.ContainsFunc(values, re.MatchString)
+					}
+				}
 
-					return nil, BadRequestError{
+				if !matches {
+					return BadRequestError{
 						Cause: InvalidParameterValueError{
 							Parameter: po.def.Name,
 							In:        string(po.def.In),
 						},
 					}
-				},
-				func(ctx context.Context, ss []string) (context.Context, error) {
-					if slices.ContainsFunc(ss, re.MatchString) {
-						return ctx, nil
-					}
+				}
 
-					return nil, BadRequestError{
-						Cause: InvalidParameterValueError{
-							Parameter: po.def.Name,
-							In:        string(po.def.In),
-						},
-					}
-				},
-				func(ctx context.Context, s string) (context.Context, error) {
-					if re.MatchString(s) {
-						return ctx, nil
-					}
+				return next(w, r)
+			}
+		})
 
-					return nil, BadRequestError{
-						Cause: InvalidParameterValueError{
-							Parameter: po.def.Name,
-							In:        string(po.def.In),
-						},
-					}
-				},
-				func(ctx context.Context, ss []string) (context.Context, error) {
-					if slices.ContainsFunc(ss, re.MatchString) {
-						return ctx, nil
-					}
-
-					return nil, BadRequestError{
-						Cause: InvalidParameterValueError{
-							Parameter: po.def.Name,
-							In:        string(po.def.In),
-						},
-					}
-				},
-			),
-		)
+		if !po.injectionRegistered {
+			po.operationOptions.interceptors = append(po.operationOptions.interceptors, po.injectionInterceptor)
+			po.injectionRegistered = true
+		}
+		po.operationOptions.validationInterceptors = append(po.operationOptions.validationInterceptors, validationInterceptor)
 	}
 }
 
@@ -555,19 +495,29 @@ func JWTAuth(schemeName string, verifier JWTVerifier) ParameterOption {
 			},
 		}
 
-		// Add transformer to extract and verify JWT token
-		po.operationOptions.transforms = append(
-			po.operationOptions.transforms,
-			func(r *http.Request) (*http.Request, error) {
+		validationInterceptor := ServerInterceptorFunc(func(next func(http.ResponseWriter, *http.Request) error) func(http.ResponseWriter, *http.Request) error {
+			return func(w http.ResponseWriter, r *http.Request) error {
 				ctx := r.Context()
+				ctxKey := paramCtxKey(po.def.Name)
 
-				// Extract header values from context (injected by injectParam)
-				headerValues := HeaderValue(ctx, po.def.Name)
+				// Extract header values from context (injected by injectParamInterceptor)
+				val := ctx.Value(ctxKey)
+				if val == nil {
+					return BadRequestError{
+						Cause: InvalidJWTError{
+							Parameter: po.def.Name,
+							In:        string(po.def.In),
+							Cause:     fmt.Errorf("missing Authorization header"),
+						},
+					}
+				}
+
+				headerValues := val.([]string)
 
 				// Extract Bearer token from Authorization header
 				token, err := extractBearerToken(headerValues)
 				if err != nil {
-					return nil, BadRequestError{
+					return BadRequestError{
 						Cause: InvalidJWTError{
 							Parameter: po.def.Name,
 							In:        string(po.def.In),
@@ -579,7 +529,7 @@ func JWTAuth(schemeName string, verifier JWTVerifier) ParameterOption {
 				// Verify JWT and inject claims into context
 				newCtx, err := verifier.Verify(ctx, token)
 				if err != nil {
-					return nil, UnauthorizedError{
+					return UnauthorizedError{
 						Cause: InvalidJWTError{
 							Parameter: po.def.Name,
 							In:        string(po.def.In),
@@ -588,9 +538,15 @@ func JWTAuth(schemeName string, verifier JWTVerifier) ParameterOption {
 					}
 				}
 
-				return r.WithContext(newCtx), nil
-			},
-		)
+				return next(w, r.WithContext(newCtx))
+			}
+		})
+
+		if !po.injectionRegistered {
+			po.operationOptions.interceptors = append(po.operationOptions.interceptors, po.injectionInterceptor)
+			po.injectionRegistered = true
+		}
+		po.operationOptions.validationInterceptors = append(po.operationOptions.validationInterceptors, validationInterceptor)
 	}
 }
 
