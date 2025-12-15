@@ -567,6 +567,7 @@ func (h *createUserHandler) Handle(ctx context.Context, req *CreateUserRequest) 
 
 ## See Also
 
+- [Interceptors]({{< ref "interceptors" >}}) - Pre-process requests before error handling
 - [RFC 7807 Problem Details Specification](https://tools.ietf.org/html/rfc7807)
 - [API Reference](https://pkg.go.dev/github.com/z5labs/humus/rest)
 - [Problem Details Example](https://github.com/z5labs/humus/tree/main/example/rest/problem-details)

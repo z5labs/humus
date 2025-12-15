@@ -661,6 +661,7 @@ func (v *MultiAuthVerifier) Verify(ctx context.Context, token string) (context.C
 
 ## Next Steps
 
+- Learn about [Interceptors]({{< ref "interceptors" >}}) for custom authentication logic
 - Learn about [Error Handling]({{< ref "error-handling" >}}) for custom authentication error responses
 - Explore [OpenAPI]({{< ref "openapi" >}}) to customize security documentation
 - Read [Handler Helpers]({{< ref "handler-helpers" >}}) for implementing authenticated handlers
