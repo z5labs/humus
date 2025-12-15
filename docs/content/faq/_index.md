@@ -38,7 +38,7 @@ A: Humus uses chi internally, so chi middleware is compatible. However, you shou
 
 **Q: How do I add custom middleware?**
 
-A: See [Advanced Topics - Middleware]({{< ref "/advanced/middleware" >}}).
+A: See [REST Interceptors]({{< ref "/features/rest/interceptors" >}}).
 
 **Q: Can I disable OpenAPI generation?**
 
@@ -52,7 +52,7 @@ A: Humus works with both proto2 and proto3. We recommend proto3 for new projects
 
 **Q: How do I add custom interceptors?**
 
-A: See [Advanced Topics - Middleware]({{< ref "/advanced/middleware" >}}).
+A: See [REST Interceptors]({{< ref "/features/rest/interceptors" >}}).
 
 ### Configuration
 
