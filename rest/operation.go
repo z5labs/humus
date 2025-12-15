@@ -13,7 +13,6 @@ import (
 	"github.com/z5labs/humus"
 
 	"github.com/swaggest/openapi-go/openapi3"
-	"github.com/z5labs/sdk-go/try"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
@@ -25,13 +24,14 @@ type securityScheme struct {
 }
 
 // OperationOptions holds configuration for an HTTP operation registered with [Handle].
-// This includes security schemes, parameter definitions, request transformations,
+// This includes security schemes, parameter definitions, interceptors,
 // and error handling.
 type OperationOptions struct {
-	securityScheme *securityScheme
-	parameters     []openapi3.ParameterOrRef
-	transforms     []func(*http.Request) (*http.Request, error)
-	errHandler     ErrorHandler
+	securityScheme         *securityScheme
+	parameters             []openapi3.ParameterOrRef
+	interceptors           []ServerInterceptor
+	validationInterceptors []ServerInterceptor
+	errHandler             ErrorHandler
 }
 
 // OperationOption configures an operation created by [Handle].
@@ -105,10 +105,8 @@ type TypedResponse[T any] interface {
 }
 
 type operation[I, O any, Req TypedRequest[I], Resp TypedResponse[O]] struct {
-	tracer     trace.Tracer
-	errHandler ErrorHandler
-	transforms []func(*http.Request) (*http.Request, error)
-	handler    Handler[I, O]
+	tracer  trace.Tracer
+	handler Handler[I, O]
 }
 
 func Operation[I, O any, Req TypedRequest[I], Resp TypedResponse[O]](method string, path Path, h Handler[I, O], opts ...OperationOption) ApiOption {
@@ -172,47 +170,43 @@ func Operation[I, O any, Req TypedRequest[I], Resp TypedResponse[O]](method stri
 			})
 		}
 
-		ao.mux.Method(method, endpoint, otelhttp.WithRouteTag(endpoint, &operation[I, O, Req, Resp]{
-			tracer:     otel.Tracer("github.com/z5labs/humus/rest"),
+		operationHandler := &operation[I, O, Req, Resp]{
+			tracer:  otel.Tracer("github.com/z5labs/humus/rest"),
+			handler: h,
+		}
+
+		serve := operationHandler.serveHTTP
+		// Apply validation interceptors first (innermost), then other interceptors
+		for _, interceptor := range oo.validationInterceptors {
+			serve = interceptor.Intercept(serve)
+		}
+		for _, interceptor := range oo.interceptors {
+			serve = interceptor.Intercept(serve)
+		}
+
+		ih := interceptHandler{
 			errHandler: oo.errHandler,
-			transforms: oo.transforms,
-			handler:    h,
-		}))
+			serve:      serve,
+		}
+
+		ao.mux.Method(method, endpoint, otelhttp.WithRouteTag(endpoint, ih))
 	})
 }
 
-func (o *operation[I, O, Req, Resp]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (o *operation[I, O, Req, Resp]) serveHTTP(w http.ResponseWriter, r *http.Request) error {
 	ctx := r.Context()
-	
-	var err error
-	defer func() {
-		if err == nil {
-			return
-		}
-
-		o.errHandler.OnError(ctx, w, err)
-	}()
-	defer try.Recover(&err)
-
-	for _, transform := range o.transforms {
-		r, err = transform(r)
-		if err != nil {
-			return
-		}
-		ctx = r.Context()
-	}
 
 	req, err := o.readRequest(ctx, r)
 	if err != nil {
-		return
+		return err
 	}
 
 	resp, err := o.handler.Handle(ctx, &req)
 	if err != nil {
-		return
+		return err
 	}
 
-	err = o.writeResponse(ctx, w, resp)
+	return o.writeResponse(ctx, w, resp)
 }
 
 func (o *operation[I, O, Req, Resp]) readRequest(ctx context.Context, r *http.Request) (I, error) {
