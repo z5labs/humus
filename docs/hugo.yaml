@@ -37,9 +37,6 @@ params:
   github_repo: https://github.com/z5labs/humus
   github_project_repo: https://github.com/z5labs/humus
 
-  # Enable Algolia DocSearch
-  algolia_docsearch: false
-
   # Enable Lunr.js offline search
   offlineSearch: true
 
@@ -49,7 +46,6 @@ params:
     breadcrumb_disable: false
     sidebar_search_disable: false
     navbar_logo: true
-    footer_about_disable: false
 
   # Links
   links:
