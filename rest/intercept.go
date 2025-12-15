@@ -11,16 +11,21 @@ import (
 	"github.com/z5labs/sdk-go/try"
 )
 
+// ServerInterceptor defines an interceptor for HTTP server requests.
 type ServerInterceptor interface {
 	Intercept(next func(http.ResponseWriter, *http.Request) error) func(http.ResponseWriter, *http.Request) error
 }
 
+// ServerInterceptorFunc is a function type that implements the ServerInterceptor interface.
 type ServerInterceptorFunc func(next func(http.ResponseWriter, *http.Request) error) func(http.ResponseWriter, *http.Request) error
 
+// Intercept calls the ServerInterceptorFunc with the next handler.
 func (f ServerInterceptorFunc) Intercept(next func(http.ResponseWriter, *http.Request) error) func(http.ResponseWriter, *http.Request) error {
 	return f(next)
 }
 
+// Intercept registers the given ServerInterceptor for the operation.
+// Multiple interceptors can be registered and will be executed in the order they were added.
 func Intercept(interceptor ServerInterceptor) OperationOption {
 	return func(oo *OperationOptions) {
 		oo.interceptors = append(oo.interceptors, interceptor)
