@@ -100,6 +100,7 @@ This section covers:
 - [Handler Helpers]({{< ref "handler-helpers" >}}) - Type-safe handlers and serialization
 - [Routing]({{< ref "routing" >}}) - Paths and parameters
 - [Authentication]({{< ref "authentication" >}}) - JWT, API keys, and security
+- [Interceptors]({{< ref "interceptors" >}}) - Operation-level request/response processing
 - [Error Handling]({{< ref "error-handling" >}}) - Custom error responses
 - [OpenAPI]({{< ref "openapi" >}}) - Working with generated specs
 - [Health Checks]({{< ref "health-checks" >}}) - Monitoring service health

@@ -13,7 +13,6 @@ This section covers advanced patterns, customizations, and deep dives into Humus
 - [Builder + Runner Pattern]({{< ref "builder-runner-pattern" >}}) - Deep dive into the core architecture
 - [Custom Health Monitors]({{< ref "custom-health-monitors" >}}) - Building custom health checks
 - [OTel Integration]({{< ref "otel-integration" >}}) - Advanced OpenTelemetry configuration
-- [Middleware]({{< ref "middleware" >}}) - Creating custom middleware and interceptors
 - [Testing]({{< ref "testing" >}}) - Testing patterns for Humus applications
 - [Multi-Source Config]({{< ref "multi-source-config" >}}) - Advanced configuration composition
 - [Concurrent Utilities]({{< ref "concurrent-utilities" >}}) - Thread-safe utilities
