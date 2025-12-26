@@ -155,6 +155,13 @@ func Bind[A, B any](reader Reader[A], binder func(context.Context, A) Reader[B])
 	})
 }
 
+// EmptyReader creates a Reader that always returns no value.
+func EmptyReader[T any]() Reader[T] {
+	return ReaderFunc[T](func(ctx context.Context) (Value[T], error) {
+		return Value[T]{}, nil
+	})
+}
+
 // ReaderOf creates a Reader that always returns the given value.
 func ReaderOf[T any](val T) Reader[T] {
 	return ReaderFunc[T](func(ctx context.Context) (Value[T], error) {
