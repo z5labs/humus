@@ -3,6 +3,7 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
+// Package config provides abstractions for reading configuration values from various sources.
 package config
 
 import (
