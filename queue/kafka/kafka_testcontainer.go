@@ -19,6 +19,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/z5labs/humus/config"
 )
 
 // setupKafkaContainer starts a Kafka container and returns the broker address and cleanup function.
@@ -153,11 +154,25 @@ func produceTestMessages(t *testing.T, brokers []string, topic string, messages 
 }
 
 // newTestRuntime creates a new Runtime instance for testing.
-func newTestRuntime(t *testing.T, brokers []string, groupID string, opts ...Option) Runtime {
+func newTestRuntime(t *testing.T, brokers []string, groupID string, topics []TopicProcessor) (Runtime, error) {
 	t.Helper()
 
-	runtime := NewRuntime(brokers, groupID, opts...)
-	return runtime
+	cfg := Config{
+		Brokers: config.ReaderFunc[[]string](func(ctx context.Context) (config.Value[[]string], error) {
+			return config.ValueOf(brokers), nil
+		}),
+		GroupID: config.ReaderFunc[string](func(ctx context.Context) (config.Value[string], error) {
+			return config.ValueOf(groupID), nil
+		}),
+	}
+
+	builder := Build(cfg, topics)
+	runtime, err := builder.Build(context.Background())
+	if err != nil {
+		return Runtime{}, err
+	}
+
+	return runtime.(Runtime), nil
 }
 
 // testMessage creates a test Message with the given value.
