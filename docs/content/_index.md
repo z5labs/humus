@@ -36,10 +36,10 @@ Build one-off job executors for batch processing, migrations, or scheduled tasks
 - Graceful shutdown with OS signal handling
 - Standardized health check patterns
 - Panic recovery middleware
-- YAML-based configuration with templating support
+- Type-safe configuration system with `config.Reader[T]`
 
 **Developer Friendly**
-- Minimal boilerplate with Builder + Runner pattern
+- Minimal boilerplate with builder pattern
 - Automatic OpenAPI schema generation from Go types
 - Type-safe request/response handling
 - Comprehensive examples and documentation
@@ -53,18 +53,24 @@ import (
     "context"
     "net/http"
 
+    "github.com/z5labs/humus/app"
+    "github.com/z5labs/humus/config"
+    httpserver "github.com/z5labs/humus/http"
+    "github.com/z5labs/humus/otel"
     "github.com/z5labs/humus/rest"
+
+    "go.opentelemetry.io/otel/metric"
+    "go.opentelemetry.io/otel/trace"
 )
 
-type Config struct {
-    rest.Config `config:",squash"`
-}
-
 func main() {
-    rest.Run(rest.YamlSource("config.yaml"), Init)
-}
+    // Configure HTTP server
+    listener := httpserver.NewTCPListener(
+        httpserver.Addr(config.Default(":8080", config.Env("HTTP_ADDR"))),
+    )
+    srv := httpserver.NewServer(listener)
 
-func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
+    // Create API
     handler := rest.ProducerFunc[string](func(ctx context.Context) (*string, error) {
         msg := "Hello, World!"
         return &msg, nil
@@ -79,7 +85,24 @@ func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
             rest.ProduceJson(handler),
         ),
     )
-    return api, nil
+
+    // Build application
+    restBuilder := rest.Build(srv, api)
+
+    // Configure OpenTelemetry (disabled for simplicity)
+    sdk := otel.SDK{
+        TracerProvider: config.ReaderFunc[trace.TracerProvider](func(ctx context.Context) (config.Value[trace.TracerProvider], error) {
+            return config.Value[trace.TracerProvider]{}, nil
+        }),
+        MeterProvider: config.ReaderFunc[metric.MeterProvider](func(ctx context.Context) (config.Value[metric.MeterProvider], error) {
+            return config.Value[metric.MeterProvider]{}, nil
+        }),
+    }
+
+    otelBuilder := otel.Build(sdk, restBuilder)
+
+    // Run
+    _ = app.Run(context.Background(), otelBuilder)
 }
 ```
 

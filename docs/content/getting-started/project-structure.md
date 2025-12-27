@@ -14,8 +14,7 @@ For small services with a single purpose:
 
 ```
 my-service/
-├── main.go              # Entry point with Run() call
-├── config.yaml          # Configuration
+├── main.go              # Entry point
 ├── go.mod
 ├── go.sum
 └── README.md
@@ -27,21 +26,40 @@ package main
 
 import (
     "context"
+    "net/http"
+    
+    "github.com/z5labs/humus/app"
+    "github.com/z5labs/humus/config"
+    httpserver "github.com/z5labs/humus/http"
+    "github.com/z5labs/humus/otel"
     "github.com/z5labs/humus/rest"
+    
+    "go.opentelemetry.io/otel/metric"
+    "go.opentelemetry.io/otel/trace"
 )
 
-type Config struct {
-    rest.Config `config:",squash"`
-}
-
 func main() {
-    rest.Run(rest.YamlSource("config.yaml"), Init)
-}
-
-func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
+    listener := httpserver.NewTCPListener(
+        httpserver.Addr(config.Default(":8080", config.Env("HTTP_ADDR"))),
+    )
+    srv := httpserver.NewServer(listener)
+    
     api := rest.NewApi("My Service", "1.0.0")
     // Register handlers...
-    return api, nil
+    
+    restBuilder := rest.Build(srv, api)
+    
+    sdk := otel.SDK{
+        TracerProvider: config.ReaderFunc[trace.TracerProvider](func(ctx context.Context) (config.Value[trace.TracerProvider], error) {
+            return config.Value[trace.TracerProvider]{}, nil
+        }),
+        MeterProvider: config.ReaderFunc[metric.MeterProvider](func(ctx context.Context) (config.Value[metric.MeterProvider], error) {
+            return config.Value[metric.MeterProvider]{}, nil
+        }),
+    }
+    
+    otelBuilder := otel.Build(sdk, restBuilder)
+    _ = app.Run(context.Background(), otelBuilder)
 }
 ```
 
@@ -56,13 +74,12 @@ my-service/
 │       └── main.go      # Entry point
 ├── internal/
 │   ├── app/
-│   │   └── app.go       # Init function
+│   │   └── api.go       # API builder
 │   ├── handlers/
 │   │   ├── users.go     # User handlers
 │   │   └── posts.go     # Post handlers
 │   └── models/
 │       └── user.go      # Domain models
-├── config.yaml
 ├── go.mod
 └── go.sum
 ```
@@ -72,38 +89,52 @@ my-service/
 package main
 
 import (
+    "context"
+    
     "my-service/internal/app"
+    
+    "github.com/z5labs/humus/app"
+    "github.com/z5labs/humus/config"
+    httpserver "github.com/z5labs/humus/http"
+    "github.com/z5labs/humus/otel"
     "github.com/z5labs/humus/rest"
 )
 
 func main() {
-    rest.Run(rest.YamlSource("config.yaml"), app.Init)
+    listener := httpserver.NewTCPListener(
+        httpserver.Addr(config.Default(":8080", config.Env("HTTP_ADDR"))),
+    )
+    srv := httpserver.NewServer(listener)
+    
+    // Build API from internal package
+    api := app.BuildAPI(context.Background())
+    
+    restBuilder := rest.Build(srv, api)
+    otelBuilder := otel.Build(app.BuildOTelSDK(), restBuilder)
+    
+    _ = app.Run(context.Background(), otelBuilder)
 }
 ```
 
-**internal/app/app.go:**
+**internal/app/api.go:**
 ```go
 package app
 
 import (
     "context"
+    
     "my-service/internal/handlers"
     "github.com/z5labs/humus/rest"
 )
 
-type Config struct {
-    rest.Config `config:",squash"`
-    // Additional config...
-}
-
-func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
+func BuildAPI(ctx context.Context) *rest.Api {
     api := rest.NewApi("My Service", "1.0.0")
-
+    
     // Register handlers from different packages
     handlers.RegisterUserHandlers(api)
     handlers.RegisterPostHandlers(api)
-
-    return api, nil
+    
+    return api
 }
 ```
 
@@ -118,12 +149,13 @@ my-service/
 │       └── main.go
 ├── internal/
 │   ├── app/
-│   │   ├── app.go
-│   │   └── config.go
+│   │   ├── api.go        # API builder
+│   │   ├── config.go     # Config readers
+│   │   └── otel.go       # OTel setup
 │   ├── user/
-│   │   ├── handler.go   # HTTP handlers
-│   │   ├── service.go   # Business logic
-│   │   └── store.go     # Data access
+│   │   ├── handler.go    # HTTP handlers
+│   │   ├── service.go    # Business logic
+│   │   └── store.go      # Data access
 │   ├── post/
 │   │   ├── handler.go
 │   │   ├── service.go
@@ -131,15 +163,17 @@ my-service/
 │   └── common/
 │       └── middleware.go
 ├── pkg/
-│   └── client/          # Public client library (optional)
+│   └── client/           # Public client library (optional)
 │       └── client.go
-├── configs/
-│   ├── config.dev.yaml
-│   ├── config.staging.yaml
-│   └── config.prod.yaml
 ├── go.mod
 └── go.sum
 ```
+
+**Key points:**
+- Configuration via environment variables (no config files)
+- Builder functions in `internal/app/`
+- Domain packages under `internal/`
+- Optional public client in `pkg/`
 
 ## gRPC Service
 

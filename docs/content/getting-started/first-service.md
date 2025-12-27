@@ -19,26 +19,6 @@ go mod init hello-humus
 go get github.com/z5labs/humus
 ```
 
-## Configuration File
-
-Create a `config.yaml` file in your project root:
-
-```yaml
-rest:
-  port: 8080
-
-otel:
-  service:
-    name: hello-humus
-  sdk:
-    disabled: true  # Disable for this simple example
-```
-
-This configuration:
-- Sets the HTTP server port to 8080
-- Names the service "hello-humus"
-- Disables OpenTelemetry for simplicity (you'll enable this in production)
-
 ## Application Code
 
 Create a `main.go` file:
@@ -50,28 +30,32 @@ import (
     "context"
     "net/http"
 
+    "github.com/z5labs/humus/app"
+    "github.com/z5labs/humus/config"
+    httpserver "github.com/z5labs/humus/http"
+    "github.com/z5labs/humus/otel"
     "github.com/z5labs/humus/rest"
+
+    "go.opentelemetry.io/otel/metric"
+    "go.opentelemetry.io/otel/trace"
 )
 
-// Config embeds rest.Config to get HTTP server configuration
-type Config struct {
-    rest.Config `config:",squash"`
-}
-
 func main() {
-    // rest.Run handles configuration loading, app initialization, and execution
-    rest.Run(rest.YamlSource("config.yaml"), Init)
-}
+    // Configure HTTP listener with default port :8080
+    listener := httpserver.NewTCPListener(
+        httpserver.Addr(config.Default(":8080", config.Env("HTTP_ADDR"))),
+    )
 
-// Init is called with the loaded configuration and returns the API
-func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
+    // Configure HTTP server
+    srv := httpserver.NewServer(listener)
+
     // Create a simple handler that returns "Hello, World!"
     handler := rest.ProducerFunc[string](func(ctx context.Context) (*string, error) {
         msg := "Hello, World!"
         return &msg, nil
     })
 
-    // Create a new API with name and version and register the handler at GET /hello
+    // Create API with GET /hello endpoint
     api := rest.NewApi(
         "Hello Service",
         "1.0.0",
@@ -82,7 +66,24 @@ func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
         ),
     )
 
-    return api, nil
+    // Build REST application
+    restBuilder := rest.Build(srv, api)
+
+    // Configure OpenTelemetry SDK (disabled for this simple example)
+    sdk := otel.SDK{
+        TracerProvider: config.ReaderFunc[trace.TracerProvider](func(ctx context.Context) (config.Value[trace.TracerProvider], error) {
+            return config.Value[trace.TracerProvider]{}, nil
+        }),
+        MeterProvider: config.ReaderFunc[metric.MeterProvider](func(ctx context.Context) (config.Value[metric.MeterProvider], error) {
+            return config.Value[metric.MeterProvider]{}, nil
+        }),
+    }
+
+    // Wrap with OpenTelemetry
+    otelBuilder := otel.Build(sdk, restBuilder)
+
+    // Run the application
+    _ = app.Run(context.Background(), otelBuilder)
 }
 ```
 
@@ -138,27 +139,30 @@ Both should return `200 OK` with `{"healthy":true}`.
 
 Let's break down what's happening:
 
-1. **Configuration**: The `Config` struct embeds `rest.Config`, which provides HTTP server configuration fields that are automatically populated from `config.yaml`.
+1. **Configuration**: Configuration is handled via `config.Reader[T]` types. In this example, `config.ReaderOf(":8080")` provides a static value for the HTTP address.
 
-2. **rest.Run()**: This function orchestrates the entire application lifecycle:
-   - Reads configuration from the YAML file
-   - Calls `Init()` with the parsed configuration
-   - Starts the HTTP server
-   - Handles graceful shutdown on OS signals
+2. **Builder Pattern**: Applications are built using the builder pattern:
+   - `rest.Build()` creates an HTTP application builder
+   - `otel.Build()` wraps it with OpenTelemetry instrumentation
+   - `app.Run()` executes the builder and manages the lifecycle
 
-3. **Init Function**: This is where you build your API:
-   - Create an `Api` instance with a name and version
-   - Define handlers for your endpoints
+3. **API Creation**: The `rest.NewApi()` function creates your API:
+   - Define API metadata (name and version)
    - Register handlers with HTTP methods and paths
-   - Return the configured API
+   - Handlers are registered inline using `rest.Handle()`
 
-4. **Handler Pattern**: The `rest.ProducerFunc` creates a type-safe handler. In this example, it produces a `string` response with no request body.
+4. **Handler Pattern**: The `rest.ProducerFunc` creates a type-safe handler that produces a `string` response with no request body.
+
+5. **Lifecycle Management**: `app.Run()` handles:
+   - Building the application from the builder
+   - Starting the HTTP server
+   - Graceful shutdown on OS signals (SIGINT, SIGTERM)
 
 ## Next Steps
 
 Now that you have a working service, you can:
 
-- Learn about [Configuration]({{< ref "configuration" >}}) to customize your service
+- Learn about [Configuration]({{< ref "configuration" >}}) to use environment variables and dynamic config
 - Explore [Project Structure]({{< ref "project-structure" >}}) for organizing larger applications
 - Read about [REST Services]({{< ref "/features/rest" >}}) for more advanced HTTP patterns
 - Understand [Core Concepts]({{< ref "/concepts" >}}) for a deeper dive into Humus architecture
