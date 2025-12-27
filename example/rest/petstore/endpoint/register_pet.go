@@ -11,8 +11,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/z5labs/bedrock/lifecycle"
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/app"
 	"github.com/z5labs/humus/rest"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
@@ -24,21 +24,17 @@ type registerPetHandler struct {
 	registerPetStmt *sql.Stmt
 }
 
-func RegisterPet(ctx context.Context, db StmtPreparer) rest.ApiOption {
+func RegisterPet(ctx context.Context, db StmtPreparer, h *app.HookRegistry) rest.ApiOption {
 	stmt, err := db.Prepare("")
 	if err != nil {
 		panic(err)
 	}
 
-	lc, ok := lifecycle.FromContext(ctx)
-	if !ok {
-		panic("lifecycle must be present in context")
-	}
-	lc.OnPostRun(lifecycle.HookFunc(func(ctx context.Context) error {
+	h.OnPostRun(func(ctx context.Context) error {
 		return stmt.Close()
-	}))
+	})
 
-	h := &registerPetHandler{
+	handler := &registerPetHandler{
 		tracer:          otel.Tracer("github.com/z5labs/humus/example/rest/petstore/endpoint"),
 		log:             humus.Logger("github.com/z5labs/humus/example/rest/petstore/endpoint"),
 		registerPetStmt: stmt,
@@ -47,7 +43,7 @@ func RegisterPet(ctx context.Context, db StmtPreparer) rest.ApiOption {
 	return rest.Operation(
 		http.MethodPost,
 		rest.BasePath("/pets"),
-		rest.HandleJson(h),
+		rest.HandleJson(handler),
 	)
 }
 

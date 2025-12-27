@@ -7,7 +7,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 
 	"github.com/z5labs/humus/app"
 	"github.com/z5labs/humus/config"
@@ -16,32 +15,9 @@ import (
 	"github.com/z5labs/humus/otel"
 	"github.com/z5labs/humus/rest"
 
-	"github.com/sourcegraph/conc/pool"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 )
-
-// runtime wraps the HTTP app with database lifecycle management.
-type runtime struct {
-	httpApp httpserver.App
-	db      *sql.DB
-}
-
-func (rt runtime) Run(ctx context.Context) error {
-	p := pool.New().WithContext(ctx)
-
-	// Run the HTTP app
-	p.Go(rt.httpApp.Run)
-
-	// Handle cleanup on context cancellation
-	p.Go(func(ctx context.Context) error {
-		<-ctx.Done()
-		rt.db.Close()
-		return nil
-	})
-
-	return p.Wait()
-}
 
 func main() {
 	// Configure HTTP listener
@@ -55,30 +31,26 @@ func main() {
 	// Configure HTTP server
 	srv := httpserver.NewServer(listener)
 
-	// Build application with database lifecycle
-	appBuilder := app.BuilderFunc[runtime](func(ctx context.Context) (runtime, error) {
+	// Build application with database lifecycle using hooks
+	appBuilder := app.WithHooks(func(ctx context.Context, h *app.HookRegistry) (httpserver.App, error) {
 		// Open database
 		postgresURL := config.MustOr(ctx, "postgres://localhost:5432/petstore", config.Env("POSTGRES_URL"))
 		db, err := petstore.OpenDatabase(ctx, postgresURL)
 		if err != nil {
-			return runtime{}, err
+			return httpserver.App{}, err
 		}
 
-		// Build API
-		api := petstore.BuildApi(ctx, db)
+		// Register cleanup hook for database
+		h.OnPostRun(func(ctx context.Context) error {
+			return db.Close()
+		})
+
+		// Build API with hook registry
+		api := petstore.BuildApi(ctx, db, h)
 
 		// Build REST app
 		restBuilder := rest.Build(srv, api)
-		httpApp, err := restBuilder.Build(ctx)
-		if err != nil {
-			db.Close()
-			return runtime{}, err
-		}
-
-		return runtime{
-			httpApp: httpApp,
-			db:      db,
-		}, nil
+		return restBuilder.Build(ctx)
 	})
 
 	// Configure OpenTelemetry SDK (disabled for this example)

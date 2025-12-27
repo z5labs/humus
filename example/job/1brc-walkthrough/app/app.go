@@ -9,38 +9,38 @@ import (
 	"context"
 
 	"github.com/z5labs/humus/app"
+	"github.com/z5labs/humus/config"
 	"github.com/z5labs/humus/example/job/1brc-walkthrough/onebrc"
 	"github.com/z5labs/humus/example/job/1brc-walkthrough/service"
 )
 
-// Config defines the application configuration.
-type Config struct {
-	Minio struct {
-		Endpoint  string `config:"endpoint"`
-		AccessKey string `config:"access_key"`
-		SecretKey string `config:"secret_key"`
-		Bucket    string `config:"bucket"`
-	} `config:"minio"`
+// BuildRuntime creates the 1BRC job runtime.
+// Configuration values are read from config readers.
+func BuildRuntime(
+	ctx context.Context,
+	minioEndpoint config.Reader[string],
+	minioAccessKey config.Reader[string],
+	minioSecretKey config.Reader[string],
+	minioBucket config.Reader[string],
+	inputKey config.Reader[string],
+	outputKey config.Reader[string],
+) (app.Runtime, error) {
+	// Read config values
+	endpoint := config.Must(ctx, minioEndpoint)
+	accessKey := config.Must(ctx, minioAccessKey)
+	secretKey := config.Must(ctx, minioSecretKey)
+	bucket := config.Must(ctx, minioBucket)
+	input := config.Must(ctx, inputKey)
+	output := config.Must(ctx, outputKey)
 
-	OneBRC struct {
-		InputKey  string `config:"input_key"`
-		OutputKey string `config:"output_key"`
-	} `config:"onebrc"`
-}
-
-// Init initializes the application runtime.
-func Init(ctx context.Context, cfg Config) (app.Runtime, error) {
-	minioClient, err := service.NewMinIOClient(cfg.Minio.Endpoint, cfg.Minio.AccessKey, cfg.Minio.SecretKey)
+	// Initialize MinIO client
+	minioClient, err := service.NewMinIOClient(endpoint, accessKey, secretKey)
 	if err != nil {
 		return nil, err
 	}
 
-	handler := onebrc.NewHandler(
-		minioClient,
-		cfg.Minio.Bucket,
-		cfg.OneBRC.InputKey,
-		cfg.OneBRC.OutputKey,
-	)
+	// Create handler
+	handler := onebrc.NewHandler(minioClient, bucket, input, output)
 
 	// The handler's Handle method matches app.Runtime.Run signature
 	return app.RuntimeFunc(handler.Handle), nil

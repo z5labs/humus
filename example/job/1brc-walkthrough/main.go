@@ -6,43 +6,64 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	_ "embed"
 
 	"github.com/z5labs/humus/app"
-	appconfig "github.com/z5labs/humus/example/job/1brc-walkthrough/app"
+	"github.com/z5labs/humus/config"
+	onebrc "github.com/z5labs/humus/example/job/1brc-walkthrough/app"
+	"github.com/z5labs/humus/otel"
 
-	"github.com/z5labs/bedrock/config"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
-//go:embed config.yaml
-var configBytes []byte
-
 func main() {
-	// Create a builder that reads config and initializes the runtime
-	builder := app.BuilderFunc[app.Runtime](func(ctx context.Context) (app.Runtime, error) {
-		// Read and parse config using bedrock (temporary - will be migrated to config.Reader)
-		var cfg appconfig.Config
-		src := config.FromYaml(bytes.NewReader(configBytes))
-		mgr, err := config.Read(src)
-		if err != nil {
-			return nil, err
-		}
-		err = mgr.Unmarshal(&cfg)
-		if err != nil {
-			return nil, err
-		}
+	// Configure MinIO connection
+	minioEndpoint := config.Or(
+		config.Env("MINIO_ENDPOINT"),
+		config.ReaderOf("localhost:9000"),
+	)
+	minioAccessKey := config.Or(
+		config.Env("MINIO_ACCESS_KEY"),
+		config.ReaderOf("minioadmin"),
+	)
+	minioSecretKey := config.Or(
+		config.Env("MINIO_SECRET_KEY"),
+		config.ReaderOf("minioadmin"),
+	)
+	minioBucket := config.Or(
+		config.Env("MINIO_BUCKET"),
+		config.ReaderOf("onebrc"),
+	)
 
-		// Initialize runtime using the config
-		runtime, err := appconfig.Init(ctx, cfg)
-		if err != nil {
-			return nil, err
-		}
+	// Configure 1BRC job parameters
+	inputKey := config.Or(
+		config.Env("ONEBRC_INPUT_KEY"),
+		config.ReaderOf("measurements.txt"),
+	)
+	outputKey := config.Or(
+		config.Env("ONEBRC_OUTPUT_KEY"),
+		config.ReaderOf("results.txt"),
+	)
 
-		return runtime, nil
+	// Build application
+	appBuilder := app.BuilderFunc[app.Runtime](func(ctx context.Context) (app.Runtime, error) {
+		return onebrc.BuildRuntime(ctx, minioEndpoint, minioAccessKey, minioSecretKey, minioBucket, inputKey, outputKey)
 	})
 
+	// Configure OpenTelemetry SDK (disabled for this example)
+	sdk := otel.SDK{
+		TracerProvider: config.ReaderFunc[trace.TracerProvider](func(ctx context.Context) (config.Value[trace.TracerProvider], error) {
+			return config.Value[trace.TracerProvider]{}, nil
+		}),
+		MeterProvider: config.ReaderFunc[metric.MeterProvider](func(ctx context.Context) (config.Value[metric.MeterProvider], error) {
+			return config.Value[metric.MeterProvider]{}, nil
+		}),
+	}
+
+	// Wrap with OpenTelemetry
+	otelBuilder := otel.Build(sdk, appBuilder)
+
 	// Run the application
-	app.Run(context.Background(), builder)
+	_ = app.Run(context.Background(), otelBuilder)
 }

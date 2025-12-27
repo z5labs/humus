@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 
+	"github.com/z5labs/humus/app"
 	"github.com/z5labs/humus/example/rest/petstore/endpoint"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -11,14 +12,14 @@ import (
 )
 
 // BuildApi creates the REST API with all endpoints registered.
-// The database connection is managed by the caller.
-func BuildApi(ctx context.Context, db *sql.DB) *rest.Api {
+// The database connection and hook registry are managed by the caller.
+func BuildApi(ctx context.Context, db *sql.DB, h *app.HookRegistry) *rest.Api {
 	api := rest.NewApi(
 		"Pet Store API",
 		"v0.0.0",
-		endpoint.AdoptPet(ctx, db),
-		endpoint.ListPets(ctx, db),
-		endpoint.RegisterPet(ctx, db),
+		endpoint.AdoptPet(ctx, db, h),
+		endpoint.ListPets(ctx, db, h),
+		endpoint.RegisterPet(ctx, db, h),
 	)
 
 	return api
