@@ -6,33 +6,23 @@
 package queue
 
 import (
-	"bytes"
 	"context"
-	_ "embed"
 	"errors"
-	"io"
 	"log/slog"
 	"os"
-	"syscall"
 
-	"github.com/z5labs/humus"
-
-	"github.com/z5labs/bedrock"
-	"github.com/z5labs/bedrock/app"
-	"github.com/z5labs/bedrock/appbuilder"
-	bedrockcfg "github.com/z5labs/bedrock/config"
-	"github.com/z5labs/bedrock/lifecycle"
+	"github.com/z5labs/humus/app"
 )
 
 // ErrEndOfQueue should be returned by [Consumer] that are consuming
-// from a finite queue. This should then signify to [Runtime]
+// from a finite queue. This should then signify to [QueueRuntime]
 // implementations to shut down.
 var ErrEndOfQueue = errors.New("queue: no more items")
 
 // Consumer consumes message(s), T, from a queue.
 //
 // Implementations should return [ErrEndOfQueue] when the queue is exhausted to signal
-// graceful shutdown to [Runtime] implementations.
+// graceful shutdown to [QueueRuntime] implementations.
 type Consumer[T any] interface {
 	Consume(context.Context) (T, error)
 }
@@ -76,128 +66,57 @@ func (f AcknowledgerFunc[T]) Acknowledge(ctx context.Context, t T) error {
 	return f(ctx, t)
 }
 
-//go:embed default_config.yaml
-var defaultConfig []byte
-
-// DefaultConfig returns the default configuration source for queue-based applications.
-//
-// It combines the base Humus configuration (which includes OpenTelemetry defaults)
-// with queue-specific configuration values from the embedded default_config.yaml file.
-func DefaultConfig() bedrockcfg.Source {
-	return bedrockcfg.MultiSource(
-		humus.DefaultConfig(),
-		humus.ConfigSource(bytes.NewReader(defaultConfig)),
-	)
-}
-
-// WithDefaultConfig creates a configuration source that combines [DefaultConfig]
-// with custom values from the provided reader.
-//
-// The reader should contain YAML configuration. Values from the reader will
-// override the defaults.
-//
-// Example:
-//
-//	configFile, _ := os.Open("config.yaml")
-//	defer configFile.Close()
-//	cfg := rest.WithDefaultConfig(configFile)
-func WithDefaultConfig(r io.Reader) bedrockcfg.Source {
-	return bedrockcfg.MultiSource(
-		DefaultConfig(),
-		humus.ConfigSource(r),
-	)
-}
-
-// Configer represents the requirements for a configuration type used with [Run].
-// It must support OpenTelemetry initialization.
-//
-// The [Config] type implements this interface and can be embedded in custom config types.
-type Configer interface {
-	appbuilder.OTelInitializer
-}
-
-// Config is the base configuration type for queue-based applications.
-//
-// It embeds [humus.Config] which provides OpenTelemetry configuration including
-// traces, metrics, and logs. Applications can embed this type in their own
-// configuration structs to add application-specific settings.
-type Config struct {
-	humus.Config `config:",squash"`
-}
-
-// Runtime orchestrates the message queue processing lifecycle.
+// QueueRuntime orchestrates the message queue processing lifecycle.
 //
 // Implementations should coordinate [Consumer], [Processor], and [Acknowledger]
 // to consume, process, and acknowledge messages. When ProcessQueue returns,
 // the application will shut down gracefully.
-type Runtime interface {
+type QueueRuntime interface {
 	ProcessQueue(context.Context) error
 }
 
-// RuntimeFunc is an adapter to allow the use of ordinary functions as [Runtime]s.
-type RuntimeFunc func(context.Context) error
+// QueueRuntimeFunc is an adapter to allow the use of ordinary functions as [QueueRuntime]s.
+type QueueRuntimeFunc func(context.Context) error
 
-// ProcessQueue implements the [Runtime] interface.
-func (f RuntimeFunc) ProcessQueue(ctx context.Context) error {
+// ProcessQueue implements the [QueueRuntime] interface.
+func (f QueueRuntimeFunc) ProcessQueue(ctx context.Context) error {
 	return f(ctx)
 }
 
-// App wraps a [Runtime] and implements the [bedrock.App] interface.
+// Runtime wraps a [QueueRuntime] and implements the [app.Runtime] interface.
 //
 // It provides the integration point between the Humus framework and
 // the queue processing runtime implementation.
-type App struct {
-	runtime Runtime
+type Runtime struct {
+	queueRuntime QueueRuntime
 }
 
-// NewApp creates a new queue-based application with the provided runtime.
-//
-// The runtime will be invoked when the application runs, orchestrating
-// the message queue processing lifecycle.
-func NewApp(runtime Runtime) *App {
-	return &App{
-		runtime: runtime,
-	}
+// Run implements [app.Runtime] interface.
+func (rt Runtime) Run(ctx context.Context) error {
+	return rt.queueRuntime.ProcessQueue(ctx)
 }
 
-// Run implements [bedrock.App] interface.
-func (a *App) Run(ctx context.Context) error {
-	return a.runtime.ProcessQueue(ctx)
-}
-
-// Builder creates an application builder that wraps the provided initializer function
-// with standardized middleware for queue-based applications.
+// Build creates an app.Builder for a queue-based application.
 //
-// The builder automatically adds:
-//   - OpenTelemetry SDK initialization for traces, metrics, and logs
-//   - Panic recovery to prevent crashes from panics
-//   - Lifecycle context management
-//   - OS signal handling (SIGTERM, SIGINT, SIGKILL) for graceful shutdown
+// The returned builder constructs a queue Runtime that executes the provided
+// queue runtime's ProcessQueue method.
 //
-// The initializer function receives a context and configuration, and should return
-// the constructed [App] or an error if initialization fails.
-func Builder[T Configer](f func(context.Context, T) (*App, error)) bedrock.AppBuilder[T] {
-	return appbuilder.LifecycleContext(
-		appbuilder.OTel(
-			appbuilder.Recover(
-				bedrock.AppBuilderFunc[T](func(ctx context.Context, cfg T) (bedrock.App, error) {
-					a, err := f(ctx, cfg)
-					if err != nil {
-						return nil, err
-					}
-
-					bapp := app.InterruptOn(
-						app.Recover(a),
-						os.Kill,
-						os.Interrupt,
-						syscall.SIGTERM,
-					)
-					return bapp, nil
-				}),
-			),
-		),
-		&lifecycle.Context{},
-	)
+// Parameters:
+//   - queueRuntime: The queue processing runtime that implements message consumption,
+//     processing, and acknowledgment logic
+//
+// Example:
+//
+//	runtime := &MyQueueRuntime{
+//	    consumer:     myConsumer,
+//	    processor:    myProcessor,
+//	    acknowledger: myAcknowledger,
+//	}
+//	builder := queue.Build(runtime)
+func Build(queueRuntime QueueRuntime) app.Builder[Runtime] {
+	return app.BuilderFunc[Runtime](func(ctx context.Context) (Runtime, error) {
+		return Runtime{queueRuntime: queueRuntime}, nil
+	})
 }
 
 // RunOptions holds configuration for [Run].
@@ -224,40 +143,30 @@ func (f runOptionFunc) ApplyRunOption(ro *RunOptions) {
 // Example:
 //
 //	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
-//	queue.Run(configReader, buildFunc, queue.LogHandler(handler))
+//	queue.Run(ctx, builder, queue.LogHandler(handler))
 func LogHandler(h slog.Handler) RunOption {
 	return runOptionFunc(func(ro *RunOptions) {
 		ro.logger = slog.New(h)
 	})
 }
 
-// Run orchestrates the complete lifecycle of a queue-based application.
+// Run builds and runs a queue-based application using the provided builder.
 //
-// It reads configuration from the provided reader (expected to be YAML format),
-// builds the application using the provided initializer function, and runs it
-// until completion or error. The function handles:
-//   - Configuration parsing and validation
-//   - Application initialization with OpenTelemetry
-//   - Graceful shutdown on OS signals
-//   - Error logging
+// This function orchestrates the complete lifecycle of a queue application:
+//  1. Builds the queue application using the provided builder
+//  2. Runs the queue processing runtime
+//  3. Logs any errors that occur
 //
-// The initializer function receives the parsed configuration and should return
-// the constructed [App]. If initialization fails, the error is logged and the
-// function returns.
+// The context should typically be context.Background(). Signal handling
+// is performed by app.Run, which will cancel the context on SIGINT, SIGKILL,
+// or SIGTERM.
 //
 // Example:
 //
-//	func main() {
-//	    configFile, _ := os.Open("config.yaml")
-//	    defer configFile.Close()
-//	    queue.Run(configFile, buildApp)
-//	}
-//
-//	func buildApp(ctx context.Context, cfg Config) (*queue.App, error) {
-//	    runtime := &MyRuntime{...}
-//	    return queue.NewApp(runtime), nil
-//	}
-func Run[T Configer](r io.Reader, f func(context.Context, T) (*App, error), opts ...RunOption) {
+//	runtime := &MyQueueRuntime{...}
+//	builder := queue.Build(runtime)
+//	queue.Run(context.Background(), builder)
+func Run(ctx context.Context, builder app.Builder[Runtime], opts ...RunOption) error {
 	ro := &RunOptions{
 		logger: slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{})),
 	}
@@ -265,11 +174,9 @@ func Run[T Configer](r io.Reader, f func(context.Context, T) (*App, error), opts
 		opt.ApplyRunOption(ro)
 	}
 
-	runner := humus.NewRunner(
-		appbuilder.FromConfig(Builder(f)),
-		humus.OnError(humus.ErrorHandlerFunc(func(err error) {
-			ro.logger.Error("unexpected error while running app", slog.Any("error", err))
-		})),
-	)
-	runner.Run(context.Background(), WithDefaultConfig(r))
+	err := app.Run(ctx, builder)
+	if err != nil {
+		app.LogError(ro.logger.Handler(), err)
+	}
+	return err
 }

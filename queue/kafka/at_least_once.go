@@ -19,14 +19,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// AtLeastOnce configures the Kafka runtime to process messages from the specified topic
-// with at-least-once delivery semantics (process before acknowledge).
-func AtLeastOnce(topic string, processor queue.Processor[Message]) Option {
-	return func(o *Options) {
-		o.topics[topic] = newAtLeastOnceOrchestrator(o.groupId, processor)
-	}
-}
-
 type atLeastOnceOrchestrator struct {
 	groupId   string
 	processor queue.Processor[Message]
@@ -45,7 +37,7 @@ func newAtLeastOnceOrchestrator(
 func (o atLeastOnceOrchestrator) Orchestrate(
 	consumer queue.Consumer[fetch],
 	acknowledger queue.Acknowledger[[]*kgo.Record],
-) queue.Runtime {
+) queue.QueueRuntime {
 	log := logger().With(GroupIDAttr(o.groupId))
 	metrics := initConsumerMetrics(log)
 

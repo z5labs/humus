@@ -26,7 +26,7 @@ type fetch struct {
 }
 
 type partitionOrchestrator interface {
-	Orchestrate(queue.Consumer[fetch], queue.Acknowledger[[]*kgo.Record]) queue.Runtime
+	Orchestrate(queue.Consumer[fetch], queue.Acknowledger[[]*kgo.Record]) queue.QueueRuntime
 }
 
 type assignedPartition struct {

@@ -18,12 +18,12 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
-type partitionOrchestratorFunc func(queue.Consumer[fetch], queue.Acknowledger[[]*kgo.Record]) queue.Runtime
+type partitionOrchestratorFunc func(queue.Consumer[fetch], queue.Acknowledger[[]*kgo.Record]) queue.QueueRuntime
 
 func (f partitionOrchestratorFunc) Orchestrate(
 	consumer queue.Consumer[fetch],
 	acknowledger queue.Acknowledger[[]*kgo.Record],
-) queue.Runtime {
+) queue.QueueRuntime {
 	return f(consumer, acknowledger)
 }
 
@@ -61,8 +61,8 @@ func TestEventLoop(t *testing.T) {
 				return func(
 					consumer queue.Consumer[fetch],
 					acknowledger queue.Acknowledger[[]*kgo.Record],
-				) queue.Runtime {
-					return queue.RuntimeFunc(func(ctx context.Context) error {
+				) queue.QueueRuntime {
+					return queue.QueueRuntimeFunc(func(ctx context.Context) error {
 						for {
 							_, err := consumer.Consume(ctx)
 							if errors.Is(err, context.Canceled) {
@@ -93,8 +93,8 @@ func TestEventLoop(t *testing.T) {
 				return func(
 					consumer queue.Consumer[fetch],
 					acknowledger queue.Acknowledger[[]*kgo.Record],
-				) queue.Runtime {
-					return queue.RuntimeFunc(func(ctx context.Context) error {
+				) queue.QueueRuntime {
+					return queue.QueueRuntimeFunc(func(ctx context.Context) error {
 						for {
 							fetch, err := consumer.Consume(ctx)
 							if errors.Is(err, context.Canceled) {
@@ -127,10 +127,10 @@ func TestEventLoop(t *testing.T) {
 				return func(
 					consumer queue.Consumer[fetch],
 					acknowledger queue.Acknowledger[[]*kgo.Record],
-				) queue.Runtime {
+				) queue.QueueRuntime {
 					lost := false
 
-					return queue.RuntimeFunc(func(ctx context.Context) error {
+					return queue.QueueRuntimeFunc(func(ctx context.Context) error {
 						for {
 							fetch, err := consumer.Consume(ctx)
 							if errors.Is(err, context.Canceled) {
@@ -165,10 +165,10 @@ func TestEventLoop(t *testing.T) {
 				return func(
 					consumer queue.Consumer[fetch],
 					acknowledger queue.Acknowledger[[]*kgo.Record],
-				) queue.Runtime {
+				) queue.QueueRuntime {
 					revoked := false
 
-					return queue.RuntimeFunc(func(ctx context.Context) error {
+					return queue.QueueRuntimeFunc(func(ctx context.Context) error {
 						for {
 							fetch, err := consumer.Consume(ctx)
 							if errors.Is(err, context.Canceled) {
@@ -213,10 +213,10 @@ func TestEventLoop(t *testing.T) {
 			for _, tp := range tc.topicPartitions {
 				wg.Add(1)
 
-				topicOrchestrators[tp.topic] = partitionOrchestratorFunc(func(c queue.Consumer[fetch], a queue.Acknowledger[[]*kgo.Record]) queue.Runtime {
+				topicOrchestrators[tp.topic] = partitionOrchestratorFunc(func(c queue.Consumer[fetch], a queue.Acknowledger[[]*kgo.Record]) queue.QueueRuntime {
 					runtime := orchestrator(c, a)
 
-					return queue.RuntimeFunc(func(ctx context.Context) error {
+					return queue.QueueRuntimeFunc(func(ctx context.Context) error {
 						defer wg.Done()
 
 						return runtime.ProcessQueue(ctx)

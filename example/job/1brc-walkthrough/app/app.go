@@ -8,15 +8,13 @@ package app
 import (
 	"context"
 
+	"github.com/z5labs/humus/app"
 	"github.com/z5labs/humus/example/job/1brc-walkthrough/onebrc"
 	"github.com/z5labs/humus/example/job/1brc-walkthrough/service"
-	"github.com/z5labs/humus/job"
 )
 
 // Config defines the application configuration.
 type Config struct {
-	job.Config `config:",squash"`
-
 	Minio struct {
 		Endpoint  string `config:"endpoint"`
 		AccessKey string `config:"access_key"`
@@ -30,8 +28,8 @@ type Config struct {
 	} `config:"onebrc"`
 }
 
-// Init initializes the job application.
-func Init(ctx context.Context, cfg Config) (*job.App, error) {
+// Init initializes the application runtime.
+func Init(ctx context.Context, cfg Config) (app.Runtime, error) {
 	minioClient, err := service.NewMinIOClient(cfg.Minio.Endpoint, cfg.Minio.AccessKey, cfg.Minio.SecretKey)
 	if err != nil {
 		return nil, err
@@ -44,5 +42,6 @@ func Init(ctx context.Context, cfg Config) (*job.App, error) {
 		cfg.OneBRC.OutputKey,
 	)
 
-	return job.NewApp(handler), nil
+	// The handler's Handle method matches app.Runtime.Run signature
+	return app.RuntimeFunc(handler.Handle), nil
 }
