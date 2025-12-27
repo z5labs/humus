@@ -4,6 +4,10 @@
 // https://opensource.org/licenses/MIT
 
 // Package app provides interfaces and utilities for building and running applications.
+//
+// The package supports post-run hooks for resource cleanup through the WithHooks builder.
+// Hooks are executed after the inner runtime completes, allowing for graceful cleanup
+// of resources like database connections, file handles, and external service clients.
 package app
 
 import (
