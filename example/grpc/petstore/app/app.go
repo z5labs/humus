@@ -13,16 +13,13 @@ import (
 	"github.com/z5labs/humus/grpc"
 )
 
-type Config struct {
-	grpc.Config `config:",squash"`
-}
-
-func Init(ctx context.Context, cfg Config) (*grpc.Api, error) {
+// BuildApi creates the gRPC API with all services registered.
+func BuildApi(ctx context.Context) *grpc.Api {
 	store := pet.NewStore()
 
 	api := grpc.NewApi()
 
 	registrar.Register(api, store)
 
-	return api, nil
+	return api
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/z5labs/humus/config"
 	"github.com/z5labs/humus/example/rest/orders-walkthrough/endpoint"
 	"github.com/z5labs/humus/example/rest/orders-walkthrough/service"
 	"github.com/z5labs/humus/rest"
@@ -11,33 +12,33 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
-// Config defines the application configuration.
-type Config struct {
-	rest.Config `config:",squash"`
-
-	Services struct {
-		DataURL        string `config:"data_url"`
-		RestrictionURL string `config:"restriction_url"`
-		EligibilityURL string `config:"eligibility_url"`
-	} `config:"services"`
-}
-
-// Init initializes the REST API with all endpoints and services.
-func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
+// BuildApi creates the REST API with all endpoints registered.
+// Service URLs are read from config readers.
+func BuildApi(
+	ctx context.Context,
+	dataURL config.Reader[string],
+	restrictionURL config.Reader[string],
+	eligibilityURL config.Reader[string],
+) (*rest.Api, error) {
 	// Create OTel-instrumented HTTP client for service calls
 	httpClient := &http.Client{
 		Transport: otelhttp.NewTransport(http.DefaultTransport),
 	}
 
+	// Read service URLs from config
+	dataURLValue := config.Must(ctx, dataURL)
+	restrictionURLValue := config.Must(ctx, restrictionURL)
+	eligibilityURLValue := config.Must(ctx, eligibilityURL)
+
 	// Initialize services
-	dataSvc := service.NewDataClient(cfg.Services.DataURL, httpClient)
-	restrictionSvc := service.NewRestrictionClient(cfg.Services.RestrictionURL, httpClient)
-	eligibilitySvc := service.NewEligibilityClient(cfg.Services.EligibilityURL, httpClient)
+	dataSvc := service.NewDataClient(dataURLValue, httpClient)
+	restrictionSvc := service.NewRestrictionClient(restrictionURLValue, httpClient)
+	eligibilitySvc := service.NewEligibilityClient(eligibilityURLValue, httpClient)
 
 	// Create API with endpoints
 	api := rest.NewApi(
-		cfg.OpenApi.Title,
-		cfg.OpenApi.Version,
+		"Orders API",
+		"v0.0.0",
 		endpoint.ListOrders(dataSvc),
 		endpoint.PlaceOrder(restrictionSvc, eligibilitySvc, dataSvc),
 	)

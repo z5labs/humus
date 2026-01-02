@@ -8,23 +8,14 @@ package app
 import (
 	"context"
 
+	"github.com/z5labs/humus/app"
+	"github.com/z5labs/humus/config"
 	"github.com/z5labs/humus/queue"
 	"github.com/z5labs/humus/queue/kafka"
 )
 
-// Config holds the application configuration.
-type Config struct {
-	queue.Config `config:",squash"`
-
-	Kafka struct {
-		Brokers []string `config:"brokers"`
-		GroupID string   `config:"group_id"`
-		Topic   string   `config:"topic"`
-	} `config:"kafka"`
-}
-
-// Init initializes the application.
-func Init(ctx context.Context, cfg Config) (*queue.App, error) {
+// BuildApp creates the Kafka queue application builder.
+func BuildApp(ctx context.Context) app.Builder[queue.Runtime] {
 	// Create business logic processor with idempotent handling
 	handler := NewOrderProcessor()
 
@@ -34,12 +25,33 @@ func Init(ctx context.Context, cfg Config) (*queue.App, error) {
 		handler: handler,
 	}
 
-	// Create Kafka runtime with at-least-once semantics
-	runtime := kafka.NewRuntime(
-		cfg.Kafka.Brokers,
-		cfg.Kafka.GroupID,
-		kafka.AtLeastOnce(cfg.Kafka.Topic, processor),
-	)
+	// Configure Kafka infrastructure
+	cfg := kafka.Config{
+		Brokers: config.Or(
+			kafka.BrokersFromEnv(),
+			config.ReaderOf([]string{"localhost:9092"}),
+		),
+		GroupID: config.Or(
+			kafka.GroupIDFromEnv(),
+			config.ReaderOf("order-processor"),
+		),
+	}
 
-	return queue.NewApp(runtime), nil
+	// Configure topic and processor with at-least-once delivery
+	topic := config.MustOr(ctx, "orders", config.Env("KAFKA_TOPIC"))
+	topics := []kafka.TopicProcessor{
+		{
+			Topic:        topic,
+			Processor:    processor,
+			DeliveryMode: kafka.AtLeastOnce,
+		},
+	}
+
+	// Build Kafka queue runtime
+	kafkaBuilder := kafka.Build(cfg, topics)
+
+	// Wrap with queue.Runtime
+	return app.Bind(kafkaBuilder, func(qr queue.QueueRuntime) app.Builder[queue.Runtime] {
+		return queue.Build(qr)
+	})
 }

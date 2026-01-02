@@ -8,23 +8,14 @@ package app
 import (
 	"context"
 
+	"github.com/z5labs/humus/app"
+	"github.com/z5labs/humus/config"
 	"github.com/z5labs/humus/queue"
 	"github.com/z5labs/humus/queue/kafka"
 )
 
-// Config holds the application configuration.
-type Config struct {
-	queue.Config `config:",squash"`
-
-	Kafka struct {
-		Brokers []string `config:"brokers"`
-		GroupID string   `config:"group_id"`
-		Topic   string   `config:"topic"`
-	} `config:"kafka"`
-}
-
-// Init initializes the application.
-func Init(ctx context.Context, cfg Config) (*queue.App, error) {
+// BuildApp creates the Kafka queue application builder.
+func BuildApp(ctx context.Context) app.Builder[queue.Runtime] {
 	// Create business logic processor for metrics aggregation
 	// Note: No idempotency needed for at-most-once semantics
 	handler := NewMetricsProcessor()
@@ -35,16 +26,37 @@ func Init(ctx context.Context, cfg Config) (*queue.App, error) {
 		handler: handler,
 	}
 
-	// Create Kafka runtime with at-most-once semantics
+	// Configure Kafka infrastructure
+	cfg := kafka.Config{
+		Brokers: config.Or(
+			kafka.BrokersFromEnv(),
+			config.ReaderOf([]string{"localhost:9092"}),
+		),
+		GroupID: config.Or(
+			kafka.GroupIDFromEnv(),
+			config.ReaderOf("metrics-processor"),
+		),
+	}
+
+	// Configure topic and processor with at-most-once delivery
 	// This commits offsets BEFORE processing, which means:
 	// - Lower latency and higher throughput
 	// - Messages may be lost if processing fails
 	// - Suitable for non-critical data like metrics, logs, cache updates
-	runtime := kafka.NewRuntime(
-		cfg.Kafka.Brokers,
-		cfg.Kafka.GroupID,
-		kafka.AtMostOnce(cfg.Kafka.Topic, processor),
-	)
+	topic := config.MustOr(ctx, "metrics", config.Env("KAFKA_TOPIC"))
+	topics := []kafka.TopicProcessor{
+		{
+			Topic:        topic,
+			Processor:    processor,
+			DeliveryMode: kafka.AtMostOnce,
+		},
+	}
 
-	return queue.NewApp(runtime), nil
+	// Build Kafka queue runtime
+	kafkaBuilder := kafka.Build(cfg, topics)
+
+	// Wrap with queue.Runtime
+	return app.Bind(kafkaBuilder, func(qr queue.QueueRuntime) app.Builder[queue.Runtime] {
+		return queue.Build(qr)
+	})
 }

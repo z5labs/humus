@@ -6,107 +6,91 @@
 package grpc
 
 import (
-	"bytes"
 	"context"
-	_ "embed"
-	"fmt"
-	"io"
+	"errors"
 	"log/slog"
 	"net"
 	"os"
-	"syscall"
 
-	"github.com/z5labs/humus"
-	"github.com/z5labs/humus/internal/grpcserver"
+	"github.com/z5labs/humus/app"
+	"github.com/z5labs/humus/config"
 
-	"github.com/z5labs/bedrock"
-	"github.com/z5labs/bedrock/app"
-	"github.com/z5labs/bedrock/appbuilder"
-	bedrockcfg "github.com/z5labs/bedrock/config"
-	"github.com/z5labs/bedrock/lifecycle"
+	"github.com/sourcegraph/conc/pool"
 )
 
-//go:embed default_config.yaml
-var defaultConfig []byte
-
-// DefaultConfig is the default [bedrockcfg.Source] which aligns with the [Config] type.
-func DefaultConfig() bedrockcfg.Source {
-	return bedrockcfg.MultiSource(
-		humus.DefaultConfig(),
-		humus.ConfigSource(bytes.NewReader(defaultConfig)),
-	)
+// Runtime represents a running gRPC application.
+// It manages the lifecycle of the gRPC server and handles graceful shutdown.
+type Runtime struct {
+	ls  net.Listener
+	api *Api
 }
 
-// WithDefaultConfig extends the [bedrockcfg.Source] returned by [DefaultConfig]
-// to include values from the given [io.Reader]. The [io.Reader] can provide
-// custom values, as well as, override default values.
-func WithDefaultConfig(r io.Reader) bedrockcfg.Source {
-	return bedrockcfg.MultiSource(
-		DefaultConfig(),
-		humus.ConfigSource(r),
-	)
+// Run starts the gRPC server and blocks until the context is cancelled or an error occurs.
+// When the context is cancelled, the server performs a graceful shutdown.
+// Returns nil if the server shuts down cleanly, or an error if the server fails to start or serve.
+func (rt Runtime) Run(ctx context.Context) error {
+	p := pool.New().WithContext(ctx)
+
+	p.Go(func(ctx context.Context) error {
+		return rt.api.server.Serve(rt.ls)
+	})
+
+	p.Go(func(ctx context.Context) error {
+		<-ctx.Done()
+		rt.api.server.GracefulStop()
+		return nil
+	})
+
+	err := p.Wait()
+	if err == nil || errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
 }
 
-// Config is the default config which can be easily embedded into
-// a more custom app specific config.
-type Config struct {
-	humus.Config `config:",squash"`
-
-	GRPC struct {
-		Port uint `config:"port"`
-	} `config:"grpc"`
+// Build creates an app.Builder for a gRPC application.
+//
+// The returned builder constructs a gRPC server that serves the provided API
+// with OpenTelemetry instrumentation automatically applied via the Api's interceptors.
+//
+// Parameters:
+//   - listener: Network listener configuration (address, TLS, etc.)
+//   - api: The gRPC API to serve
+//
+// Example:
+//
+//	listener := config.ReaderFunc[net.Listener](func(ctx context.Context) (config.Value[net.Listener], error) {
+//	    ln, err := net.Listen("tcp", ":9090")
+//	    if err != nil {
+//	        return config.Value[net.Listener]{}, err
+//	    }
+//	    return config.ValueOf(ln), nil
+//	})
+//	api := grpc.NewApi()
+//	pb.RegisterMyServiceServer(api, implementation)
+//	builder := grpc.Build(listener, api)
+func Build(listener config.Reader[net.Listener], api *Api) app.Builder[Runtime] {
+	return app.BuilderFunc[Runtime](func(ctx context.Context) (Runtime, error) {
+		val, err := listener.Read(ctx)
+		if err != nil {
+			return Runtime{}, err
+		}
+		ln, ok := val.Value()
+		if !ok {
+			return Runtime{}, errors.New("listener not configured")
+		}
+		return Runtime{ls: ln, api: api}, nil
+	})
 }
 
-// Listener implements the [ListenerProvider] interface.
-func (c Config) Listener(ctx context.Context) (net.Listener, error) {
-	return net.Listen("tcp", fmt.Sprintf(":%d", c.GRPC.Port))
-}
-
-// ListenerProvider initializes a [net.Listener].
-type ListenerProvider interface {
-	Listener(context.Context) (net.Listener, error)
-}
-
-// Configer is leveraged to constrain the custom config type into
-// supporting specific intialization behaviour required by [Run].
-type Configer interface {
-	appbuilder.OTelInitializer
-	ListenerProvider
-}
-
-// Builder initializes a [bedrock.AppBuilder] for your [Api].
-func Builder[T Configer](f func(context.Context, T) (*Api, error)) bedrock.AppBuilder[T] {
-	return appbuilder.LifecycleContext(
-		appbuilder.OTel(
-			appbuilder.Recover(
-				bedrock.AppBuilderFunc[T](func(ctx context.Context, cfg T) (bedrock.App, error) {
-					api, err := f(ctx, cfg)
-					if err != nil {
-						return nil, err
-					}
-
-					ls, err := cfg.Listener(ctx)
-					if err != nil {
-						return nil, err
-					}
-
-					var base bedrock.App = grpcserver.NewApp(ls, api.server)
-					base = app.Recover(base)
-					base = app.InterruptOn(base, os.Kill, os.Interrupt, syscall.SIGTERM)
-					return base, nil
-				}),
-			),
-		),
-		&lifecycle.Context{},
-	)
-}
-
-// RunOptions are used for configuring the running of a [Api].
+// RunOptions holds configuration for [Run].
+// These options control logging and other runtime behavior.
 type RunOptions struct {
 	logger *slog.Logger
 }
 
-// RunOption sets a value on [RunOptions].
+// RunOption configures [Run] behavior.
+// Use [LogHandler] to customize error logging.
 type RunOption interface {
 	ApplyRunOption(*RunOptions)
 }
@@ -117,15 +101,44 @@ func (f runOptionFunc) ApplyRunOption(ro *RunOptions) {
 	f(ro)
 }
 
-// LogHandler overrides the default [slog.Handler] used for logging
-// any error encountered while building or running the [Api].
+// LogHandler configures a custom log handler for errors during application startup and running.
+// By default, errors are logged as JSON to stdout.
+//
+// Example:
+//
+//	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+//	grpc.Run(ctx, builder, grpc.LogHandler(handler))
 func LogHandler(h slog.Handler) RunOption {
 	return runOptionFunc(func(ro *RunOptions) {
 		ro.logger = slog.New(h)
 	})
 }
 
-func Run[T Configer](r io.Reader, f func(context.Context, T) (*Api, error), opts ...RunOption) {
+// Run builds and runs a gRPC application using the provided builder.
+//
+// This function orchestrates the complete lifecycle of a gRPC application:
+//  1. Builds the gRPC application using the provided builder
+//  2. Runs the gRPC server
+//  3. Logs any errors that occur
+//
+// The context should typically be context.Background(). Signal handling
+// is performed by app.Run, which will cancel the context on SIGINT, SIGKILL,
+// or SIGTERM.
+//
+// Example:
+//
+//	listener := config.ReaderFunc[net.Listener](func(ctx context.Context) (config.Value[net.Listener], error) {
+//	    ln, err := net.Listen("tcp", ":9090")
+//	    if err != nil {
+//	        return config.Value[net.Listener]{}, err
+//	    }
+//	    return config.ValueOf(ln), nil
+//	})
+//	api := grpc.NewApi()
+//	pb.RegisterMyServiceServer(api, implementation)
+//	builder := grpc.Build(listener, api)
+//	grpc.Run(context.Background(), builder)
+func Run(ctx context.Context, builder app.Builder[Runtime], opts ...RunOption) error {
 	ro := &RunOptions{
 		logger: slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{})),
 	}
@@ -133,11 +146,9 @@ func Run[T Configer](r io.Reader, f func(context.Context, T) (*Api, error), opts
 		opt.ApplyRunOption(ro)
 	}
 
-	runner := humus.NewRunner(
-		appbuilder.FromConfig(Builder(f)),
-		humus.OnError(humus.ErrorHandlerFunc(func(err error) {
-			ro.logger.Error("unexpected error while running grpc app", slog.Any("error", err))
-		})),
-	)
-	runner.Run(context.Background(), WithDefaultConfig(r))
+	err := app.Run(ctx, builder)
+	if err != nil {
+		app.LogError(ro.logger.Handler(), err)
+	}
+	return err
 }

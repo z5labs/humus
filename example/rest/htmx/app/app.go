@@ -12,20 +12,17 @@ import (
 	"github.com/z5labs/humus/rest"
 )
 
-type Config struct {
-	rest.Config `config:",squash"`
-}
-
-func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
+// BuildApi creates the REST API with all endpoints registered.
+func BuildApi(ctx context.Context) *rest.Api {
 	// Create in-memory item store
 	store := endpoint.NewItemStore()
 
 	api := rest.NewApi(
-		cfg.OpenApi.Title,
-		cfg.OpenApi.Version,
+		"HTMX Todo API",
+		"v0.0.0",
 		endpoint.MainPage(ctx, store),
 		endpoint.AddItem(ctx, store),
 	)
 
-	return api, nil
+	return api
 }

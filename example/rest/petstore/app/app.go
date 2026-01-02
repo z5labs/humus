@@ -4,39 +4,33 @@ import (
 	"context"
 	"database/sql"
 
+	"github.com/z5labs/humus/app"
 	"github.com/z5labs/humus/example/rest/petstore/endpoint"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
-	"github.com/z5labs/bedrock/lifecycle"
 	"github.com/z5labs/humus/rest"
 )
 
-type Config struct {
-	rest.Config `config:",squash"`
+// BuildApi creates the REST API with all endpoints registered.
+// The database connection and hook registry are managed by the caller.
+func BuildApi(ctx context.Context, db *sql.DB, h *app.HookRegistry) *rest.Api {
+	api := rest.NewApi(
+		"Pet Store API",
+		"v0.0.0",
+		endpoint.AdoptPet(ctx, db, h),
+		endpoint.ListPets(ctx, db, h),
+		endpoint.RegisterPet(ctx, db, h),
+	)
 
-	Postgres struct {
-		URL string `config:"url"`
-	} `config:"postgres"`
+	return api
 }
 
-func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
-	db, err := sql.Open("pgx", cfg.Postgres.URL)
+// OpenDatabase opens a PostgreSQL database connection using the provided URL.
+func OpenDatabase(ctx context.Context, url string) (*sql.DB, error) {
+	db, err := sql.Open("pgx", url)
 	if err != nil {
 		return nil, err
 	}
 
-	lc, _ := lifecycle.FromContext(ctx)
-	lc.OnPostRun(lifecycle.HookFunc(func(ctx context.Context) error {
-		return db.Close()
-	}))
-
-	api := rest.NewApi(
-		cfg.OpenApi.Title,
-		cfg.OpenApi.Version,
-		endpoint.AdoptPet(ctx, db),
-		endpoint.ListPets(ctx, db),
-		endpoint.RegisterPet(ctx, db),
-	)
-
-	return api, nil
+	return db, nil
 }

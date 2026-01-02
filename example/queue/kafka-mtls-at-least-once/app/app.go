@@ -12,30 +12,14 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/z5labs/humus/app"
+	"github.com/z5labs/humus/config"
 	"github.com/z5labs/humus/queue"
 	"github.com/z5labs/humus/queue/kafka"
 )
 
-// Config holds the application configuration.
-type Config struct {
-	queue.Config `config:",squash"`
-
-	Kafka struct {
-		Brokers []string `config:"brokers"`
-		GroupID string   `config:"group_id"`
-		Topic   string   `config:"topic"`
-		TLS     struct {
-			CertFile   string `config:"cert_file"`
-			KeyFile    string `config:"key_file"`
-			CAFile     string `config:"ca_file"`
-			ServerName string `config:"server_name"`
-			MinVersion uint16 `config:"min_version"`
-		} `config:"tls"`
-	} `config:"kafka"`
-}
-
-// Init initializes the application with mTLS-enabled Kafka runtime.
-func Init(ctx context.Context, cfg Config) (*queue.App, error) {
+// BuildApp creates the Kafka queue application builder with mTLS.
+func BuildApp(ctx context.Context) app.Builder[queue.Runtime] {
 	// Create business logic processor with idempotent handling
 	handler := NewOrderProcessor()
 
@@ -45,69 +29,78 @@ func Init(ctx context.Context, cfg Config) (*queue.App, error) {
 		handler: handler,
 	}
 
-	// Configure TLS if certificates are provided
-	var tlsOpts []kafka.Option
-	if cfg.Kafka.TLS.CertFile != "" || cfg.Kafka.TLS.CAFile != "" {
-		tlsConfig, err := buildTLSConfig(cfg.Kafka.TLS)
-		if err != nil {
-			return nil, fmt.Errorf("failed to build TLS config: %w", err)
-		}
-		tlsOpts = append(tlsOpts, kafka.WithTLS(tlsConfig))
-	}
+	// Configure TLS using config readers
+	tlsConfig := config.ReaderFunc[*tls.Config](func(ctx context.Context) (config.Value[*tls.Config], error) {
+		// Read certificate paths from environment
+		certFile := config.MustOr(ctx, "", config.Env("KAFKA_TLS_CERT_FILE"))
+		keyFile := config.MustOr(ctx, "", config.Env("KAFKA_TLS_KEY_FILE"))
+		caFile := config.MustOr(ctx, "", config.Env("KAFKA_TLS_CA_FILE"))
+		serverName := config.MustOr(ctx, "", config.Env("KAFKA_TLS_SERVER_NAME"))
 
-	// Create Kafka runtime with at-least-once semantics and mTLS
-	opts := append(tlsOpts, kafka.AtLeastOnce(cfg.Kafka.Topic, processor))
-	runtime := kafka.NewRuntime(
-		cfg.Kafka.Brokers,
-		cfg.Kafka.GroupID,
-		opts...,
-	)
-
-	return queue.NewApp(runtime), nil
-}
-
-// buildTLSConfig constructs a *tls.Config from the application configuration.
-func buildTLSConfig(cfg struct {
-	CertFile   string `config:"cert_file"`
-	KeyFile    string `config:"key_file"`
-	CAFile     string `config:"ca_file"`
-	ServerName string `config:"server_name"`
-	MinVersion uint16 `config:"min_version"`
-}) (*tls.Config, error) {
-	tlsConfig := &tls.Config{
-		ServerName: cfg.ServerName,
-	}
-
-	// Set TLS version
-	if cfg.MinVersion > 0 {
-		tlsConfig.MinVersion = cfg.MinVersion
-	} else {
-		// Default to TLS 1.2 for security
-		tlsConfig.MinVersion = tls.VersionTLS12
-	}
-
-	// Load client certificate and key if provided
-	if cfg.CertFile != "" && cfg.KeyFile != "" {
-		cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load client certificate and key: %w", err)
-		}
-		tlsConfig.Certificates = []tls.Certificate{cert}
-	}
-
-	// Load CA certificate if provided
-	if cfg.CAFile != "" {
-		caCert, err := os.ReadFile(cfg.CAFile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read CA certificate: %w", err)
+		// If no TLS config provided, return nil
+		if certFile == "" && caFile == "" {
+			return config.Value[*tls.Config]{}, nil
 		}
 
-		caCertPool := x509.NewCertPool()
-		if !caCertPool.AppendCertsFromPEM(caCert) {
-			return nil, fmt.Errorf("failed to parse CA certificate")
+		tlsCfg := &tls.Config{
+			ServerName: serverName,
+			MinVersion: tls.VersionTLS12,
 		}
-		tlsConfig.RootCAs = caCertPool
+
+		// Load client certificate and key if provided
+		if certFile != "" && keyFile != "" {
+			cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+			if err != nil {
+				return config.Value[*tls.Config]{}, fmt.Errorf("failed to load client certificate and key: %w", err)
+			}
+			tlsCfg.Certificates = []tls.Certificate{cert}
+		}
+
+		// Load CA certificate if provided
+		if caFile != "" {
+			caCert, err := os.ReadFile(caFile)
+			if err != nil {
+				return config.Value[*tls.Config]{}, fmt.Errorf("failed to read CA certificate: %w", err)
+			}
+
+			caCertPool := x509.NewCertPool()
+			if !caCertPool.AppendCertsFromPEM(caCert) {
+				return config.Value[*tls.Config]{}, fmt.Errorf("failed to parse CA certificate")
+			}
+			tlsCfg.RootCAs = caCertPool
+		}
+
+		return config.ValueOf(tlsCfg), nil
+	})
+
+	// Configure Kafka infrastructure with mTLS
+	cfg := kafka.Config{
+		Brokers: config.Or(
+			kafka.BrokersFromEnv(),
+			config.ReaderOf([]string{"localhost:9092"}),
+		),
+		GroupID: config.Or(
+			kafka.GroupIDFromEnv(),
+			config.ReaderOf("order-processor-mtls"),
+		),
+		TLSConfig: tlsConfig,
 	}
 
-	return tlsConfig, nil
+	// Configure topic and processor with at-least-once delivery
+	topic := config.MustOr(ctx, "orders", config.Env("KAFKA_TOPIC"))
+	topics := []kafka.TopicProcessor{
+		{
+			Topic:        topic,
+			Processor:    processor,
+			DeliveryMode: kafka.AtLeastOnce,
+		},
+	}
+
+	// Build Kafka queue runtime
+	kafkaBuilder := kafka.Build(cfg, topics)
+
+	// Wrap with queue.Runtime
+	return app.Bind(kafkaBuilder, func(qr queue.QueueRuntime) app.Builder[queue.Runtime] {
+		return queue.Build(qr)
+	})
 }

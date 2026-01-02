@@ -12,7 +12,7 @@ This section covers the fundamental concepts and patterns that power Humus appli
 
 Understanding these core concepts will help you build better applications with Humus:
 
-- [Configuration System]({{< ref "configuration-system" >}}) - Deep dive into YAML config composition and templating
+- [Configuration System]({{< ref "configuration-system" >}}) - Type-safe config with config.Reader[T]
 - [Observability]({{< ref "observability" >}}) - OpenTelemetry integration for traces, metrics, and logs
 - [Lifecycle Management]({{< ref "lifecycle-management" >}}) - Graceful shutdown and signal handling
 
@@ -31,10 +31,10 @@ Humus is built on [Bedrock](https://github.com/z5labs/bedrock), a foundational f
 Humus provides sensible defaults so you can start quickly. Override only what you need:
 
 ```go
-// Minimal configuration needed
-type Config struct {
-    rest.Config `config:",squash"`
-}
+// Minimal configuration using defaults
+listener := httpserver.NewTCPListener(
+    httpserver.Addr(config.Default(":8080", config.Env("HTTP_ADDR"))),
+)
 ```
 
 ### Composition Over Inheritance
@@ -42,69 +42,92 @@ type Config struct {
 Build complex applications by composing simple pieces:
 
 ```go
-// Compose multiple configuration sources
-source := config.MultiSource(
-    config.FromYaml("defaults.yaml"),
-    config.FromYaml("overrides.yaml"),
+// Compose multiple configuration readers
+port := config.Or(
+    config.Env("PORT"),
+    config.Env("HTTP_PORT"),
+    config.ReaderOf("8080"),
 )
 ```
 
 ### Separation of Concerns
 
 Humus separates:
-- **Configuration** - What to run
-- **Initialization** - How to build it
-- **Execution** - When to run it
+- **Configuration** - Declarative config readers
+- **Building** - Application builders that construct components
+- **Execution** - Runtime that manages lifecycle
 
 ```go
 func main() {
-    // Configuration source
-    source := rest.YamlSource("config.yaml")
-
-    // Initialization function
-    init := app.Init
-
-    // Execution
-    rest.Run(source, init)
+    // Configure components
+    listener := httpserver.NewTCPListener(...)
+    srv := httpserver.NewServer(listener)
+    
+    // Build application
+    api := rest.NewApi(...)
+    restBuilder := rest.Build(srv, api)
+    
+    // Execute with lifecycle management
+    app.Run(context.Background(), restBuilder)
 }
 ```
 
 ## Common Patterns
 
-### The Init Function
+### Builder Pattern
 
-Every Humus service has an `Init` function that receives configuration and returns the service:
+Every Humus service uses builders that construct applications:
 
 ```go
-func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
-    // Build and return your service
-}
+// Build HTTP application
+restBuilder := rest.Build(srv, api)
+
+// Wrap with OpenTelemetry
+otelBuilder := otel.Build(sdk, restBuilder)
+
+// Run
+app.Run(ctx, otelBuilder)
 ```
 
-This function is called after configuration is loaded but before the service starts.
+Builders are composable - you can wrap one builder with another to add functionality.
 
-### Configuration Embedding
+### Configuration Readers
 
-Embed framework configs to inherit standard fields:
+Use `config.Reader[T]` for all configuration:
 
 ```go
-type Config struct {
-    rest.Config `config:",squash"`  // Inherits HTTP server config
-    Database DatabaseConfig `config:"database"`  // Your custom config
-}
+// Simple default
+port := config.Default("8080", config.Env("PORT"))
+
+// Multiple fallbacks
+addr := config.Or(
+    config.Env("HTTP_ADDR"),
+    config.Env("ADDR"),
+    config.ReaderOf(":8080"),
+)
+
+// Transform values
+timeout := config.Map(
+    config.Env("TIMEOUT"),
+    func(ctx context.Context, s string) (time.Duration, error) {
+        return time.ParseDuration(s)
+    },
+)
 ```
 
 ### Error Handling
 
-Use errors to fail fast during initialization:
+Builders return errors during construction to fail fast:
 
 ```go
-func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
-    if cfg.Database.Host == "" {
-        return nil, fmt.Errorf("database host required")
+listener := config.ReaderFunc[net.Listener](func(ctx context.Context) (config.Value[net.Listener], error) {
+    addr := config.MustOr(ctx, ":8080", config.Env("HTTP_ADDR"))
+    ln, err := net.Listen("tcp", addr)
+    if err != nil {
+        return config.Value[net.Listener]{}, fmt.Errorf("failed to create listener: %w", err)
     }
-    // ...
-}
+    return config.ValueOf(ln), nil
+})
 ```
 
 ## Next Steps
@@ -120,3 +143,4 @@ Or explore service-specific features:
 - [REST Services]({{< ref "/features/rest" >}})
 - [gRPC Services]({{< ref "/features/grpc" >}})
 - [Job Services]({{< ref "/features/job" >}})
+

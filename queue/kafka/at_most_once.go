@@ -19,31 +19,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// AtMostOnce configures the Kafka runtime to process messages from the specified topic
-// using at-most-once delivery semantics.
-//
-// With at-most-once semantics, messages are committed to Kafka before processing begins.
-// This means that if processing fails, the message is lost since it has already been
-// committed and will not be redelivered.
-//
-// This approach provides:
-//   - Lower latency (commits happen immediately)
-//   - Higher throughput (no waiting for processing to complete)
-//   - Risk of message loss on processing failures
-//
-// Use at-most-once when:
-//   - Message loss is acceptable
-//   - Performance is critical
-//   - Data is non-critical (metrics, logs, cache updates)
-//
-// The processor will receive messages even if commit fails, but the consumer group
-// offset will not advance, potentially causing duplicate processing on restart.
-func AtMostOnce(topic string, processor queue.Processor[Message]) Option {
-	return func(o *Options) {
-		o.topics[topic] = newAtMostOnceOrchestrator(o.groupId, processor)
-	}
-}
-
 type atMostOnceOrchestrator struct {
 	groupId   string
 	processor queue.Processor[Message]
@@ -62,7 +37,7 @@ func newAtMostOnceOrchestrator(
 func (o atMostOnceOrchestrator) Orchestrate(
 	consumer queue.Consumer[fetch],
 	acknowledger queue.Acknowledger[[]*kgo.Record],
-) queue.Runtime {
+) queue.QueueRuntime {
 	log := logger().With(GroupIDAttr(o.groupId))
 	metrics := initConsumerMetrics(log)
 

@@ -12,21 +12,18 @@ import (
 	"github.com/z5labs/humus/rest"
 )
 
-type Config struct {
-	rest.Config `config:",squash"`
-}
-
-func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
+// BuildApi creates the REST API with all endpoints registered.
+func BuildApi(ctx context.Context) *rest.Api {
 	// Create in-memory user store
 	store := endpoint.NewUserStore()
 
 	api := rest.NewApi(
-		cfg.OpenApi.Title,
-		cfg.OpenApi.Version,
+		"Problem Details API",
+		"v0.0.0",
 		endpoint.CreateUser(ctx, store),
 		endpoint.GetUser(ctx, store),
 		endpoint.ListUsers(ctx, store),
 	)
 
-	return api, nil
+	return api
 }

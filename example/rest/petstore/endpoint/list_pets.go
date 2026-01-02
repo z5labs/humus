@@ -8,8 +8,8 @@ import (
 	"regexp"
 	"strconv"
 
-	"github.com/z5labs/bedrock/lifecycle"
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/app"
 	"github.com/z5labs/humus/rest"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
@@ -21,21 +21,17 @@ type listPetsHandler struct {
 	listPetsStmt *sql.Stmt
 }
 
-func ListPets(ctx context.Context, db StmtPreparer) rest.ApiOption {
+func ListPets(ctx context.Context, db StmtPreparer, h *app.HookRegistry) rest.ApiOption {
 	stmt, err := db.Prepare("SELECT id, name, kind FROM pets LIMIT ?")
 	if err != nil {
 		panic(err)
 	}
 
-	lc, ok := lifecycle.FromContext(ctx)
-	if !ok {
-		panic("lifecycle must be present in context")
-	}
-	lc.OnPostRun(lifecycle.HookFunc(func(ctx context.Context) error {
+	h.OnPostRun(func(ctx context.Context) error {
 		return stmt.Close()
-	}))
+	})
 
-	h := &listPetsHandler{
+	handler := &listPetsHandler{
 		tracer:       otel.Tracer("github.com/z5labs/humus/example/rest/petstore/endpoint"),
 		log:          humus.Logger("github.com/z5labs/humus/example/rest/petstore/endpoint"),
 		listPetsStmt: stmt,
@@ -44,7 +40,7 @@ func ListPets(ctx context.Context, db StmtPreparer) rest.ApiOption {
 	return rest.Operation(
 		http.MethodGet,
 		rest.BasePath("/pets"),
-		rest.ProduceJson(h),
+		rest.ProduceJson(handler),
 		rest.QueryParam(
 			"limit",
 			rest.Regex(regexp.MustCompile(`^\d+$`)),
