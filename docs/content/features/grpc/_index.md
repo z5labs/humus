@@ -24,14 +24,17 @@ package main
 
 import (
     "context"
+    "net"
 
+    "github.com/z5labs/humus/app"
+    "github.com/z5labs/humus/config"
     "github.com/z5labs/humus/grpc"
+    "github.com/z5labs/humus/otel"
     pb "your-module/gen/proto/user"
+    
+    "go.opentelemetry.io/otel/metric"
+    "go.opentelemetry.io/otel/trace"
 )
-
-type Config struct {
-    grpc.Config `config:",squash"`
-}
 
 type userService struct {
     pb.UnimplementedUserServiceServer
@@ -46,16 +49,36 @@ func (s *userService) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.
 }
 
 func main() {
-    grpc.Run(grpc.YamlSource("config.yaml"), Init)
-}
+    // Configure listener
+    listener := config.ReaderFunc[net.Listener](func(ctx context.Context) (config.Value[net.Listener], error) {
+        addr := config.MustOr(ctx, ":9090", config.Env("GRPC_ADDR"))
+        ln, err := net.Listen("tcp", addr)
+        if err != nil {
+            return config.Value[net.Listener]{}, err
+        }
+        return config.ValueOf(ln), nil
+    })
 
-func Init(ctx context.Context, cfg Config) (*grpc.Api, error) {
+    // Build API and register services
     api := grpc.NewApi()
-
-    // Register your service
     pb.RegisterUserServiceServer(api, &userService{})
 
-    return api, nil
+    // Build gRPC application
+    grpcBuilder := grpc.Build(listener, api)
+
+    // Configure OpenTelemetry (disabled for simplicity)
+    sdk := otel.SDK{
+        TracerProvider: config.ReaderFunc[trace.TracerProvider](func(ctx context.Context) (config.Value[trace.TracerProvider], error) {
+            return config.Value[trace.TracerProvider]{}, nil
+        }),
+        MeterProvider: config.ReaderFunc[metric.MeterProvider](func(ctx context.Context) (config.Value[metric.MeterProvider], error) {
+            return config.Value[metric.MeterProvider]{}, nil
+        }),
+    }
+
+    otelBuilder := otel.Build(sdk, grpcBuilder)
+
+    _ = app.Run(context.Background(), otelBuilder)
 }
 ```
 

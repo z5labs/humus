@@ -26,26 +26,33 @@ import (
     "context"
     "net/http"
 
+    "github.com/z5labs/humus/app"
+    "github.com/z5labs/humus/config"
+    httpserver "github.com/z5labs/humus/http"
+    "github.com/z5labs/humus/otel"
     "github.com/z5labs/humus/rest"
-)
 
-type Config struct {
-    rest.Config `config:",squash"`
-}
+    "go.opentelemetry.io/otel/metric"
+    "go.opentelemetry.io/otel/trace"
+)
 
 type HelloResponse struct {
     Message string `json:"message"`
 }
 
 func main() {
-    rest.Run(rest.YamlSource("config.yaml"), Init)
-}
+    // Configure HTTP server
+    listener := httpserver.NewTCPListener(
+        httpserver.Addr(config.Default(":8080", config.Env("HTTP_ADDR"))),
+    )
+    srv := httpserver.NewServer(listener)
 
-func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
+    // Create handler
     handler := rest.ProducerFunc[HelloResponse](func(ctx context.Context) (*HelloResponse, error) {
         return &HelloResponse{Message: "Hello, World!"}, nil
     })
 
+    // Build API
     api := rest.NewApi(
         "Hello Service",
         "1.0.0",
@@ -55,7 +62,22 @@ func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
             rest.ProduceJson(handler),
         ),
     )
-    return api, nil
+
+    restBuilder := rest.Build(srv, api)
+
+    // Configure OpenTelemetry (disabled for simplicity)
+    sdk := otel.SDK{
+        TracerProvider: config.ReaderFunc[trace.TracerProvider](func(ctx context.Context) (config.Value[trace.TracerProvider], error) {
+            return config.Value[trace.TracerProvider]{}, nil
+        }),
+        MeterProvider: config.ReaderFunc[metric.MeterProvider](func(ctx context.Context) (config.Value[metric.MeterProvider], error) {
+            return config.Value[metric.MeterProvider]{}, nil
+        }),
+    }
+
+    otelBuilder := otel.Build(sdk, restBuilder)
+
+    _ = app.Run(context.Background(), otelBuilder)
 }
 ```
 
@@ -71,8 +93,10 @@ The main API object that combines:
 
 ### RPC Pattern
 
-Type-safe handler abstraction in the rest package:
-- `rest.Handler[Req, Resp]` - Business logic interface
+Type-safe handler abstraction in the `rest` package:
+- `rest.Handler[Req, Resp]` - Business logic interface for full request/response
+- `rest.Producer[Resp]` - Response-only handlers (GET endpoints)
+- `rest.Consumer[Req]` - Request-only handlers (POST webhooks)
 - Request deserialization (JSON, XML, etc.)
 - Response serialization
 - OpenAPI schema generation

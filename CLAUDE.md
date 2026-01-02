@@ -101,10 +101,8 @@ The `default_config.yaml` file contains framework defaults for OpenTelemetry con
 - `concurrent/` - Thread-safe utilities
 
 **Internal Packages** (framework implementation):
-- `internal/otel/` - OpenTelemetry SDK initialization
 - `internal/httpserver/` - HTTP server lifecycle wrapper
 - `internal/grpcserver/` - gRPC server lifecycle wrapper
-- `internal/detector/` - Resource detection utilities
 - `internal/grpchealth/` - gRPC health service implementation
 
 ### Key Abstractions

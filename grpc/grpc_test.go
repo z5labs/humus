@@ -11,43 +11,39 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"strings"
 	"testing"
 
+	"github.com/z5labs/humus/app"
+	"github.com/z5labs/humus/config"
+
 	"github.com/stretchr/testify/require"
-	"github.com/z5labs/bedrock/appbuilder"
 )
 
-type unableToListenConfig struct {
-	Config `config:",squash"`
-}
-
-var errFailedToListen = errors.New("failed to listen")
-
-func (cfg unableToListenConfig) Listener(ctx context.Context) (net.Listener, error) {
-	return nil, errFailedToListen
-}
-
-func TestBuilder_Build(t *testing.T) {
-	t.Run("will return an error", func(t *testing.T) {
-		t.Run("if the api fails to be created", func(t *testing.T) {
-			buildErr := errors.New("failed to build api")
-			b := appbuilder.FromConfig(Builder(func(ctx context.Context, cfg Config) (*Api, error) {
-				return nil, buildErr
-			}))
-
-			_, err := b.Build(context.Background(), DefaultConfig())
-			require.ErrorIs(t, err, buildErr)
+func TestBuild(t *testing.T) {
+	t.Run("returns a valid builder", func(t *testing.T) {
+		listener := config.ReaderFunc[net.Listener](func(ctx context.Context) (config.Value[net.Listener], error) {
+			ln, err := net.Listen("tcp", ":0")
+			if err != nil {
+				return config.Value[net.Listener]{}, err
+			}
+			return config.ValueOf(ln), nil
 		})
+		api := NewApi()
 
-		t.Run("if it fails to listen", func(t *testing.T) {
-			b := appbuilder.FromConfig(Builder(func(ctx context.Context, cfg unableToListenConfig) (*Api, error) {
-				return NewApi(), nil
-			}))
+		builder := Build(listener, api)
+		require.NotNil(t, builder)
+	})
 
-			_, err := b.Build(context.Background(), DefaultConfig())
-			require.ErrorIs(t, err, errFailedToListen)
+	t.Run("returns error when listener fails", func(t *testing.T) {
+		expectedErr := errors.New("listener error")
+		listener := config.ReaderFunc[net.Listener](func(ctx context.Context) (config.Value[net.Listener], error) {
+			return config.Value[net.Listener]{}, expectedErr
 		})
+		api := NewApi()
+
+		builder := Build(listener, api)
+		_, err := builder.Build(context.Background())
+		require.ErrorIs(t, err, expectedErr)
 	})
 }
 
@@ -61,43 +57,55 @@ func (h *captureHandler) Handle(ctx context.Context, record slog.Record) error {
 	return nil
 }
 
+type failingBuilder struct{}
+
+func (fb failingBuilder) Build(ctx context.Context) (Runtime, error) {
+	return Runtime{}, errors.New("build failed")
+}
+
 func TestRun(t *testing.T) {
-	t.Run("will handle error", func(t *testing.T) {
-		t.Run("if the http port is not a uint", func(t *testing.T) {
-			r := strings.NewReader(`
-http:
-  port: -1`)
+	t.Run("logs errors from builder", func(t *testing.T) {
+		logHandler := &captureHandler{
+			Handler: slog.Default().Handler(),
+		}
 
-			b := func(ctx context.Context, cfg Config) (*Api, error) {
-				return nil, nil
+		builder := failingBuilder{}
+		err := Run(context.Background(), builder, LogHandler(logHandler))
+
+		require.Error(t, err)
+		require.Len(t, logHandler.records, 1)
+
+		record := logHandler.records[0]
+		var caughtErr error
+		record.Attrs(func(a slog.Attr) bool {
+			if a.Key != "error" {
+				return true
 			}
 
-			logHandler := &captureHandler{
-				Handler: slog.Default().Handler(),
-			}
-
-			Run(r, b, LogHandler(logHandler))
-
-			records := logHandler.records
-			require.Len(t, records, 1)
-
-			record := records[0]
-			var caughtErr error
-			record.Attrs(func(a slog.Attr) bool {
-				if a.Key != "error" {
-					return true
-				}
-
-				v := a.Value.Any()
-				err, ok := v.(error)
-				if !ok {
-					caughtErr = fmt.Errorf("expected attr to be error: %v", a.Value)
-					return false
-				}
-				caughtErr = err
+			v := a.Value.Any()
+			err, ok := v.(error)
+			if !ok {
+				caughtErr = fmt.Errorf("expected attr to be error: %v", a.Value)
 				return false
-			})
-			require.Error(t, caughtErr)
+			}
+			caughtErr = err
+			return false
 		})
+		require.Error(t, caughtErr)
+		require.Equal(t, "build failed", caughtErr.Error())
+	})
+
+	t.Run("uses custom log handler when provided", func(t *testing.T) {
+		logHandler := &captureHandler{
+			Handler: slog.Default().Handler(),
+		}
+
+		builder := app.BuilderFunc[Runtime](func(ctx context.Context) (Runtime, error) {
+			return Runtime{}, errors.New("test error")
+		})
+
+		Run(context.Background(), builder, LogHandler(logHandler))
+
+		require.Len(t, logHandler.records, 1)
 	})
 }

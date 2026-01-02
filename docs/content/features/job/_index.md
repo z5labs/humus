@@ -27,17 +27,13 @@ import (
     "fmt"
 
     "github.com/z5labs/humus"
-    "github.com/z5labs/humus/job"
+    "github.com/z5labs/humus/app"
+    "github.com/z5labs/humus/config"
+    "github.com/z5labs/humus/otel"
+    
+    "go.opentelemetry.io/otel/metric"
+    "go.opentelemetry.io/otel/trace"
 )
-
-type Config struct {
-    humus.Config `config:",squash"`
-
-    Database struct {
-        Host string `config:"host"`
-        Name string `config:"name"`
-    } `config:"database"`
-}
 
 type MigrationJob struct {
     dbHost string
@@ -63,14 +59,34 @@ func (j *MigrationJob) Handle(ctx context.Context) error {
 }
 
 func main() {
-    job.Run(job.YamlSource("config.yaml"), Init)
-}
+    // Read configuration from environment
+    dbHost := config.MustOr(context.Background(), "localhost", config.Env("DB_HOST"))
+    dbName := config.MustOr(context.Background(), "mydb", config.Env("DB_NAME"))
 
-func Init(ctx context.Context, cfg Config) (job.Handler, error) {
-    return &MigrationJob{
-        dbHost: cfg.Database.Host,
-        dbName: cfg.Database.Name,
-    }, nil
+    // Create job handler
+    handler := &MigrationJob{
+        dbHost: dbHost,
+        dbName: dbName,
+    }
+
+    // Build job application
+    jobBuilder := app.BuilderFunc[app.JobApp](func(ctx context.Context) (app.JobApp, error) {
+        return app.JobApp{Handler: handler}, nil
+    })
+
+    // Configure OpenTelemetry (disabled for simplicity)
+    sdk := otel.SDK{
+        TracerProvider: config.ReaderFunc[trace.TracerProvider](func(ctx context.Context) (config.Value[trace.TracerProvider], error) {
+            return config.Value[trace.TracerProvider]{}, nil
+        }),
+        MeterProvider: config.ReaderFunc[metric.MeterProvider](func(ctx context.Context) (config.Value[metric.MeterProvider], error) {
+            return config.Value[metric.MeterProvider]{}, nil
+        }),
+    }
+
+    otelBuilder := otel.Build(sdk, jobBuilder)
+
+    _ = app.Run(context.Background(), otelBuilder)
 }
 
 func runMigrations(ctx context.Context, host, name string) error {
@@ -93,10 +109,9 @@ That's it! Just implement one method.
 
 Jobs have a simple lifecycle:
 
-1. **Configuration Loading** - Config file is parsed
-2. **Initialization** - `Init` function creates the handler
-3. **Execution** - `Handle` method is called
-4. **Exit**:
+1. **Building** - Application builder creates the job handler
+2. **Execution** - `Handle` method is called with context
+3. **Exit**:
    - Returns `nil` → Exit code 0 (success)
    - Returns `error` → Exit code 1 (failure)
    - Receives SIGTERM/SIGINT → Context cancelled, job should return
@@ -265,20 +280,31 @@ The job framework will:
 
 ## Configuration
 
-Minimal config for jobs:
+Jobs read configuration from environment variables:
 
-```yaml
-otel:
-  service:
-    name: my-job
-  sdk:
-    disabled: false  # Enable for production
-
-# Add your job-specific config
-database:
-  host: localhost
-  port: 5432
+```go
+func main() {
+    // Read config from environment
+    dbURL := config.MustOr(context.Background(), 
+        "postgres://localhost/mydb", 
+        config.Env("DATABASE_URL"),
+    )
+    
+    batchSize := config.Map(
+        config.Default("100", config.Env("BATCH_SIZE")),
+        func(ctx context.Context, s string) (int, error) {
+            return strconv.Atoi(s)
+        },
+    )
+    
+    // Use config to build your job...
+}
 ```
+
+**Environment Variables:**
+- `OTEL_SERVICE_NAME` - Service name for telemetry
+- `OTEL_TRACES_SAMPLER_RATIO` - Trace sampling (0.0-1.0)
+- Add your job-specific variables
 
 ## What You'll Learn
 

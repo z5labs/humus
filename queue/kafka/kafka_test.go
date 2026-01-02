@@ -50,7 +50,10 @@ func TestBasicConsumption(t *testing.T) {
 		})
 
 		// Create runtime with at-least-once semantics
-		runtime := newTestRuntime(t, brokers, "basic-consumption-group", AtLeastOnce(topic, processor))
+		runtime, err := newTestRuntime(t, brokers, "basic-consumption-group", []TopicProcessor{
+			{Topic: topic, Processor: processor, DeliveryMode: AtLeastOnce},
+		})
+		require.NoError(t, err)
 
 		// Run runtime in background with timeout
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -123,7 +126,10 @@ func TestBasicConsumption(t *testing.T) {
 		})
 
 		// Create runtime with at-least-once semantics
-		runtime := newTestRuntime(t, brokers, "partitions-group", AtLeastOnce(topic, processor))
+		runtime, err := newTestRuntime(t, brokers, "partitions-group", []TopicProcessor{
+			{Topic: topic, Processor: processor, DeliveryMode: AtLeastOnce},
+		})
+		require.NoError(t, err)
 
 		// Run runtime in background with timeout
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -207,10 +213,11 @@ func TestBasicConsumption(t *testing.T) {
 		})
 
 		// Create runtime with at-least-once semantics for both topics
-		runtime := newTestRuntime(t, brokers, "multi-topic-group",
-			AtLeastOnce(topic1, ordersProcessor),
-			AtLeastOnce(topic2, eventsProcessor),
-		)
+		runtime, err := newTestRuntime(t, brokers, "multi-topic-group", []TopicProcessor{
+			{Topic: topic1, Processor: ordersProcessor, DeliveryMode: AtLeastOnce},
+			{Topic: topic2, Processor: eventsProcessor, DeliveryMode: AtLeastOnce},
+		})
+		require.NoError(t, err)
 
 		// Run runtime in background with timeout
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -298,7 +305,10 @@ func TestOffsetCommits(t *testing.T) {
 			return nil
 		})
 
-		runtime1 := newTestRuntime(t, brokers, groupID, AtLeastOnce(topic, processor1))
+		runtime1, err := newTestRuntime(t, brokers, groupID, []TopicProcessor{
+			{Topic: topic, Processor: processor1, DeliveryMode: AtLeastOnce},
+		})
+		require.NoError(t, err)
 
 		ctx1, cancel1 := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel1()
@@ -345,7 +355,10 @@ func TestOffsetCommits(t *testing.T) {
 			return nil
 		})
 
-		runtime2 := newTestRuntime(t, brokers, groupID, AtLeastOnce(topic, processor2))
+		runtime2, err := newTestRuntime(t, brokers, groupID, []TopicProcessor{
+			{Topic: topic, Processor: processor2, DeliveryMode: AtLeastOnce},
+		})
+		require.NoError(t, err)
 
 		ctx2, cancel2 := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel2()
@@ -437,7 +450,10 @@ func TestRebalancing(t *testing.T) {
 		})
 
 		// Start first consumer
-		runtime1 := newTestRuntime(t, brokers, groupID, AtLeastOnce(topic, processor1))
+		runtime1, err := newTestRuntime(t, brokers, groupID, []TopicProcessor{
+			{Topic: topic, Processor: processor1, DeliveryMode: AtLeastOnce},
+		})
+		require.NoError(t, err)
 		ctx1, cancel1 := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel1()
 
@@ -457,7 +473,10 @@ func TestRebalancing(t *testing.T) {
 		time.Sleep(2 * time.Second)
 
 		// Start second consumer (triggers rebalance)
-		runtime2 := newTestRuntime(t, brokers, groupID, AtLeastOnce(topic, processor2))
+		runtime2, err := newTestRuntime(t, brokers, groupID, []TopicProcessor{
+			{Topic: topic, Processor: processor2, DeliveryMode: AtLeastOnce},
+		})
+		require.NoError(t, err)
 		ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel2()
 
@@ -594,7 +613,10 @@ func TestErrorHandling(t *testing.T) {
 			return nil
 		})
 
-		runtime := newTestRuntime(t, brokers, groupID, AtLeastOnce(topic, processor))
+		runtime, err := newTestRuntime(t, brokers, groupID, []TopicProcessor{
+			{Topic: topic, Processor: processor, DeliveryMode: AtLeastOnce},
+		})
+		require.NoError(t, err)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -664,7 +686,10 @@ func TestErrorHandling(t *testing.T) {
 			return fmt.Errorf("simulated error")
 		})
 
-		runtime1 := newTestRuntime(t, brokers, groupID, AtLeastOnce(topic, failingProcessor))
+		runtime1, err := newTestRuntime(t, brokers, groupID, []TopicProcessor{
+			{Topic: topic, Processor: failingProcessor, DeliveryMode: AtLeastOnce},
+		})
+		require.NoError(t, err)
 
 		ctx1, cancel1 := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel1()
@@ -703,7 +728,10 @@ func TestErrorHandling(t *testing.T) {
 			return nil
 		})
 
-		runtime2 := newTestRuntime(t, brokers, groupID, AtLeastOnce(topic, countingProcessor))
+		runtime2, err := newTestRuntime(t, brokers, groupID, []TopicProcessor{
+			{Topic: topic, Processor: countingProcessor, DeliveryMode: AtLeastOnce},
+		})
+		require.NoError(t, err)
 
 		ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel2()
@@ -764,7 +792,10 @@ func TestErrorHandling(t *testing.T) {
 			return nil
 		})
 
-		runtime := newTestRuntime(t, brokers, groupID, AtLeastOnce(topic, processor))
+		runtime, err := newTestRuntime(t, brokers, groupID, []TopicProcessor{
+			{Topic: topic, Processor: processor, DeliveryMode: AtLeastOnce},
+		})
+		require.NoError(t, err)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 
@@ -834,7 +865,10 @@ func TestErrorHandling(t *testing.T) {
 			}
 		})
 
-		runtime := newTestRuntime(t, brokers, groupID, AtLeastOnce(topic, processor))
+		runtime, err := newTestRuntime(t, brokers, groupID, []TopicProcessor{
+			{Topic: topic, Processor: processor, DeliveryMode: AtLeastOnce},
+		})
+		require.NoError(t, err)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 

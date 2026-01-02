@@ -1,439 +1,433 @@
 ---
 title: Configuration System
-description: Deep dive into config composition and templating
+description: Deep dive into config.Reader composition
 weight: 10
 type: docs
 ---
 
 
-Humus uses a powerful configuration system built on YAML with Go template support and multi-source composition.
+Humus uses a powerful type-safe configuration system built on the `config.Reader[T]` interface. This enables composable, testable configuration from multiple sources without YAML files.
 
 ## Configuration Anatomy
 
-### Basic Structure
+### The Reader Interface
 
-A Humus configuration file has three main sections:
-
-```yaml
-# 1. Service Configuration (REST, gRPC, or omitted for Jobs)
-rest:
-  port: 8080
-  host: 0.0.0.0
-
-# 2. OpenTelemetry Configuration (optional but recommended)
-otel:
-  service:
-    name: my-service
-    version: 1.0.0
-
-# 3. Application-Specific Configuration
-database:
-  host: localhost
-  port: 5432
-```
-
-### Config Struct Mapping
-
-The YAML maps to a Go struct:
+All configuration in Humus is based on `config.Reader[T]`:
 
 ```go
-type Config struct {
-    // 1. Service config (embedded with squash)
-    rest.Config `config:",squash"`
+type Reader[T any] interface {
+    Read(context.Context) (Value[T], error)
+}
 
-    // 2. OTel is embedded in rest.Config/grpc.Config
-    // No need to explicitly include it
-
-    // 3. Application-specific fields
-    Database struct {
-        Host string `config:"host"`
-        Port int    `config:"port"`
-    } `config:"database"`
+type Value[T any] struct {
+    val T
+    set bool
 }
 ```
 
-## Template Engine
+A `Reader` can read a value of type `T` from any source: environment variables, files, command-line flags, or even remote configuration services.
 
-### Template Functions
+### Basic Readers
 
-Humus supports Go template syntax with two key functions:
-
-#### `env` - Read Environment Variables
-
-```yaml
-otel:
-  service:
-    name: {{env "SERVICE_NAME"}}
+**Static values:**
+```go
+port := config.ReaderOf("8080")
 ```
 
-Reads the `SERVICE_NAME` environment variable.
-
-#### `default` - Provide Fallback Values
-
-```yaml
-rest:
-  port: {{env "PORT" | default "8080"}}
+**Environment variables:**
+```go
+port := config.Env("PORT")
 ```
 
-Uses `PORT` environment variable, falling back to `"8080"` if not set.
-
-### Template Examples
-
-**Database Configuration:**
-```yaml
-database:
-  host: {{env "DB_HOST" | default "localhost"}}
-  port: {{env "DB_PORT" | default "5432"}}
-  name: {{env "DB_NAME"}}
-  user: {{env "DB_USER"}}
-  password: {{env "DB_PASSWORD"}}  # No default for secrets!
+**Functions:**
+```go
+listener := config.ReaderFunc[net.Listener](func(ctx context.Context) (config.Value[net.Listener], error) {
+    ln, err := net.Listen("tcp", ":8080")
+    if err != nil {
+        return config.Value[net.Listener]{}, err
+    }
+    return config.ValueOf(ln), nil
+})
 ```
 
-**Feature Flags:**
-```yaml
-features:
-  enable_cache: {{env "ENABLE_CACHE" | default "true"}}
-  enable_auth: {{env "ENABLE_AUTH" | default "false"}}
-```
+## Reader Composition
 
-**Environment-Specific Values:**
-```yaml
-otel:
-  sdk:
-    disabled: {{env "OTEL_DISABLED" | default "false"}}
+### Fallback Values with Or
 
-  traces:
-    exporter:
-      otlp:
-        endpoint: {{env "OTEL_ENDPOINT" | default "http://localhost:4318"}}
-```
-
-## Multi-Source Configuration
-
-Compose multiple configuration files with `config.MultiSource`:
+Use `config.Or()` to try multiple readers in sequence:
 
 ```go
-import (
-    bedrockcfg "github.com/z5labs/bedrock/pkg/config"
-    "github.com/z5labs/humus/rest"
+// Try PORT, then HTTP_PORT, finally default to 8080
+port := config.Or(
+    config.Env("PORT"),
+    config.Env("HTTP_PORT"),
+    config.ReaderOf("8080"),
 )
+```
 
+### Default Values
+
+Provide a default for a single reader:
+
+```go
+port := config.Default("8080", config.Env("PORT"))
+```
+
+This reads from the `PORT` environment variable, and if not set, uses `"8080"` as the default.
+
+### Transforming Values with Map
+
+Transform a value after reading it:
+
+```go
+// Read port number and convert to full address
+addr := config.Map(
+    config.Env("PORT"),
+    func(ctx context.Context, port string) (string, error) {
+        return ":" + port, nil
+    },
+)
+```
+
+Another example - parsing a duration:
+
+```go
+timeout := config.Map(
+    config.Env("TIMEOUT"),
+    func(ctx context.Context, s string) (time.Duration, error) {
+        return time.ParseDuration(s)
+    },
+)
+```
+
+### Chaining with Bind
+
+Use `config.Bind()` for dependent configuration:
+
+```go
+// Read database type, then create appropriate connection string reader
+connStr := config.Bind(
+    config.Env("DB_TYPE"),
+    func(ctx context.Context, dbType string) config.Reader[string] {
+        switch dbType {
+        case "postgres":
+            return config.Env("POSTGRES_URL")
+        case "mysql":
+            return config.Env("MYSQL_URL")
+        default:
+            return config.ReaderOf("sqlite::memory:")
+        }
+    },
+)
+```
+
+## Reading Configuration
+
+### Immediate Reading with Must
+
+Use `config.Must()` to read a value immediately, panicking on error:
+
+```go
 func main() {
-    source := bedrockcfg.MultiSource(
-        bedrockcfg.FromYaml("defaults.yaml"),    // Base configuration
-        bedrockcfg.FromYaml("config.yaml"),      // Overrides
-    )
-
-    rest.Run(source, Init)
+    ctx := context.Background()
+    port := config.Must(ctx, config.Env("PORT"))
+    // ...
 }
 ```
 
-### Use Cases for Multi-Source
+### Safe Reading with MustOr
 
-#### 1. Framework Defaults + App Config
+Prefer `config.MustOr()` to read with a default:
 
 ```go
-source := bedrockcfg.MultiSource(
-    bedrockcfg.FromYaml("default_config.yaml"),  // Humus framework defaults
-    bedrockcfg.FromYaml("config.yaml"),          // Your application config
+func buildServer(ctx context.Context) *http.Server {
+    addr := config.MustOr(ctx, ":8080", config.Env("HTTP_ADDR"))
+    return &http.Server{Addr: addr}
+}
+```
+
+### Deferred Reading in Builders
+
+Most configuration should be read lazily within builders:
+
+```go
+listener := config.ReaderFunc[net.Listener](func(ctx context.Context) (config.Value[net.Listener], error) {
+    // Read happens at build time, not declaration time
+    addr := config.MustOr(ctx, ":8080", config.Env("HTTP_ADDR"))
+    ln, err := net.Listen("tcp", addr)
+    if err != nil {
+        return config.Value[net.Listener]{}, err
+    }
+    return config.ValueOf(ln), nil
+})
+```
+
+This allows configuration to be resolved when `app.Run()` builds the application, giving full access to the context.
+
+## Common Patterns
+
+### HTTP Server Configuration
+
+```go
+listener := httpserver.NewTCPListener(
+    httpserver.Addr(config.Default(":8080", config.Env("HTTP_ADDR"))),
+)
+
+srv := httpserver.NewServer(
+    listener,
+    httpserver.ReadTimeout(config.Map(
+        config.Env("HTTP_READ_TIMEOUT"),
+        func(ctx context.Context, s string) (time.Duration, error) {
+            return time.ParseDuration(s)
+        },
+    )),
+    httpserver.WriteTimeout(config.Map(
+        config.Env("HTTP_WRITE_TIMEOUT"),
+        func(ctx context.Context, s string) (time.Duration, error) {
+            return time.ParseDuration(s)
+        },
+    )),
 )
 ```
 
-**default_config.yaml** (framework):
-```yaml
-otel:
-  service:
-    name: unnamed-service
-  sdk:
-    disabled: false
-```
-
-**config.yaml** (your app):
-```yaml
-otel:
-  service:
-    name: my-actual-service  # Overrides framework default
-```
-
-#### 2. Environment-Specific Overrides
+### Database Configuration
 
 ```go
-import "os"
-
-func main() {
-    env := os.Getenv("ENV")
-    if env == "" {
-        env = "dev"
+db := config.ReaderFunc[*sql.DB](func(ctx context.Context) (config.Value[*sql.DB], error) {
+    url := config.MustOr(ctx, "postgres://localhost/mydb", config.Env("DATABASE_URL"))
+    
+    conn, err := sql.Open("postgres", url)
+    if err != nil {
+        return config.Value[*sql.DB]{}, err
     }
-
-    sources := []bedrockcfg.Source{
-        bedrockcfg.FromYaml("config.base.yaml"),
+    
+    if err := conn.PingContext(ctx); err != nil {
+        conn.Close()
+        return config.Value[*sql.DB]{}, err
     }
-
-    envConfig := fmt.Sprintf("config.%s.yaml", env)
-    if _, err := os.Stat(envConfig); err == nil {
-        sources = append(sources, bedrockcfg.FromYaml(envConfig))
-    }
-
-    rest.Run(bedrockcfg.MultiSource(sources...), Init)
-}
+    
+    return config.ValueOf(conn), nil
+})
 ```
 
-**config.base.yaml:**
-```yaml
-rest:
-  port: 8080
-
-otel:
-  service:
-    name: my-service
-```
-
-**config.prod.yaml:**
-```yaml
-rest:
-  host: 0.0.0.0  # Only override what changes
-
-otel:
-  traces:
-    exporter:
-      otlp:
-        endpoint: https://otel-collector.prod.example.com
-```
-
-#### 3. Local Development Overrides
+### Feature Flags
 
 ```go
-source := bedrockcfg.MultiSource(
-    bedrockcfg.FromYaml("config.yaml"),
-    bedrockcfg.FromYaml("config.local.yaml"),  // Gitignored local overrides
+enableCache := config.Map(
+    config.Default("false", config.Env("ENABLE_CACHE")),
+    func(ctx context.Context, s string) (bool, error) {
+        return strconv.ParseBool(s)
+    },
 )
-```
-
-Add to `.gitignore`:
-```
-config.local.yaml
-```
-
-Developers can create `config.local.yaml` for personal settings without affecting others.
-
-## Struct Tags
-
-### The `squash` Tag
-
-Embeds fields directly into the parent:
-
-```go
-type Config struct {
-    rest.Config `config:",squash"`  // Fields embedded at root level
-}
-```
-
-**Without squash:**
-```yaml
-rest_config:  # Would need this nesting
-  port: 8080
-```
-
-**With squash:**
-```yaml
-rest:  # Direct access
-  port: 8080
-```
-
-### Custom Field Names
-
-```go
-type Config struct {
-    DatabaseURL string `config:"database_url"`  // Maps to database_url in YAML
-    APIKey      string `config:"api_key"`       // Maps to api_key
-}
-```
-
-### Nested Structures
-
-```go
-type Config struct {
-    rest.Config `config:",squash"`
-
-    Database struct {
-        Primary struct {
-            Host string `config:"host"`
-            Port int    `config:"port"`
-        } `config:"primary"`
-
-        Replica struct {
-            Host string `config:"host"`
-            Port int    `config:"port"`
-        } `config:"replica"`
-    } `config:"database"`
-}
-```
-
-**Corresponding YAML:**
-```yaml
-database:
-  primary:
-    host: primary.db.example.com
-    port: 5432
-  replica:
-    host: replica.db.example.com
-    port: 5432
 ```
 
 ## OpenTelemetry Configuration
 
-### Full OTel Config Structure
+### Resource Configuration
 
-```yaml
-otel:
-  service:
-    name: my-service        # Required
-    version: 1.0.0          # Optional
-    namespace: production   # Optional
-    instance_id: pod-1234   # Optional
+Define service metadata for OpenTelemetry:
 
-  sdk:
-    disabled: false         # Set true to disable all OTel
-
-  # Resource attributes (optional)
-  resource:
-    attributes:
-      deployment.environment: production
-      service.team: platform
-
-  # Trace configuration
-  traces:
-    sampler:
-      type: parentbased_traceidratio  # or always_on, always_off, etc.
-      arg: 0.1  # Sample 10% of traces
-
-    exporter:
-      otlp:
-        endpoint: http://localhost:4318
-        protocol: http/protobuf  # or grpc
-        headers:
-          x-custom-header: value
-
-  # Metrics configuration
-  metrics:
-    exporter:
-      otlp:
-        endpoint: http://localhost:4318
-        protocol: http/protobuf
-
-  # Logs configuration
-  logs:
-    exporter:
-      otlp:
-        endpoint: http://localhost:4318
-        protocol: http/protobuf
+```go
+resource := otel.NewResource(
+    otel.ServiceName(config.Default("my-service", otel.ServiceNameFromEnv())),
+    otel.ServiceVersion(config.Default("1.0.0", otel.ServiceVersionFromEnv())),
+)
 ```
 
-### Disabling OTel
+### Trace Configuration
 
-For development or testing:
+Configure distributed tracing:
 
-```yaml
-otel:
-  sdk:
-    disabled: true
+```go
+traces := otel.NewTraces(
+    otel.TraceResource(resource),
+    otel.TraceSampler(config.Default(1.0, otel.SamplerRatioFromEnv())),  // Sample 100% by default
+    otel.TraceExportInterval(config.Map(
+        config.Env("OTEL_BSP_EXPORT_INTERVAL"),
+        func(ctx context.Context, s string) (time.Duration, error) {
+            return time.ParseDuration(s)
+        },
+    )),
+)
 ```
 
-Or via environment variable:
+### Metrics Configuration
 
-```yaml
-otel:
-  sdk:
-    disabled: {{env "OTEL_DISABLED" | default "false"}}
+Configure metrics collection:
+
+```go
+metrics := otel.NewMetrics(
+    otel.MetricResource(resource),
+    otel.MetricExportInterval(config.Map(
+        config.Env("OTEL_METRIC_EXPORT_INTERVAL"),
+        func(ctx context.Context, s string) (time.Duration, error) {
+            return time.ParseDuration(s)
+        },
+    )),
+)
+```
+
+### Complete SDK Setup
+
+Combine all OTel configuration:
+
+```go
+sdk := otel.SDK{
+    TracerProvider: traces,
+    MeterProvider:  metrics,
+    LogProvider:    otel.NewLogs(otel.LogResource(resource)),
+}
+
+otelBuilder := otel.Build(sdk, appBuilder)
+```
+
+### Disabling OTel for Development
+
+Disable OpenTelemetry entirely:
+
+```go
+import (
+    "go.opentelemetry.io/otel/metric"
+    "go.opentelemetry.io/otel/trace"
+)
+
+sdk := otel.SDK{
+    TracerProvider: config.ReaderFunc[trace.TracerProvider](func(ctx context.Context) (config.Value[trace.TracerProvider], error) {
+        return config.Value[trace.TracerProvider]{}, nil
+    }),
+    MeterProvider: config.ReaderFunc[metric.MeterProvider](func(ctx context.Context) (config.Value[metric.MeterProvider], error) {
+        return config.Value[metric.MeterProvider]{}, nil
+    }),
+}
 ```
 
 ## Best Practices
 
 ### 1. Secrets Management
 
-**Never commit secrets:**
-```yaml
-# Bad
-database:
-  password: super-secret-password
+Never hardcode secrets - always use environment variables:
 
-# Good
-database:
-  password: {{env "DB_PASSWORD"}}
-```
-
-### 2. Required vs Optional
-
-**Use templates for optional values:**
-```yaml
-rest:
-  port: {{env "PORT" | default "8080"}}  # Optional, has default
-```
-
-**Validate required values in Init:**
 ```go
-func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
-    if cfg.Database.Password == "" {
-        return nil, fmt.Errorf("DB_PASSWORD environment variable required")
+// Bad - hardcoded secret
+password := config.ReaderOf("my-password")
+
+// Good - from environment
+password := config.Env("DB_PASSWORD")
+
+// Better - required secret with no default
+password := config.ReaderFunc[string](func(ctx context.Context) (config.Value[string], error) {
+    val, err := config.Env("DB_PASSWORD").Read(ctx)
+    if err != nil {
+        return config.Value[string]{}, err
+    }
+    pw, ok := val.Value()
+    if !ok || pw == "" {
+        return config.Value[string]{}, fmt.Errorf("DB_PASSWORD is required")
+    }
+    return config.ValueOf(pw), nil
+})
+```
+
+### 2. Required vs Optional Configuration
+
+Use `config.Default()` for optional values with sensible defaults:
+
+```go
+// Optional: has a sensible default
+port := config.Default("8080", config.Env("PORT"))
+
+// Required: no default, will error if not set
+apiKey := config.Env("API_KEY")
+```
+
+Validate required config early in builders:
+
+```go
+db := config.ReaderFunc[*sql.DB](func(ctx context.Context) (config.Value[*sql.DB], error) {
+    url, err := config.Read(ctx, config.Env("DATABASE_URL"))
+    if err != nil {
+        return config.Value[*sql.DB]{}, fmt.Errorf("DATABASE_URL is required: %w", err)
     }
     // ...
-}
+})
 ```
 
 ### 3. Environment Variable Naming
 
-Use consistent prefixes:
-```yaml
-# Good
-database:
-  host: {{env "MYAPP_DB_HOST"}}
-  port: {{env "MYAPP_DB_PORT"}}
+Use consistent, prefixed naming conventions:
 
-# Avoids conflicts with other apps
-```
-
-### 4. Document Your Config
-
-Add comments to YAML files:
-```yaml
-# HTTP Server Configuration
-rest:
-  # Port to listen on. Set via PORT environment variable.
-  # Default: 8080
-  port: {{env "PORT" | default "8080"}}
-
-  # Host to bind to. Use 0.0.0.0 for all interfaces.
-  # Default: localhost (for security)
-  host: {{env "HOST" | default "localhost"}}
-```
-
-### 5. Config Validation
-
-Validate in `Init` function:
 ```go
-func Init(ctx context.Context, cfg Config) (*rest.Api, error) {
-    // Validate ranges
-    if cfg.REST.Port < 1024 || cfg.REST.Port > 65535 {
-        return nil, fmt.Errorf("port must be between 1024 and 65535")
-    }
+const appPrefix = "MYAPP_"
 
-    // Validate required fields
-    if cfg.Database.Host == "" {
-        return nil, fmt.Errorf("database host is required")
-    }
+// Database configuration
+dbHost := config.Env(appPrefix + "DB_HOST")
+dbPort := config.Env(appPrefix + "DB_PORT")
+dbName := config.Env(appPrefix + "DB_NAME")
 
-    // Validate mutually exclusive options
-    if cfg.Features.UseCache && cfg.Features.UseMemory {
-        return nil, fmt.Errorf("cannot enable both cache and memory mode")
-    }
-
-    // Continue with initialization...
+// Or use a helper
+func envVar(name string) config.Reader[string] {
+    return config.Env(appPrefix + name)
 }
+
+dbHost := envVar("DB_HOST")
+```
+
+### 4. Testable Configuration
+
+Configuration readers are testable:
+
+```go
+func TestDatabaseConnection(t *testing.T) {
+    // Create a test reader
+    testURL := config.ReaderOf("postgres://localhost:5432/testdb")
+    
+    // Use in your builder
+    db := buildDatabase(testURL)
+    // ...
+}
+
+func buildDatabase(urlReader config.Reader[string]) config.Reader[*sql.DB] {
+    return config.ReaderFunc[*sql.DB](func(ctx context.Context) (config.Value[*sql.DB], error) {
+        url, err := config.Read(ctx, urlReader)
+        if err != nil {
+            return config.Value[*sql.DB]{}, err
+        }
+        conn, err := sql.Open("postgres", url)
+        // ...
+    })
+}
+```
+
+### 5. Configuration Documentation
+
+Document environment variables your application uses:
+
+```go
+// Environment Variables:
+//   HTTP_ADDR - HTTP server address (default: :8080)
+//   DATABASE_URL - PostgreSQL connection string (required)
+//   OTEL_SERVICE_NAME - Service name for telemetry (required)
+//   OTEL_TRACES_SAMPLER_RATIO - Trace sampling ratio 0.0-1.0 (default: 1.0)
+//   LOG_LEVEL - Logging level: debug, info, warn, error (default: info)
+func main() {
+    // ...
+}
+```
+
+Or create a README section:
+
+```markdown
+## Configuration
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `HTTP_ADDR` | No | `:8080` | HTTP server listen address |
+| `DATABASE_URL` | Yes | - | PostgreSQL connection URL |
+| `OTEL_SERVICE_NAME` | Yes | - | Service name for traces/metrics |
 ```
 
 ## Next Steps
 
-- Learn about [Observability]({{< ref "observability" >}}) to understand OTel configuration
+- Learn about [Observability]({{< ref "observability" >}}) for OpenTelemetry configuration details
 - Explore [Lifecycle Management]({{< ref "lifecycle-management" >}}) for runtime behavior
 - See [Getting Started - Configuration]({{< ref "/getting-started/configuration" >}}) for basic examples
