@@ -9,6 +9,7 @@ package kafka
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"testing"
 	"time"
@@ -28,8 +29,8 @@ func setupKafkaContainer(t *testing.T) (brokers []string, cleanup func()) {
 
 	ctx := context.Background()
 
-	// Configure Kafka container with KRaft mode settings from podman-compose.yaml
-	// Using host network mode to avoid port mapping issues with advertised listeners
+	// Configure Kafka container with KRaft mode settings
+	// Using host network mode for simplicity with advertised listeners
 	req := testcontainers.ContainerRequest{
 		Image: "docker.io/apache/kafka-native:latest",
 		HostConfigModifier: func(hc *container.HostConfig) {
@@ -163,6 +164,22 @@ func newTestRuntime(t *testing.T, brokers []string, groupID string, topics []Top
 		}),
 		GroupID: config.ReaderFunc[string](func(ctx context.Context) (config.Value[string], error) {
 			return config.ValueOf(groupID), nil
+		}),
+		// Provide empty readers for optional fields so config.MustOr can apply defaults
+		SessionTimeout: config.ReaderFunc[time.Duration](func(ctx context.Context) (config.Value[time.Duration], error) {
+			return config.Value[time.Duration]{}, nil
+		}),
+		RebalanceTimeout: config.ReaderFunc[time.Duration](func(ctx context.Context) (config.Value[time.Duration], error) {
+			return config.Value[time.Duration]{}, nil
+		}),
+		FetchMaxBytes: config.ReaderFunc[int32](func(ctx context.Context) (config.Value[int32], error) {
+			return config.Value[int32]{}, nil
+		}),
+		MaxConcurrentFetches: config.ReaderFunc[int](func(ctx context.Context) (config.Value[int], error) {
+			return config.Value[int]{}, nil
+		}),
+		TLSConfig: config.ReaderFunc[*tls.Config](func(ctx context.Context) (config.Value[*tls.Config], error) {
+			return config.Value[*tls.Config]{}, nil
 		}),
 	}
 
