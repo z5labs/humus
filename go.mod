@@ -7,7 +7,7 @@ require (
 	github.com/go-chi/chi/v5 v5.2.4
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.8.0
-	github.com/minio/minio-go/v7 v7.0.97
+	github.com/minio/minio-go/v7 v7.0.98
 	github.com/sourcegraph/conc v0.3.0
 	github.com/stretchr/testify v1.11.1
 	github.com/swaggest/jsonschema-go v0.3.79
@@ -103,6 +103,7 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.38.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.9.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/crypto v0.47.0 // indirect
 	golang.org/x/net v0.49.0 // indirect
 	golang.org/x/sys v0.40.0 // indirect
