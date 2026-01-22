@@ -14,7 +14,7 @@ require (
 	github.com/swaggest/openapi-go v0.2.60
 	github.com/testcontainers/testcontainers-go v0.40.0
 	github.com/twmb/franz-go v1.20.6
-	github.com/twmb/franz-go/pkg/kadm v1.17.1
+	github.com/twmb/franz-go/pkg/kadm v1.17.2
 	github.com/twmb/franz-go/plugin/kotel v1.6.0
 	github.com/twmb/franz-go/plugin/kslog v1.0.0
 	github.com/z5labs/bedrock v0.20.2
