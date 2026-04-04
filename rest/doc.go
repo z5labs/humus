@@ -1,87 +1,75 @@
-// Copyright (c) 2025 Z5Labs and Contributors
+// Copyright (c) 2026 Z5Labs and Contributors
 //
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-// Package rest provides a framework for building OpenAPI-compliant RESTful HTTP applications.
+// Package rest provides an opinionated HTTPS REST server built on top of
+// bedrock's HTTP and OTel runtimes.
 //
-// # Overview
+// The server is HTTPS-only. If no TLS certificate is provided, a self-signed
+// certificate is generated automatically at startup (suitable for development).
 //
-// The rest package simplifies building REST APIs by providing:
-//   - Automatic OpenAPI 3.0 schema generation
-//   - Type-safe request/response handling
-//   - Built-in parameter validation (headers, query params, cookies, path params)
-//   - Standardized error handling
-//   - Health check endpoints (liveness/readiness)
-//   - OpenTelemetry instrumentation
-//   - Authentication schemes (JWT, API Key, OAuth2, etc.)
+// All framework-level configuration is read from environment variables so no
+// config file is required. Options passed to [Run] override the env var defaults.
 //
-// # Quick Start
+// # Environment Variables
 //
-// Creating a basic API:
+//   - HUMUS_REST_PORT            - TCP port to listen on (default: 8443)
+//   - HUMUS_REST_READ_TIMEOUT    - Maximum duration for reading a request (default: 5s)
+//   - HUMUS_REST_READ_HEADER_TIMEOUT - Maximum duration for reading request headers (default: 2s)
+//   - HUMUS_REST_WRITE_TIMEOUT   - Maximum duration for writing a response (default: 10s)
+//   - HUMUS_REST_IDLE_TIMEOUT    - Maximum idle time between keep-alive requests (default: 120s)
+//   - HUMUS_REST_MAX_HEADER_BYTES - Maximum size of request headers in bytes (default: 1048576)
+//   - HUMUS_REST_TLS_CERT_FILE   - Path to a PEM-encoded TLS certificate file
+//   - HUMUS_REST_TLS_KEY_FILE    - Path to a PEM-encoded TLS private key file
 //
-//	api := rest.NewApi("My API", "v1.0.0")
-//	http.ListenAndServe(":8080", api)
+// # OpenTelemetry
 //
-// The API automatically provides:
-//   - OpenAPI schema at GET /openapi.json
-//   - Health endpoints at GET /health/liveness and GET /health/readiness
+// Real OTel SDK providers are always initialised. By default traces and metrics
+// use noop exporters (discarded), and logs are written to stdout. Provide
+// [OTLPExporter] with a gRPC target to route all three signals to an OTLP
+// collector instead.
 //
-// # Adding Operations
+// Every HTTP request is automatically wrapped in an OTel span via otelhttp.
 //
-// Use the Handle function to register HTTP operations:
+// # Basic Usage
 //
-//	getBook := rest.Handle(
-//	    http.MethodGet,
-//	    rest.BasePath("/books").Param("id"),
-//	    myHandler,
-//	    rest.QueryParam("format", rest.Required()),
-//	)
-//	api := rest.NewApi("Bookstore", "v1.0.0", getBook)
+//	package main
 //
-// # Parameter Validation
+//	import (
+//	    "context"
+//	    "net/http"
 //
-// The package supports various parameter types with validation:
-//
-//	rest.Header("Authorization", rest.Required(), rest.JWTAuth("jwt"))
-//	rest.QueryParam("page", rest.Required(), rest.Regex(regexp.MustCompile(`^\d+$`)))
-//	rest.Cookie("session", rest.Required())
-//
-// # Path Building
-//
-// Build type-safe paths with segments and parameters:
-//
-//	path := rest.BasePath("/api/v1").Segment("users").Param("userId")
-//	// Results in: /api/v1/users/{userId}
-//
-// # Error Handling
-//
-// Customize error handling for operations:
-//
-//	handler := rest.Handle(
-//	    http.MethodPost,
-//	    rest.BasePath("/users"),
-//	    myHandler,
-//	    rest.OnError(customErrorHandler),
+//	    "github.com/z5labs/humus/rest"
+//	    bedrockrest "github.com/z5labs/bedrock/runtime/http/rest"
 //	)
 //
-// Errors implementing HttpResponseWriter can control the HTTP response:
-//
-//	type CustomError struct{}
-//	func (e CustomError) Error() string { return "custom error" }
-//	func (e CustomError) WriteHttpResponse(ctx context.Context, w http.ResponseWriter) {
-//	    w.WriteHeader(http.StatusBadRequest)
-//	    w.Write([]byte(`{"error": "custom error"}`))
+//	type HelloResponse struct {
+//	    Message string `json:"message"`
 //	}
 //
-// # Configuration and Running
+//	type APIError struct {
+//	    Message string `json:"message"`
+//	}
 //
-// Use the Builder and Run functions for production deployments:
+//	func (e APIError) Error() string { return e.Message }
 //
-//	rest.Run(configReader, func(ctx context.Context, cfg rest.Config) (*rest.Api, error) {
-//	    return rest.NewApi("My API", "v1.0.0", operations...), nil
-//	})
+//	func main() {
+//	    ep := bedrockrest.GET("/hello", func(ctx context.Context, req bedrockrest.Request[bedrockrest.EmptyBody]) (HelloResponse, error) {
+//	        return HelloResponse{Message: "Hello, World!"}, nil
+//	    })
+//	    ep = bedrockrest.WriteJSON[HelloResponse](http.StatusOK, ep)
+//	    route := bedrockrest.CatchAll(http.StatusInternalServerError, func(err error) APIError {
+//	        return APIError{Message: err.Error()}
+//	    }, ep)
 //
-// This provides automatic configuration loading, graceful shutdown,
-// OpenTelemetry setup, and signal handling.
+//	    if err := rest.Run(
+//	        context.Background(),
+//	        rest.Title("Hello API"),
+//	        rest.Version("1.0.0"),
+//	        rest.Handle(route),
+//	    ); err != nil {
+//	        panic(err)
+//	    }
+//	}
 package rest
