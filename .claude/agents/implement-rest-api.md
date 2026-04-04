@@ -54,9 +54,10 @@ Extract from the OpenAPI spec:
 - Security requirements
 
 Determine handler type for each operation:
-- **producer**: GET/HEAD/OPTIONS with no request body → `rpc.ProduceJson`
-- **consumer**: POST/PUT/PATCH/DELETE with request body but no response body → `rpc.ConsumeOnlyJson`
-- **handler**: POST/PUT/PATCH with both request and response bodies → `rpc.HandleJson`
+- **producer**: GET/HEAD/OPTIONS with no request body → `bedrockrest.GET` + `WriteJSON`
+- **consumer**: POST/PUT/PATCH/DELETE with request body but no response body (204) → `bedrockrest.POST/DELETE[io.Reader]` + `ReadJSON` + `WriteBinary(204, "", ep)`
+- **handler**: POST/PUT/PATCH with both request and response bodies → `bedrockrest.POST/PUT/PATCH` + `ReadJSON` + `WriteJSON`
+- **delete-no-body**: DELETE with no request or response body (204) → `bedrockrest.DELETE[io.Reader]` + `WriteBinary(204, "", ep)`
 
 #### 1.2 Index Backend Specifications
 
@@ -362,10 +363,16 @@ prompt: |
   5. Add OpenAPI annotations via struct tags
   6. Write unit tests for the handler
   
-  **Handler Pattern:**
-  - producer: Use rpc.ProducerFunc and rpc.ProduceJson
-  - consumer: Use rpc.ConsumerFunc and rpc.ConsumeOnlyJson  
-  - handler: Use rpc.HandlerFunc and rpc.HandleJson
+  **Handler Pattern (bedrock composition — inside-out):**
+  All endpoints use the bedrock composition pattern. The sub-agent MUST read
+  `instructions/rest-api-generator/code-templates.md` for authoritative templates.
+  
+  Quick reference:
+  - producer (GET, no body): `bedrockrest.GET[Resp](path, fn)` → `WriteJSON[Resp](status, ep)` → `ErrorJSON` → `CatchAll` → `rest.Handle(route)`
+  - handler (POST/PUT with body+response): `bedrockrest.POST[Req, Resp](path, fn)` → `ReadJSON[Req](ep)` → `WriteJSON[Resp](status, ep)` → `ErrorJSON` → `CatchAll` → `rest.Handle(route)`
+  - consumer/delete (204 no content): `bedrockrest.DELETE[io.Reader](path, fn)` → `WriteBinary(204, "", ep)` → `ErrorJSON` → `CatchAll` → `rest.Handle(route)` — handler returns `bytes.NewReader(nil)` on success
+  
+  CRITICAL: `req.Body()` is a method call, NOT a field. Use `body := req.Body()` then `&body`.
 ```
 
 #### 4.2 Track Completion
@@ -729,50 +736,72 @@ func Options() []rest.Option {
 package getpet
 
 import (
-    "context"
-    "net/http"
+	"context"
+	"log/slog"
+	"net/http"
 
-    "github.com/z5labs/bedrock/runtime/http/rest"
-    "github.com/z5labs/humus/rest/rpc"
+	bedrockrest "github.com/z5labs/bedrock/runtime/http/rest"
+	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/rest"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Response represents the pet returned by this endpoint.
 type Response struct {
-    ID     string `json:"id"`
-    Name   string `json:"name"`
-    Status string `json:"status"`
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
 }
 
-// Handler implements the getPet operation.
-type Handler struct {
-    // Add dependencies here (e.g., database, service clients)
+// PetError represents an error response.
+type PetError struct {
+	Message string `json:"message"`
 }
 
-// NewHandler creates a new Handler with the given dependencies.
-func NewHandler() *Handler {
-    return &Handler{}
+func (e PetError) Error() string { return e.Message }
+
+type getPetHandler struct {
+	tracer trace.Tracer
+	log    *slog.Logger
+	// Add dependencies here (e.g., database, service clients)
 }
 
-// Handle returns a pet by ID.
-func (h *Handler) Handle(ctx context.Context) (*Response, error) {
-    // Extract petId from path using chi.URLParam or similar
-    // Fetch pet from data source
-    // Return response
-    return &Response{
-        ID:     "123",
-        Name:   "Fluffy",
-        Status: "available",
-    }, nil
+func (h *getPetHandler) handle(ctx context.Context, id string) (Response, error) {
+	ctx, span := h.tracer.Start(ctx, "GetPet")
+	defer span.End()
+
+	h.log.InfoContext(ctx, "getting pet", slog.String("id", id))
+
+	// Fetch pet from data source
+	return Response{
+		ID:     id,
+		Name:   "Fluffy",
+		Status: "available",
+	}, nil
 }
 
 // Route returns the REST route option for this endpoint.
 func Route() rest.Option {
-    handler := NewHandler()
-    return rest.Handle(
-        rest.Get("/pets/{petId}",
-            rpc.ProduceJson(rpc.ProducerFunc[Response](handler.Handle)),
-        ),
-    )
+	h := &getPetHandler{
+		tracer: otel.Tracer("petstore/endpoint"),
+		log:    humus.Logger("petstore/endpoint"),
+	}
+
+	petID := bedrockrest.PathParam[string]("petId", bedrockrest.Required())
+
+	ep := bedrockrest.GET[Response]("/pets/{petId}", func(ctx context.Context, req bedrockrest.Request[bedrockrest.EmptyBody]) (Response, error) {
+		id := bedrockrest.ParamFrom(req, petID)
+		return h.handle(ctx, id)
+	})
+	ep = petID.Read(ep)
+	ep = bedrockrest.WriteJSON[Response](http.StatusOK, ep)
+	ep = bedrockrest.ErrorJSON[PetError](http.StatusNotFound, ep)
+	route := bedrockrest.CatchAll(http.StatusInternalServerError, func(err error) PetError {
+		return PetError{Message: err.Error()}
+	}, ep)
+
+	return rest.Handle(route)
 }
 ```
 
