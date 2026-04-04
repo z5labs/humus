@@ -191,9 +191,12 @@ The generator automatically selects the appropriate Humus handler pattern:
 
 | OpenAPI Definition | Handler Type | Generated Pattern |
 |-------------------|--------------|-------------------|
-| No requestBody, has response | Producer | `rest.ProduceJson(handler)` |
-| Has requestBody, no response (204) | Consumer | `rest.ConsumeOnlyJson(handler)` |
-| Has requestBody and response | Handler | `rest.HandleJson(handler)` |
+| No requestBody, has response | Producer | `bedrockrest.GET` + `WriteJSON[Resp](status, ep)` |
+| Has requestBody, no response (204) | Consumer | `bedrockrest.POST` + `ReadJSON[Req](ep)` + `WriteBinary(204, "", ep)` |
+| Has requestBody and response | Handler | `bedrockrest.POST` + `ReadJSON[Req](ep)` + `WriteJSON[Resp](status, ep)` |
+| No requestBody, no response (204) | Delete | `bedrockrest.DELETE` + `WriteBinary(204, "", ep)` |
+
+All types require `ErrorJSON` + `CatchAll` composition to produce a complete `Route`.
 
 ## Incremental Generation
 

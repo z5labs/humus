@@ -79,16 +79,22 @@ Extract from `security` array:
 
 Use this decision matrix to determine which Humus handler type to generate:
 
-| Has RequestBody? | Has Response Body? | Handler Type | Humus Wrapper |
-|------------------|-------------------|--------------|---------------|
-| No | Yes | Producer | `rest.ProduceJson(handler)` |
-| Yes | No | Consumer | `rest.ConsumeOnlyJson(handler)` |
-| Yes | Yes | Handler | `rest.HandleJson(handler)` |
-| No | No | Raw Handler | Custom `http.Handler` |
+| Has RequestBody? | Has Response Body? | Handler Type | Bedrock Composition |
+|------------------|-------------------|--------------|---------------------|
+| No | Yes | Producer | `bedrockrest.GET` + `WriteJSON[Resp](status, ep)` |
+| Yes | No (204) | Consumer | `bedrockrest.POST` + `ReadJSON[Req](ep)` + `WriteBinary(204, "", ep)` |
+| Yes | Yes | Handler | `bedrockrest.POST` + `ReadJSON[Req](ep)` + `WriteJSON[Resp](status, ep)` |
+| No | No (204) | Delete | `bedrockrest.DELETE` + `WriteBinary(204, "", ep)` |
+
+All endpoint types also require:
+- `bedrockrest.ErrorJSON[ErrType](statusCode, ep)` for each error response
+- `bedrockrest.CatchAll(500, wrapErrorFn, ep)` to complete the Route
+- `rest.Handle(route)` to register the Route as a `rest.Option`
 
 **Notes:**
 - "No Response Body" means either no `responses` defined, only error responses (4xx/5xx), or 204 No Content
 - "Has Response Body" means 200/201 response with `content` defined
+- For 204 No Content, use `bedrockrest.WriteBinary(http.StatusNoContent, "", ep)` and return `bytes.NewReader(nil)` from the handler (with `io.Reader` as the response type)
 
 ### Example: OpenAPI Operation
 
@@ -1421,13 +1427,15 @@ Use `(calculated)` or `(constant)` as source:
 Has Request Body?
 ├── Yes
 │   └── Has Response Body (2xx with content)?
-│       ├── Yes → rest.HandleJson (Handler)
-│       └── No → rest.ConsumeOnlyJson (Consumer)
+│       ├── Yes → bedrockrest.POST/PUT/PATCH + ReadJSON + WriteJSON (Handler)
+│       └── No (204) → bedrockrest.POST + ReadJSON + WriteBinary(204) (Consumer)
 └── No
     └── Has Response Body?
-        ├── Yes → rest.ProduceJson (Producer)
-        └── No → Custom http.Handler
+        ├── Yes → bedrockrest.GET + WriteJSON (Producer)
+        └── No (204) → bedrockrest.DELETE + WriteBinary(204) (Delete)
 ```
+
+All types require: `ErrorJSON` per error status + `CatchAll(500, ...)` to complete the Route.
 
 ### Type Mapping Quick Reference
 

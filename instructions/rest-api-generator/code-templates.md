@@ -258,7 +258,9 @@ Use this for webhooks or endpoints that accept data but don't return a body.
 package endpoint
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"log/slog"
 	"net/http"
 
@@ -285,9 +287,6 @@ type {EndpointName}Error struct {
 
 func (e {EndpointName}Error) Error() string { return e.Message }
 
-// emptyResponse is used when no response body is needed.
-type emptyResponse struct{}
-
 type {endpointName}Handler struct {
 	tracer    trace.Tracer
 	log       *slog.Logger
@@ -301,11 +300,14 @@ func {EndpointName}(processor *service.EventProcessor) rest.Option {
 		processor: processor,
 	}
 
-	// Build endpoint
-	ep := bedrockrest.POST[{EndpointName}Request, emptyResponse]("/webhooks/{resource}", func(ctx context.Context, req bedrockrest.Request[{EndpointName}Request]) (emptyResponse, error) {
-		return h.handle(ctx, &req.Body)
+	// Build endpoint — 204 No Content uses WriteBinary with an io.Reader return type.
+	// The handler returns bytes.NewReader(nil) on success.
+	ep := bedrockrest.POST[{EndpointName}Request, io.Reader]("/webhooks/{resource}", func(ctx context.Context, req bedrockrest.Request[{EndpointName}Request]) (io.Reader, error) {
+		body := req.Body()
+		return h.handle(ctx, &body)
 	})
 	ep = bedrockrest.ReadJSON[{EndpointName}Request](ep)
+	ep = bedrockrest.WriteBinary(http.StatusNoContent, "", ep)
 	ep = bedrockrest.ErrorJSON[{EndpointName}Error](http.StatusBadRequest, ep)
 	route := bedrockrest.CatchAll(http.StatusInternalServerError, func(err error) {EndpointName}Error {
 		return {EndpointName}Error{Message: err.Error()}
@@ -314,7 +316,7 @@ func {EndpointName}(processor *service.EventProcessor) rest.Option {
 	return rest.Handle(route)
 }
 
-func (h *{endpointName}Handler) handle(ctx context.Context, req *{EndpointName}Request) (emptyResponse, error) {
+func (h *{endpointName}Handler) handle(ctx context.Context, req *{EndpointName}Request) (io.Reader, error) {
 	ctx, span := h.tracer.Start(ctx, "{EndpointName}")
 	defer span.End()
 
@@ -330,10 +332,10 @@ func (h *{endpointName}Handler) handle(ctx context.Context, req *{EndpointName}R
 	})
 	if err != nil {
 		h.log.ErrorContext(ctx, "failed to process webhook", slog.String("error", err.Error()))
-		return emptyResponse{}, {EndpointName}Error{Message: "failed to process event"}
+		return nil, {EndpointName}Error{Message: "failed to process event"}
 	}
 
-	return emptyResponse{}, nil
+	return bytes.NewReader(nil), nil
 }
 ```
 
@@ -403,7 +405,8 @@ func {EndpointName}(client *service.{ResourceName}Client) rest.Option {
 
 	// Build endpoint
 	ep := bedrockrest.POST[{EndpointName}Request, {EndpointName}Response]("/{resources}", func(ctx context.Context, req bedrockrest.Request[{EndpointName}Request]) ({EndpointName}Response, error) {
-		return h.handle(ctx, &req.Body)
+		body := req.Body()
+		return h.handle(ctx, &body)
 	})
 	ep = bedrockrest.ReadJSON[{EndpointName}Request](ep)
 	ep = bedrockrest.WriteJSON[{EndpointName}Response](http.StatusCreated, ep)
@@ -522,7 +525,8 @@ func {EndpointName}(client *service.{ResourceName}Client) rest.Option {
 	// Build endpoint
 	ep := bedrockrest.PUT[{EndpointName}Request, {EndpointName}Response]("/{resources}/{id}", func(ctx context.Context, req bedrockrest.Request[{EndpointName}Request]) ({EndpointName}Response, error) {
 		id := bedrockrest.ParamFrom(req, {resourceName}ID)
-		return h.handle(ctx, id, &req.Body)
+		body := req.Body()
+		return h.handle(ctx, id, &body)
 	})
 	ep = {resourceName}ID.Read(ep)
 	ep = bedrockrest.ReadJSON[{EndpointName}Request](ep)
@@ -578,7 +582,9 @@ func (h *{endpointName}Handler) handle(ctx context.Context, id string, req *{End
 package endpoint
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"log/slog"
 	"net/http"
 
@@ -614,12 +620,14 @@ func {EndpointName}(client *service.{ResourceName}Client) rest.Option {
 	// Define path parameter
 	{resourceName}ID := bedrockrest.PathParam[string]("id", bedrockrest.Required())
 
-	// Build endpoint - DELETE returns empty body on success
-	ep := bedrockrest.DELETE[emptyResponse]("/{resources}/{id}", func(ctx context.Context, req bedrockrest.Request[bedrockrest.EmptyBody]) (emptyResponse, error) {
+	// Build endpoint — DELETE returns 204 No Content via WriteBinary with io.Reader.
+	// The handler returns bytes.NewReader(nil) on success, or nil + error on failure.
+	ep := bedrockrest.DELETE[io.Reader]("/{resources}/{id}", func(ctx context.Context, req bedrockrest.Request[bedrockrest.EmptyBody]) (io.Reader, error) {
 		id := bedrockrest.ParamFrom(req, {resourceName}ID)
 		return h.handle(ctx, id)
 	})
 	ep = {resourceName}ID.Read(ep)
+	ep = bedrockrest.WriteBinary(http.StatusNoContent, "", ep)
 	ep = bedrockrest.ErrorJSON[{EndpointName}Error](http.StatusNotFound, ep)
 	route := bedrockrest.CatchAll(http.StatusInternalServerError, func(err error) {EndpointName}Error {
 		return {EndpointName}Error{Message: err.Error()}
@@ -628,7 +636,7 @@ func {EndpointName}(client *service.{ResourceName}Client) rest.Option {
 	return rest.Handle(route)
 }
 
-func (h *{endpointName}Handler) handle(ctx context.Context, id string) (emptyResponse, error) {
+func (h *{endpointName}Handler) handle(ctx context.Context, id string) (io.Reader, error) {
 	ctx, span := h.tracer.Start(ctx, "{EndpointName}")
 	defer span.End()
 
@@ -638,10 +646,10 @@ func (h *{endpointName}Handler) handle(ctx context.Context, id string) (emptyRes
 	err := h.client.Delete{ResourceName}(ctx, &service.Delete{ResourceName}Request{ID: id})
 	if err != nil {
 		h.log.ErrorContext(ctx, "failed to delete {resourceName}", slog.String("error", err.Error()))
-		return emptyResponse{}, {EndpointName}Error{Message: "resource not found"}
+		return nil, {EndpointName}Error{Message: "resource not found"}
 	}
 
-	return emptyResponse{}, nil
+	return bytes.NewReader(nil), nil
 }
 ```
 
@@ -2146,7 +2154,7 @@ func mapServiceResponseToEndpointResponse(svc *service.GetUserResponse) GetUserR
 | GET (Producer) | `bedrockrest.GET[Resp](path, handler)` → `WriteJSON` |
 | POST (Handler) | `bedrockrest.POST[Req, Resp](path, handler)` → `ReadJSON` → `WriteJSON` |
 | PUT (Handler) | `bedrockrest.PUT[Req, Resp](path, handler)` → `ReadJSON` → `WriteJSON` |
-| DELETE | `bedrockrest.DELETE[Resp](path, handler)` |
+| DELETE (204) | `bedrockrest.DELETE[io.Reader](path, handler)` → `WriteBinary(204, "", ep)` |
 | Path Param | `bedrockrest.PathParam[T]("name", opts...)` |
 | Query Param | `bedrockrest.QueryParam[T]("name", opts...)` |
 | Header Param | `bedrockrest.HeaderParam[T]("name", opts...)` |
