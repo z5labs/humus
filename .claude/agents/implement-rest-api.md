@@ -192,17 +192,6 @@ func main() {
 }
 ```
 
-**config.yaml**
-```yaml
-otel:
-  service:
-    name: {{env "OTEL_SERVICE_NAME" | default "my-service"}}
-    version: {{env "OTEL_SERVICE_VERSION" | default "0.0.0"}}
-
-http:
-  port: {{env "HTTP_PORT" | default "8080"}}
-```
-
 **app/app.go**
 ```go
 package app
@@ -226,7 +215,6 @@ func Options() []rest.Option {
 my-service/
 ├── go.mod
 ├── main.go
-├── config.yaml
 ├── app/
 │   └── app.go
 ├── endpoint/
