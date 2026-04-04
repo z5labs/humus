@@ -576,14 +576,18 @@ func (h *{OperationId}Handler) Route() bedrockrest.Route {
 
 ## Output File Structure
 
-Generate these files in the output path:
+Convert the operationId to snake_case for all file and directory names (e.g., `listPets` → `list_pets`). Generate these files in the output path:
 
 ```
 {output_path}/
-├── endpoint/
-│   ├── {operation_id}.go          # Handler implementation
-│   └── {operation_id}_test.go     # Handler tests
+├── {snake_operation_id}/
+│   ├── {snake_operation_id}.go          # Handler implementation
+│   └── {snake_operation_id}_test.go     # Handler tests
+│   ├── types.go                         # Request/response types (if separated)
+│   └── types_test.go                    # Types tests (one per implementation file)
 ```
+
+Each implementation file must have a corresponding `_test.go` file with the same base name. Do not consolidate tests from multiple files into a single test file.
 
 ## Validation Checklist
 
@@ -609,3 +613,5 @@ Before completing, verify:
 - Use `otel.Tracer()` for distributed tracing
 - Service dependencies should be interfaces for testability
 - Error variables use `Err` prefix (e.g., `ErrNotFound`)
+- **File naming**: Convert operationId to snake_case for all file and directory names (e.g., `listPets` → `list_pets`, `createOrder` → `create_order`). The Go package name matches the directory name (e.g., `package list_pets`)
+- **Test files**: Each `.go` implementation file gets its own `_test.go` with the same base name. Never merge tests from multiple files into a single test file

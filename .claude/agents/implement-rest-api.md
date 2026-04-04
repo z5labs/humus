@@ -353,7 +353,9 @@ prompt: |
   **Backend Services Used:**
   {backend_services_list}
   
-  **Output path:** {output_dir}/endpoint/{operation_id}/
+  **Output path:** {output_dir}/endpoint/{snake_operation_id}/
+  
+  Where `{snake_operation_id}` is the operationId converted to snake_case (e.g., `listPets` → `list_pets`).
   
   **Requirements:**
   1. Create request/response structs matching schemas
@@ -361,7 +363,7 @@ prompt: |
   3. Use the generated service clients for backend calls
   4. Include proper error handling
   5. Add OpenAPI annotations via struct tags
-  6. Write unit tests for the handler
+  6. Write unit tests per implementation file: each `.go` file gets its own `_test.go` with the same base name (e.g., `list_pets.go` → `list_pets_test.go`, `types.go` → `types_test.go`)
   
   **Handler Pattern (bedrock composition — inside-out):**
   All endpoints use the bedrock composition pattern. The sub-agent MUST read
@@ -521,9 +523,12 @@ task(
 ```
 
 **Expected Output:**
-- `service/{name}/{name}.go` - Client implementation
-- `service/{name}/{name}_test.go` - Unit tests
-- `service/{name}/types.go` - Request/response types (if complex)
+- `service/{snake_name}/{snake_name}.go` - Client implementation
+- `service/{snake_name}/{snake_name}_test.go` - Unit tests matching the implementation file
+- `service/{snake_name}/types.go` - Request/response types (if complex)
+- `service/{snake_name}/types_test.go` - Tests for types (if types.go exists)
+
+Where `{snake_name}` is the service name converted to snake_case (e.g., `userService` → `user_service`).
 
 ### implement-endpoint Agent
 
@@ -540,9 +545,14 @@ task(
 ```
 
 **Expected Output:**
-- `endpoint/{operation_id}/{operation_id}.go` - Handler implementation
-- `endpoint/{operation_id}/{operation_id}_test.go` - Unit tests
-- `endpoint/{operation_id}/types.go` - Request/response types
+- `endpoint/{snake_id}/{snake_id}.go` - Handler implementation
+- `endpoint/{snake_id}/{snake_id}_test.go` - Unit tests matching the implementation file
+- `endpoint/{snake_id}/types.go` - Request/response types (if separate from handler file)
+- `endpoint/{snake_id}/types_test.go` - Tests for types (if types.go exists)
+
+Where `{snake_id}` is the operationId converted to snake_case (e.g., `listPets` → `list_pets`).
+
+**Test file convention:** Each implementation file must have a corresponding test file with the same base name and a `_test.go` suffix. Do NOT consolidate tests from multiple implementation files into a single test file.
 
 ## Error Handling
 
@@ -686,15 +696,15 @@ petstore-api/
 ├── app/
 │   └── app.go
 ├── endpoint/
-│   ├── listpets/
-│   │   ├── listpets.go
-│   │   └── listpets_test.go
-│   ├── createpet/
-│   │   ├── createpet.go
-│   │   └── createpet_test.go
-│   └── getpet/
-│       ├── getpet.go
-│       └── getpet_test.go
+│   ├── list_pets/
+│   │   ├── list_pets.go
+│   │   └── list_pets_test.go
+│   ├── create_pet/
+│   │   ├── create_pet.go
+│   │   └── create_pet_test.go
+│   └── get_pet/
+│       ├── get_pet.go
+│       └── get_pet_test.go
 └── service/
     └── (backend service clients if any)
 ```
@@ -707,9 +717,9 @@ package app
 import (
     "github.com/z5labs/humus/rest"
 
-    "github.com/myorg/petstore-api/endpoint/createpet"
-    "github.com/myorg/petstore-api/endpoint/getpet"
-    "github.com/myorg/petstore-api/endpoint/listpets"
+    "github.com/myorg/petstore-api/endpoint/create_pet"
+    "github.com/myorg/petstore-api/endpoint/get_pet"
+    "github.com/myorg/petstore-api/endpoint/list_pets"
 )
 
 // Options returns the REST server options with all registered endpoints.
@@ -719,21 +729,21 @@ func Options() []rest.Option {
         rest.Version("1.0.0"),
 
         // GET /pets - List all pets
-        listpets.Route(),
+        list_pets.Route(),
 
         // POST /pets - Create a pet
-        createpet.Route(),
+        create_pet.Route(),
 
         // GET /pets/{petId} - Get a pet by ID
-        getpet.Route(),
+        get_pet.Route(),
     }
 }
 ```
 
-### Expected Endpoint Implementation (endpoint/getpet/getpet.go)
+### Expected Endpoint Implementation (endpoint/get_pet/get_pet.go)
 
 ```go
-package getpet
+package get_pet
 
 import (
 	"context"
@@ -821,14 +831,14 @@ During execution, the agent reports progress:
 
 🔧 Generating endpoints...
    [1/3] listPets (GET /pets) - producer
-         ✓ endpoint/listpets/listpets.go
-         ✓ endpoint/listpets/listpets_test.go
+         ✓ endpoint/list_pets/list_pets.go
+         ✓ endpoint/list_pets/list_pets_test.go
    [2/3] createPet (POST /pets) - handler
-         ✓ endpoint/createpet/createpet.go
-         ✓ endpoint/createpet/createpet_test.go
+         ✓ endpoint/create_pet/create_pet.go
+         ✓ endpoint/create_pet/create_pet_test.go
    [3/3] getPet (GET /pets/{petId}) - producer
-         ✓ endpoint/getpet/getpet.go
-         ✓ endpoint/getpet/getpet_test.go
+         ✓ endpoint/get_pet/get_pet.go
+         ✓ endpoint/get_pet/get_pet_test.go
 
 📝 Updating app/app.go with endpoint registrations
 
@@ -869,3 +879,4 @@ The agent supports resuming interrupted generation:
 - Follow Go naming: `ErrFoo` for errors, `camelCase` for unexported
 - Embed OpenAPI metadata in struct tags for automatic schema generation
 - Each endpoint is self-contained with its own types and tests
+- File naming and test file conventions are enforced by the `implement-endpoint` sub-agent
