@@ -1,0 +1,239 @@
+openapi: 3.0.3
+info:
+  title: Shopping Cart API
+  version: 1.0.0
+  description: REST API for managing shopping carts on an e-commerce platform.
+
+paths:
+  /carts:
+    post:
+      operationId: createCart
+      summary: Create a new shopping cart
+      responses:
+        '201':
+          description: Cart created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cart'
+
+  /carts/{cartId}:
+    get:
+      operationId: getCart
+      summary: Get a shopping cart and its items
+      parameters:
+        - name: cartId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Cart found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cart'
+        '404':
+          description: Cart not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+
+    delete:
+      operationId: deleteCart
+      summary: Delete a shopping cart and all its items
+      parameters:
+        - name: cartId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Cart deleted successfully
+        '404':
+          description: Cart not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+
+  /carts/{cartId}/items:
+    post:
+      operationId: addCartItem
+      summary: Add an item to a shopping cart
+      parameters:
+        - name: cartId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddItemRequest'
+      responses:
+        '201':
+          description: Item added successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CartItem'
+        '404':
+          description: Cart not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+
+  /carts/{cartId}/items/{itemId}:
+    patch:
+      operationId: updateCartItem
+      summary: Update the quantity of an item in the cart
+      parameters:
+        - name: cartId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateItemRequest'
+      responses:
+        '200':
+          description: Item updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CartItem'
+        '404':
+          description: Cart or item not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+
+    delete:
+      operationId: removeCartItem
+      summary: Remove an item from the shopping cart
+      parameters:
+        - name: cartId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Item removed successfully
+        '404':
+          description: Cart or item not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+
+components:
+  schemas:
+    Cart:
+      type: object
+      required: [cartId, items, createdAt, updatedAt]
+      properties:
+        cartId:
+          type: string
+          format: uuid
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CartItem'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CartItem:
+      type: object
+      required: [itemId, cartId, productId, quantity, unitPrice, createdAt, updatedAt]
+      properties:
+        itemId:
+          type: string
+          format: uuid
+        cartId:
+          type: string
+          format: uuid
+        productId:
+          type: string
+        quantity:
+          type: integer
+          minimum: 1
+        unitPrice:
+          type: number
+          format: double
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    AddItemRequest:
+      type: object
+      required: [productId, quantity, unitPrice]
+      properties:
+        productId:
+          type: string
+        quantity:
+          type: integer
+          minimum: 1
+        unitPrice:
+          type: number
+          format: double
+
+    UpdateItemRequest:
+      type: object
+      required: [quantity]
+      properties:
+        quantity:
+          type: integer
+          minimum: 1
+
+    ProblemDetail:
+      type: object
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri

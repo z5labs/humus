@@ -1,0 +1,15 @@
+sequenceDiagram
+    participant Client
+    participant API
+    participant Database
+
+    Client->>API: GET /carts/{cartId}
+    API->>Database: SELECT id, created_at, updated_at FROM carts WHERE id = $1
+    Database-->>API: carts row (or not found)
+    alt cart not found
+        API-->>Client: 404 Not Found (ProblemDetail)
+    else cart found
+        API->>Database: SELECT id, cart_id, product_id, quantity, unit_price, created_at, updated_at FROM cart_items WHERE cart_id = $1
+        Database-->>API: cart_items rows
+        API-->>Client: 200 OK (Cart with items)
+    end
