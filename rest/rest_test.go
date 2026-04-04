@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Z5Labs and Contributors
+// Copyright (c) 2026 Z5Labs and Contributors
 //
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
@@ -7,117 +7,157 @@ package rest
 
 import (
 	"context"
-	"errors"
+	"crypto/tls"
+	"encoding/json"
 	"fmt"
-	"log/slog"
+	"io"
 	"net"
 	"net/http"
-	"strings"
 	"testing"
+	"time"
 
+	bedrockconfig "github.com/z5labs/bedrock/config"
+	bedrockrest "github.com/z5labs/bedrock/runtime/http/rest"
 	"github.com/stretchr/testify/require"
-	"github.com/z5labs/bedrock/appbuilder"
 )
 
-type unableToListenConfig struct {
-	Config `config:",squash"`
+type testResponse struct {
+	Message string `json:"message"`
 }
 
-var errFailedToListen = errors.New("failed to listen")
-
-func (cfg unableToListenConfig) Listener(ctx context.Context) (net.Listener, error) {
-	return nil, errFailedToListen
+type testError struct {
+	Message string `json:"message"`
 }
 
-type unableToHttpServerConfig struct {
-	Config `config:",squash"`
+func (e testError) Error() string { return e.Message }
+
+// freePort returns an available TCP port on localhost.
+func freePort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", ":0")
+	require.NoError(t, err)
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+	return port
 }
 
-var errFailedToHttpServer = errors.New("failed to http server")
-
-func (cfg unableToHttpServerConfig) HttpServer(ctx context.Context, h http.Handler) (*http.Server, error) {
-	return nil, errFailedToHttpServer
-}
-
-func TestBuilder_Build(t *testing.T) {
-	t.Run("will return an error", func(t *testing.T) {
-		t.Run("if the api fails to be created", func(t *testing.T) {
-			buildErr := errors.New("failed to build api")
-			b := appbuilder.FromConfig(Builder(func(ctx context.Context, cfg Config) (*Api, error) {
-				return nil, buildErr
-			}))
-
-			_, err := b.Build(t.Context(), DefaultConfig())
-			require.ErrorIs(t, err, buildErr)
-		})
-
-		t.Run("if it fails to listen", func(t *testing.T) {
-			b := appbuilder.FromConfig(Builder(func(ctx context.Context, cfg unableToListenConfig) (*Api, error) {
-				return NewApi("", ""), nil
-			}))
-
-			_, err := b.Build(t.Context(), DefaultConfig())
-			require.ErrorIs(t, err, errFailedToListen)
-		})
-
-		t.Run("if it fails to initialize http server", func(t *testing.T) {
-			b := appbuilder.FromConfig(Builder(func(ctx context.Context, cfg unableToHttpServerConfig) (*Api, error) {
-				return NewApi("", ""), nil
-			}))
-
-			_, err := b.Build(t.Context(), DefaultConfig())
-			require.ErrorIs(t, err, errFailedToHttpServer)
-		})
-	})
-}
-
-type captureHandler struct {
-	slog.Handler
-	records []slog.Record
-}
-
-func (h *captureHandler) Handle(ctx context.Context, record slog.Record) error {
-	h.records = append(h.records, record)
-	return nil
+// insecureClient returns an HTTP client that skips TLS certificate verification.
+func insecureClient() *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+		},
+	}
 }
 
 func TestRun(t *testing.T) {
-	t.Run("will handle error", func(t *testing.T) {
-		t.Run("if the http port is not a uint", func(t *testing.T) {
-			r := strings.NewReader(`
-http:
-  port: -1`)
+	t.Run("serves a registered route over HTTPS", func(t *testing.T) {
+		port := freePort(t)
 
-			b := func(ctx context.Context, cfg Config) (*Api, error) {
-				return nil, nil
-			}
-
-			logHandler := &captureHandler{
-				Handler: slog.Default().Handler(),
-			}
-
-			Run(r, b, LogHandler(logHandler))
-
-			records := logHandler.records
-			require.Len(t, records, 1)
-
-			record := records[0]
-			var caughtErr error
-			record.Attrs(func(a slog.Attr) bool {
-				if a.Key != "error" {
-					return true
-				}
-
-				v := a.Value.Any()
-				err, ok := v.(error)
-				if !ok {
-					caughtErr = fmt.Errorf("expected attr to be error: %v", a.Value)
-					return false
-				}
-				caughtErr = err
-				return false
-			})
-			require.Error(t, caughtErr)
+		ep := bedrockrest.GET("/hello", func(ctx context.Context, req bedrockrest.Request[bedrockrest.EmptyBody]) (testResponse, error) {
+			return testResponse{Message: "hello"}, nil
 		})
+		ep = bedrockrest.WriteJSON[testResponse](http.StatusOK, ep)
+		route := bedrockrest.CatchAll(http.StatusInternalServerError, func(err error) testError {
+			return testError{Message: err.Error()}
+		}, ep)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- Run(
+				ctx,
+				Port(bedrockconfig.ReaderOf(port)),
+				Handle(route),
+			)
+		}()
+
+		client := insecureClient()
+		url := fmt.Sprintf("https://localhost:%d/hello", port)
+
+		var resp *http.Response
+		require.Eventually(t, func() bool {
+			var err error
+			resp, err = client.Get(url)
+			return err == nil
+		}, 5*time.Second, 50*time.Millisecond)
+		defer resp.Body.Close()
+
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var body testResponse
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+		require.Equal(t, "hello", body.Message)
+
+		cancel()
+		require.NoError(t, <-errCh)
+	})
+
+	t.Run("serves the OpenAPI spec", func(t *testing.T) {
+		port := freePort(t)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- Run(
+				ctx,
+				Title("Test API"),
+				Version("1.2.3"),
+				Port(bedrockconfig.ReaderOf(port)),
+			)
+		}()
+
+		client := insecureClient()
+		url := fmt.Sprintf("https://localhost:%d/openapi.json", port)
+
+		var resp *http.Response
+		require.Eventually(t, func() bool {
+			var err error
+			resp, err = client.Get(url)
+			return err == nil
+		}, 5*time.Second, 50*time.Millisecond)
+		defer resp.Body.Close()
+
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+
+		var spec map[string]any
+		require.NoError(t, json.Unmarshal(body, &spec))
+
+		info, ok := spec["info"].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "Test API", info["title"])
+		require.Equal(t, "1.2.3", info["version"])
+
+		cancel()
+		require.NoError(t, <-errCh)
+	})
+}
+
+func TestBuildComponents(t *testing.T) {
+	t.Run("buildHandler", func(t *testing.T) {
+		o := defaultOptions()
+		_, err := buildHandler(o).Build(context.Background())
+		require.NoError(t, err)
+	})
+
+	t.Run("buildListener", func(t *testing.T) {
+		o := defaultOptions()
+		o.port = bedrockconfig.ReaderOf(freePort(t))
+		_, err := buildListener(o).Build(context.Background())
+		require.NoError(t, err)
+	})
+
+	t.Run("buildRuntime", func(t *testing.T) {
+		o := defaultOptions()
+		o.port = bedrockconfig.ReaderOf(freePort(t))
+		_, err := buildRuntime(o).Build(context.Background())
+		require.NoError(t, err)
 	})
 }
