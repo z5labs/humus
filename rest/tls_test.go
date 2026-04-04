@@ -8,14 +8,16 @@ package rest
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/rand"
 	"crypto/x509"
-	"encoding/pem"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
 
 	bedrockconfig "github.com/z5labs/bedrock/config"
 	"github.com/stretchr/testify/require"
+	"software.sslmate.com/src/go-pkcs12"
 )
 
 func TestBuildSelfSignedTLSConfig(t *testing.T) {
@@ -46,13 +48,14 @@ func TestBuildSelfSignedTLSConfig(t *testing.T) {
 	})
 }
 
-func TestBuildFileTLSConfig(t *testing.T) {
-	t.Run("loads cert and key from files", func(t *testing.T) {
-		certFile, keyFile := writeTempCert(t)
+func TestBuildPKCS12TLSConfig(t *testing.T) {
+	t.Run("loads cert and key from PKCS12 file", func(t *testing.T) {
+		password := randomPassword(t)
+		pkcs12File := writeTempPKCS12(t, password)
 
-		val, err := buildFileTLSConfig(
-			bedrockconfig.ReaderOf(certFile),
-			bedrockconfig.ReaderOf(keyFile),
+		val, err := buildPKCS12TLSConfig(
+			bedrockconfig.ReaderOf(pkcs12File),
+			bedrockconfig.ReaderOf(password),
 		).Read(context.Background())
 		require.NoError(t, err)
 
@@ -62,10 +65,25 @@ func TestBuildFileTLSConfig(t *testing.T) {
 		require.Len(t, cfg.Certificates, 1)
 	})
 
-	t.Run("returns no value when cert file reader is empty", func(t *testing.T) {
-		val, err := buildFileTLSConfig(
+	t.Run("loads cert and key from PKCS12 file with empty password", func(t *testing.T) {
+		pkcs12File := writeTempPKCS12(t, "")
+
+		val, err := buildPKCS12TLSConfig(
+			bedrockconfig.ReaderOf(pkcs12File),
 			bedrockconfig.EmptyReader[string](),
-			bedrockconfig.ReaderOf("/some/key.pem"),
+		).Read(context.Background())
+		require.NoError(t, err)
+
+		cfg, ok := val.Value()
+		require.True(t, ok)
+		require.NotNil(t, cfg)
+		require.Len(t, cfg.Certificates, 1)
+	})
+
+	t.Run("returns no value when file reader is empty", func(t *testing.T) {
+		val, err := buildPKCS12TLSConfig(
+			bedrockconfig.EmptyReader[string](),
+			bedrockconfig.ReaderOf(randomPassword(t)),
 		).Read(context.Background())
 		require.NoError(t, err)
 
@@ -73,20 +91,21 @@ func TestBuildFileTLSConfig(t *testing.T) {
 		require.False(t, ok)
 	})
 
-	t.Run("returns no value when key file reader is empty", func(t *testing.T) {
-		val, err := buildFileTLSConfig(
-			bedrockconfig.ReaderOf("/some/cert.pem"),
-			bedrockconfig.EmptyReader[string](),
-		).Read(context.Background())
-		require.NoError(t, err)
+	t.Run("returns error when password is incorrect", func(t *testing.T) {
+		correctPassword := randomPassword(t)
+		wrongPassword := randomPassword(t)
+		pkcs12File := writeTempPKCS12(t, correctPassword)
 
-		_, ok := val.Value()
-		require.False(t, ok)
+		_, err := buildPKCS12TLSConfig(
+			bedrockconfig.ReaderOf(pkcs12File),
+			bedrockconfig.ReaderOf(wrongPassword),
+		).Read(context.Background())
+		require.Error(t, err)
 	})
 }
 
 func TestBuildTLSConfig(t *testing.T) {
-	t.Run("falls back to self-signed when no file readers are set", func(t *testing.T) {
+	t.Run("falls back to self-signed when no file reader is set", func(t *testing.T) {
 		val, err := buildTLSConfig(
 			bedrockconfig.EmptyReader[string](),
 			bedrockconfig.EmptyReader[string](),
@@ -99,12 +118,13 @@ func TestBuildTLSConfig(t *testing.T) {
 		require.Len(t, cfg.Certificates, 1)
 	})
 
-	t.Run("uses file cert when both paths are provided", func(t *testing.T) {
-		certFile, keyFile := writeTempCert(t)
+	t.Run("uses PKCS12 cert when file is provided", func(t *testing.T) {
+		password := randomPassword(t)
+		pkcs12File := writeTempPKCS12(t, password)
 
 		val, err := buildTLSConfig(
-			bedrockconfig.ReaderOf(certFile),
-			bedrockconfig.ReaderOf(keyFile),
+			bedrockconfig.ReaderOf(pkcs12File),
+			bedrockconfig.ReaderOf(password),
 		).Read(context.Background())
 		require.NoError(t, err)
 
@@ -115,35 +135,37 @@ func TestBuildTLSConfig(t *testing.T) {
 	})
 }
 
-// writeTempCert generates a self-signed cert, writes it to temp files,
-// and returns the paths.
-func writeTempCert(t *testing.T) (certFile, keyFile string) {
+// randomPassword generates a cryptographically random password for testing.
+func randomPassword(t *testing.T) string {
+	t.Helper()
+	b := make([]byte, 16)
+	_, err := rand.Read(b)
+	require.NoError(t, err)
+	return hex.EncodeToString(b)
+}
+
+// writeTempPKCS12 generates a self-signed cert, encodes it as PKCS#12, writes
+// it to a temp file, and returns the path.
+func writeTempPKCS12(t *testing.T, password string) string {
 	t.Helper()
 
 	reader := buildSelfSignedTLSConfig()
 	val, err := reader.Read(context.Background())
 	require.NoError(t, err)
 	cfg, _ := val.Value()
-	cert := cfg.Certificates[0]
+	tlsCert := cfg.Certificates[0]
 
-	certPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: cert.Certificate[0],
-	})
-
-	key, ok := cert.PrivateKey.(*ecdsa.PrivateKey)
-	require.True(t, ok)
-	keyDER, err := x509.MarshalECPrivateKey(key)
+	cert, err := x509.ParseCertificate(tlsCert.Certificate[0])
 	require.NoError(t, err)
-	keyPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "EC PRIVATE KEY",
-		Bytes: keyDER,
-	})
+
+	key, ok := tlsCert.PrivateKey.(*ecdsa.PrivateKey)
+	require.True(t, ok)
+
+	pfxData, err := pkcs12.Modern.Encode(key, cert, nil, password)
+	require.NoError(t, err)
 
 	dir := t.TempDir()
-	certFile = filepath.Join(dir, "cert.pem")
-	keyFile = filepath.Join(dir, "key.pem")
-	require.NoError(t, os.WriteFile(certFile, certPEM, 0600))
-	require.NoError(t, os.WriteFile(keyFile, keyPEM, 0600))
-	return certFile, keyFile
+	pkcs12File := filepath.Join(dir, "cert.p12")
+	require.NoError(t, os.WriteFile(pkcs12File, pfxData, 0600))
+	return pkcs12File
 }

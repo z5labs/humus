@@ -20,8 +20,8 @@
 //   - HUMUS_REST_WRITE_TIMEOUT   - Maximum duration for writing a response (default: 10s)
 //   - HUMUS_REST_IDLE_TIMEOUT    - Maximum idle time between keep-alive requests (default: 120s)
 //   - HUMUS_REST_MAX_HEADER_BYTES - Maximum size of request headers in bytes (default: 1048576)
-//   - HUMUS_REST_TLS_CERT_FILE   - Path to a PEM-encoded TLS certificate file
-//   - HUMUS_REST_TLS_KEY_FILE    - Path to a PEM-encoded TLS private key file
+//   - HUMUS_REST_TLS_PKCS12_FILE     - Path to a DER-encoded PKCS#12 file containing the certificate and private key
+//   - HUMUS_REST_TLS_PKCS12_PASSWORD - Password for the PKCS#12 file (empty string if no password)
 //
 // # OpenTelemetry
 //

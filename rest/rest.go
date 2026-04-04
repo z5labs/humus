@@ -89,8 +89,8 @@ func defaultOptions() *options {
 			bedrockconfig.IntFromString(bedrockconfig.Env("HUMUS_REST_MAX_HEADER_BYTES")),
 		),
 		tlsConfig: buildTLSConfig(
-			bedrockconfig.Env("HUMUS_REST_TLS_CERT_FILE"),
-			bedrockconfig.Env("HUMUS_REST_TLS_KEY_FILE"),
+			bedrockconfig.Env("HUMUS_REST_TLS_PKCS12_FILE"),
+			bedrockconfig.Env("HUMUS_REST_TLS_PKCS12_PASSWORD"),
 		),
 	}
 }

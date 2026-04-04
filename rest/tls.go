@@ -15,37 +15,55 @@ import (
 	"crypto/x509/pkix"
 	"math/big"
 	"net"
+	"os"
 	"time"
 
 	"github.com/z5labs/bedrock/config"
+	"software.sslmate.com/src/go-pkcs12"
 )
 
 // buildTLSConfig returns a config.Reader[*tls.Config] that loads a TLS config
-// from the cert and key files when both readers return a value, or falls back
-// to generating a self-signed certificate.
-func buildTLSConfig(certFile, keyFile config.Reader[string]) config.Reader[*tls.Config] {
-	fileBased := buildFileTLSConfig(certFile, keyFile)
+// from a PKCS#12 file when available, or falls back to generating a self-signed
+// certificate.
+func buildTLSConfig(pkcs12File, pkcs12Password config.Reader[string]) config.Reader[*tls.Config] {
+	fileBased := buildPKCS12TLSConfig(pkcs12File, pkcs12Password)
 	selfSigned := buildSelfSignedTLSConfig()
 	return config.Or(fileBased, selfSigned)
 }
 
-// buildFileTLSConfig returns a config.Reader[*tls.Config] that reads cert and key
-// from the provided file path readers. It returns no value if either path is unset.
-func buildFileTLSConfig(certFile, keyFile config.Reader[string]) config.Reader[*tls.Config] {
+// buildPKCS12TLSConfig returns a config.Reader[*tls.Config] that reads a PKCS#12
+// file containing a certificate and private key. It returns no value if the file
+// path is unset.
+func buildPKCS12TLSConfig(pkcs12File, pkcs12Password config.Reader[string]) config.Reader[*tls.Config] {
 	return config.ReaderFunc[*tls.Config](func(ctx context.Context) (config.Value[*tls.Config], error) {
-		cert, err := config.Read(ctx, certFile)
+		filePath, err := config.Read(ctx, pkcs12File)
 		if err != nil {
 			return config.Value[*tls.Config]{}, nil
 		}
 
-		key, err := config.Read(ctx, keyFile)
+		password, err := config.Read(ctx, pkcs12Password)
 		if err != nil {
-			return config.Value[*tls.Config]{}, nil
+			// If no password is provided, use an empty password
+			password = ""
 		}
 
-		tlsCert, err := tls.LoadX509KeyPair(cert, key)
+		pfxData, err := os.ReadFile(filePath)
 		if err != nil {
 			return config.Value[*tls.Config]{}, err
+		}
+
+		privateKey, cert, caCerts, err := pkcs12.DecodeChain(pfxData, password)
+		if err != nil {
+			return config.Value[*tls.Config]{}, err
+		}
+
+		tlsCert := tls.Certificate{
+			Certificate: make([][]byte, 0, 1+len(caCerts)),
+			PrivateKey:  privateKey,
+		}
+		tlsCert.Certificate = append(tlsCert.Certificate, cert.Raw)
+		for _, caCert := range caCerts {
+			tlsCert.Certificate = append(tlsCert.Certificate, caCert.Raw)
 		}
 
 		return config.ValueOf(&tls.Config{
