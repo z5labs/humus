@@ -14,8 +14,8 @@ require (
 	github.com/twmb/franz-go/plugin/kslog v1.0.0
 	github.com/z5labs/bedrock v0.21.0
 	github.com/z5labs/sdk-go v0.2.0
-	go.opentelemetry.io/contrib/bridges/otelslog v0.13.0
-	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.63.0
+	go.opentelemetry.io/contrib/bridges/otelslog v0.17.0
+	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.67.0
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/metric v1.43.0
 	go.opentelemetry.io/otel/sdk v1.43.0
