@@ -1,0 +1,16 @@
+sequenceDiagram
+    participant Client
+    participant API
+    participant Database
+
+    Client->>API: POST /carts/{cartId}/items (AddItemRequest)
+    API->>Database: SELECT id FROM carts WHERE id = $1
+    Database-->>API: carts row (or not found)
+    alt cart not found
+        API-->>Client: 404 Not Found (ProblemDetail)
+    else cart found
+        API->>Database: INSERT INTO cart_items (id, cart_id, product_id, quantity, unit_price, created_at, updated_at) VALUES (...) RETURNING *
+        Database-->>API: new cart_items row
+        API->>Database: UPDATE carts SET updated_at = NOW() WHERE id = $1
+        API-->>Client: 201 Created (CartItem)
+    end
