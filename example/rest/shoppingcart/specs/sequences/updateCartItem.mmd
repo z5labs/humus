@@ -1,0 +1,13 @@
+sequenceDiagram
+    participant Client
+    participant API
+    participant Database
+
+    Client->>API: PATCH /carts/{cartId}/items/{itemId} (UpdateItemRequest)
+    API->>Database: UPDATE cart_items SET quantity = $1, updated_at = NOW() WHERE id = $2 AND cart_id = $3 RETURNING *
+    Database-->>API: updated cart_items row (or not found)
+    alt item not found
+        API-->>Client: 404 Not Found (ProblemDetail)
+    else item updated
+        API-->>Client: 200 OK (CartItem)
+    end
