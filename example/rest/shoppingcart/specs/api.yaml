@@ -9,6 +9,9 @@ paths:
     post:
       operationId: createCart
       summary: Create a new shopping cart
+      parameters:
+        - $ref: '#/components/parameters/TraceParent'
+        - $ref: '#/components/parameters/TraceState'
       responses:
         '201':
           description: Cart created successfully
@@ -22,6 +25,8 @@ paths:
       operationId: getCart
       summary: Get a shopping cart and its items
       parameters:
+        - $ref: '#/components/parameters/TraceParent'
+        - $ref: '#/components/parameters/TraceState'
         - name: cartId
           in: path
           required: true
@@ -46,6 +51,8 @@ paths:
       operationId: deleteCart
       summary: Delete a shopping cart and all its items
       parameters:
+        - $ref: '#/components/parameters/TraceParent'
+        - $ref: '#/components/parameters/TraceState'
         - name: cartId
           in: path
           required: true
@@ -67,6 +74,8 @@ paths:
       operationId: addCartItem
       summary: Add an item to a shopping cart
       parameters:
+        - $ref: '#/components/parameters/TraceParent'
+        - $ref: '#/components/parameters/TraceState'
         - name: cartId
           in: path
           required: true
@@ -98,6 +107,8 @@ paths:
       operationId: updateCartItem
       summary: Update the quantity of an item in the cart
       parameters:
+        - $ref: '#/components/parameters/TraceParent'
+        - $ref: '#/components/parameters/TraceState'
         - name: cartId
           in: path
           required: true
@@ -134,6 +145,8 @@ paths:
       operationId: removeCartItem
       summary: Remove an item from the shopping cart
       parameters:
+        - $ref: '#/components/parameters/TraceParent'
+        - $ref: '#/components/parameters/TraceState'
         - name: cartId
           in: path
           required: true
@@ -157,6 +170,27 @@ paths:
                 $ref: '#/components/schemas/ProblemDetail'
 
 components:
+  parameters:
+    TraceParent:
+      name: traceparent
+      in: header
+      required: false
+      description: >
+        W3C Trace Context traceparent header for distributed tracing.
+        Format: 00-{traceId}-{parentId}-{flags}
+      schema:
+        type: string
+        example: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+    TraceState:
+      name: tracestate
+      in: header
+      required: false
+      description: >
+        W3C Trace Context tracestate header carrying vendor-specific trace data.
+      schema:
+        type: string
+        example: "rojo=00f067aa0ba902b7,congo=t61rcWkgMzE"
+
   schemas:
     Cart:
       type: object
