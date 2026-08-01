@@ -11,7 +11,7 @@ require (
 	github.com/testcontainers/testcontainers-go v0.41.0
 	github.com/twmb/franz-go v1.21.5
 	github.com/twmb/franz-go/pkg/kadm v1.18.0
-	github.com/twmb/franz-go/plugin/kotel v1.6.0
+	github.com/twmb/franz-go/plugin/kotel v1.7.0
 	github.com/twmb/franz-go/plugin/kslog v1.0.0
 	github.com/z5labs/bedrock v0.21.0
 	github.com/z5labs/sdk-go v0.2.0
