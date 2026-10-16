@@ -37,6 +37,12 @@
 // Inside a synctest bubble that wait takes no time; outside one, it is
 // real.
 //
+// A package that provides a humus.Service checks it with [TestService],
+// which runs the Service contract against it inside synctest: Serve returns
+// nil after Shutdown, Shutdown with a done context stops the Service at
+// once, Shutdown is safe before Serve, after Serve has returned and twice,
+// and no goroutine the Service started outlives Serve.
+//
 // The design is Proposal: humustest:
 // https://github.com/z5labs/humus/discussions/633
 package humustest

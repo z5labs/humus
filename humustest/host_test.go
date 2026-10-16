@@ -596,7 +596,8 @@ func TestHost_Listening(t *testing.T) {
 }
 
 // httpService serves an http.Server on a listener, as the REST runtime
-// will.
+// will. It keeps serving after Serve's context is done, until Shutdown, and
+// it passes TestService.
 type httpService struct {
 	ln  net.Listener
 	srv *http.Server
@@ -610,8 +611,15 @@ func (s *httpService) Serve(context.Context) error {
 	return err
 }
 
+// Shutdown stops the server gracefully. http.Server.Shutdown returns nil
+// for a done context when no connection is open, so Shutdown checks the
+// context itself, and closes every connection at once when it is done.
 func (s *httpService) Shutdown(ctx context.Context) error {
-	return s.srv.Shutdown(ctx)
+	err := s.srv.Shutdown(ctx)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return errors.Join(fmt.Errorf("http service: %w", ctxErr), s.srv.Close())
+	}
+	return err
 }
 
 // TestHost_Listening_an_App_in_real_time runs an App without synctest. The
