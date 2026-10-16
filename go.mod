@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/stretchr/testify v1.12.1
-	github.com/z5labs/bedrock v0.22.0
+	github.com/z5labs/bedrock v0.23.1
 	software.sslmate.com/src/go-pkcs12 v0.7.4
 )
 
