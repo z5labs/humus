@@ -15,7 +15,7 @@ import (
 )
 
 // settings is the configuration of the App lifecycle, read in step 1 of Run.
-// It is the one place humus reads environment variables.
+// Its variables are the only environment variables the root package reads.
 type settings struct {
 	// gracePeriod bounds the whole shutdown: every Service's Shutdown and
 	// every OnStop function share it.

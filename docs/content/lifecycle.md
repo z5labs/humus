@@ -59,11 +59,12 @@ bedrock.Main(humus.App{
 ```
 
 `ShutdownGracePeriod` and `DrainDelay` are defaults: an operator overrides
-either through its [variable](#settings) without a rebuild. humus itself has
-no default for either. How long to pause and how long to allow for shutdown
-depend on the kind of App — a REST or gRPC App needs time for a load balancer
-to stop sending it connections, and a job does not — so each runtime
-package's App sets its own.
+either through its [variable](#settings) without a rebuild. humus has no
+default grace period of its own, so an App sets `ShutdownGracePeriod` unless
+its environment always sets the variable; a `DrainDelay` left at zero means no
+pause. How long to pause and how long to allow for shutdown depend on the kind
+of App — a REST or gRPC App needs time for a load balancer to stop sending it
+connections, and a job does not — so each runtime package's App sets its own.
 
 ## Service
 
@@ -216,7 +217,8 @@ the context each is given is done when the grace period runs out.
 6. Stops listening for signals, so that a second interrupt or SIGTERM takes
    its default action and ends the process at once, and cancels the context
    passed to `Serve`.
-7. Waits the drain delay, `HUMUS_SHUTDOWN_DRAIN_DELAY`.
+7. Waits the drain delay: `HUMUS_SHUTDOWN_DRAIN_DELAY`, defaulting to
+   `App.DrainDelay`.
 8. Calls `Shutdown` on every Service concurrently, waits for every `Serve` to
    return, and then runs the OnStop functions in reverse order of
    registration. All of this happens within one grace period,

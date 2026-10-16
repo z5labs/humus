@@ -114,9 +114,31 @@ func TestApp_Run_HUMUS_SHUTDOWN_GRACE_PERIOD_overrides_ShutdownGracePeriod(t *te
 	})
 }
 
+func TestApp_Run_variables_override_fields_that_would_fail(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		app := humus.App{
+			Host:       humus.OSHost(),
+			DrainDelay: -time.Second, // ShutdownGracePeriod is zero
+		}
+		p := bedrocktest.NewProcess(t, bedrocktest.WithEnv(map[string]string{
+			"HUMUS_SHUTDOWN_GRACE_PERIOD": "2s",
+			"HUMUS_SHUTDOWN_DRAIN_DELAY":  "1s",
+		}))
+
+		drain, grace := shutdownTiming(t, app, p)
+
+		if drain != time.Second {
+			t.Errorf("Shutdown called %s after SIGTERM, want 1s", drain)
+		}
+		if grace != 2*time.Second {
+			t.Errorf("Shutdown had %s of the grace period, want 2s", grace)
+		}
+	})
+}
+
 // runConfigFailure runs app on a Process with env, and checks that it exits
-// ExitConfig without calling Init and writes its cause to stderr. It returns
-// the cause.
+// ExitConfig without listening for signals or calling Init, and writes its
+// cause to stderr. It returns the cause.
 func runConfigFailure(t *testing.T, app humus.App, env map[string]string) error {
 	t.Helper()
 	initCalled := false
@@ -125,11 +147,19 @@ func runConfigFailure(t *testing.T, app humus.App, env map[string]string) error 
 		return nil, nil
 	}
 	p := bedrocktest.NewProcess(t, bedrocktest.WithEnv(env))
+	// notified is closed if Run ever calls NotifyContext, and stays closed
+	// after the registration is stopped.
+	notified := p.Notified(syscall.SIGTERM)
 
 	st := app.Run(t.Context(), p.Process())
 
 	if st.Code() != humus.ExitConfig {
 		t.Errorf("code = %d, want %d", st.Code(), humus.ExitConfig)
+	}
+	select {
+	case <-notified:
+		t.Error("NotifyContext was called")
+	default:
 	}
 	if initCalled {
 		t.Error("Init was called")

@@ -32,8 +32,8 @@
 // delay from HUMUS_SHUTDOWN_DRAIN_DELAY, through the Process's environment,
 // with the App's ShutdownGracePeriod and DrainDelay fields as their defaults.
 // An operator tunes either without a rebuild, and a bad default fails at
-// startup with ExitConfig, as a bad variable does. This is the one place
-// humus reads environment variables.
+// startup with ExitConfig, as a bad variable does. These are the only
+// environment variables the root package reads.
 //
 // An App reaches the network and the filesystem only through its [Host]:
 // [OSHost] in main, and a Host the test controls in a test, so a whole App
