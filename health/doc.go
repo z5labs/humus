@@ -1,0 +1,56 @@
+// Copyright (c) 2026 Z5Labs and Contributors
+//
+// This software is released under the MIT License.
+// https://opensource.org/licenses/MIT
+
+// Package health describes a service's health as monitors that the service
+// combines.
+//
+// A [Monitor] is anything that can report whether it is healthy right now:
+// a database ping, a flag the service sets once it has started, a check of
+// a queue's depth. Its Healthy method returns false, or an error, when it is
+// not. [Binary] is a monitor the service marks healthy or unhealthy itself,
+// and [MonitorFunc] turns any func(context.Context) (bool, error) into one.
+//
+// Monitors combine. [And] is healthy when every one of its monitors is: it
+// checks them in order and stops at the first that is unhealthy or returns
+// an error, returning that result. [Or] is healthy when any one of its
+// monitors is: it stops at the first that is healthy, and otherwise is
+// unhealthy and returns every monitor's error, joined with [errors.Join].
+// Both pass the context they are given to every monitor they check, so a
+// caller's deadline reaches each check. And and Or are monitors themselves,
+// so they nest.
+//
+// # Liveness and readiness
+//
+// An orchestrator such as Kubernetes asks a service two questions, and
+// [Probes] holds a monitor for each:
+//
+//   - Liveness: is the process still working? When a liveness probe fails,
+//     the orchestrator restarts the process, so it should fail only when a
+//     restart would fix it, a deadlock for example.
+//   - Readiness: can the process serve traffic right now? When a readiness
+//     probe fails, the orchestrator stops sending the process traffic until
+//     it passes again, without restarting it. This is where a service checks
+//     that it has started and that the dependencies it needs, a database for
+//     example, are reachable.
+//
+// Liveness checks no dependencies by default, which is [And] with no
+// monitors: restarting a pod doesn't fix a database that is down, and a
+// liveness probe that checks one restarts every pod of the service while the
+// database is down.
+//
+//	var started health.Binary
+//	probes := health.Probes{
+//		Liveness: health.And(),
+//		Readiness: health.And(&started, health.MonitorFunc(func(ctx context.Context) (bool, error) {
+//			return pool.Ping(ctx) == nil, nil
+//		})),
+//	}
+//
+// health serves no protocol: nothing in it opens a port or answers an
+// orchestrator's probes, and it depends on nothing but the standard library.
+// Exposing probes is Proposal: exposing health probes, in wave 3 of the
+// charter,
+// https://github.com/z5labs/humus/discussions/629#discussioncomment-18979083.
+package health
