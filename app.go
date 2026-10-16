@@ -40,13 +40,14 @@ type Service interface {
 	// for a Service that finishes on its own such as a job, until it is
 	// done. It returns nil when Shutdown stopped it or it finished.
 	//
-	// ctx is done as soon as the App starts shutting down. A Service may
-	// stop on it, as a job or a queue consumer does, or keep serving until
-	// Shutdown, as an HTTP, gRPC or health Service does.
+	// ctx is done as soon as the App starts shutting down, before the
+	// App's DrainDelay. A Service may stop on it, as a job or a queue
+	// consumer does, or keep serving until Shutdown, as an HTTP, gRPC or
+	// health Service does.
 	Serve(ctx context.Context) error
 
 	// Shutdown stops the Service gracefully. The App calls it on every
-	// Service once shutdown has started, including one whose Serve has
+	// Service after the App's DrainDelay, including one whose Serve has
 	// already returned. If ctx is done before the Service has stopped,
 	// Shutdown stops it at once and returns an error that wraps ctx's
 	// error.
@@ -59,6 +60,18 @@ type App struct {
 	// Host is the network and filesystem the App runs on: OSHost() in
 	// main, and a Host the test controls in a test.
 	Host Host
+
+	// DrainDelay is the pause between shutdown starting and Shutdown being
+	// called on the Services: Serve's context is done at once, and Shutdown
+	// is called DrainDelay later. It gives a load balancer, such as a
+	// Kubernetes Service removing the pod from its endpoints, time to stop
+	// sending new connections before the Services stop accepting them. The
+	// grace period starts after it.
+	//
+	// The zero value means no pause, and so does a negative one. humus reads
+	// no variable for DrainDelay and has no default; a runtime package's App
+	// sets its own.
+	DrainDelay time.Duration
 
 	// Init builds the App's dependencies and returns the Services to run.
 	// Its ctx is done when the App receives an interrupt or SIGTERM, so a
@@ -140,12 +153,16 @@ func (e *GracePeriodError) Unwrap() error {
 //  5. waits for a signal, or for the first Service to return;
 //  6. stops listening for signals, so a second one takes its default
 //     action, and cancels the context passed to Serve;
-//  7. calls Shutdown on every Service concurrently, waits for every Serve
+//  7. waits DrainDelay;
+//  8. calls Shutdown on every Service concurrently, waits for every Serve
 //     to return, and then runs the OnStop functions in reverse order of
-//     registration, all within one ShutdownGracePeriod.
+//     registration, all within one ShutdownGracePeriod, which starts after
+//     the drain delay.
 //
-// An Init that returns no Services ends the App at once, as a Service
-// returning nil would. Run waits for every Serve, Shutdown and OnStop call it
+// An Init that returns no Services ends the App at once, without a drain
+// delay, as there is nothing to drain. Neither a cancelled ctx nor a second
+// signal cuts the drain delay short: the second signal takes its default
+// action, which ends the process. Run waits for every Serve, Shutdown and OnStop call it
 // made to return: the grace period reaches them through the context they
 // are given, which they must honour.
 //
@@ -199,6 +216,10 @@ func (a App) Run(ctx context.Context, p bedrock.Process) bedrock.ExitStatus {
 	cause := context.Cause(sigCtx)
 	stop()
 	cancelServe()
+	if len(services) > 0 {
+		// time.Sleep returns at once for a DrainDelay of zero or less.
+		time.Sleep(a.DrainDelay)
+	}
 
 	stopServices := func(graceCtx context.Context) []error {
 		errs := shutdownServices(graceCtx, services)
