@@ -18,6 +18,25 @@
 // telemetry exporters and health endpoints, and every one of them is a default
 // that code can override.
 //
+// # The App lifecycle
+//
+// [App] is the lifecycle every humus app type is built on. Its Init builds
+// the App's dependencies from a [Setup], registers their release with
+// [Setup.OnStop], and returns the [Service] values to run. Run calls Serve on
+// each of them, and when a signal arrives or the first Service returns, it
+// cancels Serve's context, waits the App's DrainDelay, calls Shutdown on
+// every Service and runs the OnStop functions, all within one grace period.
+// The outcome is the exit status: 0, [ExitFailure] or [ExitConfig].
+//
+// An App reaches the network and the filesystem only through its [Host]:
+// [OSHost] in main, and a Host the test controls in a test, so a whole App
+// runs inside a test under testing/synctest with bedrocktest's fake process.
+// Telemetry and health are not part of the lifecycle; each is added by its
+// own package.
+//
+// The lifecycle, its settings, its exit codes and the dependencies that leak
+// around it are documented at https://z5labs.github.io/humus/lifecycle/.
+//
 // # Being rebuilt
 //
 // humus is being rebuilt, package by package, on bedrock's process model. The

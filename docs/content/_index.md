@@ -17,6 +17,11 @@ Builder/Runner code, the YAML configuration, the global telemetry, and the
 `rest`, `grpc`, `job`, `queue` and `health` packages. Each package comes back
 through its own accepted proposal, and its pages are written here as it lands.
 
+The App lifecycle has landed in the root package:
+[The App lifecycle]({{< relref "lifecycle" >}}) explains `humus.App`, which every
+humus app type is built on. The runtime packages built on it have not landed
+yet.
+
 The plan is in the charter,
 [Proposal: humus on the bedrock process model](https://github.com/z5labs/humus/discussions/629).
 
