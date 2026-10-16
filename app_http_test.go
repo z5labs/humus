@@ -155,6 +155,28 @@ func get(h *humustest.Host, url string) <-chan response {
 	return got
 }
 
+// awaitStarted waits for the handler to start, failing t with the
+// request's error if the response arrives first.
+func awaitStarted(t *testing.T, started <-chan struct{}, got <-chan response) {
+	t.Helper()
+	select {
+	case <-started:
+	case r := <-got:
+		t.Fatalf("the request ended before the handler started: %q, %v", r.body, r.err)
+	}
+}
+
+// requireSignalCause fails t unless cause is the SIGTERM the App received.
+func requireSignalCause(t *testing.T, cause error) {
+	t.Helper()
+	if !errors.Is(cause, context.Canceled) {
+		t.Errorf("errors.Is(%v, context.Canceled) = false, want the signal as the cause", cause)
+	}
+	if cause == nil || cause.Error() != "terminated signal received" {
+		t.Errorf("cause = %v, want terminated signal received", cause)
+	}
+}
+
 // requireRefused fails t unless a Dial to address is refused, as it is once
 // nothing listens on it.
 func requireRefused(t *testing.T, h *humustest.Host, address string) {
@@ -173,7 +195,9 @@ func TestApp_Run_HTTP_SIGTERM_lets_an_in_flight_request_finish(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
 		started := make(chan struct{})
+		var startedAt time.Time
 		handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			startedAt = time.Now()
 			close(started)
 			time.Sleep(3 * time.Second)
 			_, _ = io.WriteString(w, "finished")
@@ -182,8 +206,11 @@ func TestApp_Run_HTTP_SIGTERM_lets_an_in_flight_request_finish(t *testing.T) {
 
 		<-h.Listening("localhost:8080")
 		got := get(h, "http://localhost:8080/")
-		<-started
+		awaitStarted(t, started, got)
 		<-p.Notified(syscall.SIGTERM)
+		if inFlight := time.Since(startedAt); inFlight != 0 {
+			t.Fatalf("SIGTERM is sent %s after the handler started, want while it sleeps", inFlight)
+		}
 		p.Signal(syscall.SIGTERM)
 
 		r := <-got
@@ -193,13 +220,14 @@ func TestApp_Run_HTTP_SIGTERM_lets_an_in_flight_request_finish(t *testing.T) {
 		if r.body != "finished" {
 			t.Errorf("body = %q, want the full body", r.body)
 		}
+		if took := time.Since(startedAt); took != 3*time.Second {
+			t.Errorf("the response arrived %s after the handler started, want 3s", took)
+		}
 		st := <-status
 		if st.Code() != 0 {
 			t.Errorf("code = %d, want 0: %v", st.Code(), st.Cause())
 		}
-		if cause := st.Cause(); cause == nil || cause.Error() != "terminated signal received" {
-			t.Errorf("cause = %v, want terminated signal received", cause)
-		}
+		requireSignalCause(t, st.Cause())
 		if got := p.Stderr(); got != "" {
 			t.Errorf("stderr = %q, want nothing", got)
 		}
@@ -220,7 +248,7 @@ func TestApp_Run_HTTP_shutdown_is_bounded_by_the_grace_period(t *testing.T) {
 
 		<-h.Listening("localhost:8080")
 		got := get(h, "http://localhost:8080/")
-		<-started
+		awaitStarted(t, started, got)
 		<-p.Notified(syscall.SIGTERM)
 		sigterm := time.Now()
 		p.Signal(syscall.SIGTERM)
@@ -330,6 +358,7 @@ func TestApp_Run_HTTP_DrainDelay_keeps_serving(t *testing.T) {
 		if st.Code() != 0 {
 			t.Errorf("code = %d, want 0: %v", st.Code(), st.Cause())
 		}
+		requireSignalCause(t, st.Cause())
 		if got := p.Stderr(); got != "" {
 			t.Errorf("stderr = %q, want nothing", got)
 		}
