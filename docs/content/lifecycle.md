@@ -373,6 +373,9 @@ test body, which makes it a leak detector for Services. For an HTTP Service
 the cost is that handlers must honour `r.Context()`, because a handler that
 ignores it after the server force-closes the connection outlives the test.
 
+[Testing a humus App]({{< relref "testing" >}}) runs Apps that serve real
+HTTP, on a humustest Host whose network and filesystem the test controls.
+
 ## Ambient leaks
 
 Some dependencies read the real process behind an App's back, so they reach
