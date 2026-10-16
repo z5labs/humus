@@ -40,6 +40,14 @@ from accepted ones.
 The [documentation site](https://z5labs.github.io/humus/) is rewritten as each
 package lands.
 
+## Testing
+
+A whole humus App runs inside a test, under `testing/synctest`, with
+[bedrocktest](https://pkg.go.dev/github.com/z5labs/bedrock/bedrocktest) for the
+process and [humustest](https://pkg.go.dev/github.com/z5labs/humus/humustest)
+for the network, the filesystem and TLS. See
+[Testing a humus App](https://z5labs.github.io/humus/testing/).
+
 ## License
 
 Released under the [MIT License](LICENSE).

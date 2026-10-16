@@ -7,6 +7,7 @@ package humus_test
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -20,6 +21,8 @@ import (
 
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/bedrocktest"
+	"github.com/z5labs/bedrock/config"
+	"software.sslmate.com/src/go-pkcs12"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/humustest"
@@ -37,6 +40,7 @@ import (
 type httpService struct {
 	host humus.Host
 	addr string
+	tls  *tls.Config
 	srv  *http.Server
 }
 
@@ -49,13 +53,24 @@ func newHTTPService(s *humus.Setup, addr string, h http.Handler) *httpService {
 	}
 }
 
-// Serve listens on the Service's address and serves until Shutdown. It
-// returns nil when Shutdown stopped it, including a Shutdown called before
-// Serve.
+// newHTTPSService returns an httpService that serves h with TLS on addr of
+// s.Host.
+func newHTTPSService(s *humus.Setup, addr string, cfg *tls.Config, h http.Handler) *httpService {
+	srv := newHTTPService(s, addr, h)
+	srv.tls = cfg
+	return srv
+}
+
+// Serve listens on the Service's address, with TLS when the Service has a
+// TLS config, and serves until Shutdown. It returns nil when Shutdown
+// stopped it, including a Shutdown called before Serve.
 func (s *httpService) Serve(context.Context) error {
 	ln, err := s.host.Listen("tcp", s.addr)
 	if err != nil {
 		return fmt.Errorf("http listen: %w", err)
+	}
+	if s.tls != nil {
+		ln = tls.NewListener(ln, s.tls)
 	}
 	// Serve closes ln when it returns.
 	if err := s.srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
@@ -363,5 +378,159 @@ func TestApp_Run_HTTP_DrainDelay_keeps_serving(t *testing.T) {
 			t.Errorf("stderr = %q, want nothing", got)
 		}
 		requireRefused(t, h, "localhost:8080")
+	})
+}
+
+// The docs site's "Testing a humus App" page and humustest's package doc
+// quote the two tests below.
+
+func TestApp_Run_HTTP_a_whole_App_on_a_test_Host(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := humustest.NewHost(t)
+		hello := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, "hello")
+		})
+		p, status := bedrocktest.Start(t, httpApp(h, hello))
+
+		// Wait until every goroutine in the bubble is blocked, which
+		// includes the App blocked in Accept on :8080.
+		synctest.Wait()
+
+		resp, err := h.HTTPClient().Get("http://localhost:8080/")
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(b) != "hello" {
+			t.Errorf("body = %q, want hello", b)
+		}
+
+		p.Signal(syscall.SIGTERM)
+		st := <-status
+		if st.Code() != 0 {
+			t.Errorf("code = %d, want 0: %v", st.Code(), st.Cause())
+		}
+		requireSignalCause(t, st.Cause())
+		requireRefused(t, h, "localhost:8080")
+	})
+}
+
+// tlsFromPKCS12 reads the PKCS#12 bundle that TLS_PKCS12_FILE names,
+// through the Setup's Host, and decrypts it with TLS_PKCS12_PASSWORD. The
+// setting names are only for illustration.
+func tlsFromPKCS12(ctx context.Context, s *humus.Setup) (*tls.Config, error) {
+	path, err := config.Env(s.Process.Environment, "TLS_PKCS12_FILE").Read(ctx)
+	if err != nil {
+		return nil, err
+	}
+	password, err := config.Env(s.Process.Environment, "TLS_PKCS12_PASSWORD").Read(ctx)
+	if err != nil {
+		return nil, err
+	}
+	f, err := s.Host.FS.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	b, err := io.ReadAll(f)
+	if err != nil {
+		return nil, err
+	}
+	key, leaf, chain, err := pkcs12.DecodeChain(b, password)
+	if err != nil {
+		return nil, fmt.Errorf("decode %s: %w", path, err)
+	}
+	cert := tls.Certificate{Certificate: [][]byte{leaf.Raw}, PrivateKey: key, Leaf: leaf}
+	for _, c := range chain {
+		cert.Certificate = append(cert.Certificate, c.Raw)
+	}
+	return &tls.Config{Certificates: []tls.Certificate{cert}}, nil
+}
+
+func TestApp_Run_HTTPS_with_a_PKCS12_bundle_from_NewCA(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ca := humustest.NewCA(t)
+		bundle, password := ca.Issue(t, "api.internal").PKCS12(t)
+		h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+			"etc/tls/server.p12": bundle,
+		}))
+		hello := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, "hello over TLS")
+		})
+		app := humus.App{
+			Host: h.Host(),
+			Init: func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+				cfg, err := tlsFromPKCS12(ctx, s)
+				if err != nil {
+					return nil, err
+				}
+				return []humus.Service{newHTTPSService(s, ":8443", cfg, hello)}, nil
+			},
+		}
+		p, status := bedrocktest.Start(t, app, bedrocktest.WithEnv(map[string]string{
+			"TLS_PKCS12_FILE":     h.Path("etc/tls/server.p12"),
+			"TLS_PKCS12_PASSWORD": password,
+		}))
+		synctest.Wait()
+
+		client := h.HTTPClient()
+		client.Transport.(*http.Transport).TLSClientConfig = &tls.Config{RootCAs: ca.Pool()}
+		resp, err := client.Get("https://api.internal:8443/")
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(b) != "hello over TLS" {
+			t.Errorf("body = %q, want hello over TLS", b)
+		}
+
+		p.Signal(syscall.SIGTERM)
+		st := <-status
+		if st.Code() != 0 {
+			t.Errorf("code = %d, want 0: %v", st.Code(), st.Cause())
+		}
+		if got := p.Stderr(); got != "" {
+			t.Errorf("stderr = %q, want nothing", got)
+		}
+	})
+}
+
+func TestApp_Run_HTTPS_a_wrong_password_exits_1_with_the_cause(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ca := humustest.NewCA(t)
+		bundle, _ := ca.Issue(t, "api.internal").PKCS12(t)
+		_, wrong := ca.Issue(t, "api.internal").PKCS12(t)
+		h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+			"etc/tls/server.p12": bundle,
+		}))
+		app := humus.App{
+			Host: h.Host(),
+			Init: func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+				if _, err := tlsFromPKCS12(ctx, s); err != nil {
+					return nil, err
+				}
+				return nil, nil
+			},
+		}
+		_, status := bedrocktest.Start(t, app, bedrocktest.WithEnv(map[string]string{
+			"TLS_PKCS12_FILE":     h.Path("etc/tls/server.p12"),
+			"TLS_PKCS12_PASSWORD": wrong,
+		}))
+
+		st := <-status
+		if st.Code() != humus.ExitFailure {
+			t.Errorf("code = %d, want %d", st.Code(), humus.ExitFailure)
+		}
+		if !errors.Is(st.Cause(), pkcs12.ErrIncorrectPassword) {
+			t.Errorf("cause = %v, want pkcs12.ErrIncorrectPassword", st.Cause())
+		}
 	})
 }
