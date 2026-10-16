@@ -18,13 +18,16 @@ import (
 	"github.com/z5labs/humus"
 )
 
-// Host is a humus.Host for tests: a network of net.Pipe connections. The
-// network starts no goroutines, so the Host works inside a testing/synctest
-// bubble; build it inside the bubble that uses it.
+// Host is a humus.Host for tests: a network of net.Pipe connections, and a
+// filesystem in a directory from t.TempDir(). The network starts no
+// goroutines, so the Host works inside a testing/synctest bubble; build it
+// inside the bubble that uses it.
 //
 // A Host is safe for concurrent use.
 type Host struct {
-	tb testing.TB
+	tb   testing.TB
+	dir  string
+	root *os.Root
 
 	mu        sync.Mutex
 	listeners map[key]*listener
@@ -36,15 +39,29 @@ type Host struct {
 // HostOption configures a [Host] built by [NewHost].
 type HostOption func(*Host)
 
-// NewHost returns a Host configured by opts, reporting misuse through t.
+// NewHost returns a Host whose directory comes from t.TempDir(), so it is
+// removed when the test ends. It is configured by opts, and reports misuse
+// through t.
 //
 // NewHost starts no goroutines and makes no channels: Listen and Listening
 // make theirs when they are called. To use a Host with testing/synctest,
 // call NewHost inside synctest.Test with the bubble's t, so that every
 // channel the Host makes belongs to the bubble that uses it.
 func NewHost(t testing.TB, opts ...HostOption) *Host {
+	t.Helper()
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatalf("humustest: NewHost: %v", err)
+	}
+	// Cleanups run last in, first out, so the root closes before
+	// t.TempDir's cleanup removes the directory.
+	t.Cleanup(func() { _ = root.Close() })
+
 	h := &Host{
 		tb:        t,
+		dir:       dir,
+		root:      root,
 		listeners: make(map[key]*listener),
 		held:      make(map[int]int),
 		listening: make(map[key]chan struct{}),
@@ -57,11 +74,12 @@ func NewHost(t testing.TB, opts ...HostOption) *Host {
 }
 
 // Host returns the humus.Host to run an App on, like bedrocktest's
-// Process.Process. Its Listen and Dial are the Host's. Its FS is nil.
+// Process.Process. Its Listen, Dial and FS are the Host's.
 func (h *Host) Host() humus.Host {
 	return humus.Host{
 		Listen: h.Listen,
 		Dial:   h.Dial,
+		FS:     h.FS(),
 	}
 }
 

@@ -90,13 +90,17 @@ func isClosed(ch <-chan struct{}) bool {
 	}
 }
 
-func TestHost_Host_sets_Listen_and_Dial(t *testing.T) {
+func TestHost_Host_sets_every_field(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		h := humustest.NewHost(t)
+		h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{"etc/app.conf": []byte("conf")}))
 		hh := h.Host()
 		require.NotNil(t, hh.Listen)
 		require.NotNil(t, hh.Dial)
-		require.Nil(t, hh.FS, "the filesystem is a later story")
+		require.NotNil(t, hh.FS)
+
+		b, err := readAll(hh.FS, "etc/app.conf")
+		require.NoError(t, err)
+		require.Equal(t, "conf", b, "the FS works inside a bubble")
 
 		ln, err := hh.Listen("tcp", "api:80")
 		require.NoError(t, err)
