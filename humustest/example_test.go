@@ -25,7 +25,9 @@ import (
 // TestDocs_code_samples checks that every quote still matches it.
 
 // exampleTB stands in for the *testing.T an Example does not have. In a
-// test, pass t to humustest.NewHost and humustest.NewCA instead.
+// test, pass t to humustest.NewHost and humustest.NewCA instead. It
+// implements only the methods humustest calls: Helper, Errorf, Fatalf,
+// Cleanup and TempDir. Any other method panics on the nil testing.TB.
 type exampleTB struct {
 	testing.TB
 	cleanups []func()
@@ -139,7 +141,11 @@ func ExampleHost_Listening() {
 		_, _ = io.WriteString(conn, "hello from every name")
 	}()
 
-	<-listening
+	select {
+	case <-listening:
+	case <-served: // Listen failed, and the goroutine said why
+		return
+	}
 	conn, err := h.Dial(context.Background(), "tcp", "localhost:8080")
 	if err != nil {
 		fmt.Println(err)

@@ -197,8 +197,9 @@ func (h *Host) Listening(address string) <-chan struct{} {
 }
 
 // HTTPClient returns an http.Client that dials the Host, with keep-alives
-// off, so no idle connection outlives a request. Its Transport is an
-// *http.Transport, so a test can set its TLSClientConfig.
+// off, so no idle connection outlives a request. Each call returns a new
+// client whose Transport is a new *http.Transport, so a test can set its
+// TLSClientConfig without changing any other client.
 func (h *Host) HTTPClient() *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{

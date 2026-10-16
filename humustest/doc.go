@@ -47,8 +47,11 @@
 //		})
 //	}
 //
-// Build the Host, and a CA, inside the bubble that uses them, with the
-// bubble's t.
+// The App reaches the network and the filesystem only through the Host in
+// its Setup: its Services listen with s.Host.Listen and open files with
+// s.Host.FS, never with net.Listen or os.Open, which would reach the real
+// host and block where synctest can't see. Build the Host, and a CA,
+// inside the bubble that uses them, with the bubble's t.
 //
 // # Names
 //

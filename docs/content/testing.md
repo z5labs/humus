@@ -170,6 +170,44 @@ fmt.Println("before Listen, refused:", errors.Is(err, syscall.ECONNREFUSED))
 // The goroutine stands in for an App, which listens when it gets to
 // it. Listening is called first, so the test can't miss the listener.
 listening := h.Listening("localhost:8080")
+served := make(chan struct{})
+go func() {
+	defer close(served)
+	ln, err := h.Listen("tcp", ":8080")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = ln.Close() }()
+	conn, err := ln.Accept()
+	if err != nil {
+		return
+	}
+	defer func() { _ = conn.Close() }()
+	_, _ = io.WriteString(conn, "hello from every name")
+}()
+
+select {
+case <-listening:
+case <-served: // Listen failed, and the goroutine said why
+	return
+}
+conn, err := h.Dial(context.Background(), "tcp", "localhost:8080")
+if err != nil {
+	fmt.Println(err)
+	return
+}
+defer func() { _ = conn.Close() }()
+b, err := io.ReadAll(conn)
+if err != nil {
+	fmt.Println(err)
+	return
+}
+fmt.Println(string(b))
+<-served
+// Output:
+// before Listen, refused: true
+// hello from every name
 ```
 
 ## Files
@@ -188,6 +226,24 @@ path := h.Path("etc/app/greeting.txt")
 fmt.Println("absolute:", filepath.IsAbs(path))
 
 f, err := h.FS().Open(path)
+if err != nil {
+	fmt.Println(err)
+	return
+}
+defer func() { _ = f.Close() }()
+b, err := io.ReadAll(f)
+if err != nil {
+	fmt.Println(err)
+	return
+}
+fmt.Println(string(b))
+
+_, err = h.FS().Open("../outside.txt")
+fmt.Println("outside the directory refused:", err != nil)
+// Output:
+// absolute: true
+// hello from a real file
+// outside the directory refused: true
 ```
 
 Real files are what let libraries that need an `*os.File` or a path, such as
@@ -248,6 +304,25 @@ func TestApp_Run_HTTPS_with_a_PKCS12_bundle_from_NewCA(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		b, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(b) != "hello over TLS" {
+			t.Errorf("body = %q, want hello over TLS", b)
+		}
+
+		p.Signal(syscall.SIGTERM)
+		st := <-status
+		if st.Code() != 0 {
+			t.Errorf("code = %d, want 0: %v", st.Code(), st.Cause())
+		}
+		if got := p.Stderr(); got != "" {
+			t.Errorf("stderr = %q, want nothing", got)
+		}
+	})
+}
 ```
 
 The setting names are only for illustration; each runtime package names its
@@ -265,18 +340,71 @@ func tlsFromPKCS12(ctx context.Context, s *humus.Setup) (*tls.Config, error) {
 		return nil, err
 	}
 	f, err := s.Host.FS.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	b, err := io.ReadAll(f)
+	if err != nil {
+		return nil, err
+	}
+	key, leaf, chain, err := pkcs12.DecodeChain(b, password)
+	if err != nil {
+		return nil, fmt.Errorf("decode %s: %w", path, err)
+	}
+	cert := tls.Certificate{Certificate: [][]byte{leaf.Raw}, PrivateKey: key, Leaf: leaf}
+	for _, c := range chain {
+		cert.Certificate = append(cert.Certificate, c.Raw)
+	}
+	return &tls.Config{Certificates: []tls.Certificate{cert}}, nil
+}
 ```
 
+`h.HTTPClient()` returns a new client, with a new `*http.Transport`, on every
+call, so setting its `TLSClientConfig` changes no other client.
+
 A server that takes a `tls.Certificate` rather than a file serves
-`cert.TLS()` instead:
+`cert.TLS()` instead, and a client that dials the Host itself trusts the CA's
+pool:
 
 ```go
 ca := humustest.NewCA(t)
 cert := ca.Issue(t, "api.internal")
-```
 
-```go
-srv := tls.Server(conn, &tls.Config{Certificates: []tls.Certificate{cert.TLS()}})
+h := humustest.NewHost(t)
+ln, err := h.Listen("tcp", "api.internal:8443")
+if err != nil {
+	fmt.Println(err)
+	return
+}
+defer func() { _ = ln.Close() }()
+go func() {
+	conn, err := ln.Accept()
+	if err != nil {
+		return
+	}
+	srv := tls.Server(conn, &tls.Config{Certificates: []tls.Certificate{cert.TLS()}})
+	defer func() { _ = srv.Close() }()
+	_, _ = io.WriteString(srv, "hello over TLS")
+}()
+
+conn, err := h.Dial(context.Background(), "tcp", "api.internal:8443")
+if err != nil {
+	fmt.Println(err)
+	return
+}
+client := tls.Client(conn, &tls.Config{RootCAs: ca.Pool(), ServerName: "api.internal"})
+defer func() { _ = client.Close() }()
+b, err := io.ReadAll(client)
+if err != nil {
+	fmt.Println(err)
+	return
+}
+fmt.Println(string(b))
+fmt.Println("verified for:", client.ConnectionState().PeerCertificates[0].DNSNames)
+// Output:
+// hello over TLS
+// verified for: [api.internal]
 ```
 
 A connection on the Host's network is a `net.Pipe`, which has no buffer. When
