@@ -332,7 +332,9 @@ func TestService_Probes_is_race_free(t *testing.T) {
 	var shutdowns sync.WaitGroup
 	for range 2 {
 		shutdowns.Go(func() {
-			require.NoError(t, hs.Shutdown(ctx))
+			if err := hs.Shutdown(ctx); err != nil {
+				t.Errorf("Shutdown returned %v, want nil", err)
+			}
 		})
 	}
 
