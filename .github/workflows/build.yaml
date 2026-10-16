@@ -6,17 +6,28 @@ on:
       - "main"
     paths:
       - '**.go'
-      - 'go.mod'
-      - 'go.sum'
+      - '**/go.mod'
+      - '**/go.sum'
+      - '.golangci.yaml'
+      - '.github/scripts/**'
+      - '.github/workflows/build.yaml'
   pull_request:
     branches:
       - "main"
   merge_group:
 
 jobs:
+  # The default branch requires a status check named exactly Build, so every
+  # module is checked by this one job rather than by a matrix, which would
+  # rename the check. `./...` does not descend into a nested module, so each
+  # step runs once per module that go-modules.sh lists. Each step after the
+  # first runs even when an earlier one failed, so one run reports every
+  # failure, and the job fails if any step failed.
   build:
     name: Build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
         - name: Checkout
           uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -24,15 +35,65 @@ jobs:
         - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
           with:
             go-version: '1.27.2'
+            cache-dependency-path: '**/go.sum'
 
-        - name: Lint Go Code
+        - name: Install golangci-lint
           uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
           with:
-            version: latest
-            skip-cache: false
+            version: v2.14.0
+            install-only: true
+
+        - name: List modules
+          run: .github/scripts/go-modules.sh | tee "$RUNNER_TEMP/modules.txt"
+
+        - name: Lint
+          if: ${{ !cancelled() }}
+          run: |
+            failed=0
+            for module in $(cat "$RUNNER_TEMP/modules.txt"); do
+              echo "::group::golangci-lint ($module)"
+              (cd "$module" && golangci-lint run) || failed=1
+              echo "::endgroup::"
+            done
+            exit "$failed"
 
         - name: Build
-          run: go build ./...
+          if: ${{ !cancelled() }}
+          run: |
+            failed=0
+            for module in $(cat "$RUNNER_TEMP/modules.txt"); do
+              echo "::group::go build ($module)"
+              go -C "$module" build ./... || failed=1
+              echo "::endgroup::"
+            done
+            exit "$failed"
 
+        # Every module's profile is merged into one, so that one gate covers
+        # them all, and every package outside example/ is listed for the gate.
         - name: Test
-          run: go test -race -cover -tags testcontainers ./...
+          if: ${{ !cancelled() }}
+          run: |
+            failed=0
+            examples="$(go list -m)/example"
+            : > "$RUNNER_TEMP/coverage.out"
+            : > "$RUNNER_TEMP/packages.txt"
+            for module in $(cat "$RUNNER_TEMP/modules.txt"); do
+              echo "::group::go test ($module)"
+              rm -f "$RUNNER_TEMP/module-coverage.out"
+              go -C "$module" test -race -cover -tags testcontainers \
+                -coverprofile="$RUNNER_TEMP/module-coverage.out" ./... || failed=1
+              cat "$RUNNER_TEMP/module-coverage.out" >> "$RUNNER_TEMP/coverage.out" || failed=1
+              go -C "$module" list -tags testcontainers ./... > "$RUNNER_TEMP/module-packages.txt" || failed=1
+              awk -v examples="$examples" '$0 != examples && index($0, examples "/") != 1' \
+                "$RUNNER_TEMP/module-packages.txt" >> "$RUNNER_TEMP/packages.txt" || failed=1
+              echo "::endgroup::"
+            done
+            exit "$failed"
+
+        - name: Require 80% statement coverage of every library package
+          if: ${{ !cancelled() }}
+          run: .github/scripts/coverage-gate.sh 80 "$RUNNER_TEMP/packages.txt" "$RUNNER_TEMP/coverage.out"
+
+        - name: Test the coverage gate
+          if: ${{ !cancelled() }}
+          run: .github/scripts/coverage-gate_test.sh
