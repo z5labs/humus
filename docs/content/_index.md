@@ -21,7 +21,9 @@ The App lifecycle has landed in the root package:
 [The App lifecycle]({{< relref "lifecycle" >}}) explains `humus.App`, which every
 humus app type is built on. The runtime packages built on it have not landed
 yet. [Configuring a humus service]({{< relref "configuration" >}}) explains how
-a service's settings are sourced, and [Testing a humus App]({{< relref "testing" >}}) explains how to run a whole
+a service's settings are sourced, [Telemetry]({{< relref "telemetry" >}})
+explains how a service gets its OpenTelemetry providers, and
+[Testing a humus App]({{< relref "testing" >}}) explains how to run a whole
 App inside a test with bedrocktest and humustest.
 
 The plan is in the charter,

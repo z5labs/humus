@@ -29,9 +29,8 @@ real environment, no real time and no file outside the test's temp directory.
 
 The design behind everything on this page is in
 [Proposal: humustest](https://github.com/z5labs/humus/discussions/633#discussioncomment-18964655).
-Telemetry in tests is added to humustest by
-[Proposal: OpenTelemetry without globals](https://github.com/z5labs/humus/discussions/632),
-and documented here when it lands.
+Recording an App's telemetry in a test, with `humustest.NewTelemetry()`, is
+covered on the [Telemetry]({{< relref "telemetry#testing" >}}) page.
 
 ## A whole-App test
 
@@ -454,9 +453,8 @@ tests that:
    its own temp directory**, except integration tests behind a build tag.
 3. **Negative tests assert why something failed** — the cause, with
    `errors.Is` or `errors.AsType` — not only the exit code. A test that checks
-   a logged failure reads it from humustest's telemetry recorder, once
-   [Proposal: OpenTelemetry without globals](https://github.com/z5labs/humus/discussions/632)
-   adds it.
+   a logged failure reads it from humustest's telemetry recorder,
+   [`humustest.Telemetry`]({{< relref "telemetry#testing" >}}).
 4. **Every Service passes `humustest.TestService`.**
 
 And one rule for every test, fixture and `testdata` file:

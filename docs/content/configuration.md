@@ -46,9 +46,12 @@ and names its check. A check is a `func(T) error`. Its error says what is
 wrong, such as `must not be negative`, and does not name the field: whatever
 reads the value adds the name.
 
-No humus package exports `Settings` yet. Until one does, the samples on this
-page use a stand-in, declared in the root package's tests in the shape every
-package gives it:
+The samples on this page use a stand-in, declared in the root package's
+tests in the shape every package gives it. The
+[`telemetry`](https://pkg.go.dev/github.com/z5labs/humus/telemetry) package's
+`Settings` has the same shape, and [Telemetry]({{< relref "telemetry#writing-the-builder" >}})
+sources it with the same pattern, in the App's telemetry `Builder` rather than
+in `Init`:
 
 ```go
 // Settings configures a Greeter. Every field is a plain value, and a field's
@@ -269,7 +272,10 @@ reads them before it calls `Init`, with defaults from `App`'s own fields, and
 checks each after its default, as on this page.
 [The lifecycle's settings]({{< relref "lifecycle#settings" >}}) describes
 them. That is the one exception to "humus defines no variable names", and no
-humus package adds another.
+humus package adds another. The `telemetry` package reads no `OTEL_*`
+variable either: a `Builder` that wants them maps them onto
+`telemetry.Settings` itself, as [Telemetry]({{< relref "telemetry#settings" >}})
+shows.
 
 ## Logging and secrets
 
