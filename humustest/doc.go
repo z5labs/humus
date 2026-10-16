@@ -25,6 +25,18 @@
 // os.Root on that directory, so ".." and symlinks can't leave it, and
 // [Host.Path] gives the absolute path of a file in it to put in a setting.
 //
+// A test that serves TLS generates what it needs with [NewCA]. Each CA and
+// each certificate it issues has a new random key and serial number, and
+// each [Certificate.PKCS12] bundle a new random password, so no key,
+// certificate or password is ever written into a repository. A client
+// trusts the CA through [CA.Pool].
+//
+// A connection on the network is a net.Pipe, which has no buffer. When
+// both ends of a TLS connection close at once, each waits to send its
+// close_notify alert until crypto/tls's five-second write deadline passes.
+// Inside a synctest bubble that wait takes no time; outside one, it is
+// real.
+//
 // The design is Proposal: humustest:
 // https://github.com/z5labs/humus/discussions/633
 package humustest
