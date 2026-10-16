@@ -16,7 +16,16 @@ service already uses: an environment variable called &lt;code&gt;READ_TIMEOUT&lt
 &lt;code&gt;MYSVC_HTTP_READ_TIMEOUT&lt;/code&gt;, a duration written &lt;code&gt;5s&lt;/code&gt;, a file of PEM, a flag. The
 usual tool is bedrock&amp;rsquo;s
 &lt;a href="https://pkg.go.dev/github.com/z5labs/bedrock/config"&gt;&lt;code&gt;config&lt;/code&gt;&lt;/a&gt; package, and
-this page uses it throughout.&lt;/p&gt;</description></item><item><title>Testing a humus App</title><link>https://z5labs.github.io/humus/testing/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/testing/</guid><description>&lt;p&gt;A humus App runs whole inside a test. Two packages make that possible, and a
+this page uses it throughout.&lt;/p&gt;</description></item><item><title>Telemetry</title><link>https://z5labs.github.io/humus/telemetry/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/telemetry/</guid><description>&lt;p&gt;A humus App builds its OpenTelemetry providers before &lt;code&gt;Init&lt;/code&gt;, hands them to
+&lt;code&gt;Init&lt;/code&gt; as one value, logs through them, and shuts them down last. The
+&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/telemetry"&gt;&lt;code&gt;telemetry&lt;/code&gt;&lt;/a&gt; package
+builds them from a plain &lt;code&gt;Settings&lt;/code&gt; value, and the service&amp;rsquo;s own &lt;code&gt;Builder&lt;/code&gt;
+sources that value, the same way &lt;code&gt;Init&lt;/code&gt; sources any other package&amp;rsquo;s
+&lt;a href="https://z5labs.github.io/humus/configuration/"&gt;settings&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;The design behind everything on this page is in
+&lt;a href="https://github.com/z5labs/humus/discussions/632#discussioncomment-18966249"&gt;Proposal: OpenTelemetry without globals, Revision 2&lt;/a&gt;.
+&lt;a href="https://z5labs.github.io/humus/lifecycle/#telemetry"&gt;The lifecycle&lt;/a&gt; describes when the App
+builds its telemetry and shuts it down.&lt;/p&gt;</description></item><item><title>Testing a humus App</title><link>https://z5labs.github.io/humus/testing/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/testing/</guid><description>&lt;p&gt;A humus App runs whole inside a test. Two packages make that possible, and a
 whole-App test imports both:&lt;/p&gt;
 &lt;ul&gt;
 &lt;li&gt;&lt;a href="https://pkg.go.dev/github.com/z5labs/bedrock/bedrocktest"&gt;bedrocktest&lt;/a&gt;
