@@ -103,9 +103,10 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 // exit the test binary.
 func Example_main() {
 	bedrock.Main(humus.App{
-		Host:       humus.OSHost(),
-		DrainDelay: 5 * time.Second, // humus has no default
-		Init:       Init,
+		Host:                humus.OSHost(),
+		ShutdownGracePeriod: 30 * time.Second, // when HUMUS_SHUTDOWN_GRACE_PERIOD is not set
+		DrainDelay:          5 * time.Second,  // when HUMUS_SHUTDOWN_DRAIN_DELAY is not set
+		Init:                Init,
 	})
 }
 
@@ -115,7 +116,8 @@ func Example_main() {
 func ExampleApp() {
 	srv := newServer(nil)
 	app := humus.App{
-		Host: humus.OSHost(), // the Service never uses it
+		Host:                humus.OSHost(), // the Service never uses it
+		ShutdownGracePeriod: 10 * time.Second,
 		Init: func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 			srv.out = s.Process.Stdout
 			s.OnStop(func(context.Context) error {
@@ -156,8 +158,9 @@ func ExampleApp() {
 // setting Init cannot read exits ExitConfig.
 func ExampleSetup_OnStop() {
 	app := humus.App{
-		Host: humus.OSHost(),
-		Init: Init,
+		Host:                humus.OSHost(),
+		ShutdownGracePeriod: 10 * time.Second,
+		Init:                Init,
 	}
 
 	t := new(exampleTB)

@@ -14,49 +14,61 @@ import (
 	"github.com/z5labs/bedrock/config"
 )
 
-// defaultShutdownGracePeriod is the ShutdownGracePeriod of an App whose
-// environment does not set HUMUS_SHUTDOWN_GRACE_PERIOD.
-const defaultShutdownGracePeriod = 10 * time.Second
+// settings is the configuration of the App lifecycle, read in step 1 of Run.
+// Its variables are the only environment variables the root package reads.
+type settings struct {
+	// gracePeriod bounds the whole shutdown: every Service's Shutdown and
+	// every OnStop function share it.
+	gracePeriod time.Duration
 
-// Settings is the configuration of the App lifecycle.
-type Settings struct {
-	// ShutdownGracePeriod bounds the whole shutdown of an App: every
-	// Service's Shutdown and every OnStop function share it. It is read
-	// from HUMUS_SHUTDOWN_GRACE_PERIOD, as a time.ParseDuration string
-	// such as "30s", and defaults to 10s.
-	ShutdownGracePeriod time.Duration
+	// drainDelay is the pause between shutdown starting and Shutdown being
+	// called on the Services.
+	drainDelay time.Duration
 }
 
-// errNotPositive is the cause of a duration setting that is zero or less.
-var errNotPositive = errors.New("must be positive")
+// The causes of a lifecycle setting that fails its check.
+var (
+	errNotPositive = errors.New("must be positive")
+	errNegative    = errors.New("must not be negative")
+)
 
-// ReadSettings reads the lifecycle's Settings from env.
+// readSettings reads the lifecycle's settings from env, defaulting each to
+// the App's field.
 //
-// A variable that is not set takes its default. A variable that is set but
-// malformed, including a duration that is not positive, is an error with a
-// *config.Error naming the variable in its chain, and App.Run exits
-// ExitConfig on it.
-func ReadSettings(ctx context.Context, env bedrock.Environment) (Settings, error) {
-	return config.Struct(func(r *config.Resolver) Settings {
-		return Settings{
-			ShutdownGracePeriod: r.Get(
+// Each value is checked after its default, so a bad default fails the same
+// way as a bad variable: with a *config.Error naming the variable. Both
+// values are read even when one fails, and every failure is returned, joined.
+func (a App) readSettings(ctx context.Context, env bedrock.Environment) (settings, error) {
+	return config.Struct(func(r *config.Resolver) settings {
+		return settings{
+			gracePeriod: r.Get(
 				config.Env(env, "HUMUS_SHUTDOWN_GRACE_PERIOD").
-					Parse(parsePositiveDuration).
-					Default(defaultShutdownGracePeriod),
+					Parse(time.ParseDuration).
+					Default(a.ShutdownGracePeriod).
+					Validate(checkGracePeriod),
+			),
+			drainDelay: r.Get(
+				config.Env(env, "HUMUS_SHUTDOWN_DRAIN_DELAY").
+					Parse(time.ParseDuration).
+					Default(a.DrainDelay).
+					Validate(checkDrainDelay),
 			),
 		}
 	}).Read(ctx)
 }
 
-// parsePositiveDuration parses s with time.ParseDuration and rejects
-// a duration that is not above zero.
-func parsePositiveDuration(s string) (time.Duration, error) {
-	d, err := time.ParseDuration(s)
-	if err != nil {
-		return 0, err
-	}
+// checkGracePeriod rejects a grace period that is not positive.
+func checkGracePeriod(d time.Duration) error {
 	if d <= 0 {
-		return 0, errNotPositive
+		return errNotPositive
 	}
-	return d, nil
+	return nil
+}
+
+// checkDrainDelay rejects a negative drain delay.
+func checkDrainDelay(d time.Duration) error {
+	if d < 0 {
+		return errNegative
+	}
+	return nil
 }

@@ -627,7 +627,8 @@ func (s *httpService) Shutdown(ctx context.Context) error {
 func TestHost_Listening_an_App_in_real_time(t *testing.T) {
 	host := humustest.NewHost(t)
 	app := humus.App{
-		Host: host.Host(),
+		Host:                host.Host(),
+		ShutdownGracePeriod: 10 * time.Second,
 		Init: func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
 			ln, err := s.Host.Listen("tcp", ":8080")
 			if err != nil {

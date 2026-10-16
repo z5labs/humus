@@ -37,12 +37,13 @@ The design behind everything on this page is in
 
 ## App
 
-An App has three fields:
+An App has four fields:
 
 | Field | Required | Meaning |
 |---|---|---|
 | `Host` | yes | the network and filesystem the App runs on: `humus.OSHost()` in `main`, and a Host the test controls in a test |
-| `DrainDelay` | no | the pause between shutdown starting and `Shutdown` being called on the Services; the zero value means no pause |
+| `ShutdownGracePeriod` | yes, unless `HUMUS_SHUTDOWN_GRACE_PERIOD` is set | the grace period when `HUMUS_SHUTDOWN_GRACE_PERIOD` is not set. It must be positive, so the zero value fails startup |
+| `DrainDelay` | no | the drain delay when `HUMUS_SHUTDOWN_DRAIN_DELAY` is not set: the pause between shutdown starting and `Shutdown` being called on the Services. It must not be negative; zero means no pause |
 | `Init` | yes | builds the App's dependencies and returns the Services to run |
 
 Its `main` is one call to `bedrock.Main`, the only place a humus program
@@ -50,16 +51,20 @@ touches the real process:
 
 ```go
 bedrock.Main(humus.App{
-	Host:       humus.OSHost(),
-	DrainDelay: 5 * time.Second, // humus has no default
-	Init:       Init,
+	Host:                humus.OSHost(),
+	ShutdownGracePeriod: 30 * time.Second, // when HUMUS_SHUTDOWN_GRACE_PERIOD is not set
+	DrainDelay:          5 * time.Second,  // when HUMUS_SHUTDOWN_DRAIN_DELAY is not set
+	Init:                Init,
 })
 ```
 
-humus has no default for `DrainDelay` and reads no variable for it. Whether
-to pause depends on the kind of App — a REST or gRPC App needs time for a load
-balancer to stop sending it connections, and a job does not — so each runtime
-package's App sets its own.
+`ShutdownGracePeriod` and `DrainDelay` are defaults: an operator overrides
+either through its [variable](#settings) without a rebuild. humus has no
+default grace period of its own, so an App sets `ShutdownGracePeriod` unless
+its environment always sets the variable; a `DrainDelay` left at zero means no
+pause. How long to pause and how long to allow for shutdown depend on the kind
+of App — a REST or gRPC App needs time for a load balancer to stop sending it
+connections, and a job does not — so each runtime package's App sets its own.
 
 ## Service
 
@@ -198,7 +203,9 @@ the context each is given is done when the grace period runs out.
 ## What Run does, in order
 
 1. Reads the lifecycle's [settings](#settings) from the process's
-   environment. A malformed one exits 78, and `Init` is never called.
+   environment, defaulting each to its App field. A malformed one, or a bad
+   default, exits 78 before the App listens for signals, and `Init` is never
+   called.
 2. Listens for an interrupt and SIGTERM through the process's
    `NotifyContext`, before `Init`, so a signal during a slow `Init` cancels
    it.
@@ -210,7 +217,8 @@ the context each is given is done when the grace period runs out.
 6. Stops listening for signals, so that a second interrupt or SIGTERM takes
    its default action and ends the process at once, and cancels the context
    passed to `Serve`.
-7. Waits `DrainDelay`.
+7. Waits the drain delay: `HUMUS_SHUTDOWN_DRAIN_DELAY`, defaulting to
+   `App.DrainDelay`.
 8. Calls `Shutdown` on every Service concurrently, waits for every `Serve` to
    return, and then runs the OnStop functions in reverse order of
    registration. All of this happens within one grace period,
@@ -228,11 +236,15 @@ never recovers a panic.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `HUMUS_SHUTDOWN_GRACE_PERIOD` | `10s` | bounds the whole shutdown: every Service's `Shutdown` and every OnStop function share it. A [`time.ParseDuration`](https://pkg.go.dev/time#ParseDuration) string, such as `30s`, that must be positive. |
+| `HUMUS_SHUTDOWN_GRACE_PERIOD` | `App.ShutdownGracePeriod` | bounds the whole shutdown: every Service's `Shutdown` and every OnStop function share it. A [`time.ParseDuration`](https://pkg.go.dev/time#ParseDuration) string, such as `30s`, that must be positive. |
+| `HUMUS_SHUTDOWN_DRAIN_DELAY` | `App.DrainDelay` | the pause between shutdown starting and `Shutdown` being called on the Services. A `time.ParseDuration` string, such as `5s`, that must not be negative; `0s` means no pause. |
 
-The lifecycle reads no variable for the drain delay. A runtime package's App
-may read one, such as `HUMUS_SHUTDOWN_DRAIN_DELAY`, with its own default, and
-pass it as `App.DrainDelay`; its own page says whether it does.
+These are the only variables the lifecycle reads, and the root package is the
+one place humus reads them. Each value is checked after its default, so a bad
+default fails the same way as a bad variable: an App whose
+`ShutdownGracePeriod` is zero, run without `HUMUS_SHUTDOWN_GRACE_PERIOD`,
+exits 78 with `config HUMUS_SHUTDOWN_GRACE_PERIOD: must be positive`. When both
+values are bad, both are reported, one line each.
 
 ## Exit codes
 
@@ -321,8 +333,9 @@ func TestApp_Run_a_whole_App(t *testing.T) {
 
 		var poolClosedAt time.Time
 		app := humus.App{
-			Host:       humus.OSHost(), // the fake Services never use it
-			DrainDelay: 5 * time.Second,
+			Host:                humus.OSHost(), // the fake Services never use it
+			ShutdownGracePeriod: 10 * time.Second,
+			DrainDelay:          5 * time.Second,
 			Init: func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
 				s.OnStop(func(context.Context) error {
 					poolClosedAt = time.Now()
@@ -332,9 +345,7 @@ func TestApp_Run_a_whole_App(t *testing.T) {
 			},
 		}
 
-		p := bedrocktest.NewProcess(t, bedrocktest.WithEnv(map[string]string{
-			"HUMUS_SHUTDOWN_GRACE_PERIOD": "10s",
-		}))
+		p := bedrocktest.NewProcess(t)
 		status := make(chan bedrock.ExitStatus, 1)
 		go func() { status <- app.Run(t.Context(), p.Process()) }()
 

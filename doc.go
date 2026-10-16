@@ -24,9 +24,16 @@
 // the App's dependencies from a [Setup], registers their release with
 // [Setup.OnStop], and returns the [Service] values to run. Run calls Serve on
 // each of them, and when a signal arrives or the first Service returns, it
-// cancels Serve's context, waits the App's DrainDelay, calls Shutdown on
-// every Service and runs the OnStop functions, all within one grace period.
-// The outcome is the exit status: 0, [ExitFailure] or [ExitConfig].
+// cancels Serve's context, waits the drain delay, calls Shutdown on every
+// Service and runs the OnStop functions, all within one grace period. The
+// outcome is the exit status: 0, [ExitFailure] or [ExitConfig].
+//
+// Run reads the grace period from HUMUS_SHUTDOWN_GRACE_PERIOD and the drain
+// delay from HUMUS_SHUTDOWN_DRAIN_DELAY, through the Process's environment,
+// with the App's ShutdownGracePeriod and DrainDelay fields as their defaults.
+// An operator tunes either without a rebuild, and a bad default fails at
+// startup with ExitConfig, as a bad variable does. These are the only
+// environment variables the root package reads.
 //
 // An App reaches the network and the filesystem only through its [Host]:
 // [OSHost] in main, and a Host the test controls in a test, so a whole App

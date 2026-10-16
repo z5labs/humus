@@ -41,13 +41,13 @@ type Service interface {
 	// done. It returns nil when Shutdown stopped it or it finished.
 	//
 	// ctx is done as soon as the App starts shutting down, before the
-	// App's DrainDelay. A Service may stop on it, as a job or a queue
+	// App's drain delay. A Service may stop on it, as a job or a queue
 	// consumer does, or keep serving until Shutdown, as an HTTP, gRPC or
 	// health Service does.
 	Serve(ctx context.Context) error
 
 	// Shutdown stops the Service gracefully. The App calls it on every
-	// Service after the App's DrainDelay, including one whose Serve has
+	// Service after the App's drain delay, including one whose Serve has
 	// already returned. If ctx is done before the Service has stopped,
 	// Shutdown stops it at once and returns an error that wraps ctx's
 	// error.
@@ -61,16 +61,27 @@ type App struct {
 	// main, and a Host the test controls in a test.
 	Host Host
 
-	// DrainDelay is the pause between shutdown starting and Shutdown being
-	// called on the Services: Serve's context is done at once, and Shutdown
-	// is called DrainDelay later. It gives a load balancer, such as a
-	// Kubernetes Service removing the pod from its endpoints, time to stop
-	// sending new connections before the Services stop accepting them. The
-	// grace period starts after it.
+	// ShutdownGracePeriod is the grace period when the environment does not
+	// set HUMUS_SHUTDOWN_GRACE_PERIOD. The grace period bounds the whole
+	// shutdown of the App: every Service's Shutdown and every OnStop function
+	// share it.
 	//
-	// The zero value means no pause, and so does a negative one. humus reads
-	// no variable for DrainDelay and has no default; a runtime package's App
-	// sets its own.
+	// The grace period must be positive, so a zero ShutdownGracePeriod fails
+	// startup, exiting ExitConfig, unless HUMUS_SHUTDOWN_GRACE_PERIOD is set.
+	// A runtime package's App sets its own.
+	ShutdownGracePeriod time.Duration
+
+	// DrainDelay is the drain delay when the environment does not set
+	// HUMUS_SHUTDOWN_DRAIN_DELAY. The drain delay is the pause between
+	// shutdown starting and Shutdown being called on the Services: Serve's
+	// context is done at once, and Shutdown is called a drain delay later.
+	// It gives a load balancer, such as a Kubernetes Service removing the pod
+	// from its endpoints, time to stop sending new connections before the
+	// Services stop accepting them. The grace period starts after it.
+	//
+	// The drain delay must not be negative, so a negative DrainDelay fails
+	// startup, exiting ExitConfig, unless HUMUS_SHUTDOWN_DRAIN_DELAY is set.
+	// Zero means no pause. A runtime package's App sets its own.
 	DrainDelay time.Duration
 
 	// Init builds the App's dependencies and returns the Services to run.
@@ -143,8 +154,12 @@ func (e *GracePeriodError) Unwrap() error {
 
 // Run implements bedrock.App. In order, it:
 //
-//  1. reads the lifecycle's Settings from p.Environment, exiting
-//     ExitConfig if one is malformed;
+//  1. reads the grace period from HUMUS_SHUTDOWN_GRACE_PERIOD and the
+//     drain delay from HUMUS_SHUTDOWN_DRAIN_DELAY in p.Environment, each a
+//     time.ParseDuration string such as "30s" defaulting to the App's
+//     ShutdownGracePeriod and DrainDelay. It exits ExitConfig, naming every
+//     variable at fault, if either is malformed or, after its default, a
+//     grace period is not positive or a drain delay is negative;
 //  2. listens for an interrupt and SIGTERM through p.NotifyContext;
 //  3. calls Init, and if it fails, runs the OnStop functions registered so
 //     far and exits ExitConfig when a *config.Error is in Init's error
@@ -153,11 +168,11 @@ func (e *GracePeriodError) Unwrap() error {
 //  5. waits for a signal, or for the first Service to return;
 //  6. stops listening for signals, so a second one takes its default
 //     action, and cancels the context passed to Serve;
-//  7. waits DrainDelay;
+//  7. waits the drain delay;
 //  8. calls Shutdown on every Service concurrently, waits for every Serve
 //     to return, and then runs the OnStop functions in reverse order of
-//     registration, all within one ShutdownGracePeriod, which starts after
-//     the drain delay.
+//     registration, all within one grace period, which starts after the
+//     drain delay.
 //
 // An Init that returns no Services ends the App at once, without a drain
 // delay, as there is nothing to drain. Neither a cancelled ctx nor a second
@@ -173,7 +188,7 @@ func (e *GracePeriodError) Unwrap() error {
 // every failure is written to p.Stderr, one line per error, and nothing
 // else is written. Run never recovers a panic.
 func (a App) Run(ctx context.Context, p bedrock.Process) bedrock.ExitStatus {
-	settings, err := ReadSettings(ctx, p.Environment)
+	settings, err := a.readSettings(ctx, p.Environment)
 	if err != nil {
 		return fail(p, ExitConfig, err)
 	}
@@ -189,9 +204,9 @@ func (a App) Run(ctx context.Context, p bedrock.Process) bedrock.ExitStatus {
 		if _, ok := errors.AsType[*config.Error](err); ok {
 			code = ExitConfig
 		}
-		errs, ranOut := shutdown(ctx, settings.ShutdownGracePeriod, setup, nil)
+		errs, ranOut := shutdown(ctx, settings.gracePeriod, setup, nil)
 		errs = append([]error{fmt.Errorf("init: %w", err)}, errs...)
-		return fail(p, code, failure(settings.ShutdownGracePeriod, errs, ranOut))
+		return fail(p, code, failure(settings.gracePeriod, errs, ranOut))
 	}
 
 	serveCtx, cancelServe := context.WithCancel(sigCtx)
@@ -217,8 +232,8 @@ func (a App) Run(ctx context.Context, p bedrock.Process) bedrock.ExitStatus {
 	stop()
 	cancelServe()
 	if len(services) > 0 {
-		// time.Sleep returns at once for a DrainDelay of zero or less.
-		time.Sleep(a.DrainDelay)
+		// time.Sleep returns at once for a drain delay of zero.
+		time.Sleep(settings.drainDelay)
 	}
 
 	stopServices := func(graceCtx context.Context) []error {
@@ -228,10 +243,10 @@ func (a App) Run(ctx context.Context, p bedrock.Process) bedrock.ExitStatus {
 		}
 		return errs
 	}
-	shutdownErrs, ranOut := shutdown(ctx, settings.ShutdownGracePeriod, setup, stopServices)
+	shutdownErrs, ranOut := shutdown(ctx, settings.gracePeriod, setup, stopServices)
 	errs = append(errs, shutdownErrs...)
 
-	if err := failure(settings.ShutdownGracePeriod, errs, ranOut); err != nil {
+	if err := failure(settings.gracePeriod, errs, ranOut); err != nil {
 		return fail(p, ExitFailure, err)
 	}
 	if signalled {
