@@ -23,8 +23,11 @@
 // humus is being rebuilt, package by package, on bedrock's process model. The
 // previous Builder/Runner code, its YAML configuration, its global telemetry
 // and the rest, grpc, job, queue and health packages have been removed, and
-// each package comes back through its own accepted proposal. Until the App
-// lifecycle lands, this package has no app type to run.
+// each package comes back through its own accepted proposal. The App
+// lifecycle has landed: App runs Services, shuts them down within a grace
+// period, releases what Init registered with Setup.OnStop and turns the
+// outcome into an exit status. The runtime packages that build their Apps
+// on it have not landed yet.
 //
 // The plan is in the charter, Proposal: humus on the bedrock process model:
 // https://github.com/z5labs/humus/discussions/629

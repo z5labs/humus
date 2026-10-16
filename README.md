@@ -18,7 +18,8 @@ process. Humus is being rebuilt on that process model, package by package.
 The previous code has been removed from `main`: the Builder/Runner code, the
 YAML configuration, the global telemetry, and the `rest`, `grpc`, `job`,
 `queue` and `health` packages. Each package comes back through its own accepted
-proposal. Until the App lifecycle lands, `main` has no app type to run. Earlier
+proposal. The App lifecycle, `humus.App`, has landed in the root package; the
+runtime packages built on it have not yet. Earlier
 releases remain available on [pkg.go.dev](https://pkg.go.dev/github.com/z5labs/humus?tab=versions).
 
 The plan is in the charter,
