@@ -18,6 +18,7 @@ import (
 	"github.com/z5labs/bedrock/bedrocktest"
 
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/telemetry"
 )
 
 // The rules of the humus.Service contract. Each is the name of one of
@@ -197,6 +198,7 @@ func (st *subtest) run(newService func(*testing.T, *humus.Setup) humus.Service, 
 	app := humus.App{
 		Host:                host.Host(),
 		ShutdownGracePeriod: waitLimit,
+		Telemetry:           telemetry.NoopBuilder,
 		Init: func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 			select {
 			case setups <- s:

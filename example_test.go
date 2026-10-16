@@ -19,6 +19,8 @@ import (
 	"github.com/z5labs/bedrock/config"
 
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/humustest"
+	"github.com/z5labs/humus/telemetry"
 )
 
 // The docs site quotes the code in this file, and TestDocs_code_samples
@@ -116,6 +118,15 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	return []humus.Service{newServer(out)}, nil
 }
 
+// buildTelemetry is the App's telemetry.Builder. It starts from the
+// telemetry package's defaults, which write log records to stdout, and names
+// the service.
+func buildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+	s := telemetry.DefaultSettings()
+	s.ServiceName = "greeter"
+	return telemetry.New(ctx, s, dial, p.Stdout)
+}
+
 // The main function of a humus App is one call to bedrock.Main. This example
 // has no Output comment, so it is compiled but never run: running it would
 // exit the test binary.
@@ -124,6 +135,7 @@ func Example_main() {
 		Host:                humus.OSHost(),
 		ShutdownGracePeriod: 30 * time.Second, // when HUMUS_SHUTDOWN_GRACE_PERIOD is not set
 		DrainDelay:          5 * time.Second,  // when HUMUS_SHUTDOWN_DRAIN_DELAY is not set
+		Telemetry:           buildTelemetry,
 		Init:                Init,
 	})
 }
@@ -136,6 +148,7 @@ func ExampleApp() {
 	app := humus.App{
 		Host:                humus.OSHost(), // the Service never uses it
 		ShutdownGracePeriod: 10 * time.Second,
+		Telemetry:           telemetry.NoopBuilder,
 		Init: func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 			srv.out = s.Process.Stdout
 			s.OnStop(func(context.Context) error {
@@ -173,11 +186,14 @@ func ExampleApp() {
 
 // OnStop works like t.Cleanup: the functions run in reverse order of
 // registration, and they run when Init fails partway through too. A
-// setting Init cannot read exits ExitConfig.
+// setting Init cannot read exits ExitConfig, and the App logs Init's error
+// through its telemetry, recorded here by humustest.
 func ExampleSetup_OnStop() {
+	tel := humustest.NewTelemetry()
 	app := humus.App{
 		Host:                humus.OSHost(),
 		ShutdownGracePeriod: 10 * time.Second,
+		Telemetry:           tel.Builder(),
 		Init:                Init,
 	}
 
@@ -188,11 +204,15 @@ func ExampleSetup_OnStop() {
 	status := app.Run(context.Background(), fp.Process())
 
 	fmt.Print(fp.Stdout())
-	fmt.Print("stderr: ", fp.Stderr())
+	for _, r := range tel.Logs() {
+		fmt.Printf("logged %s: %s\n", r.SeverityText(), r.Body().AsString())
+	}
+	fmt.Printf("stderr: %q\n", fp.Stderr())
 	fmt.Println("exit code:", status.Code())
 	// Output:
 	// on stop: close the queue
 	// on stop: close the cache
-	// stderr: init: config DATABASE_URL: not found
+	// logged ERROR: init: config DATABASE_URL: not found
+	// stderr: ""
 	// exit code: 78
 }

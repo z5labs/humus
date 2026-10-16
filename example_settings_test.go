@@ -145,23 +145,27 @@ func readFile(fsys humus.FS) func(name string) (string, error) {
 }
 
 // runGreeter runs the App of Example_settings on a bedrocktest Process with
-// env and a humustest Host holding files, and prints what the App wrote and
-// its exit code.
+// env and a humustest Host holding files, and prints what the App wrote, the
+// errors it logged and its exit code.
 func runGreeter(env map[string]string, files map[string][]byte) {
 	t := new(exampleTB)
 	defer t.runCleanups()
 
 	h := humustest.NewHost(t, humustest.WithFiles(files))
+	tel := humustest.NewTelemetry()
 	app := humus.App{
 		Host:                h.Host(),
 		ShutdownGracePeriod: 10 * time.Second,
+		Telemetry:           tel.Builder(),
 		Init:                GreeterInit,
 	}
 	fp := bedrocktest.NewProcess(t, bedrocktest.WithEnv(env))
 	status := app.Run(context.Background(), fp.Process())
 
 	fmt.Print(fp.Stdout())
-	fmt.Print(fp.Stderr())
+	for _, msg := range errorLogs(tel) {
+		fmt.Println(msg)
+	}
 	fmt.Println("exit code:", status.Code())
 }
 

@@ -22,12 +22,18 @@ import (
 	"github.com/z5labs/bedrock/bedrocktest"
 	"github.com/z5labs/bedrock/config"
 
+	"go.opentelemetry.io/otel/log"
+
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/humustest"
+	"github.com/z5labs/humus/telemetry"
 )
 
 // Every test in this file runs the App lifecycle whole, inside a synctest
 // bubble, on a bedrocktest Process and fake Services. None opens a socket or
 // touches a file: the Host is OSHost, which the fake Services never use.
+// A test that asserts on a failure the App logs records the App's telemetry
+// with humustest.Telemetry and reads the failure from its Logs.
 
 // fakeService is a Service built from two functions. A nil serve blocks
 // until its context is done and returns nil; a nil shutdown returns nil.
@@ -63,14 +69,35 @@ func (s *fakeService) calls() int {
 	return s.shutdownCalls
 }
 
-// appWith returns an App on OSHost with a 10s ShutdownGracePeriod whose
-// Init is init.
+// appWith returns an App on OSHost with a 10s ShutdownGracePeriod and no-op
+// telemetry whose Init is init.
 func appWith(init func(ctx context.Context, s *humus.Setup) ([]humus.Service, error)) humus.App {
 	return humus.App{
 		Host:                humus.OSHost(),
 		ShutdownGracePeriod: 10 * time.Second,
+		Telemetry:           telemetry.NoopBuilder,
 		Init:                init,
 	}
+}
+
+// recorded returns app with its telemetry recorded by a new
+// humustest.Telemetry, and the Telemetry.
+func recorded(app humus.App) (humus.App, *humustest.Telemetry) {
+	tel := humustest.NewTelemetry()
+	app.Telemetry = tel.Builder()
+	return app, tel
+}
+
+// errorLogs returns the bodies of the records tel recorded at ERROR, in the
+// order they were emitted.
+func errorLogs(tel *humustest.Telemetry) []string {
+	var bodies []string
+	for _, r := range tel.Logs() {
+		if r.Severity() == log.SeverityError {
+			bodies = append(bodies, r.Body().AsString())
+		}
+	}
+	return bodies
 }
 
 // servicesOf returns an Init that returns svcs.
@@ -122,6 +149,7 @@ func TestApp_Run_a_whole_App(t *testing.T) {
 			Host:                humus.OSHost(), // the fake Services never use it
 			ShutdownGracePeriod: 10 * time.Second,
 			DrainDelay:          5 * time.Second,
+			Telemetry:           telemetry.NoopBuilder,
 			Init: func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
 				s.OnStop(func(context.Context) error {
 					poolClosedAt = time.Now()
@@ -394,7 +422,8 @@ func TestApp_Run_shutdown_is_bounded_by_the_grace_period(t *testing.T) {
 		p := bedrocktest.NewProcess(t, bedrocktest.WithEnv(map[string]string{
 			"HUMUS_SHUTDOWN_GRACE_PERIOD": "2s",
 		}))
-		status := start(t, appWith(servicesOf(stuck)), p)
+		app, tel := recorded(appWith(servicesOf(stuck)))
+		status := start(t, app, p)
 
 		<-p.Notified(syscall.SIGTERM)
 		begin := time.Now()
@@ -417,8 +446,11 @@ func TestApp_Run_shutdown_is_bounded_by_the_grace_period(t *testing.T) {
 		if !errors.Is(st.Cause(), context.DeadlineExceeded) {
 			t.Errorf("errors.Is(%v, context.DeadlineExceeded) = false", st.Cause())
 		}
-		if got := p.Stderr(); !strings.Contains(got, "stuck shutdown: context deadline exceeded") {
-			t.Errorf("stderr = %q, want the shutdown error", got)
+		if got := strings.Join(errorLogs(tel), "\n"); !strings.Contains(got, "stuck shutdown: context deadline exceeded") {
+			t.Errorf("logged errors = %q, want the shutdown error", got)
+		}
+		if got := p.Stderr(); got != "" {
+			t.Errorf("stderr = %q, want nothing", got)
 		}
 	})
 }
@@ -470,7 +502,8 @@ func TestApp_Run_OnStop_running_past_the_grace_period(t *testing.T) {
 		p := bedrocktest.NewProcess(t, bedrocktest.WithEnv(map[string]string{
 			"HUMUS_SHUTDOWN_GRACE_PERIOD": "1s",
 		}))
-		status := start(t, appWith(init), p)
+		app, tel := recorded(appWith(init))
+		status := start(t, app, p)
 
 		<-p.Notified(syscall.SIGTERM)
 		p.Signal(syscall.SIGTERM)
@@ -487,8 +520,12 @@ func TestApp_Run_OnStop_running_past_the_grace_period(t *testing.T) {
 		if !errors.Is(st.Cause(), context.DeadlineExceeded) {
 			t.Errorf("errors.Is(%v, context.DeadlineExceeded) = false", st.Cause())
 		}
-		if want := "shutdown ran past the grace period of 1s: context deadline exceeded\n"; p.Stderr() != want {
-			t.Errorf("stderr = %q, want %q", p.Stderr(), want)
+		want := []string{"shutdown ran past the grace period of 1s: context deadline exceeded"}
+		if got := errorLogs(tel); !slices.Equal(got, want) {
+			t.Errorf("logged errors = %q, want %q", got, want)
+		}
+		if got := p.Stderr(); got != "" {
+			t.Errorf("stderr = %q, want nothing", got)
 		}
 	})
 }
@@ -542,6 +579,7 @@ func TestApp_Run_missing_config_in_Init_exits_78_and_runs_OnStop_in_reverse(t *t
 			t.Errorf("DATABASE_URL = %q, want it unset", url)
 			return nil, nil
 		})
+		app, tel := recorded(app)
 		p := bedrocktest.NewProcess(t)
 
 		st := app.Run(t.Context(), p.Process())
@@ -555,8 +593,11 @@ func TestApp_Run_missing_config_in_Init_exits_78_and_runs_OnStop_in_reverse(t *t
 		if want := []int{2, 1, 0}; !slices.Equal(stopped, want) {
 			t.Errorf("OnStop functions ran in order %v, want %v", stopped, want)
 		}
-		if want := "init: config DATABASE_URL: not found\n"; p.Stderr() != want {
-			t.Errorf("stderr = %q, want %q", p.Stderr(), want)
+		if want := []string{"init: config DATABASE_URL: not found"}; !slices.Equal(errorLogs(tel), want) {
+			t.Errorf("logged errors = %q, want %q", errorLogs(tel), want)
+		}
+		if got := p.Stderr(); got != "" {
+			t.Errorf("stderr = %q, want nothing", got)
 		}
 	})
 }
@@ -569,6 +610,7 @@ func TestApp_Run_failed_Init_exits_1(t *testing.T) {
 			s.OnStop(func(context.Context) error { return errStop })
 			return nil, errInit
 		})
+		app, tel := recorded(app)
 		p := bedrocktest.NewProcess(t)
 
 		st := app.Run(t.Context(), p.Process())
@@ -582,9 +624,9 @@ func TestApp_Run_failed_Init_exits_1(t *testing.T) {
 		if !errors.Is(st.Cause(), errStop) {
 			t.Errorf("errors.Is(%v, errStop) = false", st.Cause())
 		}
-		want := "init: dial database: connection refused\non stop: close pool\n"
-		if p.Stderr() != want {
-			t.Errorf("stderr = %q, want %q", p.Stderr(), want)
+		want := []string{"init: dial database: connection refused", "on stop: close pool"}
+		if got := errorLogs(tel); !slices.Equal(got, want) {
+			t.Errorf("logged errors = %q, want %q", got, want)
 		}
 	})
 }
@@ -695,7 +737,8 @@ func TestApp_Run_failing_service_exits_1_with_its_error(t *testing.T) {
 		other := &fakeService{}
 		p := bedrocktest.NewProcess(t)
 
-		st := appWith(servicesOf(failing, other)).Run(t.Context(), p.Process())
+		app, tel := recorded(appWith(servicesOf(failing, other)))
+		st := app.Run(t.Context(), p.Process())
 
 		if st.Code() != humus.ExitFailure {
 			t.Errorf("code = %d, want %d", st.Code(), humus.ExitFailure)
@@ -703,8 +746,11 @@ func TestApp_Run_failing_service_exits_1_with_its_error(t *testing.T) {
 		if !errors.Is(st.Cause(), errServe) {
 			t.Errorf("errors.Is(%v, errServe) = false", st.Cause())
 		}
-		if want := "serve: consume orders: broker went away\n"; p.Stderr() != want {
-			t.Errorf("stderr = %q, want %q", p.Stderr(), want)
+		if want := []string{"serve: consume orders: broker went away"}; !slices.Equal(errorLogs(tel), want) {
+			t.Errorf("logged errors = %q, want %q", errorLogs(tel), want)
+		}
+		if got := p.Stderr(); got != "" {
+			t.Errorf("stderr = %q, want nothing", got)
 		}
 		if n := other.calls(); n != 1 {
 			t.Errorf("Shutdown called %d times on the other Service, want 1", n)
@@ -733,7 +779,8 @@ func TestApp_Run_joins_every_error(t *testing.T) {
 		}
 		p := bedrocktest.NewProcess(t)
 
-		st := appWith(init).Run(t.Context(), p.Process())
+		app, tel := recorded(appWith(init))
+		st := app.Run(t.Context(), p.Process())
 
 		if st.Code() != humus.ExitFailure {
 			t.Errorf("code = %d, want %d", st.Code(), humus.ExitFailure)
@@ -743,9 +790,8 @@ func TestApp_Run_joins_every_error(t *testing.T) {
 				t.Errorf("errors.Is(cause, %v) = false", want)
 			}
 		}
-		lines := strings.Split(strings.TrimSuffix(p.Stderr(), "\n"), "\n")
-		if len(lines) != 4 {
-			t.Errorf("stderr has %d lines, want 4: %q", len(lines), p.Stderr())
+		if got := errorLogs(tel); len(got) != 4 {
+			t.Errorf("%d errors were logged, want 4, one per error: %q", len(got), got)
 		}
 	})
 }

@@ -2,9 +2,9 @@
 title: The App lifecycle
 linkTitle: App lifecycle
 description: >
-  How humus.App reads its settings, builds its dependencies, runs its
-  Services, shuts them down within a grace period and turns the outcome into
-  an exit status.
+  How humus.App reads its settings, builds its telemetry and its
+  dependencies, runs its Services, shuts them down within a grace period and
+  turns the outcome into an exit status.
 type: docs
 weight: 10
 ---
@@ -12,9 +12,9 @@ weight: 10
 Every humus application is a [`bedrock.App`](https://pkg.go.dev/github.com/z5labs/bedrock#App),
 and the root package's [`humus.App`](https://pkg.go.dev/github.com/z5labs/humus#App)
 is the lifecycle every humus app type is built on. It reads its settings,
-listens for signals, builds the user's dependencies, runs one or more
-Services, shuts them down within a grace period, releases what was built, and
-turns the outcome into an exit status.
+listens for signals, builds its telemetry and the user's dependencies, runs
+one or more Services, shuts them down within a grace period, releases what was
+built, shuts its telemetry down and turns the outcome into an exit status.
 
 Most applications will not use `humus.App` directly. Each runtime package —
 REST, gRPC, jobs, queues — provides an App of its own, built on `humus.App`
@@ -23,27 +23,27 @@ with that package's defaults, and that is the API most users touch. Using
 process, is the advanced path. Read this page before taking it; read it, too,
 to understand what the App a runtime package builds for you does.
 
-Telemetry and health are not part of the lifecycle. Each is added by its own
-package, which integrates itself with the lifecycle as it lands:
-
-- telemetry by [Proposal: OpenTelemetry without globals](https://github.com/z5labs/humus/discussions/632);
-- health by [Proposal: health monitors and probes](https://github.com/z5labs/humus/discussions/634).
-
-Until they land, the lifecycle writes every failure to the process's
-standard error.
+Telemetry is part of the lifecycle: the App builds it before `Init`, logs
+through it, and shuts it down last. See [Telemetry](#telemetry). Health is not
+part of the lifecycle yet. It is added by
+[Proposal: health monitors and probes](https://github.com/z5labs/humus/discussions/634),
+which integrates it with the lifecycle when it lands.
 
 The design behind everything on this page is in
-[Proposal: the humus App lifecycle](https://github.com/z5labs/humus/discussions/630#discussioncomment-18964173).
+[Proposal: the humus App lifecycle](https://github.com/z5labs/humus/discussions/630#discussioncomment-18964173),
+and the telemetry integration is in
+[Proposal: OpenTelemetry without globals, Revision 2](https://github.com/z5labs/humus/discussions/632#discussioncomment-18966249).
 
 ## App
 
-An App has four fields:
+An App has five fields:
 
 | Field | Required | Meaning |
 |---|---|---|
 | `Host` | yes | the network and filesystem the App runs on: `humus.OSHost()` in `main`, and a Host the test controls in a test |
 | `ShutdownGracePeriod` | yes, unless `HUMUS_SHUTDOWN_GRACE_PERIOD` is set | the grace period when `HUMUS_SHUTDOWN_GRACE_PERIOD` is not set. It must be positive, so the zero value fails startup |
 | `DrainDelay` | no | the drain delay when `HUMUS_SHUTDOWN_DRAIN_DELAY` is not set: the pause between shutdown starting and `Shutdown` being called on the Services. It must not be negative; zero means no pause |
+| `Telemetry` | yes | the [`telemetry.Builder`](https://pkg.go.dev/github.com/z5labs/humus/telemetry#Builder) that builds the App's telemetry: the end user's own `Builder` in `main`, and `telemetry.NoopBuilder` or the `Builder` of humustest's recorder, `humustest.Telemetry`, in tests |
 | `Init` | yes | builds the App's dependencies and returns the Services to run |
 
 Its `main` is one call to `bedrock.Main`, the only place a humus program
@@ -54,8 +54,21 @@ bedrock.Main(humus.App{
 	Host:                humus.OSHost(),
 	ShutdownGracePeriod: 30 * time.Second, // when HUMUS_SHUTDOWN_GRACE_PERIOD is not set
 	DrainDelay:          5 * time.Second,  // when HUMUS_SHUTDOWN_DRAIN_DELAY is not set
+	Telemetry:           buildTelemetry,
 	Init:                Init,
 })
+```
+
+`buildTelemetry` is the end user's `Builder`. It starts from the telemetry
+package's defaults, which write log records to standard output, and names the
+service:
+
+```go
+func buildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+	s := telemetry.DefaultSettings()
+	s.ServiceName = "greeter"
+	return telemetry.New(ctx, s, dial, p.Stdout)
+}
 ```
 
 `ShutdownGracePeriod` and `DrainDelay` are defaults: an operator overrides
@@ -162,9 +175,10 @@ modification times are real under `synctest`, so code that compares
 ## Setup and OnStop
 
 `Init` is given a [`*humus.Setup`](https://pkg.go.dev/github.com/z5labs/humus#Setup)
-holding the `bedrock.Process` the App is run with and the App's `Host`. `Init`
-reads its configuration from `Setup.Process`, builds its dependencies on
-`Setup.Host`, and returns the Services to run. Its context is done when the
+holding the `bedrock.Process` the App is run with, the App's `Host` and its
+telemetry, `Setup.Telemetry`. `Init` reads its configuration from
+`Setup.Process`, builds its dependencies on `Setup.Host`, takes their tracers,
+meters and loggers from `Setup.Telemetry`, and returns the Services to run. Its context is done when the
 App receives an interrupt or SIGTERM, so a slow `Init`, such as one retrying a
 database connection, is cancelled by a signal.
 
@@ -193,9 +207,9 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 }
 ```
 
-Run without `DATABASE_URL`, this App writes
-`init: config DATABASE_URL: not found` to standard error, closes the queue
-and then the cache, and exits 78.
+Run without `DATABASE_URL`, this App closes the queue and then the cache, logs
+`init: config DATABASE_URL: not found` at ERROR through its telemetry, and
+exits 78.
 
 The OnStop functions share the grace period with the Services' `Shutdown`:
 the context each is given is done when the grace period runs out.
@@ -207,30 +221,84 @@ the context each is given is done when the grace period runs out.
    default, exits 78 before the App listens for signals, and `Init` is never
    called.
 2. Listens for an interrupt and SIGTERM through the process's
-   `NotifyContext`, before `Init`, so a signal during a slow `Init` cancels
-   it.
-3. Calls `Init`. If it fails, runs the OnStop functions registered so far,
+   `NotifyContext`, before the telemetry and `Init`, so a signal during a slow
+   `Builder` or a slow `Init` cancels it.
+3. Builds the [telemetry](#telemetry) by calling `App.Telemetry`. If it
+   fails, `Init` is never called, and the App exits 78 when a `*config.Error`
+   is in the error chain, or 1 otherwise.
+4. Sets OpenTelemetry's process-wide error handler, which writes each export
+   error to standard error.
+5. Calls `Init`. If it fails, runs the OnStop functions registered so far,
    within the grace period, and exits 78 when a `*config.Error` is in `Init`'s
    error chain, or 1 otherwise.
-4. Calls `Serve` on every Service concurrently.
-5. Waits for a signal, or for the first Service to return.
-6. Stops listening for signals, so that a second interrupt or SIGTERM takes
-   its default action and ends the process at once, and cancels the context
-   passed to `Serve`.
-7. Waits the drain delay: `HUMUS_SHUTDOWN_DRAIN_DELAY`, defaulting to
+6. Calls `Serve` on every Service concurrently, and logs `serving`.
+7. Waits for a signal, or for the first Service to return.
+8. Stops listening for signals, so that a second interrupt or SIGTERM takes
+   its default action and ends the process at once, cancels the context
+   passed to `Serve`, and logs `shutting down`.
+9. Waits the drain delay: `HUMUS_SHUTDOWN_DRAIN_DELAY`, defaulting to
    `App.DrainDelay`.
-8. Calls `Shutdown` on every Service concurrently, waits for every `Serve` to
-   return, and then runs the OnStop functions in reverse order of
-   registration. All of this happens within one grace period,
-   `HUMUS_SHUTDOWN_GRACE_PERIOD`, which starts after the drain delay.
-9. Returns the [exit status](#exit-codes).
+10. Calls `Shutdown` on every Service concurrently, waits for every `Serve` to
+    return, and then runs the OnStop functions in reverse order of
+    registration. All of this happens within one grace period,
+    `HUMUS_SHUTDOWN_GRACE_PERIOD`, which starts after the drain delay. Then it
+    logs `stopped`.
+11. Shuts the telemetry down.
+12. Returns the [exit status](#exit-codes).
 
 An `Init` that returns no Services ends the App at once, without a drain
 delay, as there is nothing to drain. A cancelled root context still gets a
 graceful shutdown: the grace period keeps the context's values but not its
-cancellation. Every failure is the cause of the exit status and is written to
-standard error, one line per error; nothing else is written. The lifecycle
-never recovers a panic.
+cancellation. Every failure is the cause of the exit status. Once the
+telemetry is built, each failure is logged through it, one record per error;
+before that, it is written to standard error, one line per error. The
+lifecycle never recovers a panic.
+
+## Telemetry
+
+`App.Telemetry` is the App's
+[`telemetry.Builder`](https://pkg.go.dev/github.com/z5labs/humus/telemetry#Builder),
+and it is required. In `main` it is the end user's own `Builder`, such as
+`buildTelemetry` [above](#app), which sources
+[`telemetry.Settings`](https://pkg.go.dev/github.com/z5labs/humus/telemetry#Settings)
+however it likes and calls `telemetry.New`. In a test it is
+`telemetry.NoopBuilder`, or the `Builder` of humustest's recorder,
+`humustest.Telemetry`, when the test asserts on what the App emits.
+
+**Telemetry is built after `NotifyContext` and before `Init`.** `Run` calls
+`App.Telemetry` with the context that a signal cancels, the `Process`, and the
+Host's `Dial`, so the OTLP exporters reach the collector through the `Host`. A
+`Builder` that runs a resource detector can be slow, because a cloud detector
+calls its metadata server, so a signal cancels it as it cancels a slow
+`Init`. A failure exits 78 when a `*config.Error` is in its chain, such as a
+malformed variable the `Builder` read, and 1 otherwise. A `Builder` that
+returns an SDK with a nil field fails too, and exits 1. In every case `Init`
+is never called. `Init` gets the SDK in `Setup.Telemetry`, and hands it on to
+its Services.
+
+**Failures are logged through telemetry.** The lifecycle logs with the
+OpenTelemetry Logs API, through
+`Setup.Telemetry.LoggerProvider.Logger("github.com/z5labs/humus")`: its own
+records, `serving`, `shutting down` and `stopped`, at INFO, and every failure
+after the telemetry is built at ERROR, one record per error, so an operator
+sees them in the same log stream as everything else. humus has no logging
+bridge of its own. Standard error still gets what telemetry cannot report
+itself:
+
+- a failure to build telemetry, and a malformed lifecycle setting, which come
+  before there is any telemetry;
+- export errors, each on one line starting with `telemetry: `. `Run` sets
+  OpenTelemetry's process-wide error handler to write them there, because a
+  failing exporter cannot report its own failure;
+- a failure to shut telemetry down.
+
+**Telemetry shuts down last:** after the OnStop functions, or after a failed
+`Init` and its OnStop functions. So the spans and logs that record a slow or
+failed shutdown are still exported. Its context keeps the root context's
+values but not its cancellation, and it is separate from the grace period:
+`telemetry.New` bounds it with `Settings.ShutdownTimeout`. A failure to shut
+telemetry down is joined into the cause of the exit status, and it turns an
+exit 0 into 1.
 
 ## Settings
 
@@ -252,10 +320,11 @@ values are bad, both are reported, one line each.
 |---|---|---|
 | 0 | a signal stopped the App and it shut down in time | the signal |
 | 0 | a Service returned `nil` on its own, and the App shut down in time | none |
-| 1 (`humus.ExitFailure`) | `Init`, a Service, a Service's `Shutdown` or an OnStop function failed | every error, joined |
+| 1 (`humus.ExitFailure`) | the telemetry could not be built, or its SDK has a nil field | the error |
+| 1 (`humus.ExitFailure`) | `Init`, a Service, a Service's `Shutdown`, an OnStop function or the telemetry's shutdown failed | every error, joined |
 | 1 (`humus.ExitFailure`) | the shutdown ran past the grace period | a `*humus.GracePeriodError` |
 | 2 | never set by humus: Go's exit status for an unrecovered panic | |
-| 78 (`humus.ExitConfig`) | a setting is missing or malformed, including a config value read by `Init` | a `*config.Error` in the chain |
+| 78 (`humus.ExitConfig`) | a setting is missing or malformed, including a config value read by the telemetry `Builder` or by `Init` | a `*config.Error` in the chain |
 
 78 is `EX_CONFIG` from `sysexits.h`. It tells an operator "fix the
 configuration" apart from "the service failed". Everything else that fails
@@ -336,6 +405,7 @@ func TestApp_Run_a_whole_App(t *testing.T) {
 			Host:                humus.OSHost(), // the fake Services never use it
 			ShutdownGracePeriod: 10 * time.Second,
 			DrainDelay:          5 * time.Second,
+			Telemetry:           telemetry.NoopBuilder,
 			Init: func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
 				s.OnStop(func(context.Context) error {
 					poolClosedAt = time.Now()
@@ -411,10 +481,19 @@ explicitly from `Setup`:
 - `http.ProxyFromEnvironment`, the `Proxy` of `http.DefaultTransport`, reads
   the proxy variables of the real environment, and `http.DefaultClient`
   dials the real network rather than through `Host.Dial`.
-- OpenTelemetry's `resource.Default` reads the real environment, and its
-  global providers are process-wide state.
 - `slog.Default` writes to the real standard error unless it is replaced, and
   replacing it is process-wide state.
+- OpenTelemetry's process-wide error handler, which `Run` sets. In a process
+  with several Apps, the last App to start gets every App's export errors, so
+  a test that asserts on export errors does not run in parallel.
+- OpenTelemetry's internal logger, which writes its own errors to the real
+  standard error.
+- `OTEL_GO_X_*`, OpenTelemetry's experimental features, which the SDK reads
+  from the real environment.
+- Any resource detector the end user opts into in `Settings.ResourceOptions`,
+  which reads the real host, such as `/etc`, `/proc` and cgroups, or dials a
+  metadata server rather than through `Host.Dial`.
 
-The last five are on [bedrock's own list](https://pkg.go.dev/github.com/z5labs/bedrock#hdr-Ambient_leaks).
+`flag`, `exec.Cmd`, `http.ProxyFromEnvironment` and `slog.Default` are on
+[bedrock's own list](https://pkg.go.dev/github.com/z5labs/bedrock#hdr-Ambient_leaks).
 A dependency found reading the real process belongs on this list.

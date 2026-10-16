@@ -25,6 +25,7 @@ import (
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/humustest"
+	"github.com/z5labs/humus/telemetry"
 )
 
 // Every test in this file runs on the in-memory network and opens no real
@@ -629,6 +630,7 @@ func TestHost_Listening_an_App_in_real_time(t *testing.T) {
 	app := humus.App{
 		Host:                host.Host(),
 		ShutdownGracePeriod: 10 * time.Second,
+		Telemetry:           telemetry.NoopBuilder,
 		Init: func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
 			ln, err := s.Host.Listen("tcp", ":8080")
 			if err != nil {
