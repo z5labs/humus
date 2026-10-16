@@ -133,15 +133,17 @@ func TestJSONLogExporter_fallbacks(t *testing.T) {
 	})
 
 	t.Run("an empty severity text is replaced by the severity's short name", func(t *testing.T) {
-		cases := map[log.Severity]string{
-			log.SeverityTrace1: "TRACE",
-			log.SeverityDebug3: "DEBUG3",
-			log.SeverityInfo2:  "INFO2",
-			log.SeverityWarn:   "WARN",
-			log.SeverityError4: "ERROR4",
-			log.SeverityFatal4: "FATAL4",
+		// Every one of the 24, since the names are part of the format.
+		names := []string{
+			"TRACE", "TRACE2", "TRACE3", "TRACE4",
+			"DEBUG", "DEBUG2", "DEBUG3", "DEBUG4",
+			"INFO", "INFO2", "INFO3", "INFO4",
+			"WARN", "WARN2", "WARN3", "WARN4",
+			"ERROR", "ERROR2", "ERROR3", "ERROR4",
+			"FATAL", "FATAL2", "FATAL3", "FATAL4",
 		}
-		for sev, name := range cases {
+		for i, name := range names {
+			sev := log.Severity(i + 1)
 			t.Run(name, func(t *testing.T) {
 				var r log.Record
 				r.SetTimestamp(testTimestamp)
@@ -338,6 +340,46 @@ func TestJSONLogExporter_attributes_keep_their_order(t *testing.T) {
 	require.Equal(t, `{"timestamp":"2026-10-16T06:56:32.447829601Z","scope":"carts","attributes":{"z":"1","a":"2","m":"3"}}`+"\n", got)
 }
 
+func TestJSONLogExporter_an_empty_attribute_value_is_null(t *testing.T) {
+	var r log.Record
+	r.SetTimestamp(testTimestamp)
+	r.AddAttributes(attribute.KeyValue{Key: "e"})
+
+	got := emit(t, t.Context(), "carts", r)
+
+	require.Equal(t, `{"timestamp":"2026-10-16T06:56:32.447829601Z","scope":"carts","attributes":{"e":null}}`+"\n", got)
+}
+
+func TestJSONLogExporter_map_keys_are_sorted(t *testing.T) {
+	var r log.Record
+	r.SetTimestamp(testTimestamp)
+	r.SetBody(attribute.MapValue(
+		attribute.String("z", "1"),
+		attribute.String("a", "2"),
+		attribute.String("m", "3"),
+	))
+
+	got := emit(t, t.Context(), "carts", r)
+
+	require.Equal(t, `{"timestamp":"2026-10-16T06:56:32.447829601Z","body":{"a":"2","m":"3","z":"1"},"scope":"carts"}`+"\n", got)
+}
+
+func TestJSONLogExporter_duplicate_attribute_keys_are_each_written(t *testing.T) {
+	var out bytes.Buffer
+	lp := sdklog.NewLoggerProvider(
+		sdklog.WithAllowKeyDuplication(),
+		sdklog.WithProcessor(sdklog.NewSimpleProcessor(newJSONLogExporter(&out))),
+	)
+	defer func() { require.NoError(t, lp.Shutdown(context.Background())) }()
+
+	var r log.Record
+	r.SetTimestamp(testTimestamp)
+	r.AddAttributes(attribute.String("k", "1"), attribute.String("k", "2"))
+	lp.Logger("carts").Emit(t.Context(), r)
+
+	require.Equal(t, `{"timestamp":"2026-10-16T06:56:32.447829601Z","scope":"carts","attributes":{"k":"1","k":"2"}}`+"\n", out.String())
+}
+
 func TestJSONLogExporter_NaN(t *testing.T) {
 	var r log.Record
 	r.SetTimestamp(testTimestamp)
@@ -402,14 +444,31 @@ func TestJSONLogExporter_Export(t *testing.T) {
 		require.ErrorIs(t, err, errWrite)
 	})
 
-	t.Run("returns the context's error and writes nothing when it is done", func(t *testing.T) {
+	t.Run("writes a record emitted with a cancelled context", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		w := &countingWriter{}
-		var r sdklog.Record
-		err := newJSONLogExporter(w).Export(ctx, []sdklog.Record{r})
-		require.ErrorIs(t, err, context.Canceled)
-		require.Zero(t, w.writes)
+		var r log.Record
+		r.SetTimestamp(testTimestamp)
+		r.SetSeverity(log.SeverityError)
+		r.SetBody(attribute.StringValue("client went away"))
+
+		got := emit(t, ctx, "carts", r)
+
+		require.Equal(t, `{"timestamp":"2026-10-16T06:56:32.447829601Z","severity_text":"ERROR","severity_number":17,"body":"client went away","scope":"carts"}`+"\n", got)
+	})
+
+	t.Run("keeps a small buffer and drops a large one", func(t *testing.T) {
+		e := newJSONLogExporter(&countingWriter{})
+
+		var small sdklog.Record
+		small.SetBody(attribute.StringValue("small"))
+		require.NoError(t, e.Export(t.Context(), []sdklog.Record{small}))
+		require.NotNil(t, e.buf)
+
+		var large sdklog.Record
+		large.SetBody(attribute.StringValue(strings.Repeat("x", maxRetainedBuf)))
+		require.NoError(t, e.Export(t.Context(), []sdklog.Record{large}))
+		require.Nil(t, e.buf)
 	})
 }
 

@@ -10,7 +10,9 @@ import (
 	"encoding/base64"
 	"io"
 	"math"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"unicode/utf8"
 
@@ -41,12 +43,18 @@ func newJSONLogExporter(w io.Writer) *jsonLogExporter {
 	return &jsonLogExporter{w: w}
 }
 
+// maxRetainedBuf is the largest buffer Export keeps between calls; a batch
+// needing more is written from a buffer that is then dropped.
+const maxRetainedBuf = 64 << 10
+
 // Export writes records to the exporter's writer, one line each, in a single
 // Write call, so the lines of concurrent calls never interleave.
-func (e *jsonLogExporter) Export(ctx context.Context, records []sdklog.Record) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
+//
+// Export ignores ctx. A simple processor exports with the context the record
+// was emitted with, and a record logged as a request is cancelled, such as an
+// error logged after the client went away, is one worth keeping. There is no
+// work to cancel before the one Write, and a Write cannot be cancelled.
+func (e *jsonLogExporter) Export(_ context.Context, records []sdklog.Record) error {
 	if len(records) == 0 {
 		return nil
 	}
@@ -59,7 +67,11 @@ func (e *jsonLogExporter) Export(ctx context.Context, records []sdklog.Record) e
 		b = appendRecord(b, &records[i])
 	}
 	_, err := e.w.Write(b)
-	e.buf = b
+	if cap(b) <= maxRetainedBuf {
+		e.buf = b
+	} else {
+		e.buf = nil
+	}
 	return err
 }
 
@@ -81,7 +93,7 @@ func appendRecord(b []byte, r *sdklog.Record) []byte {
 	if sev := r.Severity(); sev >= log.SeverityTrace1 && sev <= log.SeverityFatal4 {
 		text := r.SeverityText()
 		if text == "" {
-			text = sev.String()
+			text = severityNames[sev]
 		}
 		b = append(b, `,"severity_text":`...)
 		b = appendString(b, text)
@@ -134,6 +146,18 @@ func appendRecord(b []byte, r *sdklog.Record) []byte {
 	return append(b, '}', '\n')
 }
 
+// severityNames are the short names of OpenTelemetry's severities 1 to 24,
+// kept here rather than taken from log.Severity.String, so that the format
+// does not change with OpenTelemetry.
+var severityNames = [...]string{
+	log.SeverityTrace1: "TRACE", log.SeverityTrace2: "TRACE2", log.SeverityTrace3: "TRACE3", log.SeverityTrace4: "TRACE4",
+	log.SeverityDebug1: "DEBUG", log.SeverityDebug2: "DEBUG2", log.SeverityDebug3: "DEBUG3", log.SeverityDebug4: "DEBUG4",
+	log.SeverityInfo1: "INFO", log.SeverityInfo2: "INFO2", log.SeverityInfo3: "INFO3", log.SeverityInfo4: "INFO4",
+	log.SeverityWarn1: "WARN", log.SeverityWarn2: "WARN2", log.SeverityWarn3: "WARN3", log.SeverityWarn4: "WARN4",
+	log.SeverityError1: "ERROR", log.SeverityError2: "ERROR2", log.SeverityError3: "ERROR3", log.SeverityError4: "ERROR4",
+	log.SeverityFatal1: "FATAL", log.SeverityFatal2: "FATAL2", log.SeverityFatal3: "FATAL3", log.SeverityFatal4: "FATAL4",
+}
+
 func appendKeyValue(b []byte, kv attribute.KeyValue) []byte {
 	b = appendString(b, string(kv.Key))
 	b = append(b, ':')
@@ -168,8 +192,15 @@ func appendValue(b []byte, v attribute.Value) []byte {
 	case attribute.SLICE:
 		return appendArray(b, v.AsSlice(), appendValue)
 	case attribute.MAP:
+		// OpenTelemetry sorts a map's keys today; sorting here as well keeps
+		// the order the format promises whatever it does later.
+		kvs := v.AsMap()
+		if !slices.IsSortedFunc(kvs, compareKeys) {
+			kvs = slices.Clone(kvs)
+			slices.SortStableFunc(kvs, compareKeys)
+		}
 		b = append(b, '{')
-		for i, kv := range v.AsMap() {
+		for i, kv := range kvs {
 			if i > 0 {
 				b = append(b, ',')
 			}
@@ -177,10 +208,14 @@ func appendValue(b []byte, v attribute.Value) []byte {
 		}
 		return append(b, '}')
 	default:
-		// attribute.EMPTY, and any type a later OpenTelemetry adds before
-		// this format says how to write it.
+		// attribute.EMPTY, as a body never reaches here, and any type a later
+		// OpenTelemetry adds before this format says how to write it.
 		return append(b, "null"...)
 	}
+}
+
+func compareKeys(a, b attribute.KeyValue) int {
+	return strings.Compare(string(a.Key), string(b.Key))
 }
 
 func appendArray[T any](b []byte, vs []T, f func([]byte, T) []byte) []byte {

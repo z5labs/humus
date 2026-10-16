@@ -43,7 +43,10 @@
 //     logger was created with. Always present, and empty when that name is.
 //   - attributes: the record's attributes, as an object whose keys are the
 //     attribute keys, in the record's order. Present when the record has at
-//     least one attribute.
+//     least one attribute. An attribute whose value is empty is written with
+//     the value null. A key the record holds more than once, which happens
+//     only when its logger provider allows duplicate keys, is written once
+//     for each value it holds.
 //
 // The record's resource and its count of dropped attributes are never
 // written.
@@ -60,9 +63,11 @@
 //   - bytes as a string holding their standard, padded base64 encoding;
 //   - a slice, the typed bool, integer, float and string slices included, as
 //     an array of its elements, each encoded by these rules;
-//   - a map as an object, its keys in the map's order and its values encoded
-//     by these rules;
-//   - an empty value inside a slice or map as null.
+//   - a map as an object, its keys sorted by their bytes and its values
+//     encoded by these rules; a key the map holds more than once is written
+//     once for each value it holds;
+//   - an empty value as null, as an attribute's value or inside a slice or
+//     map. An empty body is not written at all.
 //
 // Strings are escaped as JSON requires and no further: the characters <, >
 // and & are written as they are. Invalid UTF-8 is replaced by U+FFFD.
