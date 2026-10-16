@@ -238,7 +238,7 @@ func (a App) Run(ctx context.Context, p bedrock.Process) bedrock.ExitStatus {
 	sigCtx, stop := p.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	sdk, err := a.buildTelemetry(sigCtx, ctx, p)
+	sdk, err := a.buildTelemetry(ctx, sigCtx, p)
 	if err != nil {
 		code := ExitFailure
 		if _, ok := errors.AsType[*config.Error](err); ok {
@@ -280,7 +280,7 @@ const loggerName = "github.com/z5labs/humus"
 // buildTelemetry calls App.Telemetry with sigCtx and checks the SDK it
 // returns. An SDK with a nil field is shut down, if it can be, with a
 // context that keeps ctx's values but not its cancellation, and is an error.
-func (a App) buildTelemetry(sigCtx, ctx context.Context, p bedrock.Process) (telemetry.SDK, error) {
+func (a App) buildTelemetry(ctx, sigCtx context.Context, p bedrock.Process) (telemetry.SDK, error) {
 	if a.Telemetry == nil {
 		return telemetry.SDK{}, errors.New("build telemetry: App.Telemetry is nil")
 	}
