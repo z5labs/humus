@@ -87,10 +87,11 @@ func (tk *ticker) Shutdown(ctx context.Context) error {
 // function may register OnStop functions on the Setup, such as closing a
 // pool, and TestService runs them through the App lifecycle.
 //
-// This example has no Output comment, so it is compiled but never run.
+// The ticker above is the Service. testTicker is the test a package writes,
+// as func TestTicker(t *testing.T) in its ticker_test.go. This example has
+// no Output comment, so it is compiled but never run; humustest's
 // TestTicker runs the same test.
 func ExampleTestService() {
-	// In ticker_test.go:
 	testTicker := func(t *testing.T) {
 		humustest.TestService(t, func(t *testing.T, s *humus.Setup) humus.Service {
 			return newTicker(time.Second)
@@ -98,10 +99,4 @@ func ExampleTestService() {
 	}
 
 	_ = testTicker
-}
-
-func TestTicker(t *testing.T) {
-	humustest.TestService(t, func(t *testing.T, s *humus.Setup) humus.Service {
-		return newTicker(time.Second)
-	})
 }

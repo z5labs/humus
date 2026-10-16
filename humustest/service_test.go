@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/bedrocktest"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/humustest"
@@ -80,6 +81,10 @@ const (
 	// failsOnStop is not a fault of a job either: TestTestService_child
 	// tests a correct job whose OnStop function fails with it.
 	failsOnStop fault = "fails on stop"
+
+	// httpServer is no fault at all: TestTestService_child tests the
+	// correct HTTP Service with it.
+	httpServer fault = "http"
 )
 
 // faults maps every fault to the subtest it fails.
@@ -198,6 +203,13 @@ func TestTestService_a_correct_HTTP_Service_passes(t *testing.T) {
 	humustest.TestService(t, newHTTPService)
 }
 
+// TestTicker runs TestService on the ticker of ExampleTestService.
+func TestTicker(t *testing.T) {
+	humustest.TestService(t, func(t *testing.T, s *humus.Setup) humus.Service {
+		return newTicker(time.Second)
+	})
+}
+
 func TestTestService_a_correct_job_passes(t *testing.T) {
 	humustest.TestService(t, func(*testing.T, *humus.Setup) humus.Service {
 		return newJob(correct)
@@ -205,10 +217,24 @@ func TestTestService_a_correct_job_passes(t *testing.T) {
 }
 
 func TestTestService_runs_OnStop_functions_through_the_lifecycle(t *testing.T) {
-	var ran atomic.Int64
+	var (
+		ran    atomic.Int64
+		mu     sync.Mutex
+		setups = make(map[*humus.Setup]bool)
+	)
 	humustest.TestService(t, func(t *testing.T, s *humus.Setup) humus.Service {
-		require.NotNil(t, s.Process.Stdout, "the Setup's Process comes from bedrocktest")
-		require.NotNil(t, s.Host.FS, "the Setup's Host is a humustest Host")
+		require.Equal(t, bedrocktest.ProgramName, s.Process.Args[0], "the Setup's Process comes from bedrocktest")
+
+		// The marker can only be created in a directory no other subtest
+		// has used, so each subtest has a new humustest Host.
+		f, err := s.Host.FS.OpenFile("marker", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		require.NoError(t, err, "each subtest has a new Host")
+		require.NoError(t, f.Close())
+
+		mu.Lock()
+		require.False(t, setups[s], "each subtest has a new Setup")
+		setups[s] = true
+		mu.Unlock()
 
 		j := newJob(correct)
 		s.OnStop(func(context.Context) error {
@@ -221,10 +247,23 @@ func TestTestService_runs_OnStop_functions_through_the_lifecycle(t *testing.T) {
 		return j
 	})
 	require.Equal(t, int64(len(serviceSubtests)), ran.Load(), "an OnStop function runs in every subtest")
+	require.Len(t, setups, len(serviceSubtests))
+}
+
+func TestTestService_skips_what_it_cant_check(t *testing.T) {
+	results, out := runChild(t, httpServer, true)
+	for _, sub := range serviceSubtests {
+		want := "PASS"
+		if sub == "Shutdown_is_safe/after_Serve_has_returned_on_its_own" {
+			want = "SKIP"
+		}
+		require.Equal(t, want, results[childTest+"/"+sub], "%s\n%s", sub, out)
+	}
+	require.Contains(t, out, `humustest: "Shutdown is safe after Serve has returned on its own" can't be checked: Serve keeps running after its context is done`)
 }
 
 func TestTestService_reports_an_App_that_fails_OnStop(t *testing.T) {
-	results, out := runChild(t, failsOnStop)
+	results, out := runChild(t, failsOnStop, false)
 	for _, sub := range serviceSubtests {
 		require.Equal(t, "FAIL", results[childTest+"/"+sub], sub)
 	}
@@ -249,7 +288,7 @@ func (s *hangingService) Shutdown(context.Context) error {
 }
 
 func TestTestService_reports_a_Service_that_hangs(t *testing.T) {
-	results, out := runChild(t, hangs)
+	results, out := runChild(t, hangs, false)
 	for _, sub := range serviceSubtests {
 		require.Equal(t, "FAIL", results[childTest+"/"+sub], sub)
 	}
@@ -259,14 +298,14 @@ func TestTestService_reports_a_Service_that_hangs(t *testing.T) {
 func TestTestService_fails_only_the_rule_a_Service_breaks(t *testing.T) {
 	for f, broken := range faults {
 		t.Run(string(f), func(t *testing.T) {
-			results, out := runChild(t, f)
+			results, out := runChild(t, f, false)
 
 			for _, sub := range serviceSubtests {
-				want := []string{"PASS", "SKIP"}
+				want := "PASS"
 				if sub == broken {
-					want = []string{"FAIL"}
+					want = "FAIL"
 				}
-				require.Contains(t, want, results[childTest+"/"+sub], "%s\n%s", sub, out)
+				require.Equal(t, want, results[childTest+"/"+sub], "%s\n%s", sub, out)
 			}
 			rule := strings.ReplaceAll(strings.ReplaceAll(broken, "_", " "), "/", " ")
 			require.Contains(t, out, fmt.Sprintf("humustest: the Service broke %q: ", rule))
@@ -289,6 +328,8 @@ func TestTestService_child(t *testing.T) {
 	switch f {
 	case correct:
 		t.Skip("run in a child test binary by runChild")
+	case httpServer:
+		humustest.TestService(t, newHTTPService)
 	case hangs:
 		humustest.TestService(t, func(*testing.T, *humus.Setup) humus.Service {
 			return &hangingService{stopped: make(chan struct{})}
@@ -312,8 +353,9 @@ func TestTestService_child(t *testing.T) {
 var resultLine = regexp.MustCompile(`(?m)^\s*--- (PASS|FAIL|SKIP): (\S+) \(`)
 
 // runChild runs TestTestService_child in a child test binary with fault f,
-// and returns the result of every test it ran, by name, and its output.
-func runChild(t *testing.T, f fault) (map[string]string, string) {
+// requires it to pass or to fail, and returns the result of every test it
+// ran, by name, and its output.
+func runChild(t *testing.T, f fault, pass bool) (map[string]string, string) {
 	t.Helper()
 	exe, err := os.Executable()
 	require.NoError(t, err)
@@ -326,14 +368,20 @@ func runChild(t *testing.T, f fault) (map[string]string, string) {
 	)
 	b, err := cmd.CombinedOutput()
 	out := string(b)
-	var exitErr *exec.ExitError
-	require.ErrorAs(t, err, &exitErr, "the child test binary should fail\n%s", out)
+	want := "PASS"
+	if pass {
+		require.NoError(t, err, out)
+	} else {
+		var exitErr *exec.ExitError
+		require.ErrorAs(t, err, &exitErr, "the child test binary should fail\n%s", out)
+		want = "FAIL"
+	}
 
 	results := make(map[string]string)
 	for _, m := range resultLine.FindAllStringSubmatch(out, -1) {
 		results[m[2]] = m[1]
 	}
-	require.Equal(t, "FAIL", results[childTest], out)
+	require.Equal(t, want, results[childTest], out)
 	require.NotRegexp(t, `(?m)^panic: `, out, "the child test binary should not crash")
 	return results, out
 }

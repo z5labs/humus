@@ -76,16 +76,26 @@ var errNoService = errors.New("humustest: newService did not return a Service")
 // must build a Service that runs until it is stopped: a job that finishes at
 // once can't show that Shutdown stops it. A Service that keeps serving after
 // Serve's context is done, as an HTTP server does, never returns on its own,
-// and the subtest for Shutdown after that is skipped.
+// and the subtest for Shutdown after that reports SKIP.
 //
-// The Service's Serve is called with a context that stays live until Serve
-// returns, unless the subtest cancels it, so Shutdown must stop the Service
-// without help from that context. Fake time makes every wait free: a Serve
-// that has not returned 10 seconds after Shutdown never will.
+// The App runs a Service of TestService's own rather than the Service under
+// test, so that each subtest can call Serve and Shutdown in the order its
+// rule needs. The Service's Serve is called with a context that stays live
+// until Serve returns, unless the subtest cancels it, so Shutdown must stop
+// the Service without help from that context. Fake time makes every wait
+// free: a Serve that has not returned 10 seconds after Shutdown never will.
 //
 // A goroutine that outlives Serve is found by synctest, which reports it as
 // a deadlock when the subtest ends. Only the leak subtest fails on it.
-// TestService must not be called inside a synctest bubble.
+//
+// All of this rests on synctest seeing the Service's goroutines block, so
+// the Service must reach the network and the filesystem only through the
+// Setup's Host. A goroutine blocked where synctest can't see it, such as on
+// a real socket, in a syscall, on a sync.Mutex or on a channel made outside
+// the subtest, stops fake time: the subtest's waits never run out, a leak
+// of such a goroutine is never reported, and the test binary hangs until
+// its -test.timeout. TestService must not be called inside a synctest
+// bubble.
 func TestService(t *testing.T, newService func(t *testing.T, s *humus.Setup) humus.Service) {
 	t.Helper()
 	if newService == nil {
@@ -116,10 +126,13 @@ type subtest struct {
 	ctx context.Context
 
 	// step is what the subtest was waiting for, to report a hang with, and
-	// served is whether Serve has returned. Both are read from outside the
-	// bubble when it deadlocks.
-	step   atomic.Pointer[string]
-	served atomic.Bool
+	// inService whether that was a call on the Service. served is whether
+	// Serve has returned, and skipped why the subtest skipped, if it did.
+	// All of them are read from outside the bubble.
+	step      atomic.Pointer[string]
+	inService atomic.Bool
+	served    atomic.Bool
+	skipped   atomic.Pointer[string]
 }
 
 // runRule runs check as the subtest name of t, inside synctest, on a new
@@ -129,7 +142,7 @@ func runRule(t *testing.T, name, rule string, newService func(*testing.T, *humus
 	t.Run(name, func(t *testing.T) {
 		st := &subtest{rule: rule}
 		st.setStep("starting the App")
-		defer st.recoverDeadlock(t)
+		defer st.finish(t)
 		synctest.Test(t, func(t *testing.T) {
 			st.t = t
 			st.run(newService, check)
@@ -137,28 +150,36 @@ func runRule(t *testing.T, name, rule string, newService func(*testing.T, *humus
 	})
 }
 
-// recoverDeadlock turns the panic of a deadlocked bubble into a failure of
-// t, outside the bubble. A leak fails only the leak subtest, so that a
-// Service which leaks fails no other rule; a hang fails any subtest. Every
-// other panic is not the Service's contract to report, and is re-raised.
-func (st *subtest) recoverDeadlock(t *testing.T) {
-	r := recover()
-	if r == nil {
-		return
-	}
-	err, ok := r.(error)
-	if !ok {
-		panic(r)
-	}
-	switch {
-	case strings.HasPrefix(err.Error(), leakPanic):
-		if st.rule == ruleNoLeak && st.served.Load() {
-			t.Errorf("humustest: the Service broke %q: a goroutine was still blocked after Serve returned and the App's OnStop functions had run (%v)", st.rule, err)
+// finish runs outside the bubble once it has ended. It turns the panic of
+// a deadlocked bubble into a failure of t: a leak fails only the leak
+// subtest, so that a Service which leaks fails no other rule, and a hang
+// fails any subtest. Every other panic is not the Service's contract to
+// report, and is re-raised.
+//
+// It then skips t if the subtest skipped inside the bubble: testing does
+// not carry a skip out of a synctest bubble, and the subtest would
+// otherwise report PASS having checked nothing.
+func (st *subtest) finish(t *testing.T) {
+	if r := recover(); r != nil {
+		err, ok := r.(error)
+		if !ok {
+			panic(r)
 		}
-	case strings.HasPrefix(err.Error(), hangPanic):
-		t.Errorf("humustest: the Service broke %q: every goroutine was blocked, for good, while %s (%v)", st.rule, *st.step.Load(), err)
-	default:
-		panic(r)
+		switch {
+		case strings.HasPrefix(err.Error(), leakPanic):
+			if st.rule == ruleNoLeak && st.served.Load() {
+				t.Errorf("humustest: the Service broke %q: a goroutine was still blocked after Serve returned and the App's OnStop functions had run (%v)", st.rule, err)
+			}
+		case strings.HasPrefix(err.Error(), hangPanic) && st.inService.Load():
+			t.Errorf("humustest: the Service broke %q: every goroutine was blocked, for good, while %s (%v)", st.rule, *st.step.Load(), err)
+		case strings.HasPrefix(err.Error(), hangPanic):
+			t.Errorf("humustest: %q: every goroutine was blocked, for good, while %s (%v)", st.rule, *st.step.Load(), err)
+		default:
+			panic(r)
+		}
+	}
+	if why := st.skipped.Load(); why != nil && !t.Failed() {
+		t.Skip(*why)
 	}
 }
 
@@ -277,7 +298,7 @@ func checkDoneContext(st *subtest) {
 
 	done, cancelDone := context.WithCancel(context.WithoutCancel(st.ctx))
 	cancelDone()
-	st.setStep("calling Shutdown with a done context")
+	st.setServiceStep("calling Shutdown with a done context")
 	start := time.Now()
 	c := callShutdown(done, st.svc)
 	took := time.Since(start)
@@ -339,7 +360,7 @@ func checkAfterReturn(st *subtest) {
 	if _, ok := st.awaitServe(served, "Serve to return once its context was done"); !ok {
 		st.shutdown()
 		st.awaitServe(served, "Serve to return after Shutdown")
-		st.t.Skipf("humustest: %q can't be checked: Serve keeps running after its context is done, as an HTTP Service does, so it never returns on its own", st.rule)
+		st.skipf("Serve keeps running after its context is done, as an HTTP Service does, so it never returns on its own")
 	}
 
 	c := st.shutdown()
@@ -382,7 +403,7 @@ func checkNoLeak(st *subtest) {
 
 	st.shutdown()
 	if _, ok := st.awaitServe(served, "Serve to return after Shutdown"); !ok {
-		st.t.Skipf("humustest: %q can't be checked: Serve had not returned %s after Shutdown returned", st.rule, waitLimit)
+		st.skipf("Serve had not returned %s after Shutdown returned", waitLimit)
 	}
 }
 
@@ -407,7 +428,7 @@ func callShutdown(ctx context.Context, svc humus.Service) (c call) {
 // shutdown calls Shutdown with a live context, which runs out after
 // waitLimit.
 func (st *subtest) shutdown() call {
-	st.setStep("calling Shutdown")
+	st.setServiceStep("calling Shutdown")
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(st.ctx), waitLimit)
 	defer cancel()
 	return callShutdown(ctx, st.svc)
@@ -449,7 +470,7 @@ func (st *subtest) serveUntilStopped(ctx context.Context) <-chan call {
 // awaitServe waits up to waitLimit for Serve to return, and reports what it
 // came to and whether it returned.
 func (st *subtest) awaitServe(served <-chan call, step string) (call, bool) {
-	st.setStep("waiting for " + step)
+	st.setServiceStep("waiting for " + step)
 	select {
 	case c := <-served:
 		st.served.Store(true)
@@ -465,8 +486,25 @@ func (st *subtest) errorf(format string, args ...any) {
 	st.t.Errorf("humustest: the Service broke %q: %s", st.rule, fmt.Sprintf(format, args...))
 }
 
+// skipf skips the subtest, which can't check its rule on this Service.
+func (st *subtest) skipf(format string, args ...any) {
+	why := fmt.Sprintf("humustest: %q can't be checked: %s", st.rule, fmt.Sprintf(format, args...))
+	st.skipped.Store(&why)
+	st.t.Skip(why)
+}
+
+// setStep records what the subtest is doing, outside a call on the
+// Service.
 func (st *subtest) setStep(step string) {
 	st.step.Store(&step)
+	st.inService.Store(false)
+}
+
+// setServiceStep records a call on the Service the subtest is making or
+// waiting for.
+func (st *subtest) setServiceStep(step string) {
+	st.step.Store(&step)
+	st.inService.Store(true)
 }
 
 // String describes what a call came to, for a failure message.
