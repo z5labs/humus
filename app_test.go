@@ -84,6 +84,82 @@ func start(t *testing.T, app humus.App, p *bedrocktest.Process) <-chan bedrock.E
 	return status
 }
 
+// TestApp_Run_a_whole_App runs an App with two kinds of Service through a
+// whole lifecycle in fake time. The docs site quotes it.
+func TestApp_Run_a_whole_App(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		// api keeps serving until Shutdown, as an HTTP server does.
+		stopped := make(chan struct{})
+		var shutdownAt time.Time
+		api := &fakeService{
+			serve: func(context.Context) error {
+				<-stopped
+				return nil
+			},
+			shutdown: func(context.Context) error {
+				shutdownAt = time.Now()
+				close(stopped)
+				return nil
+			},
+		}
+
+		// consumer stops as soon as Serve's context is done, as a queue
+		// consumer does.
+		var consumerStoppedAt time.Time
+		consumer := &fakeService{serve: func(ctx context.Context) error {
+			<-ctx.Done()
+			consumerStoppedAt = time.Now()
+			return nil
+		}}
+
+		var poolClosedAt time.Time
+		app := humus.App{
+			Host:       humus.OSHost(), // the fake Services never use it
+			DrainDelay: 5 * time.Second,
+			Init: func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+				s.OnStop(func(context.Context) error {
+					poolClosedAt = time.Now()
+					return nil
+				})
+				return []humus.Service{api, consumer}, nil
+			},
+		}
+
+		p := bedrocktest.NewProcess(t, bedrocktest.WithEnv(map[string]string{
+			"HUMUS_SHUTDOWN_GRACE_PERIOD": "10s",
+		}))
+		status := make(chan bedrock.ExitStatus, 1)
+		go func() { status <- app.Run(t.Context(), p.Process()) }()
+
+		<-p.Notified(syscall.SIGTERM)
+		sigterm := time.Now()
+		p.Signal(syscall.SIGTERM)
+		st := <-status
+
+		if st.Code() != 0 {
+			t.Errorf("code = %d, want 0: %v", st.Code(), st.Cause())
+		}
+		if !errors.Is(st.Cause(), context.Canceled) {
+			t.Errorf("cause = %v, want the signal", st.Cause())
+		}
+		if got := consumerStoppedAt.Sub(sigterm); got != 0 {
+			t.Errorf("consumer stopped %s after SIGTERM, want at once", got)
+		}
+		if got := shutdownAt.Sub(sigterm); got != 5*time.Second {
+			t.Errorf("Shutdown called %s after SIGTERM, want after the 5s drain delay", got)
+		}
+		if api.calls() != 1 || consumer.calls() != 1 {
+			t.Errorf("Shutdown called %d and %d times, want once each", api.calls(), consumer.calls())
+		}
+		if poolClosedAt.IsZero() || poolClosedAt.Before(shutdownAt) {
+			t.Errorf("OnStop ran at %v, want it after Shutdown at %v", poolClosedAt, shutdownAt)
+		}
+		if got := p.Stderr(); got != "" {
+			t.Errorf("stderr = %q, want nothing", got)
+		}
+	})
+}
+
 func TestApp_Run_SIGTERM_exits_0_with_the_signal_as_its_cause(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var serveCtxDone bool
