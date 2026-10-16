@@ -26,10 +26,10 @@ to understand what the App a runtime package builds for you does.
 Telemetry is part of the lifecycle: the App builds it before `Init`, logs
 through it, and shuts it down last. See [Telemetry](#telemetry) below, and
 the [Telemetry]({{< relref "telemetry" >}}) page for what a service does with
-it. Health is not
-part of the lifecycle yet. It is added by
-[Proposal: health monitors and probes](https://github.com/z5labs/humus/discussions/634),
-which integrates it with the lifecycle when it lands.
+it. Health is a Service like any other: an App's `Init` returns the `health`
+package's Service next to its other Services, and
+[Health]({{< relref "health" >}}) explains what it does to readiness through
+the lifecycle.
 
 The design behind everything on this page is in
 [Proposal: the humus App lifecycle](https://github.com/z5labs/humus/discussions/630#discussioncomment-18964173),
@@ -93,9 +93,12 @@ shutdown signals, at different times:
 2. **`Shutdown` is called** after the drain delay, with the grace period as
    its context's deadline.
 
-A Service may stop on the first, as a job or a queue consumer does. Or it may
-keep serving until the second, as an HTTP, gRPC or health Service does, so
-that a load balancer still draining connections towards it is answered. This
+A Service may stop on the first, as a job, a queue consumer or the
+[health Service]({{< relref "health#the-health-service" >}}) does: the health
+Service turns not ready then, so a load balancer stops sending the App new
+traffic. Or it may keep serving until the second, as an HTTP or gRPC Service
+does, so that a load balancer still draining connections towards it is
+answered. This
 Service keeps serving until `Shutdown`:
 
 ```go

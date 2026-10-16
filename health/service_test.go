@@ -355,3 +355,86 @@ func TestReadiness_panics_on_a_nil_Monitor(t *testing.T) {
 		health.Readiness(nil)
 	})
 }
+
+func TestService_returned_from_Init(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var reachable bool // a stand-in for a database
+		ping := func(ctx context.Context) error {
+			if !reachable {
+				return errors.New("connection refused")
+			}
+			return nil
+		}
+
+		var working health.Binary // marked unhealthy when only a restart would fix the process
+		working.MarkHealthy()
+
+		probes := make(chan health.Probes, 1)
+		app := humus.App{
+			Host:                humustest.NewHost(t).Host(),
+			Telemetry:           telemetry.NoopBuilder,
+			ShutdownGracePeriod: 10 * time.Second,
+			DrainDelay:          5 * time.Second,
+			Init: func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+				hs := health.NewService(
+					health.Liveness(&working),
+					health.Readiness(health.MonitorFunc(func(ctx context.Context) (bool, error) {
+						return ping(ctx) == nil, nil
+					})),
+				)
+				probes <- hs.Probes() // where an HTTP or gRPC Service would expose them
+				return []humus.Service{hs}, nil
+			},
+		}
+
+		p := bedrocktest.NewProcess(t)
+		status := make(chan bedrock.ExitStatus, 1)
+		go func() { status <- app.Run(t.Context(), p.Process()) }()
+
+		<-p.Notified(syscall.SIGTERM)
+		synctest.Wait() // Serve has started
+		pr := <-probes
+		require.True(t, ready(t, pr.Liveness))
+		require.False(t, ready(t, pr.Readiness), "ready while the database is unreachable")
+
+		reachable = true
+		require.True(t, ready(t, pr.Readiness))
+
+		working.MarkUnhealthy()
+		require.False(t, ready(t, pr.Liveness))
+
+		p.Signal(syscall.SIGTERM)
+		synctest.Wait()
+		require.False(t, ready(t, pr.Readiness))
+
+		require.Zero(t, (<-status).Code())
+	})
+}
+
+func TestService_not_returned_from_Init_never_turns_ready(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		forgotten := health.NewService()
+		served := health.NewService()
+		app := humus.App{
+			Host:                humustest.NewHost(t).Host(),
+			Telemetry:           telemetry.NoopBuilder,
+			ShutdownGracePeriod: 10 * time.Second,
+			Init: func(context.Context, *humus.Setup) ([]humus.Service, error) {
+				return []humus.Service{served}, nil // forgotten is not returned
+			},
+		}
+
+		p := bedrocktest.NewProcess(t)
+		status := make(chan bedrock.ExitStatus, 1)
+		go func() { status <- app.Run(t.Context(), p.Process()) }()
+
+		<-p.Notified(syscall.SIGTERM)
+		synctest.Wait() // the App is serving
+		require.True(t, ready(t, served.Probes().Readiness))
+		require.False(t, ready(t, forgotten.Probes().Readiness))
+
+		p.Signal(syscall.SIGTERM)
+		require.Zero(t, (<-status).Code())
+		require.False(t, ready(t, forgotten.Probes().Readiness))
+	})
+}

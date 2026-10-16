@@ -20,7 +20,10 @@ through its own accepted proposal, and its pages are written here as it lands.
 The App lifecycle has landed in the root package:
 [The App lifecycle]({{< relref "lifecycle" >}}) explains `humus.App`, which every
 humus app type is built on. The runtime packages built on it have not landed
-yet. [Configuring a humus service]({{< relref "configuration" >}}) explains how
+yet. The core of the `health` package has landed too:
+[Health]({{< relref "health" >}}) explains monitors, liveness and readiness,
+and the health Service that owns an App's readiness.
+[Configuring a humus service]({{< relref "configuration" >}}) explains how
 a service's settings are sourced, [Telemetry]({{< relref "telemetry" >}})
 explains how a service gets its OpenTelemetry providers, and
 [Testing a humus App]({{< relref "testing" >}}) explains how to run a whole
