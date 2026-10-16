@@ -23,10 +23,10 @@ import (
 // The configuration page of the docs site quotes the code in this file, and
 // TestDocs_code_samples checks that every quote still matches it.
 //
-// No humus package exports Settings yet, so Settings, DefaultSettings, the
-// Check functions and NewGreeter stand in for those of a humus package with
-// settings, in the shape every such package gives them. The first package
-// with settings replaces them with its own.
+// Settings, DefaultSettings, the Check functions and NewGreeter stand in for
+// those of a humus package with settings, in the shape every such package
+// gives them, as the telemetry package does. example_telemetry_test.go
+// sources telemetry.Settings with the same pattern.
 
 // Settings configures a Greeter. Every field is a plain value, and a field's
 // zero value means zero, never "use the default".

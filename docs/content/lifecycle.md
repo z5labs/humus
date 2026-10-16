@@ -24,7 +24,9 @@ process, is the advanced path. Read this page before taking it; read it, too,
 to understand what the App a runtime package builds for you does.
 
 Telemetry is part of the lifecycle: the App builds it before `Init`, logs
-through it, and shuts it down last. See [Telemetry](#telemetry). Health is not
+through it, and shuts it down last. See [Telemetry](#telemetry) below, and
+the [Telemetry]({{< relref "telemetry" >}}) page for what a service does with
+it. Health is not
 part of the lifecycle yet. It is added by
 [Proposal: health monitors and probes](https://github.com/z5labs/humus/discussions/634),
 which integrates it with the lifecycle when it lands.
@@ -264,6 +266,9 @@ and it is required. In `main` it is the end user's own `Builder`, such as
 however it likes and calls `telemetry.New`. In a test it is
 `telemetry.NoopBuilder`, or the `Builder` of humustest's recorder,
 `humustest.Telemetry`, when the test asserts on what the App emits.
+[Telemetry]({{< relref "telemetry" >}}) explains how to write the `Builder`,
+what the defaults are, the console log format, and how logs get their trace
+context.
 
 **Telemetry is built after `NotifyContext` and before `Init`.** `Run` calls
 `App.Telemetry` with the context that a signal cancels, the `Process`, and the
