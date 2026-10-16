@@ -63,9 +63,14 @@ func (s *fakeService) calls() int {
 	return s.shutdownCalls
 }
 
-// appWith returns an App on OSHost whose Init is init.
+// appWith returns an App on OSHost with a 10s ShutdownGracePeriod whose
+// Init is init.
 func appWith(init func(ctx context.Context, s *humus.Setup) ([]humus.Service, error)) humus.App {
-	return humus.App{Host: humus.OSHost(), Init: init}
+	return humus.App{
+		Host:                humus.OSHost(),
+		ShutdownGracePeriod: 10 * time.Second,
+		Init:                init,
+	}
 }
 
 // servicesOf returns an Init that returns svcs.
@@ -114,8 +119,9 @@ func TestApp_Run_a_whole_App(t *testing.T) {
 
 		var poolClosedAt time.Time
 		app := humus.App{
-			Host:       humus.OSHost(), // the fake Services never use it
-			DrainDelay: 5 * time.Second,
+			Host:                humus.OSHost(), // the fake Services never use it
+			ShutdownGracePeriod: 10 * time.Second,
+			DrainDelay:          5 * time.Second,
 			Init: func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
 				s.OnStop(func(context.Context) error {
 					poolClosedAt = time.Now()
@@ -125,9 +131,7 @@ func TestApp_Run_a_whole_App(t *testing.T) {
 			},
 		}
 
-		p := bedrocktest.NewProcess(t, bedrocktest.WithEnv(map[string]string{
-			"HUMUS_SHUTDOWN_GRACE_PERIOD": "10s",
-		}))
+		p := bedrocktest.NewProcess(t)
 		status := make(chan bedrock.ExitStatus, 1)
 		go func() { status <- app.Run(t.Context(), p.Process()) }()
 

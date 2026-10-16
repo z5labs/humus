@@ -34,8 +34,8 @@ const (
 )
 
 // waitLimit bounds every wait of a subtest for the Service: for Serve to
-// return, and for the context given to Shutdown to run out. It is the App's
-// default ShutdownGracePeriod, and it passes in fake time.
+// return, and for the context given to Shutdown to run out. It is the
+// ShutdownGracePeriod of the App a subtest runs, and it passes in fake time.
 const waitLimit = 10 * time.Second
 
 // The messages synctest panics with when a bubble deadlocks. A goroutine
@@ -195,7 +195,8 @@ func (st *subtest) run(newService func(*testing.T, *humus.Setup) humus.Service, 
 		done:    make(chan struct{}),
 	}
 	app := humus.App{
-		Host: host.Host(),
+		Host:                host.Host(),
+		ShutdownGracePeriod: waitLimit,
 		Init: func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 			select {
 			case setups <- s:

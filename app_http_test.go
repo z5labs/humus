@@ -136,7 +136,8 @@ func (j *job) Shutdown(context.Context) error {
 // handler on :8080, followed by more.
 func httpApp(h *humustest.Host, handler http.Handler, more ...humus.Service) humus.App {
 	return humus.App{
-		Host: h.Host(),
+		Host:                h.Host(),
+		ShutdownGracePeriod: 10 * time.Second,
 		Init: func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
 			return append([]humus.Service{newHTTPService(s, ":8080", handler)}, more...), nil
 		},
@@ -306,7 +307,8 @@ func TestApp_Run_HTTP_a_job_ends_the_App_and_stops_the_other_Services(t *testing
 			_, _ = io.WriteString(w, "ok")
 		})
 		app := humus.App{
-			Host: h.Host(),
+			Host:                h.Host(),
+			ShutdownGracePeriod: 10 * time.Second,
 			Init: func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
 				return []humus.Service{newJob(time.Second), newHTTPService(s, ":8081", probe)}, nil
 			},
@@ -462,7 +464,8 @@ func TestApp_Run_HTTPS_with_a_PKCS12_bundle_from_NewCA(t *testing.T) {
 			_, _ = io.WriteString(w, "hello over TLS")
 		})
 		app := humus.App{
-			Host: h.Host(),
+			Host:                h.Host(),
+			ShutdownGracePeriod: 10 * time.Second,
 			Init: func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 				cfg, err := tlsFromPKCS12(ctx, s)
 				if err != nil {
@@ -512,7 +515,8 @@ func TestApp_Run_HTTPS_a_wrong_password_exits_1_with_the_cause(t *testing.T) {
 			"etc/tls/server.p12": bundle,
 		}))
 		app := humus.App{
-			Host: h.Host(),
+			Host:                h.Host(),
+			ShutdownGracePeriod: 10 * time.Second,
 			Init: func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 				if _, err := tlsFromPKCS12(ctx, s); err != nil {
 					return nil, err

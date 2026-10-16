@@ -82,7 +82,8 @@ func TestApp_Run_HTTP_a_whole_App_on_a_test_Host(t *testing.T) {
 ```go
 func httpApp(h *humustest.Host, handler http.Handler, more ...humus.Service) humus.App {
 	return humus.App{
-		Host: h.Host(),
+		Host:                h.Host(),
+		ShutdownGracePeriod: 10 * time.Second,
 		Init: func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
 			return append([]humus.Service{newHTTPService(s, ":8080", handler)}, more...), nil
 		},
@@ -283,7 +284,8 @@ func TestApp_Run_HTTPS_with_a_PKCS12_bundle_from_NewCA(t *testing.T) {
 			_, _ = io.WriteString(w, "hello over TLS")
 		})
 		app := humus.App{
-			Host: h.Host(),
+			Host:                h.Host(),
+			ShutdownGracePeriod: 10 * time.Second,
 			Init: func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 				cfg, err := tlsFromPKCS12(ctx, s)
 				if err != nil {
