@@ -46,7 +46,8 @@
 // An App reaches the network and the filesystem only through its [Host]:
 // [OSHost] in main, and a Host the test controls in a test, so a whole App
 // runs inside a test under testing/synctest with bedrocktest's fake process.
-// Health is not part of the lifecycle yet; it is added by its own package.
+// Health is a Service that the health package provides: the end user's Init
+// returns it next to the App's other Services.
 //
 // The lifecycle, its settings, its exit codes and the dependencies that leak
 // around it are documented at https://z5labs.github.io/humus/lifecycle/.
@@ -60,8 +61,9 @@
 // lifecycle has landed: App builds its telemetry, runs Services, shuts them
 // down within a grace period, releases what Init registered with
 // Setup.OnStop, shuts its telemetry down and turns the outcome into an exit
-// status. The runtime packages that build their Apps
-// on it have not landed yet.
+// status. The health package's core is back: monitors, probes and a health
+// Service that owns an App's readiness. The runtime packages that build their
+// Apps on it have not landed yet.
 //
 // The plan is in the charter, Proposal: humus on the bedrock process model:
 // https://github.com/z5labs/humus/discussions/629
