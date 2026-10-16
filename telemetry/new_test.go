@@ -499,10 +499,118 @@ func TestNew_Shutdown_returns_within_ShutdownTimeout_when_the_receiver_never_ans
 				}
 				mu.Unlock()
 				// Shutdown returns at its deadline, but an export already
-				// in flight runs on until its own OTLP.Timeout, retrying.
-				// Every goroutine of the bubble must end before it does.
-				time.Sleep(time.Minute)
+				// in flight runs on until OTLP.Timeout, retrying. Every
+				// goroutine of the bubble must end before it does.
+				time.Sleep(s.OTLP.Timeout)
 			})
 		})
 	}
+}
+
+// neverAnswer accepts every connection to ln and never reads from or
+// writes to it, until the returned function closes them all.
+func neverAnswer(ln net.Listener) (closeAll func()) {
+	var mu sync.Mutex
+	var held []net.Conn
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			held = append(held, conn)
+			mu.Unlock()
+		}
+	}()
+	return func() {
+		_ = ln.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, conn := range held {
+			_ = conn.Close()
+		}
+	}
+}
+
+func TestNew_OTLP_Timeout_bounds_each_export(t *testing.T) {
+	t.Parallel()
+
+	for _, protocol := range []telemetry.Protocol{telemetry.ProtocolGRPC, telemetry.ProtocolHTTPProtobuf} {
+		t.Run(string(protocol), func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				host := humustest.NewHost(t)
+				closeAll := neverAnswer(listen(t, host, "otlp:4317"))
+				defer closeAll()
+
+				s := telemetry.DefaultSettings()
+				s.Traces = telemetry.ExporterOTLP
+				s.Metrics = telemetry.ExporterOTLP
+				s.Logs = telemetry.ExporterOTLP
+				s.OTLP.Endpoint = "otlp:4317"
+				s.OTLP.Protocol = protocol
+				s.OTLP.Timeout = time.Second
+				s.ShutdownTimeout = time.Minute
+				sdk, err := telemetry.New(t.Context(), s, host.Dial, nil)
+				require.NoError(t, err)
+
+				_, span := sdk.TracerProvider.Tracer("carts").Start(t.Context(), "create cart")
+				span.End()
+				counter, err := sdk.MeterProvider.Meter("carts").Int64Counter("carts.created")
+				require.NoError(t, err)
+				counter.Add(t.Context(), 1)
+				var r log.Record
+				r.SetBody(attribute.StringValue("cart created"))
+				sdk.LoggerProvider.Logger("carts").Emit(t.Context(), r)
+
+				// Shutdown exports what is pending; each export gives up
+				// after OTLP.Timeout, long before ShutdownTimeout.
+				start := time.Now()
+				_ = sdk.Shutdown(context.Background())
+				require.LessOrEqual(t, time.Since(start), s.OTLP.Timeout)
+			})
+		})
+	}
+}
+
+// blockingWriter blocks every Write until release is closed.
+type blockingWriter struct {
+	writing chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (w *blockingWriter) Write(p []byte) (int, error) {
+	w.once.Do(func() { close(w.writing) })
+	<-w.release
+	return len(p), nil
+}
+
+func TestNew_Shutdown_returns_within_ShutdownTimeout_when_stdout_blocks(t *testing.T) {
+	t.Parallel()
+
+	// Not in a synctest bubble: the span processor's Shutdown waits on a
+	// mutex the blocked export holds, and a goroutine waiting on a mutex
+	// is not durably blocked, so the bubble's clock would never reach the
+	// deadline.
+	out := &blockingWriter{writing: make(chan struct{}), release: make(chan struct{})}
+	defer close(out.release)
+
+	s := telemetry.DefaultSettings()
+	s.Traces = telemetry.ExporterConsole
+	s.ShutdownTimeout = 100 * time.Millisecond
+	sdk, err := telemetry.New(t.Context(), s, failingDialer(t), out)
+	require.NoError(t, err)
+
+	go func() {
+		_, span := sdk.TracerProvider.Tracer("carts").Start(context.Background(), "create cart")
+		span.End()
+	}()
+	<-out.writing
+
+	start := time.Now()
+	err = sdk.Shutdown(context.Background())
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Less(t, time.Since(start), 5*time.Second, "Shutdown returns about ShutdownTimeout after it was called")
 }

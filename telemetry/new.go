@@ -31,6 +31,7 @@ import (
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/exemplar"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
@@ -117,16 +118,20 @@ const (
 // set to s.ServiceName, so it wins over anything a detector finds. If a
 // resource option fails, even partly, New fails.
 //
-// New reads nothing from the environment. The OpenTelemetry SDK reads an
-// environment variable for each option it is not given, so New gives it
-// every one, at the SDK's default where Settings has no field: the sampler,
-// the span and log record limits, the batch processors' and periodic
-// reader's settings, the OTLP endpoint, headers, TLS, compression and
-// timeout, and the resource. The SDK also merges OTEL_RESOURCE_ATTRIBUTES
+// What New builds does not depend on the environment. The OpenTelemetry SDK
+// reads an environment variable for each option it is not given, so New
+// gives it every one, at the SDK's default where Settings has no field: the
+// sampler, the span and log record limits, the batch processors' and
+// periodic reader's settings, the OTLP endpoint, headers, TLS, compression
+// and timeout, and the resource. The SDK also merges OTEL_RESOURCE_ATTRIBUTES
 // into a resource it is given; New takes those attributes out again before
-// anything is exported. What still reads the environment is OpenTelemetry's
-// experimental OTEL_GO_X_* features, its internal logger, and any resource
-// detector s.ResourceOptions opts in to.
+// anything is exported. The SDK still reads some variables only to discard
+// what it read: the exporters resolve their OTEL_EXPORTER_OTLP_* settings,
+// certificate files included, before New's options replace them, and the
+// MeterProvider computes resource.Default before New's resource replaces
+// it. What does still take effect is OpenTelemetry's experimental
+// OTEL_GO_X_* features, its internal logger, and any resource detector
+// s.ResourceOptions opts in to.
 func New(ctx context.Context, s Settings, dial Dialer, stdout io.Writer) (SDK, error) {
 	if s.Disabled {
 		return Noop(), nil
@@ -213,24 +218,52 @@ func (b *builder) build(ctx context.Context) (SDK, error) {
 
 // shutdown flushes and stops every provider within s.ShutdownTimeout, then
 // releases the OTLP connections, and returns every error, joined.
+//
+// It returns by the deadline even when a provider does not: a console
+// exporter blocked writing to stdout holds up its provider's Shutdown
+// whatever the context says. The error of a provider still running at the
+// deadline is the context's.
 func (b *builder) shutdown(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, b.s.ShutdownTimeout)
 	defer cancel()
 
-	errs := make([]error, len(b.providers), len(b.providers)+1)
+	var mu sync.Mutex
+	var errs []error
 	var wg sync.WaitGroup
-	for i, shutdown := range b.providers {
-		wg.Go(func() { errs[i] = shutdown(ctx) })
+	for _, shutdown := range b.providers {
+		wg.Go(func() {
+			err := shutdown(ctx)
+			mu.Lock()
+			defer mu.Unlock()
+			errs = append(errs, err)
+		})
 	}
-	wg.Wait()
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+
+	// A provider still running appends to errs after this; out is what
+	// had arrived by now.
+	mu.Lock()
+	out := slices.Clone(errs)
+	mu.Unlock()
+	if len(out) < len(b.providers) {
+		out = append(out, fmt.Errorf("telemetry: shutdown: %w", ctx.Err()))
+	}
 
 	if b.conn != nil {
-		errs = append(errs, b.conn.Close())
+		out = append(out, b.conn.Close())
 	}
 	if b.transport != nil {
 		b.transport.CloseIdleConnections()
 	}
-	return errors.Join(errs...)
+	return errors.Join(out...)
 }
 
 func (b *builder) tracerProvider(ctx context.Context) (*sdktrace.TracerProvider, error) {
@@ -251,6 +284,7 @@ func (b *builder) tracerProvider(ctx context.Context) (*sdktrace.TracerProvider,
 		if err != nil {
 			return nil, err
 		}
+		exp = timeoutSpanExporter{SpanExporter: exp, timeout: b.s.OTLP.Timeout}
 		opts = append(opts, sdktrace.WithSpanProcessor(sdktrace.NewBatchSpanProcessor(
 			b.spanExporter(exp),
 			sdktrace.WithBatchTimeout(bspScheduleDelay),
@@ -284,7 +318,6 @@ func (b *builder) otlpSpanExporter(ctx context.Context) (sdktrace.SpanExporter, 
 		otlptracegrpc.WithGRPCConn(conn),
 		otlptracegrpc.WithHeaders(b.s.OTLP.Headers),
 		otlptracegrpc.WithTimeout(b.s.OTLP.Timeout),
-		otlptracegrpc.WithCompressor("none"),
 	)
 }
 
@@ -302,6 +335,7 @@ func (b *builder) meterProvider(ctx context.Context) (metric.MeterProvider, erro
 		)
 	case ExporterOTLP:
 		exp, err = b.otlpMetricExporter(ctx)
+		exp = timeoutMetricExporter{Exporter: exp, timeout: b.s.OTLP.Timeout}
 	}
 	if err != nil {
 		return nil, err
@@ -341,7 +375,6 @@ func (b *builder) otlpMetricExporter(ctx context.Context) (sdkmetric.Exporter, e
 		otlpmetricgrpc.WithGRPCConn(conn),
 		otlpmetricgrpc.WithHeaders(b.s.OTLP.Headers),
 		otlpmetricgrpc.WithTimeout(b.s.OTLP.Timeout),
-		otlpmetricgrpc.WithCompressor("none"),
 		otlpmetricgrpc.WithTemporalitySelector(sdkmetric.DefaultTemporalitySelector),
 		otlpmetricgrpc.WithAggregationSelector(sdkmetric.DefaultAggregationSelector),
 	)
@@ -359,7 +392,7 @@ func (b *builder) loggerProvider(ctx context.Context) (log.LoggerProvider, error
 		if err != nil {
 			return nil, err
 		}
-		proc = sdklog.NewBatchProcessor(exp,
+		proc = sdklog.NewBatchProcessor(timeoutLogExporter{Exporter: exp, timeout: b.s.OTLP.Timeout},
 			sdklog.WithExportInterval(blrpScheduleDelay),
 			sdklog.WithExportTimeout(blrpExportTimeout),
 			sdklog.WithMaxQueueSize(blrpMaxQueueSize),
@@ -395,7 +428,6 @@ func (b *builder) otlpLogExporter(ctx context.Context) (sdklog.Exporter, error) 
 		otlploggrpc.WithGRPCConn(conn),
 		otlploggrpc.WithHeaders(b.s.OTLP.Headers),
 		otlploggrpc.WithTimeout(b.s.OTLP.Timeout),
-		otlploggrpc.WithCompressor("none"),
 	)
 }
 
@@ -416,6 +448,9 @@ func (b *builder) url(path string) string {
 
 // grpcConn returns the gRPC connection the OTLP exporters share, making it
 // on the first call. grpc.NewClient does not dial: the first export does.
+// The connection is made without a compressor, and an exporter given a
+// connection takes its compression from it, so neither New's options nor
+// OTEL_EXPORTER_OTLP_COMPRESSION compress gRPC exports.
 //
 // The passthrough resolver hands the endpoint to dial as it is, so that a
 // name is resolved by the Host, not by DNS, and no proxy is used, so that
@@ -454,10 +489,16 @@ func (b *builder) httpClient() *http.Client {
 		DialContext:     b.dial,
 		TLSClientConfig: b.s.OTLP.TLS.Clone(),
 	}
-	b.client = &http.Client{Transport: &resourceFilterTransport{
-		base:   b.transport,
-		filter: newResourceFilter(b.res),
-	}}
+	b.client = &http.Client{
+		Transport: &resourceFilterTransport{
+			base:   b.transport,
+			filter: newResourceFilter(b.res),
+		},
+		// The exporters apply their own timeout only to a client they make
+		// themselves. Each export is bounded by the timeout*Exporter
+		// wrappers; this bounds each request within it, as theirs would.
+		Timeout: b.s.OTLP.Timeout,
+	}
 	return b.client
 }
 
@@ -501,4 +542,42 @@ func (f severityFilter) OnEmit(ctx context.Context, r *sdklog.Record) error {
 		return nil
 	}
 	return f.Processor.OnEmit(ctx, r)
+}
+
+// The OTLP exporters over HTTP apply OTLP.Timeout only to a client they
+// make themselves, and New gives them its own, so the timeout*Exporter
+// wrappers bound every OTLP export, retries included, by OTLP.Timeout,
+// whatever the protocol.
+
+type timeoutSpanExporter struct {
+	sdktrace.SpanExporter
+	timeout time.Duration
+}
+
+func (e timeoutSpanExporter) ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error {
+	ctx, cancel := context.WithTimeout(ctx, e.timeout)
+	defer cancel()
+	return e.SpanExporter.ExportSpans(ctx, spans)
+}
+
+type timeoutMetricExporter struct {
+	sdkmetric.Exporter
+	timeout time.Duration
+}
+
+func (e timeoutMetricExporter) Export(ctx context.Context, rm *metricdata.ResourceMetrics) error {
+	ctx, cancel := context.WithTimeout(ctx, e.timeout)
+	defer cancel()
+	return e.Exporter.Export(ctx, rm)
+}
+
+type timeoutLogExporter struct {
+	sdklog.Exporter
+	timeout time.Duration
+}
+
+func (e timeoutLogExporter) Export(ctx context.Context, records []sdklog.Record) error {
+	ctx, cancel := context.WithTimeout(ctx, e.timeout)
+	defer cancel()
+	return e.Exporter.Export(ctx, records)
 }

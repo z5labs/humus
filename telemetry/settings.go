@@ -72,6 +72,14 @@ type Settings struct {
 	// alone. A detector reads the real host, not the humus.Host: opt in to
 	// one, such as resource.WithHost(), knowingly.
 	//
+	// New fails if any of them fails, even partly, with
+	// resource.ErrPartialResource. Some detectors fail where their attribute
+	// cannot be found: resource.WithProcess includes the process owner,
+	// which cannot be looked up in an image without a passwd entry for its
+	// user. Opt in to the detectors whose attributes the service's
+	// environment has, such as resource.WithProcessPID, rather than to a
+	// group of them.
+	//
 	// Default: none. Valid: any. Spec variable: OTEL_RESOURCE_ATTRIBUTES,
 	// as resource.WithAttributes.
 	ResourceOptions []resource.Option
@@ -161,7 +169,8 @@ type OTLPSettings struct {
 	// OTEL_EXPORTER_OTLP_CERTIFICATE and the related variables.
 	TLS *tls.Config
 
-	// Timeout bounds each export.
+	// Timeout bounds each export, its retries included, over either
+	// protocol.
 	//
 	// Default: 10s. Valid: positive. Check: CheckOTLPTimeout. Spec
 	// variable: OTEL_EXPORTER_OTLP_TIMEOUT.
