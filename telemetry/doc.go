@@ -5,6 +5,21 @@
 
 // Package telemetry sets up OpenTelemetry for a humus service.
 //
+// An App's OpenTelemetry providers are one [SDK] value, handed to its
+// Services, so nothing reads or sets OpenTelemetry's globals. [New] builds
+// one from a plain [Settings] value, which the end user's [Builder] sources
+// however it likes, starting from [DefaultSettings]:
+//
+//	func buildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+//		s := telemetry.DefaultSettings()
+//		s.ServiceName = "carts"
+//		return telemetry.New(ctx, s, dial, p.Stdout)
+//	}
+//
+// The package reads no environment variables. With the defaults, log
+// records are written to stdout in the format below, spans are not exported
+// but still get real IDs, so the logs carry them, and metrics are a no-op.
+//
 // # Console log format
 //
 // When a service's logs are written to the console, each log record is
