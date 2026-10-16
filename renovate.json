@@ -1,7 +1,7 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended",
+    "config:best-practices",
     "abandonments:recommended"
   ],
   "ignorePaths": [
@@ -34,14 +34,26 @@
         "digest"
       ],
       "groupName": "Patch and digest versions",
-      "groupSlug": "patch-digest"
+      "groupSlug": "patch-digest",
+      "automerge": true
     },
     {
       "matchUpdateTypes": [
         "minor"
       ],
       "groupName": "Minor versions",
-      "groupSlug": "minor"
+      "groupSlug": "minor",
+      "automerge": true
+    },
+    {
+      "description": "The minimum Go version in go.mod follows a support schedule, so it is bumped by hand",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchDepNames": [
+        "go"
+      ],
+      "enabled": false
     }
   ],
   "postUpdateOptions": [
