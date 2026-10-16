@@ -9,7 +9,14 @@ REST, gRPC, jobs, queues — provides an App of its own, built on &lt;code&gt;hu
 with that package&amp;rsquo;s defaults, and that is the API most users touch. Using
 &lt;code&gt;humus.App&lt;/code&gt; directly, for example to run a REST API and a gRPC service in one
 process, is the advanced path. Read this page before taking it; read it, too,
-to understand what the App a runtime package builds for you does.&lt;/p&gt;</description></item><item><title>Testing a humus App</title><link>https://z5labs.github.io/humus/testing/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/testing/</guid><description>&lt;p&gt;A humus App runs whole inside a test. Two packages make that possible, and a
+to understand what the App a runtime package builds for you does.&lt;/p&gt;</description></item><item><title>Configuring a humus service</title><link>https://z5labs.github.io/humus/configuration/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/configuration/</guid><description>&lt;p&gt;humus packages are configured with plain Go values. They read no environment
+variables, define no variable names and read no files on your behalf. Every
+value is sourced in your own &lt;code&gt;Init&lt;/code&gt;, with whatever names and formats your
+service already uses: an environment variable called &lt;code&gt;READ_TIMEOUT&lt;/code&gt; or
+&lt;code&gt;MYSVC_HTTP_READ_TIMEOUT&lt;/code&gt;, a duration written &lt;code&gt;5s&lt;/code&gt;, a file of PEM, a flag. The
+usual tool is bedrock&amp;rsquo;s
+&lt;a href="https://pkg.go.dev/github.com/z5labs/bedrock/config"&gt;&lt;code&gt;config&lt;/code&gt;&lt;/a&gt; package, and
+this page uses it throughout.&lt;/p&gt;</description></item><item><title>Testing a humus App</title><link>https://z5labs.github.io/humus/testing/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/testing/</guid><description>&lt;p&gt;A humus App runs whole inside a test. Two packages make that possible, and a
 whole-App test imports both:&lt;/p&gt;
 &lt;ul&gt;
 &lt;li&gt;&lt;a href="https://pkg.go.dev/github.com/z5labs/bedrock/bedrocktest"&gt;bedrocktest&lt;/a&gt;
