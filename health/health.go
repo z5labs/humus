@@ -62,7 +62,7 @@ func (b *Binary) Healthy(ctx context.Context) (bool, error) {
 // checking the rest. An AndMonitor with no monitors is healthy.
 type AndMonitor []Monitor
 
-// And is a simple helper for initializing a [AndMonitor] in a more functional style.
+// And is a simple helper for initializing an [AndMonitor] in a more functional style.
 func And(ms ...Monitor) AndMonitor {
 	return AndMonitor(ms)
 }
@@ -88,7 +88,7 @@ func (am AndMonitor) Healthy(ctx context.Context) (bool, error) {
 // OrMonitor with no monitors is unhealthy.
 type OrMonitor []Monitor
 
-// Or is a simple helper for initializing a [OrMonitor] in a more functional style.
+// Or is a simple helper for initializing an [OrMonitor] in a more functional style.
 func Or(ms ...Monitor) OrMonitor {
 	return OrMonitor(ms)
 }
