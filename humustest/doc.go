@@ -13,6 +13,8 @@
 //     dials, and whose filesystem is confined to the test's own temp
 //     directory;
 //   - a certificate authority, [NewCA], generated for each test;
+//   - [Telemetry], which records the spans, metrics and log records an App
+//     emits in memory, for a test to assert on;
 //   - [TestService], the contract every humus.Service must pass.
 //
 // A whole-App test imports both. The network opens no real socket and
