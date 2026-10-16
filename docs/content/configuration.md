@@ -188,18 +188,32 @@ init: config READ_TIMEOUT: must not be negative
 config MAX_CONNS: strconv.Atoi: parsing "lots": invalid syntax
 ```
 
+The lifecycle wraps the error `Init` returns once, as `init: <error>`, and
+writes it as it renders. `config.Struct` joins its failures with
+`errors.Join`, which renders one line per failure, so only the first line
+carries the `init: ` prefix. Every line that names a bad variable starts
+`config `, prefix or not, and that is the word to search for.
+
 And with `GREETING_FILE` naming a file that does not exist:
 
 ```
 init: config GREETING_FILE: openat etc/greeter/greeting.txt: no such file or directory
 ```
 
+The cause is whatever the Host's `FS` returned. This output is from the
+example, on a humustest Host, whose `FS` opens files through an `os.Root`,
+hence `openat`. On `humus.OSHost()` the same file fails with
+`open <path>: no such file or directory`.
+
 Every error a `config.Value` returns is a
 [`*config.Error`](https://pkg.go.dev/github.com/z5labs/bedrock/config#Error).
 When one is in the chain of the error `Init` returns, the App exits 78
 (`humus.ExitConfig`, `EX_CONFIG` from `sysexits.h`), which tells an operator
-"fix the configuration" apart from "the service failed". A test finds the
-variable with `errors.AsType[*config.Error]`. The
+"fix the configuration" apart from "the service failed".
+`errors.AsType[*config.Error]` finds the first bad variable in the chain, which
+is `READ_TIMEOUT` in the run above. A test that checks every bad variable
+walks the joined error, whose `Unwrap() []error` returns one `*config.Error`
+per variable, or compares the whole of standard error. The
 [lifecycle's exit codes]({{< relref "lifecycle#exit-codes" >}}) list the rest.
 
 ## Building Settings in code
@@ -265,6 +279,13 @@ your decisions. `Init` is given the same `Process` and `Host` that humus has,
 so it can log anything it wants, environment variables included, to
 `s.Process.Stderr` or to a logger of its own.
 
+What humus does write is the error `Init` returns, to standard error, and a
+parse error often quotes the value it could not parse: `parsing "lots"` above.
+A malformed secret, such as a token in the wrong format or a key that does not
+decode, would be written the same way. Keeping a secret out of that error is
+part of the same choice: give the secret's chain a parser of your own whose
+error says what is wrong without quoting the input.
+
 ## Testing it
 
 Settings are tested by running the whole App: a
@@ -285,6 +306,11 @@ app := humus.App{
 fp := bedrocktest.NewProcess(t, bedrocktest.WithEnv(env))
 status := app.Run(context.Background(), fp.Process())
 ```
+
+`ShutdownGracePeriod` is the lifecycle's own setting, not the Greeter's. The
+grace period must be positive and humus has no default of its own, so an App
+sets it unless `HUMUS_SHUTDOWN_GRACE_PERIOD` is always set; left at zero, the
+App would exit 78 naming that variable before `Init` ran.
 
 A relative name given to the humustest Host's `FS` is relative to the test's
 temp directory, and an absolute one, from `h.Path`, must be inside it, so a
