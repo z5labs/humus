@@ -48,9 +48,9 @@ type Service interface {
 	// done. It returns nil when Shutdown stopped it or it finished.
 	//
 	// ctx is done as soon as the App starts shutting down, before the
-	// App's drain delay. A Service may stop on it, as a job or a queue
-	// consumer does, or keep serving until Shutdown, as an HTTP, gRPC or
-	// health Service does.
+	// App's drain delay. A Service may stop on it, as a job, a queue
+	// consumer or a health Service does, or keep serving until Shutdown,
+	// as an HTTP or gRPC Service does.
 	Serve(ctx context.Context) error
 
 	// Shutdown stops the Service gracefully. The App calls it on every
