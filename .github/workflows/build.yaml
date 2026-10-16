@@ -90,6 +90,14 @@ jobs:
             done
             exit "$failed"
 
+        # The loopback half of humustest's conformance test opens real
+        # sockets on 127.0.0.1 and 127.0.0.2, so it is behind the
+        # conformance build tag and runs here rather than with the unit
+        # tests.
+        - name: Conformance
+          if: ${{ !cancelled() }}
+          run: go test -race -tags conformance -run '^TestConformance_' ./humustest/
+
         - name: Require 80% statement coverage of every library package
           if: ${{ !cancelled() }}
           run: .github/scripts/coverage-gate.sh 80 "$RUNNER_TEMP/packages.txt" "$RUNNER_TEMP/coverage.out"
