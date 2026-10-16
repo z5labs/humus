@@ -48,6 +48,21 @@
 //		})),
 //	}
 //
+// # The health Service
+//
+// A [Service] owns an App's readiness. The end user's Init builds one with
+// [NewService], adding monitors to its probes with [Liveness] and
+// [Readiness], and returns it next to the App's other Services. Its
+// readiness turns true once its Serve starts, and false as soon as its
+// Serve context is done, which is when the App starts shutting down, before
+// the drain delay. A load balancer then stops sending the App traffic while
+// it drains. [Service.Probes] returns its probes:
+//
+//	hs := health.NewService(health.Readiness(health.MonitorFunc(func(ctx context.Context) (bool, error) {
+//		return pool.Ping(ctx) == nil, nil
+//	})))
+//	return []humus.Service{api, hs}, nil
+//
 // health serves no protocol: nothing in it opens a port or answers an
 // orchestrator's probes, and it depends on nothing but the standard library.
 // Exposing probes is Proposal: exposing health probes, in wave 3 of the

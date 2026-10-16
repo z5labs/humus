@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/z5labs/humus/health"
 )
@@ -116,4 +117,42 @@ func ExampleMonitorFunc() {
 	// Output: true false
 	// true false
 	// true true
+}
+
+// A health Service owns readiness: it is not ready until its Serve starts,
+// ready while Serve runs and its monitors are healthy, and not ready for
+// good once Serve's context is done, which is when the App starts shutting
+// down. Here the App's part is played by hand.
+func ExampleNewService() {
+	var reachable health.Binary
+	hs := health.NewService(health.Readiness(health.MonitorFunc(func(ctx context.Context) (bool, error) {
+		return reachable.Healthy(ctx) // a stand-in for a database ping
+	})))
+	readiness := hs.Probes().Readiness
+
+	ready, _ := readiness.Healthy(context.Background())
+	fmt.Println("before Serve:", ready)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	served := make(chan error, 1)
+	go func() { served <- hs.Serve(ctx) }()
+
+	reachable.MarkHealthy()
+	for ready, _ = readiness.Healthy(context.Background()); !ready; ready, _ = readiness.Healthy(context.Background()) {
+		time.Sleep(time.Millisecond) // until Serve has started
+	}
+	fmt.Println("serving:", ready)
+
+	cancel() // the App starts shutting down
+	ready, _ = readiness.Healthy(context.Background())
+	fmt.Println("shutting down:", ready)
+
+	fmt.Println("Serve returned:", <-served)
+	fmt.Println("Shutdown returned:", hs.Shutdown(context.Background()))
+
+	// Output: before Serve: false
+	// serving: true
+	// shutting down: false
+	// Serve returned: <nil>
+	// Shutdown returned: <nil>
 }
