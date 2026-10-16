@@ -1,79 +1,63 @@
 {
-    "extends": [
-        "config:best-practices"
-    ],
-    "ignorePaths": ["docs/**"],
-    "osvVulnerabilityAlerts": true,
-    "schedule": [
-        "before 4am"
-    ],
-    "baseBranchPatterns": [
-        "main"
-    ],
-    "labels": [
-        "dependencies"
-    ],
-    "packageRules": [
-        {
-            "description": "Automerge non-major updates",
-            "matchUpdateTypes": ["minor", "patch"],
-            "automerge": true
-        },
-        {
-            "matchManagers": [
-                "gomod"
-            ],
-            "matchDepTypes": [
-                "indirect"
-            ],
-            "enabled": true
-        },
-        {
-            "groupName": "opentelemetry-go and opentelemetry-go-contrib monorepos",
-            "matchSourceUrls": [
-                "https://github.com/open-telemetry/opentelemetry-go",
-                "https://github.com/open-telemetry/opentelemetry-go-contrib"
-            ],
-            "matchUpdateTypes": [
-                "digest",
-                "patch",
-                "minor",
-                "major"
-            ]
-        },
-        {
-            "groupName": "google.golang.org/genproto/googleapis monorepo",
-            "matchDatasources": [
-                "go"
-            ],
-            "matchPackageNames": [
-                "google.golang.org/genproto/googleapis/**"
-            ],
-            "matchUpdateTypes": [
-                "digest",
-                "patch",
-                "minor",
-                "major"
-            ]
-        },
-        {
-            "groupName": "golang.org/x monorepo",
-            "matchDatasources": [
-                "go"
-            ],
-            "matchPackageNames": [
-                "golang.org/x/**"
-            ],
-            "matchUpdateTypes": [
-                "digest",
-                "patch",
-                "minor",
-                "major"
-            ]
-        }
-    ],
-    "postUpdateOptions": [
-        "gomodTidy",
-        "gomodUpdateImportPaths"
-    ]
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:best-practices",
+    "abandonments:recommended"
+  ],
+  "ignorePaths": [
+    "docs/**"
+  ],
+  "osvVulnerabilityAlerts": true,
+  "schedule": [
+    "before 4am"
+  ],
+  "baseBranchPatterns": [
+    "main"
+  ],
+  "labels": [
+    "renovate"
+  ],
+  "dependencyDashboardApproval": false,
+  "packageRules": [
+    {
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchDepTypes": [
+        "indirect"
+      ],
+      "enabled": true
+    },
+    {
+      "matchUpdateTypes": [
+        "patch",
+        "digest"
+      ],
+      "groupName": "Patch and digest versions",
+      "groupSlug": "patch-digest",
+      "automerge": true
+    },
+    {
+      "matchUpdateTypes": [
+        "minor"
+      ],
+      "groupName": "Minor versions",
+      "groupSlug": "minor",
+      "automerge": true
+    },
+    {
+      "description": "The minimum Go version in go.mod follows a support schedule, so it is bumped by hand",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchDepNames": [
+        "go"
+      ],
+      "enabled": false
+    }
+  ],
+  "postUpdateOptions": [
+    "gomodTidy",
+    "gomodUpdateImportPaths"
+  ]
 }
