@@ -29,7 +29,7 @@ func build(t *testing.T, tel *humustest.Telemetry) telemetry.SDK {
 	t.Helper()
 	sdk, err := tel.Builder()(t.Context(), bedrock.Process{}, nil)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = sdk.Shutdown(context.Background()) })
+	t.Cleanup(func() { require.NoError(t, sdk.Shutdown(context.Background())) })
 	return sdk
 }
 
@@ -121,6 +121,9 @@ func TestTelemetry_what_was_recorded_before_Shutdown_is_returned_after_it(t *tes
 	sdk := build(t, tel)
 
 	ctx, span := sdk.TracerProvider.Tracer("test").Start(t.Context(), "work")
+	counter, err := sdk.MeterProvider.Meter("test").Int64Counter("work.done")
+	require.NoError(t, err)
+	counter.Add(ctx, 2)
 	emit(ctx, sdk, log.SeverityInfo, "before")
 	span.End()
 
@@ -137,11 +140,36 @@ func TestTelemetry_what_was_recorded_before_Shutdown_is_returned_after_it(t *tes
 	_, after := sdk.TracerProvider.Tracer("test").Start(t.Context(), "after")
 	after.End()
 	emit(t.Context(), sdk, log.SeverityInfo, "after")
+	counter.Add(t.Context(), 5)
 	require.Len(t, tel.Spans(), 1)
 	require.Len(t, tel.Logs(), 1)
 
-	_, err := tel.Metrics(t.Context())
-	require.Error(t, err, "the reader is shut down with its provider")
+	rm, err := tel.Metrics(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, int64(2), counterValue(t, rm, "work.done"), "Metrics returns what Shutdown collected")
+}
+
+func TestTelemetry_Shutdown_twice_returns_nil_both_times(t *testing.T) {
+	tel := humustest.NewTelemetry()
+	sdk := build(t, tel)
+
+	require.NoError(t, sdk.Shutdown(t.Context()))
+	require.NoError(t, sdk.Shutdown(t.Context()))
+}
+
+func TestTelemetry_Shutdown_returns_the_error_of_the_final_collection(t *testing.T) {
+	tel := humustest.NewTelemetry()
+	sdk, err := tel.Builder()(t.Context(), bedrock.Process{}, nil)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	err = sdk.Shutdown(ctx)
+	require.ErrorIs(t, err, context.Canceled)
+
+	_, err = tel.Metrics(t.Context())
+	require.ErrorIs(t, err, context.Canceled, "Metrics returns the final collection's error")
+	require.ErrorIs(t, sdk.Shutdown(t.Context()), context.Canceled, "a second Shutdown returns the first one's result")
 }
 
 func TestTelemetry_records_every_severity(t *testing.T) {

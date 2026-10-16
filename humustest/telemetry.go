@@ -30,9 +30,10 @@ import (
 // bubble. A span is recorded when it ends and a log record when it is
 // emitted, with no batching, so each is visible at once.
 //
-// Spans and log records emitted before the SDK's Shutdown are still
-// returned after it, so a test can assert once the App has exited. Every
-// method is safe for concurrent use.
+// What was recorded before the SDK's Shutdown is still returned after it,
+// so a test can assert once the App has exited: the spans and log records,
+// and the metrics as Shutdown collected them, just before it stopped the
+// MeterProvider. Every method is safe for concurrent use.
 //
 // A whole-App test passes [Telemetry.Builder] as the App's telemetry
 // Builder in place of the one production uses.
@@ -41,6 +42,16 @@ type Telemetry struct {
 	reader *sdkmetric.ManualReader
 	logs   *logRecorder
 	sdk    telemetry.SDK
+
+	// mu guards the reader's collection against Shutdown, so Metrics sees
+	// either the live reader or the final collection, never a reader that
+	// has just shut down.
+	mu       sync.Mutex
+	final    *metricdata.ResourceMetrics
+	finalErr error
+
+	once        sync.Once
+	shutdownErr error
 }
 
 // NewTelemetry returns a Telemetry that has recorded nothing yet.
@@ -67,16 +78,31 @@ func NewTelemetry() *Telemetry {
 	t.sdk.MeterProvider = mp
 	t.sdk.LoggerProvider = lp
 	t.sdk.Shutdown = func(ctx context.Context) error {
-		return errors.Join(tp.Shutdown(ctx), mp.Shutdown(ctx), lp.Shutdown(ctx))
+		t.once.Do(func() { t.shutdownErr = t.shutdown(ctx, tp, mp, lp) })
+		return t.shutdownErr
 	}
 	return t
+}
+
+// shutdown collects the metrics one last time, then shuts down every
+// provider, which flushes it, and returns every error, joined.
+func (t *Telemetry) shutdown(ctx context.Context, tp *sdktrace.TracerProvider, mp *sdkmetric.MeterProvider, lp *sdklog.LoggerProvider) error {
+	t.mu.Lock()
+	var rm metricdata.ResourceMetrics
+	t.finalErr = t.reader.Collect(ctx, &rm)
+	t.final = &rm
+	mpErr := mp.Shutdown(ctx)
+	t.mu.Unlock()
+
+	return errors.Join(t.finalErr, tp.Shutdown(ctx), mpErr, lp.Shutdown(ctx))
 }
 
 // Builder returns a telemetry.Builder that builds the SDK t records from:
 // a TracerProvider that samples every span, a MeterProvider read by t's
 // ManualReader, a LoggerProvider that records every severity, and the W3C
 // trace context and baggage propagator. The SDK's Shutdown flushes and
-// stops all three providers.
+// stops all three providers. It does so once: calling it again returns
+// the first call's result.
 //
 // Every call of the Builder returns the same SDK, which ignores the
 // process and the Dialer it is given.
@@ -93,9 +119,15 @@ func (t *Telemetry) Spans() []sdktrace.ReadOnlySpan {
 }
 
 // Metrics collects the current value of every instrument from t's
-// ManualReader. Once the SDK has been shut down, the reader is too, and
-// Metrics returns its error.
+// ManualReader. Once the SDK has been shut down, it returns what Shutdown
+// collected, and that collection's error, instead: the same value on every
+// call, so a caller that changes it changes it for later calls too.
 func (t *Telemetry) Metrics(ctx context.Context) (metricdata.ResourceMetrics, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.final != nil {
+		return *t.final, t.finalErr
+	}
 	var rm metricdata.ResourceMetrics
 	err := t.reader.Collect(ctx, &rm)
 	return rm, err
