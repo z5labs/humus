@@ -26,6 +26,7 @@ import (
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/humustest"
+	"github.com/z5labs/humus/telemetry"
 )
 
 // The tests in this file run whole Apps that serve real HTTP, with net/http,
@@ -138,6 +139,7 @@ func httpApp(h *humustest.Host, handler http.Handler, more ...humus.Service) hum
 	return humus.App{
 		Host:                h.Host(),
 		ShutdownGracePeriod: 10 * time.Second,
+		Telemetry:           telemetry.NoopBuilder,
 		Init: func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
 			return append([]humus.Service{newHTTPService(s, ":8080", handler)}, more...), nil
 		},
@@ -258,7 +260,8 @@ func TestApp_Run_HTTP_shutdown_is_bounded_by_the_grace_period(t *testing.T) {
 			close(started)
 			<-r.Context().Done()
 		})
-		p, status := bedrocktest.Start(t, httpApp(h, handler), bedrocktest.WithEnv(map[string]string{
+		app, tel := recorded(httpApp(h, handler))
+		p, status := bedrocktest.Start(t, app, bedrocktest.WithEnv(map[string]string{
 			"HUMUS_SHUTDOWN_GRACE_PERIOD": "2s",
 		}))
 
@@ -286,8 +289,11 @@ func TestApp_Run_HTTP_shutdown_is_bounded_by_the_grace_period(t *testing.T) {
 		if !errors.Is(st.Cause(), context.DeadlineExceeded) {
 			t.Errorf("errors.Is(%v, context.DeadlineExceeded) = false", st.Cause())
 		}
-		if got := p.Stderr(); !strings.Contains(got, "http shutdown: context deadline exceeded") {
-			t.Errorf("stderr = %q, want the HTTP shutdown error", got)
+		if got := strings.Join(errorLogs(tel), "\n"); !strings.Contains(got, "http shutdown: context deadline exceeded") {
+			t.Errorf("logged errors = %q, want the HTTP shutdown error", got)
+		}
+		if got := p.Stderr(); got != "" {
+			t.Errorf("stderr = %q, want nothing", got)
 		}
 
 		r := <-got
@@ -309,6 +315,7 @@ func TestApp_Run_HTTP_a_job_ends_the_App_and_stops_the_other_Services(t *testing
 		app := humus.App{
 			Host:                h.Host(),
 			ShutdownGracePeriod: 10 * time.Second,
+			Telemetry:           telemetry.NoopBuilder,
 			Init: func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
 				return []humus.Service{newJob(time.Second), newHTTPService(s, ":8081", probe)}, nil
 			},
@@ -466,6 +473,7 @@ func TestApp_Run_HTTPS_with_a_PKCS12_bundle_from_NewCA(t *testing.T) {
 		app := humus.App{
 			Host:                h.Host(),
 			ShutdownGracePeriod: 10 * time.Second,
+			Telemetry:           telemetry.NoopBuilder,
 			Init: func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 				cfg, err := tlsFromPKCS12(ctx, s)
 				if err != nil {
@@ -517,6 +525,7 @@ func TestApp_Run_HTTPS_a_wrong_password_exits_1_with_the_cause(t *testing.T) {
 		app := humus.App{
 			Host:                h.Host(),
 			ShutdownGracePeriod: 10 * time.Second,
+			Telemetry:           telemetry.NoopBuilder,
 			Init: func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 				if _, err := tlsFromPKCS12(ctx, s); err != nil {
 					return nil, err

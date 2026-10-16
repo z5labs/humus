@@ -27,8 +27,12 @@ linters:
           msg: parse p.Args[1:] with a flag.FlagSet of your own, using flag.ContinueOnError and p.Stderr as its output
         # humus's additions. humus has no package-level state: it never sets
         # or reads OpenTelemetry's global providers or propagator, and it never
-        # replaces slog.Default. The list deliberately does not ban net.Listen,
-        # net.Dial or os's file API; see the lifecycle proposal, #630.
+        # replaces slog.Default. The one exception is App.Run's call to
+        # otel.SetErrorHandler, which writes OpenTelemetry's export errors to
+        # the Process's stderr and carries a nolint:forbidigo naming the
+        # telemetry proposal, #632. The list deliberately does not ban
+        # net.Listen, net.Dial or os's file API; see the lifecycle proposal,
+        # #630.
         - pattern: ^otel\.(Set|Get)
           msg: pass OpenTelemetry providers and propagators explicitly instead of using OpenTelemetry's globals
         - pattern: ^otel\.(Tracer|Meter)$

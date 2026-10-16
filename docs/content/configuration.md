@@ -180,8 +180,8 @@ how a certificate is stored and encoded is yours to decide. A further
 ## How a bad value fails
 
 A bad value renders as `config <variable>: <cause>`. With
-`READ_TIMEOUT=-5s` and `MAX_CONNS=lots`, the App above writes both to standard
-error, one line each, and exits 78:
+`READ_TIMEOUT=-5s` and `MAX_CONNS=lots`, the App above logs both at ERROR
+through its telemetry, in one record of two lines, and exits 78:
 
 ```
 init: config READ_TIMEOUT: must not be negative
@@ -189,7 +189,7 @@ config MAX_CONNS: strconv.Atoi: parsing "lots": invalid syntax
 ```
 
 The lifecycle wraps the error `Init` returns once, as `init: <error>`, and
-writes it as it renders. `config.Struct` joins its failures with
+logs it as it renders. `config.Struct` joins its failures with
 `errors.Join`, which renders one line per failure, so only the first line
 carries the `init: ` prefix. Every line that names a bad variable starts
 `config `, prefix or not, and that is the word to search for.
@@ -213,7 +213,7 @@ When one is in the chain of the error `Init` returns, the App exits 78
 `errors.AsType[*config.Error]` finds the first bad variable in the chain, which
 is `READ_TIMEOUT` in the run above. A test that checks every bad variable
 walks the joined error, whose `Unwrap() []error` returns one `*config.Error`
-per variable, or compares the whole of standard error. The
+per variable, or compares the whole of the record the App logged. The
 [lifecycle's exit codes]({{< relref "lifecycle#exit-codes" >}}) list the rest.
 
 ## Building Settings in code
@@ -279,10 +279,10 @@ your decisions. `Init` is given the same `Process` and `Host` that humus has,
 so it can log anything it wants, environment variables included, to
 `s.Process.Stderr` or to a logger of its own.
 
-What humus does write is the error `Init` returns, to standard error, and a
-parse error often quotes the value it could not parse: `parsing "lots"` above.
-A malformed secret, such as a token in the wrong format or a key that does not
-decode, would be written the same way. Keeping a secret out of that error is
+What humus does log is the error `Init` returns, through the App's telemetry,
+and a parse error often quotes the value it could not parse: `parsing "lots"`
+above. A malformed secret, such as a token in the wrong format or a key that
+does not decode, would be logged the same way. Keeping a secret out of that error is
 part of the same choice: give the secret's chain a parser of your own whose
 error says what is wrong without quoting the input.
 
@@ -298,14 +298,19 @@ runs the App above this way:
 
 ```go
 h := humustest.NewHost(t, humustest.WithFiles(files))
+tel := humustest.NewTelemetry()
 app := humus.App{
 	Host:                h.Host(),
 	ShutdownGracePeriod: 10 * time.Second,
+	Telemetry:           tel.Builder(),
 	Init:                GreeterInit,
 }
 fp := bedrocktest.NewProcess(t, bedrocktest.WithEnv(env))
 status := app.Run(context.Background(), fp.Process())
 ```
+
+`Telemetry` is `humustest.Telemetry`'s `Builder`, so the example prints the
+errors the App logged from the recorder's `Logs()`.
 
 `ShutdownGracePeriod` is the lifecycle's own setting, not the Greeter's. The
 grace period must be positive and humus has no default of its own, so an App

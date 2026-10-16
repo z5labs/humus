@@ -84,6 +84,7 @@ func httpApp(h *humustest.Host, handler http.Handler, more ...humus.Service) hum
 	return humus.App{
 		Host:                h.Host(),
 		ShutdownGracePeriod: 10 * time.Second,
+		Telemetry:           telemetry.NoopBuilder,
 		Init: func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
 			return append([]humus.Service{newHTTPService(s, ":8080", handler)}, more...), nil
 		},
@@ -286,6 +287,7 @@ func TestApp_Run_HTTPS_with_a_PKCS12_bundle_from_NewCA(t *testing.T) {
 		app := humus.App{
 			Host:                h.Host(),
 			ShutdownGracePeriod: 10 * time.Second,
+			Telemetry:           telemetry.NoopBuilder,
 			Init: func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 				cfg, err := tlsFromPKCS12(ctx, s)
 				if err != nil {
