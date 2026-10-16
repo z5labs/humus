@@ -24,6 +24,9 @@ dist/
 # Claude Code local settings
 .claude/settings.local.json
 
+# Backlog plugin per-issue worktrees
+.claude/worktrees/
+
 # Hugo
 docs/public/
 docs/resources/_gen/
