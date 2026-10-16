@@ -1,4 +1,41 @@
 version: "2"
+# This file configures every module in the repository. golangci-lint run from
+# a nested module finds it by searching the parent directories, and every path
+# below is relative to this file rather than to the module.
 run:
   timeout: 5m
-  tests: false
+  # Test code is linted too, so errcheck covers tests.
+  tests: true
+  relative-path-mode: cfg
+linters:
+  enable:
+    - forbidigo
+  settings:
+    forbidigo:
+      # Examples are documentation that users copy, so they are held to the
+      # same rules as everything else.
+      exclude-godoc-examples: false
+      forbid:
+        # bedrock's list. An App reaches its OS process only through the
+        # bedrock.Process it is run with, and exits by returning a
+        # bedrock.ExitStatus.
+        - pattern: ^os\.(Args|Stdin|Stdout|Stderr|Getenv|LookupEnv|Environ|Exit)$
+          msg: read the process through bedrock.Process, and exit by returning a bedrock.ExitStatus
+        - pattern: ^signal\.(Notify|NotifyContext)$
+          msg: listen for signals through bedrock.Process.NotifyContext
+        - pattern: ^flag\.(Parse|CommandLine)$
+          msg: parse p.Args[1:] with a flag.FlagSet of your own, using flag.ContinueOnError and p.Stderr as its output
+        # humus's additions. humus has no package-level state: it never sets
+        # or reads OpenTelemetry's global providers or propagator, and it never
+        # replaces slog.Default. The list deliberately does not ban net.Listen,
+        # net.Dial or os's file API; see the lifecycle proposal, #630.
+        - pattern: ^otel\.(Set|Get)
+          msg: pass OpenTelemetry providers and propagators explicitly instead of using OpenTelemetry's globals
+        - pattern: ^otel\.(Tracer|Meter)$
+          msg: take a trace.TracerProvider or metric.MeterProvider explicitly instead of using OpenTelemetry's globals
+        - pattern: ^global\.SetLoggerProvider$
+          msg: pass a log.LoggerProvider explicitly instead of setting OpenTelemetry's global logger provider
+        - pattern: ^resource\.Default$
+          msg: build the resource explicitly; resource.Default reads the process environment
+        - pattern: ^slog\.SetDefault$
+          msg: pass a *slog.Logger explicitly instead of replacing slog.Default
