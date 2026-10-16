@@ -20,7 +20,8 @@ through its own accepted proposal, and its pages are written here as it lands.
 The App lifecycle has landed in the root package:
 [The App lifecycle]({{< relref "lifecycle" >}}) explains `humus.App`, which every
 humus app type is built on. The runtime packages built on it have not landed
-yet. [Testing a humus App]({{< relref "testing" >}}) explains how to run a whole
+yet. [Configuring a humus service]({{< relref "configuration" >}}) explains how
+a service's settings are sourced, and [Testing a humus App]({{< relref "testing" >}}) explains how to run a whole
 App inside a test with bedrocktest and humustest.
 
 The plan is in the charter,

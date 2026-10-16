@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"syscall"
 	"testing"
 	"time"
@@ -24,7 +25,9 @@ import (
 // checks that every quote still matches it.
 
 // exampleTB stands in for the *testing.T an Example does not have. In a
-// test, pass t to bedrocktest.NewProcess instead.
+// test, pass t to bedrocktest.NewProcess and humustest.NewHost instead. It
+// implements only the methods they call: Helper, Errorf, Fatalf, Cleanup and
+// TempDir. Any other method panics on the nil testing.TB.
 type exampleTB struct {
 	testing.TB
 	cleanups []func()
@@ -36,8 +39,23 @@ func (*exampleTB) Errorf(format string, args ...any) {
 	fmt.Printf("test failed: "+format+"\n", args...)
 }
 
+func (*exampleTB) Fatalf(format string, args ...any) {
+	panic(fmt.Sprintf("test failed: "+format, args...))
+}
+
 func (tb *exampleTB) Cleanup(f func()) {
 	tb.cleanups = append(tb.cleanups, f)
+}
+
+// TempDir makes a new directory, removed by runCleanups, as t.TempDir's is
+// removed when the test ends.
+func (tb *exampleTB) TempDir() string {
+	dir, err := os.MkdirTemp("", "humus-example-")
+	if err != nil {
+		tb.Fatalf("TempDir: %v", err)
+	}
+	tb.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
 }
 
 func (tb *exampleTB) runCleanups() {
