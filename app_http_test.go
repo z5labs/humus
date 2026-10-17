@@ -31,9 +31,9 @@ import (
 
 // The tests in this file run whole Apps that serve real HTTP, with net/http,
 // over a humustest Host's in-memory network. Each runs inside a synctest
-// bubble and is started with bedrocktest.Start, so none opens a socket, sets
-// a variable of the real process or touches a file outside its own temp
-// directory.
+// bubble and is started with bedrocktest.Start or humustest.Start, so none
+// opens a socket, sets a variable of the real process or touches a file
+// outside its own temp directory.
 
 // httpService is a test-only humus.Service: an http.Server serving on a
 // listener from the Setup's Host. It keeps serving after Serve's context is
@@ -470,22 +470,20 @@ func TestApp_Run_HTTPS_with_a_PKCS12_bundle_from_NewCA(t *testing.T) {
 		hello := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = io.WriteString(w, "hello over TLS")
 		})
-		app := humus.App{
-			Host:                h.Host(),
-			ShutdownGracePeriod: 10 * time.Second,
-			Telemetry:           telemetry.NoopBuilder,
-			Init: func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-				cfg, err := tlsFromPKCS12(ctx, s)
-				if err != nil {
-					return nil, err
-				}
-				return []humus.Service{newHTTPSService(s, ":8443", cfg, hello)}, nil
-			},
+		init := func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+			cfg, err := tlsFromPKCS12(ctx, s)
+			if err != nil {
+				return nil, err
+			}
+			return []humus.Service{newHTTPSService(s, ":8443", cfg, hello)}, nil
 		}
-		p, status := bedrocktest.Start(t, app, bedrocktest.WithEnv(map[string]string{
-			"TLS_PKCS12_FILE":     h.Path("etc/tls/server.p12"),
-			"TLS_PKCS12_PASSWORD": password,
-		}))
+		p, status := humustest.Start(t, init,
+			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+			humustest.WithEnv(map[string]string{
+				"TLS_PKCS12_FILE":     h.Path("etc/tls/server.p12"),
+				"TLS_PKCS12_PASSWORD": password,
+			}),
+		)
 		synctest.Wait()
 
 		client := h.HTTPClient()

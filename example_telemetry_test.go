@@ -13,10 +13,8 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/z5labs/bedrock"
-	"github.com/z5labs/bedrock/bedrocktest"
 	"github.com/z5labs/bedrock/config"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel/trace"
@@ -92,26 +90,22 @@ func (j *cartJob) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// runCarts runs the App of Example_telemetry on a bedrocktest Process with
-// env and a humustest Host, and prints the records the carts scope logged
-// to stdout, what the App wrote to stderr and its exit code.
+// runCarts runs the App of Example_telemetry with humustest.Start, with
+// env, and prints the records the carts scope logged to stdout, what the
+// App wrote to stderr and its exit code.
 func runCarts(env map[string]string) {
 	t := new(exampleTB)
 	defer t.runCleanups()
 
-	h := humustest.NewHost(t)
-	app := humus.App{
-		Host:                h.Host(),
-		ShutdownGracePeriod: 10 * time.Second,
-		Telemetry:           buildCartsTelemetry,
-		Init:                CartsInit,
-	}
-	fp := bedrocktest.NewProcess(t, bedrocktest.WithEnv(env))
-	status := app.Run(context.Background(), fp.Process())
+	p, status := humustest.Start(t, CartsInit,
+		humustest.WithApp(humus.WithTelemetry(buildCartsTelemetry)),
+		humustest.WithEnv(env),
+	)
+	st := <-status
 
-	printConsoleLogs(fp.Stdout(), "carts")
-	fmt.Print(fp.Stderr())
-	fmt.Println("exit code:", status.Code())
+	printConsoleLogs(p.Stdout(), "carts")
+	fmt.Print(p.Stderr())
+	fmt.Println("exit code:", st.Code())
 }
 
 // printConsoleLogs prints the records of the given scope in out, which holds
@@ -164,22 +158,42 @@ func Example_telemetry() {
 	// exit code: 0
 }
 
+// A service that exports anything passes its own Builder to humus.Main with
+// humus.WithTelemetry. Like Example_main, this example is compiled but never
+// run.
+func Example_telemetryMain() {
+	humus.Main(CartsInit, humus.WithTelemetry(buildCartsTelemetry))
+}
+
+// humus.Main's telemetry default, which humustest.Start keeps, is
+// telemetry.New with telemetry.DefaultSettings(): log records are written
+// to stdout as JSON lines, spans get real IDs, and nothing is exported.
+func Example_telemetryDefault() {
+	t := new(exampleTB)
+	defer t.runCleanups()
+
+	p, status := humustest.Start(t, CartsInit)
+	st := <-status
+
+	printConsoleLogs(p.Stdout(), "carts")
+	fmt.Println("exit code:", st.Code())
+	// Output:
+	// INFO "cart created" map[cart.id:c-123], trace context: true
+	// INFO "cart created, untraced" map[], trace context: false
+	// exit code: 0
+}
+
 // A test that asserts on an App's telemetry runs it with humustest's
 // recorder as its Builder, and reads what the App emitted from it.
 func Example_telemetryRecorder() {
 	t := new(exampleTB)
 	defer t.runCleanups()
 
-	h := humustest.NewHost(t)
 	tel := humustest.NewTelemetry()
-	app := humus.App{
-		Host:                h.Host(),
-		ShutdownGracePeriod: 10 * time.Second,
-		Telemetry:           tel.Builder(),
-		Init:                CartsInit,
-	}
-	fp := bedrocktest.NewProcess(t)
-	status := app.Run(context.Background(), fp.Process())
+	_, status := humustest.Start(t, CartsInit,
+		humustest.WithApp(humus.WithTelemetry(tel.Builder())),
+	)
+	st := <-status
 
 	span := tel.Spans()[0]
 	fmt.Println("span:", span.Name())
@@ -190,7 +204,7 @@ func Example_telemetryRecorder() {
 		inSpan := r.TraceID() == span.SpanContext().TraceID() && r.SpanID() == span.SpanContext().SpanID()
 		fmt.Printf("logged %s: %s, in the span: %t\n", r.SeverityText(), r.Body().AsString(), inSpan)
 	}
-	fmt.Println("exit code:", status.Code())
+	fmt.Println("exit code:", st.Code())
 	// Output:
 	// span: create cart
 	// logged INFO: cart created, in the span: true

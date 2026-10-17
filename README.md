@@ -18,9 +18,13 @@ process. Humus is being rebuilt on that process model, package by package.
 The previous code has been removed from `main`: the Builder/Runner code, the
 YAML configuration, the global telemetry, and the `rest`, `grpc`, `job`,
 `queue` and `health` packages. Each package comes back through its own accepted
-proposal. The App lifecycle, `humus.App`, has landed in the root package, and
-the `health` package's core is back: monitors, probes and a health Service that
-owns an App's readiness. The runtime packages built on the lifecycle have not
+proposal. The App lifecycle has landed in the root package: a service's `main`
+is `func main() { humus.Main(app.Init) }`, and `humus.Main` runs the
+`humus.App` it builds from that `Init` on the OS process, with defaults that
+fit inside Kubernetes' termination budget, while `humustest.Start` runs the
+same App in a test, on a test Host. The `health` package's core is back
+too: monitors, probes and a health Service that owns an App's readiness. The
+runtime packages, which export Services for an `Init` to return, have not
 landed yet. Earlier
 releases remain available on [pkg.go.dev](https://pkg.go.dev/github.com/z5labs/humus?tab=versions).
 
@@ -44,10 +48,11 @@ package lands.
 
 ## Testing
 
-A whole humus App runs inside a test, under `testing/synctest`, with
-[bedrocktest](https://pkg.go.dev/github.com/z5labs/bedrock/bedrocktest) for the
-process and [humustest](https://pkg.go.dev/github.com/z5labs/humus/humustest)
-for the network, the filesystem and TLS. See
+A whole humus App runs inside a test, under `testing/synctest`:
+`humustest.Start` hands a service's `Init` to the App `humus.Main` would run,
+on a [bedrocktest](https://pkg.go.dev/github.com/z5labs/bedrock/bedrocktest)
+process and a [humustest](https://pkg.go.dev/github.com/z5labs/humus/humustest)
+Host, whose network and filesystem the test controls. See
 [Testing a humus App](https://z5labs.github.io/humus/testing/).
 
 ## License
