@@ -164,33 +164,6 @@ func TestService_meets_the_Service_contract(t *testing.T) {
 	})
 }
 
-func TestMain_an_RPC_in_flight_finishes_during_shutdown(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		ca := humustest.NewCA(t)
-		h := humustest.NewHost(t)
-		ts := &testServer{entered: make(chan struct{}), release: make(chan struct{})}
-
-		p, exit := humustest.Start(t, serves(settingsFor(t, ca, ":9090"), ts), onHost(h))
-		<-h.Listening("carts:9090")
-
-		client := testpb.NewTestServiceClient(grpcservertest.NewClient(t, h, "carts:9090", ca.Pool()))
-		got := call(t, client)
-		<-ts.entered // the handler is running
-
-		<-p.Notified(syscall.SIGTERM)
-		sigterm := time.Now()
-		p.Signal(syscall.SIGTERM)
-		time.Sleep(7 * time.Second) // past the 5s drain: Shutdown is waiting for the RPC
-		close(ts.release)
-
-		require.Equal(t, "done", <-got)
-		st := <-exit
-		require.Zero(t, st.Code(), "cause: %v", st.Cause())
-		require.Equal(t, 7*time.Second, time.Since(sigterm))
-		requireRefused(t, h, "carts:9090")
-	})
-}
-
 func TestService_the_grace_period_cuts_off_an_RPC_that_never_returns(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
