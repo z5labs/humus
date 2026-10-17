@@ -1,0 +1,121 @@
+// Copyright (c) 2026 Z5Labs and Contributors
+//
+// This software is released under the MIT License.
+// https://opensource.org/licenses/MIT
+
+package grpcserver
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+
+	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/grpc/internal/server"
+)
+
+// Service is a humus.Service that serves gRPC over TLS. It is a
+// grpc.ServiceRegistrar, so generated code registers services on it:
+//
+//	cartpb.RegisterCartServiceServer(svc, carts)
+type Service struct {
+	srv *server.Server
+}
+
+// The Service is a grpc.ServiceRegistrar, and a humus.Service.
+var (
+	_ grpc.ServiceRegistrar = (*Service)(nil)
+	_ humus.Service         = (*Service)(nil)
+)
+
+// NewService runs CheckAddr and CheckTLS on settings, reporting every bad
+// field in one error that names each one, listens on settings.Addr through
+// s.Host, and builds the server.
+//
+// opts come after humus's own options, and humus's transport credentials
+// come after opts. An option that grpc-go keeps one value of, such as
+// grpc.MaxRecvMsgSize, replaces humus's. An option that chains, such as
+// grpc.ChainUnaryInterceptor, is added inside humus's. grpc.Creds in opts
+// has no effect, so every connection is served with settings.TLS.
+//
+// The listener is closed by Shutdown, or by an OnStop function NewService
+// registers with s, if the App never serves.
+func NewService(s *humus.Setup, settings Settings, opts ...grpc.ServerOption) (*Service, error) {
+	if err := checkSettings(settings); err != nil {
+		return nil, fmt.Errorf("grpcserver: NewService: %w", err)
+	}
+
+	// The credentials come last, so grpc-go keeps them over any grpc.Creds
+	// in opts. credentials.NewTLS clones the config, so the end user's is
+	// never changed.
+	all := make([]grpc.ServerOption, 0, len(opts)+1)
+	all = append(all, opts...)
+	all = append(all, grpc.Creds(credentials.NewTLS(settings.TLS)))
+
+	srv, err := server.New(s, settings.Addr, all...)
+	if err != nil {
+		return nil, fmt.Errorf("grpcserver: NewService: %w", err)
+	}
+	return &Service{srv: srv}, nil
+}
+
+// checkSettings runs every check on settings, and reports every failure in
+// one error, each naming its field.
+func checkSettings(settings Settings) error {
+	var errs []error
+	check := func(field string, err error) {
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s %w", field, err))
+		}
+	}
+	check("Settings.Addr", CheckAddr(settings.Addr))
+	check("Settings.TLS", CheckTLS(settings.TLS))
+	return errors.Join(errs...)
+}
+
+// Addr returns the address the Service listens on, with the port the Host
+// picked when settings.Addr has port 0.
+func (svc *Service) Addr() net.Addr {
+	return svc.srv.Addr()
+}
+
+// RegisterService implements grpc.ServiceRegistrar. It panics, instead of
+// exiting the process as grpc-go does, if it is called after Serve, if
+// desc's service is already registered, or if impl doesn't implement
+// desc.HandlerType.
+func (svc *Service) RegisterService(desc *grpc.ServiceDesc, impl any) {
+	if err := svc.srv.RegisterService(desc, impl); err != nil {
+		panic(fmt.Errorf("grpcserver: RegisterService: %w", err))
+	}
+}
+
+// GetServiceInfo returns the registered services, like
+// (*grpc.Server).GetServiceInfo, so a Service can be given to
+// reflection.Register.
+func (svc *Service) GetServiceInfo() map[string]grpc.ServiceInfo {
+	return svc.srv.GetServiceInfo()
+}
+
+// Serve serves gRPC until Shutdown. It keeps serving after ctx is done,
+// through the App's drain delay.
+func (svc *Service) Serve(ctx context.Context) error {
+	if err := svc.srv.Serve(ctx); err != nil {
+		return fmt.Errorf("grpcserver: %w", err)
+	}
+	return nil
+}
+
+// Shutdown stops the server gracefully: it stops accepting connections,
+// sends every client a GOAWAY, and waits for the RPCs in flight. If ctx is
+// done first, it closes every connection, cancels every RPC, waits for
+// every handler to return, and returns an error that wraps ctx's error.
+func (svc *Service) Shutdown(ctx context.Context) error {
+	if err := svc.srv.Shutdown(ctx); err != nil {
+		return fmt.Errorf("grpcserver: %w", err)
+	}
+	return nil
+}
