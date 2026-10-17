@@ -321,6 +321,24 @@ func (j *cartJob) Serve(ctx context.Context) error {
 With the defaults, the first line on standard output has `trace_id`,
 `span_id` and `trace_flags`, and the second has none of them.
 
+## A job's parent trace
+
+A job's run joins the trace of the process that started it. `job.Service`
+extracts a trace context from the Process's environment through the SDK's
+`Propagator`, the one `s.Telemetry` carries, and the run's span is that
+context's child. With `telemetry.New`'s propagator, W3C trace context and
+baggage, it reads `TRACEPARENT`, `TRACESTATE` and `BAGGAGE`, the names
+OpenTelemetry's
+[environment-variable carriers](https://opentelemetry.io/docs/specs/otel/context/env-carriers/)
+give its keys. A `Builder` whose SDK has a propagator of another kind
+changes the variables read along with it. When none is set, as under
+Kubernetes, the run starts a new trace.
+
+These are trace context, not settings: the `OTEL_*` variables in the
+[table above](#settings) are still read only by a `Builder` that maps them.
+[Jobs]({{< relref "jobs#joining-the-trace-that-started-the-job" >}}) covers
+the run's span in full.
+
 ## Other settings
 
 - **`LogLevel`** is the lowest severity the `LoggerProvider` exports, as an

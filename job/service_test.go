@@ -27,6 +27,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/health"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/job"
 	"github.com/z5labs/humus/telemetry"
@@ -533,5 +534,48 @@ func TestService_reads_the_variables_of_the_Builders_propagator(t *testing.T) {
 		require.Equal(t, "4bf92f3577b34da6a3ce929d0e0e4736", spans[0].SpanContext().TraceID().String())
 		require.Equal(t, "00f067aa0ba902b7", spans[0].Parent().SpanID().String())
 		require.True(t, spans[0].Parent().IsRemote())
+	})
+}
+
+func TestInit_runs_the_job_and_releases_its_dependencies(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		tel := humustest.NewTelemetry()
+		p, status := humustest.Start(t, Init,
+			humustest.WithApp(humus.WithTelemetry(tel.Builder())),
+			humustest.WithEnv(map[string]string{"EXPORT_BUCKET": "nightly"}),
+		)
+
+		st := <-status
+		require.Zero(t, st.Code(), "cause: %v", st.Cause())
+		require.Equal(t, "exported to nightly\n", p.Stdout(), "OnStop flushed the run's output")
+		require.Equal(t, "job", tel.Spans()[0].Name())
+	})
+}
+
+func TestInit_without_its_bucket_exits_78(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		_, status := humustest.Start(t, Init)
+
+		st := <-status
+		require.Equal(t, humus.ExitConfig, st.Code(), "cause: %v", st.Cause())
+		cerr, ok := errors.AsType[*config.Error](st.Cause())
+		require.True(t, ok, "cause = %v, want a *config.Error", st.Cause())
+		require.Equal(t, "EXPORT_BUCKET", cerr.Name)
+	})
+}
+
+func TestService_a_job_next_to_the_health_Service_ends_the_App(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+			run := func(context.Context) error { return nil }
+			return []humus.Service{
+				health.NewService(),
+				job.NewService(s, run),
+			}, nil
+		})
+
+		st := <-status
+		require.Zero(t, st.Code(), "cause: %v", st.Cause())
+		require.NoError(t, st.Cause())
 	})
 }
