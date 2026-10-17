@@ -118,8 +118,8 @@ func checkSettings(settings Settings, h http.Handler) error {
 }
 
 // nextProtos returns the ALPN protocols the Service offers: h2, then
-// http/1.1 unless http2Only is set, then every other protocol of configured,
-// in its order.
+// http/1.1 unless http2Only is set, then every other protocol in configured,
+// in configured's order.
 func nextProtos(configured []string, http2Only bool) []string {
 	protos := []string{protoH2}
 	if !http2Only {
