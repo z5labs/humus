@@ -26,6 +26,11 @@
 //		}
 //	}).Read(ctx)
 //
+// Here s is the Setup the end user's Init is given, and env, readFile and
+// serverTLS are the end user's own helpers: env names a variable, readFile
+// reads the file it names, and serverTLS builds a *tls.Config from what it
+// read.
+//
 // Neither field has a default. humus imposes no port, and serves nothing in
 // plain text, so the end user always sources both, with no .Default in
 // their chains. The package has no DefaultSettings: it would only return

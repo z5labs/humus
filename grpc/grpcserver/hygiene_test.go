@@ -81,19 +81,23 @@ func TestPackage_exports_only_Settings_and_its_checks(t *testing.T) {
 }
 
 // TestPackage_reads_no_environment_and_no_file checks that the package
-// imports neither bedrock/config, nor os, io/fs or os/exec, so it can read
-// no environment variable and no file, and that it never names an
-// Environment. No string in it reads as a variable's name: the end user
-// names every variable.
+// imports neither bedrock/config, nor os, os/exec, syscall, io/fs or
+// io/ioutil, so it can read no environment variable and no file, and that
+// it never names an Environment. No string in it reads as a variable's
+// name: the end user names every variable.
 func TestPackage_reads_no_environment_and_no_file(t *testing.T) {
 	t.Parallel()
 
 	banned := map[string]string{
-		"github.com/z5labs/bedrock/config": "the end user sources the settings",
-		"os":                               "the package reads no environment variable and no file",
-		"os/exec":                          "the package reads no environment variable and no file",
-		"io/fs":                            "the package reads no file",
+		"os":        "the package reads no environment variable and no file",
+		"os/exec":   "the package reads no environment variable and no file",
+		"syscall":   "the package reads no environment variable and no file",
+		"io/fs":     "the package reads no file",
+		"io/ioutil": "the package reads no file",
 	}
+	// bedrock/config and every package under it source settings, which is
+	// the end user's to do.
+	const config = "github.com/z5labs/bedrock/config"
 
 	fset, files := sourceFiles(t)
 	for _, f := range files {
@@ -102,6 +106,9 @@ func TestPackage_reads_no_environment_and_no_file(t *testing.T) {
 			require.NoError(t, err)
 			if why := banned[path]; why != "" {
 				t.Errorf("%s: imports %s, but %s", fset.Position(imp.Pos()), path, why)
+			}
+			if path == config || strings.HasPrefix(path, config+"/") {
+				t.Errorf("%s: imports %s, but the end user sources the settings", fset.Position(imp.Pos()), path)
 			}
 		}
 

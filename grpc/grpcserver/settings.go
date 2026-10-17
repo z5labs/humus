@@ -36,10 +36,11 @@ type Settings struct {
 	TLS *tls.Config
 }
 
-// CheckAddr reports why addr is not a valid Addr, or nil if it is. It
-// accepts what Host.Listen accepts, an empty host and port 0 included, and
-// rejects an address that is not host:port, such as "" or an address with
-// no port, and one whose port is not a number from 0 to 65535.
+// CheckAddr reports why addr is not a valid Addr, or nil if it is. A valid
+// Addr is host:port, with any host, an empty one included, and a port
+// written as a number from 0 to 65535, port 0 included. It rejects "", an
+// address with no port, and a port that is not such a number, such as the
+// named port ":grpc".
 func CheckAddr(addr string) error {
 	_, port, err := net.SplitHostPort(addr)
 	if err != nil {

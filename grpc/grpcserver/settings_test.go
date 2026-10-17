@@ -16,14 +16,15 @@ import (
 	"github.com/z5labs/humus/humustest"
 )
 
-// fieldNames are words a check's error must not contain: a check reports
-// what is wrong, and whoever calls it names the field or the variable.
-// Settings.TLS is checked by tlsField, since "TLS 1.2" names a version.
-var fieldNames = []string{"Settings", "Addr", "address"}
+// fieldNames matches words a check's error must not contain, in any case:
+// a check reports what is wrong, and whoever calls it names the field or
+// the variable. Settings.TLS is matched by tlsField, since "TLS 1.2" names
+// a version.
+var fieldNames = regexp.MustCompile(`(?i)\b(?:settings|addr|address)\b`)
 
-// tlsField matches "TLS" where it is not the start of a version, such as
-// "TLS 1.2".
-var tlsField = regexp.MustCompile(`TLS(?:[^ _]|$)|TLS [^1]`)
+// tlsField matches "TLS", in any case, where it is not the start of a
+// version, such as "TLS 1.2".
+var tlsField = regexp.MustCompile(`(?i)\btls(?:[^ _]|$| [^1])`)
 
 // certificate is a server certificate from a CA generated for the test.
 func certificate(t *testing.T) []tls.Certificate {
@@ -34,9 +35,7 @@ func certificate(t *testing.T) []tls.Certificate {
 // requireUnnamed fails the test if err names a field of Settings.
 func requireUnnamed(t *testing.T, err error, msgAndArgs ...any) {
 	t.Helper()
-	for _, name := range fieldNames {
-		require.NotContains(t, err.Error(), name, msgAndArgs...)
-	}
+	require.NotRegexp(t, fieldNames, err.Error(), msgAndArgs...)
 	require.NotRegexp(t, tlsField, err.Error(), msgAndArgs...)
 }
 
@@ -47,6 +46,7 @@ func TestCheckAddr(t *testing.T) {
 		name  string
 		addr  string
 		valid bool
+		cause string // what the error says is wrong, when addr is not valid
 	}{
 		{name: "an empty host", addr: ":9090", valid: true},
 		{name: "port 0", addr: ":0", valid: true},
@@ -54,14 +54,14 @@ func TestCheckAddr(t *testing.T) {
 		{name: "the highest port", addr: "0.0.0.0:65535", valid: true},
 		{name: "an IPv6 host", addr: "[::1]:443", valid: true},
 		{name: "every IPv6 address on port 0", addr: "[::]:0", valid: true},
-		{name: "the empty string", addr: ""},
-		{name: "a host with no port", addr: "localhost"},
-		{name: "a bare IPv6 address", addr: "::1"},
-		{name: "an empty port", addr: "localhost:"},
-		{name: "a port above 65535", addr: ":65536"},
-		{name: "a negative port", addr: ":-1"},
-		{name: "a named port", addr: ":grpc"},
-		{name: "a URL", addr: "https://localhost:9090"},
+		{name: "the empty string", addr: "", cause: "is not host:port"},
+		{name: "a host with no port", addr: "localhost", cause: "is not host:port"},
+		{name: "a bare IPv6 address", addr: "::1", cause: "is not host:port"},
+		{name: "an empty port", addr: "localhost:", cause: "has no port from 0 to 65535"},
+		{name: "a port above 65535", addr: ":65536", cause: "has no port from 0 to 65535"},
+		{name: "a negative port", addr: ":-1", cause: "has no port from 0 to 65535"},
+		{name: "a named port", addr: ":grpc", cause: "has no port from 0 to 65535"},
+		{name: "a URL", addr: "https://localhost:9090", cause: "is not host:port"},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -72,7 +72,7 @@ func TestCheckAddr(t *testing.T) {
 				require.NoError(t, err)
 				return
 			}
-			require.Error(t, err)
+			require.ErrorContains(t, err, tc.cause)
 			requireUnnamed(t, err, "the error names a field")
 		})
 	}
@@ -94,6 +94,7 @@ func TestCheckTLS(t *testing.T) {
 		name  string
 		c     *tls.Config
 		valid bool
+		cause string // what the error says is wrong, when c is not valid
 	}{
 		{name: "Certificates", c: &tls.Config{Certificates: certs}, valid: true},
 		{name: "only GetCertificate", c: &tls.Config{GetCertificate: getCertificate}, valid: true},
@@ -111,11 +112,11 @@ func TestCheckTLS(t *testing.T) {
 			MaxVersion:   tls.VersionTLS12,
 			CipherSuites: nonHTTP2Suites,
 		}, valid: true},
-		{name: "nil", c: nil},
-		{name: "an empty config", c: &tls.Config{}},
-		{name: "an empty Certificates", c: &tls.Config{Certificates: []tls.Certificate{}, MinVersion: tls.VersionTLS13}},
-		{name: "a MaxVersion of TLS 1.1", c: &tls.Config{Certificates: certs, MaxVersion: tls.VersionTLS11}},
-		{name: "a MaxVersion of TLS 1.0", c: &tls.Config{GetCertificate: getCertificate, MaxVersion: tls.VersionTLS10}},
+		{name: "nil", c: nil, cause: "must not be nil"},
+		{name: "an empty config", c: &tls.Config{}, cause: "has no certificate"},
+		{name: "an empty Certificates", c: &tls.Config{Certificates: []tls.Certificate{}, MinVersion: tls.VersionTLS13}, cause: "has no certificate"},
+		{name: "a MaxVersion of TLS 1.1", c: &tls.Config{Certificates: certs, MaxVersion: tls.VersionTLS11}, cause: "has a MaxVersion of TLS 1.1"},
+		{name: "a MaxVersion of TLS 1.0", c: &tls.Config{GetCertificate: getCertificate, MaxVersion: tls.VersionTLS10}, cause: "has a MaxVersion of TLS 1.0"},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -126,7 +127,7 @@ func TestCheckTLS(t *testing.T) {
 				require.NoError(t, err)
 				return
 			}
-			require.Error(t, err)
+			require.ErrorContains(t, err, tc.cause)
 			requireUnnamed(t, err, "the error names a field")
 		})
 	}
@@ -138,10 +139,10 @@ func TestSettings_zero_value_fails_both_checks(t *testing.T) {
 	var s grpcserver.Settings
 
 	err := grpcserver.CheckAddr(s.Addr)
-	require.Error(t, err)
+	require.ErrorContains(t, err, "is not host:port")
 	requireUnnamed(t, err, "the error names a field")
 
 	err = grpcserver.CheckTLS(s.TLS)
-	require.Error(t, err)
+	require.ErrorContains(t, err, "must not be nil")
 	requireUnnamed(t, err, "the error names a field")
 }
