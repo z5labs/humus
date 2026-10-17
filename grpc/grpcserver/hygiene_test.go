@@ -43,11 +43,12 @@ func sourceFiles(t *testing.T) (*token.FileSet, []*ast.File) {
 	return fset, files
 }
 
-// TestPackage_exports_only_Settings_its_checks_and_the_Service checks
-// that the package's only exported names, methods included, are Settings,
-// CheckAddr and CheckTLS, and the Service with NewService and its methods:
-// in particular, there is no DefaultSettings.
-func TestPackage_exports_only_Settings_its_checks_and_the_Service(t *testing.T) {
+// TestPackage_exports_only_Settings_its_checks_the_Service_and_Main
+// checks that the package's only exported names, methods included, are
+// Settings, CheckAddr and CheckTLS, the Service with NewService and its
+// methods, and Defaults and Main: in particular, there is no
+// DefaultSettings and no App.
+func TestPackage_exports_only_Settings_its_checks_the_Service_and_Main(t *testing.T) {
 	t.Parallel()
 
 	_, files := sourceFiles(t)
@@ -79,8 +80,8 @@ func TestPackage_exports_only_Settings_its_checks_and_the_Service(t *testing.T) 
 	}
 	slices.Sort(exported)
 	require.Equal(t, []string{
-		"Addr", "CheckAddr", "CheckTLS", "GetServiceInfo", "NewService",
-		"RegisterService", "Serve", "Service", "Settings", "Shutdown",
+		"Addr", "CheckAddr", "CheckTLS", "Defaults", "GetServiceInfo", "Main",
+		"NewService", "RegisterService", "Serve", "Service", "Settings", "Shutdown",
 	}, exported)
 }
 

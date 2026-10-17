@@ -30,6 +30,54 @@
 // Serve waits in the backlog. If Init fails after NewService, the listener
 // is closed by a function NewService registers with the Setup's OnStop.
 //
+// # Main and its defaults
+//
+// [Main] runs the end user's Init with the defaults a gRPC server behind a
+// Kubernetes Service needs. It is humus.Main with [Defaults] applied before
+// the end user's options, and does nothing else:
+//
+//	func main() {
+//		grpcserver.Main(Init, humus.WithTelemetry(buildTelemetry))
+//	}
+//
+// The package exports no App. The end user's Init builds the Service with
+// NewService, registers their services on it, and returns it, along with
+// any other Service the process runs, such as a Kafka consumer next to the
+// gRPC server. Main runs no health Service and serves no probes.
+//
+// Defaults sets two of humus.Main's defaults, and leaves the Host and the
+// telemetry Builder as humus.Main's:
+//
+//   - The drain is humus.DrainDelay(5 * time.Second). Kubernetes removes a
+//     terminating pod from a Service's endpoints asynchronously, so for a
+//     while after SIGTERM, clients and load balancers still send RPCs and
+//     open connections to the pod. The Service keeps serving through the
+//     drain, so those RPCs are answered rather than refused, while the
+//     endpoint removal reaches every node.
+//   - The grace period is 15s. It gives unary RPCs, and stream handlers
+//     ending on their contexts, time to finish once Shutdown has sent every
+//     client a GOAWAY.
+//
+// With telemetry's 5s shutdown after them, the drain and the grace period
+// add up to 25s, the budget humus.Main keeps within Kubernetes' default
+// terminationGracePeriodSeconds of 30s.
+//
+// The end user's options come after Defaults, so they win:
+// grpcserver.Main(Init, humus.WithShutdownGracePeriod(25*time.Second)) has a
+// 25s grace period and still the 5s drain, and humus.WithDrain(nil) removes
+// the drain. An operator overrides both without a rebuild, with
+// HUMUS_SHUTDOWN_GRACE_PERIOD and HUMUS_SHUTDOWN_DRAIN_DELAY, in the same
+// manifest that sets terminationGracePeriodSeconds. A test runs the App on
+// the same defaults with grpcservertest.Start, or by passing Defaults to
+// humustest.Start with humustest.WithApp.
+//
+// Whether a process calls grpcserver.Main or humus.Main depends on what a
+// load balancer routes to. A process uses grpcserver.Main when a load
+// balancer, or a Kubernetes Service, routes RPCs to its gRPC server: that
+// server needs the drain, even when the process also runs a job or a queue
+// consumer. A process that no load balancer routes to, such as a job, calls
+// humus.Main, with no drain.
+//
 // # TLS
 //
 // TLS is required. The Service serves gRPC with Settings.TLS and nothing in

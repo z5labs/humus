@@ -6,8 +6,8 @@
 // Package grpcservertest tests gRPC services on a humustest Host.
 //
 // It sits beside grpcserver as httpservertest sits beside httpserver. Its
-// [NewClient] gives a test a client of a Service on a humustest Host, over
-// TLS:
+// [Start] runs an App the way grpcserver.Main does, and its [NewClient]
+// gives a test a client of a Service on a humustest Host, over TLS:
 //
 //	ca := humustest.NewCA(t)
 //	h := humustest.NewHost(t)
@@ -15,6 +15,39 @@
 //	<-h.Listening("carts:9090")
 //
 //	client := testpb.NewTestServiceClient(grpcservertest.NewClient(t, h, "carts:9090", ca.Pool()))
+//
+// # Start and the defaults
+//
+// Start is humustest.Start with grpcserver.Defaults applied first, so a test
+// can't forget the defaults the App runs with in production: the 5s drain,
+// humus.DrainDelay(5 * time.Second), and the 15s grace period. An RPC that
+// never returns is cancelled 20s after SIGTERM. Start does nothing else.
+//
+// Options given with humustest.WithApp come after the defaults, so they win,
+// as the end user's options to grpcserver.Main do:
+// humustest.WithApp(humus.WithShutdownGracePeriod(2*time.Second)) keeps the
+// 5s drain and cancels that RPC 7s after SIGTERM. HUMUS_SHUTDOWN_GRACE_PERIOD
+// and HUMUS_SHUTDOWN_DRAIN_DELAY, given with humustest.WithEnv, override them
+// too, as an operator's manifest does.
+//
+// Start makes no CA and no certificate. The test gives the App its
+// certificate the way production does: it writes the certificate's file to
+// the Host with humustest.WithFiles, and names it, and its password, in the
+// environment the end user's Init sources, with humustest.WithEnv:
+//
+//	ca := humustest.NewCA(t)
+//	bundle, password := ca.Issue(t, "carts").PKCS12(t)
+//	h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{"tls.p12": bundle}))
+//
+//	p, exit := grpcservertest.Start(t, app.Init,
+//		humustest.WithApp(humus.WithHost(h.Host())),
+//		humustest.WithEnv(map[string]string{
+//			"GRPC_ADDR":             ":9090",
+//			"GRPC_TLS_P12_FILE":     "tls.p12",
+//			"GRPC_TLS_P12_PASSWORD": password,
+//		}),
+//	)
+//	<-h.Listening("carts:9090")
 //
 // # The dns resolver and synctest
 //

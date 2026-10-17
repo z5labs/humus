@@ -12,11 +12,23 @@ import (
 	"net"
 	"testing"
 
+	"github.com/z5labs/bedrock"
+	"github.com/z5labs/bedrock/bedrocktest"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
+	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/grpc/grpcserver"
 	"github.com/z5labs/humus/humustest"
 )
+
+// Start is humustest.Start with grpcserver.Defaults applied before opts, so
+// a test runs its App with the drain and the grace period that
+// grpcserver.Main gives it in production. Options given with
+// humustest.WithApp come after the defaults, and win over them.
+func Start(t testing.TB, init func(ctx context.Context, s *humus.Setup) ([]humus.Service, error), opts ...humustest.Option) (*bedrocktest.Process, <-chan bedrock.ExitStatus) {
+	return humustest.Start(t, init, append([]humustest.Option{humustest.WithApp(grpcserver.Defaults())}, opts...)...)
+}
 
 // NewClient returns a client of the Service listening on address in h. It
 // dials through h, never resolves address, and verifies the Service's

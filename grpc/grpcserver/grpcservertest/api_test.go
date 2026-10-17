@@ -17,9 +17,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestPackage_exports_only_NewClient checks the package's own
-// source, test files excluded: its only exported name is NewClient.
-func TestPackage_exports_only_NewClient(t *testing.T) {
+// TestPackage_exports_only_NewClient_and_Start checks the package's own
+// source, test files excluded: its only exported names are NewClient and
+// Start.
+func TestPackage_exports_only_NewClient_and_Start(t *testing.T) {
 	t.Parallel()
 
 	files, err := filepath.Glob("*.go")
@@ -57,5 +58,5 @@ func TestPackage_exports_only_NewClient(t *testing.T) {
 		}
 	}
 	slices.Sort(exported)
-	require.Equal(t, []string{"NewClient"}, exported)
+	require.Equal(t, []string{"NewClient", "Start"}, exported)
 }
