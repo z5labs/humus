@@ -220,6 +220,13 @@ func TestService_records_gRFC_A66_metrics_with_a_second_stats_handler(t *testing
 		_, err := client.EmptyCall(t.Context(), &testpb.Empty{})
 		require.NoError(t, err)
 
+		// The stats handlers record the RPC's metrics after its status is
+		// sent, so they are read once the App has exited and every handler
+		// has returned.
+		p.Signal(syscall.SIGTERM)
+		st := <-exit
+		require.Zero(t, st.Code(), "cause: %v", st.Cause())
+
 		rm, err := tel.Metrics(t.Context())
 		require.NoError(t, err)
 		names := make(map[string][]string)
@@ -230,10 +237,6 @@ func TestService_records_gRFC_A66_metrics_with_a_second_stats_handler(t *testing
 		}
 		require.Contains(t, names, "grpc.server.call.duration", "the A66 metric, from the second stats handler")
 		require.Equal(t, []string{otelgrpc.ScopeName}, names["rpc.server.call.duration"], "otelgrpc's metric, from humus's stats handler")
-
-		p.Signal(syscall.SIGTERM)
-		st := <-exit
-		require.Zero(t, st.Code(), "cause: %v", st.Cause())
 		require.Len(t, serverSpans(tel), 1, "the second stats handler adds no span")
 	})
 }

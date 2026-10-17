@@ -8,6 +8,7 @@ package grpcserver_test
 import (
 	"context"
 	"errors"
+	"io"
 	"syscall"
 	"testing"
 	"testing/synctest"
@@ -77,10 +78,23 @@ func receive(stream grpc.ServerStreamingClient[testpb.StreamingOutputCallRespons
 			// The server is going away. Reconnect: the new stream lands on another pod.
 			return true, nil
 		}
+		if errors.Is(err, io.EOF) {
+			return false, nil // the server ended the stream with OK
+		}
 		if err != nil {
 			return false, err
 		}
 	}
+}
+
+// finite's StreamingOutputCall sends one response and returns nil, so its
+// stream ends with OK before any shutdown.
+type finite struct {
+	testpb.UnimplementedTestServiceServer
+}
+
+func (finite) StreamingOutputCall(_ *testpb.StreamingOutputCallRequest, stream grpc.ServerStreamingServer[testpb.StreamingOutputCallResponse]) error {
+	return stream.Send(&testpb.StreamingOutputCallResponse{})
 }
 
 func TestMain_a_client_reconnects_when_shutdown_ends_its_stream(t *testing.T) {
@@ -115,7 +129,30 @@ func TestMain_a_client_reconnects_when_shutdown_ends_its_stream(t *testing.T) {
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
 	})
 
-	t.Run("and does not reconnect when the stream ends on its own", func(t *testing.T) {
+	t.Run("and does not reconnect when the stream ends with OK", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ca := humustest.NewCA(t)
+			h := humustest.NewHost(t)
+			p, exit := grpcservertest.Start(t, serves(settingsFor(t, ca, ":9090"), finite{}),
+				humustest.WithApp(humus.WithHost(h.Host())),
+			)
+			<-h.Listening("carts:9090")
+
+			client := testpb.NewTestServiceClient(grpcservertest.NewClient(t, h, "carts:9090", ca.Pool()))
+			stream, err := client.StreamingOutputCall(t.Context(), &testpb.StreamingOutputCallRequest{})
+			require.NoError(t, err)
+			reconnect, err := receive(stream)
+			require.NoError(t, err)
+			require.False(t, reconnect)
+
+			<-p.Notified(syscall.SIGTERM)
+			p.Signal(syscall.SIGTERM)
+			st := <-exit
+			require.Zero(t, st.Code(), "cause: %v", st.Cause())
+		})
+	})
+
+	t.Run("and does not reconnect when the handler ends the stream with a status of its own at shutdown", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			ca := humustest.NewCA(t)
 			h := humustest.NewHost(t)
