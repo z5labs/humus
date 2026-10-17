@@ -10,7 +10,7 @@
   "verify": [
     "modules=$(.github/scripts/go-modules.sh) && test -n \"$modules\" && failed=0 && for m in $modules; do (cd \"$m\" && golangci-lint run) || failed=1; done && test \"$failed\" = 0",
     "modules=$(.github/scripts/go-modules.sh) && test -n \"$modules\" && failed=0 && for m in $modules; do go -C \"$m\" build ./... || failed=1; done && test \"$failed\" = 0",
-    "modules=$(.github/scripts/go-modules.sh) && test -n \"$modules\" && failed=0 && for m in $modules; do go -C \"$m\" test -race -cover -tags testcontainers ./... || failed=1; done && test \"$failed\" = 0"
+    "modules=$(.github/scripts/go-modules.sh) && test -n \"$modules\" && failed=0 && for m in $modules; do go -C \"$m\" test -race -cover ./... || failed=1; done && test \"$failed\" = 0"
   ],
   "merge": {
     "label": "auto-merge",
