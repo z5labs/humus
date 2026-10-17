@@ -1,9 +1,13 @@
 ---
 title: Humus
+description: >
+  An opinionated Go framework for building services on bedrock's process
+  model. Humus is being rebuilt, package by package, and these pages document
+  what has landed. Releases up to v0.15.0, which pkg.go.dev shows by default,
+  document the Builder/Runner, YAML configuration and rest.Run API that the
+  rebuild removed.
 type: docs
 ---
-
-**An opinionated Go framework for building services on [bedrock](https://github.com/z5labs/bedrock)'s process model.**
 
 Humus is for HTTP and REST APIs, gRPC services, queue consumers and jobs, with
 telemetry, health and graceful shutdown built in. Every humus application is a
@@ -12,7 +16,8 @@ where `app.Init` is the service's own `Init`.
 
 ## Humus is being rebuilt
 
-Humus is being rebuilt on bedrock's process model, package by package. The
+Humus is being rebuilt on
+[bedrock](https://github.com/z5labs/bedrock)'s process model, package by package. The
 previous code, and the pages that documented it, have been removed: the
 Builder/Runner code, the YAML configuration, the global telemetry, and the
 `rest`, `grpc`, `job`, `queue` and `health` packages. Each package comes back

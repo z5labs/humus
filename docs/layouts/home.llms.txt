@@ -1,0 +1,21 @@
+{{- /*
+  /llms.txt, in the format https://llmstxt.org/ proposes: the site's title,
+  the home page's description, and every page, by weight, linked to its
+  Markdown copy and described by its own description. The home page comes
+  first, since its weight orders nothing.
+*/ -}}
+{{- define "partials/llms-description.txt" -}}
+  {{- . | plainify | replaceRE `\s+` " " | strings.TrimSpace -}}
+{{- end -}}
+# {{ site.Title }}
+
+> {{ partial "llms-description.txt" .Description }}
+
+## Docs
+{{ $pages := slice . }}
+{{- range (where site.Pages "Kind" "in" (slice "page" "section")).ByWeight }}
+  {{- $pages = $pages | append . }}
+{{- end }}
+{{- range $pages }}
+- [{{ .Title }}]({{ (.OutputFormats.Get "markdown").Permalink }}): {{ partial "llms-description.txt" .Description }}
+{{- end }}

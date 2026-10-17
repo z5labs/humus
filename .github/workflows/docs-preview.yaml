@@ -23,6 +23,7 @@ jobs:
       pull-requests: write
     env:
       HUGO_VERSION: 0.152.2
+      BASE_URL: https://z5labs.github.io/humus/pr-preview/pr-${{ github.event.pull_request.number }}/
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -53,7 +54,28 @@ jobs:
           hugo \
             --gc \
             --minify \
-            --baseURL "https://z5labs.github.io/humus/pr-preview/pr-${{ github.event.pull_request.number }}/"
+            --baseURL "$BASE_URL"
+
+      - name: Check llms.txt and the Markdown copies
+        if: github.event.action != 'closed'
+        working-directory: ./docs/public
+        run: |
+          test -s llms.txt
+          links=$(grep -o '^- \[[^]]*\]([^)]*)' llms.txt | sed 's/.*](\(.*\))$/\1/')
+          test -n "$links"
+          for link in $links; do
+            file=${link#"$BASE_URL"}
+            if [ "$file" = "$link" ] || [ ! -s "$file" ]; then
+              echo "::error::llms.txt links to $link, which is not a Markdown copy on this site"
+              exit 1
+            fi
+          done
+          for file in $(find . -name index.html.md | sed 's|^\./||'); do
+            if ! printf '%s\n' $links | grep -qxF "$BASE_URL$file"; then
+              echo "::error::llms.txt does not list $file"
+              exit 1
+            fi
+          done
 
       - name: Deploy PR Preview
         uses: rossjrw/pr-preview-action@ffa7509e91a3ec8dfc2e5536c4d5c1acdf7a6de9 # v1

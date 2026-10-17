@@ -6,11 +6,15 @@
 package humus_test
 
 import (
+	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"go.yaml.in/yaml/v3"
 )
 
 // docsContent is the content directory of the docs site, relative to this
@@ -47,6 +51,93 @@ func TestDocs_code_samples(t *testing.T) {
 	if pages == 0 {
 		t.Fatalf("no pages found under %s", docsContent)
 	}
+}
+
+// TestDocs_descriptions checks that every page on the docs site has a
+// description in its front matter: /llms.txt describes each page with it, and
+// the home page's is the summary at the top of /llms.txt.
+func TestDocs_descriptions(t *testing.T) {
+	pages := 0
+	err := filepath.WalkDir(docsContent, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || filepath.Ext(path) != ".md" {
+			return err
+		}
+		pages++
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		fm, err := frontMatter(string(b))
+		if err != nil {
+			t.Errorf("%s: %v", path, err)
+			return nil
+		}
+		if strings.TrimSpace(fm.Description) == "" {
+			t.Errorf("%s: the page has no description; /llms.txt describes each page with it", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pages == 0 {
+		t.Fatalf("no pages found under %s", docsContent)
+	}
+}
+
+func TestFrontMatter(t *testing.T) {
+	cases := []struct {
+		name    string
+		page    string
+		want    string
+		wantErr bool
+	}{
+		{"folded", "---\ntitle: T\ndescription: >\n  One\n  two.\n---\n\nBody\n", "One two.", false},
+		{"inline", "---\ndescription: One line.\n---\n", "One line.", false},
+		{"missing", "---\ntitle: T\n---\n\ndescription: not front matter\n", "", false},
+		{"no front matter", "# T\n\ndescription: x\n", "", true},
+		{"unclosed", "---\ndescription: x\n", "", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := frontMatter(c.page)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("frontMatter() = %+v, want an error", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Description != c.want {
+				t.Errorf("description = %q, want %q", got.Description, c.want)
+			}
+		})
+	}
+}
+
+// pageFrontMatter is the part of a page's YAML front matter the tests read.
+type pageFrontMatter struct {
+	Description string `yaml:"description"`
+}
+
+// frontMatter parses the YAML front matter that opens page between two ---
+// lines.
+func frontMatter(page string) (pageFrontMatter, error) {
+	var fm pageFrontMatter
+	rest, ok := strings.CutPrefix(page, "---\n")
+	if !ok {
+		return fm, errors.New("the page does not open with YAML front matter")
+	}
+	body, _, ok := strings.Cut(rest, "\n---\n")
+	if !ok {
+		return fm, errors.New("the page's front matter is not closed by a --- line")
+	}
+	if err := yaml.Unmarshal([]byte(body), &fm); err != nil {
+		return fm, fmt.Errorf("parsing the front matter: %w", err)
+	}
+	return fm, nil
 }
 
 func TestGoSamples(t *testing.T) {

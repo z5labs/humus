@@ -8,6 +8,27 @@ module:
     - path: github.com/google/docsy/dependencies
       disable: false
 
+# Output formats. Besides its HTML, every page has a Markdown copy at its URL
+# followed by index.html.md, and the home page builds /llms.txt, which lists
+# them, as https://llmstxt.org/ proposes. Both are built from the pages
+# themselves, so a new page appears in them without editing a template.
+outputFormats:
+  llms:
+    mediaType: text/plain
+    baseName: llms
+    isPlainText: true
+    notAlternative: true
+  markdown:
+    mediaType: text/markdown
+    baseName: index.html
+    isPlainText: true
+    notAlternative: true
+
+outputs:
+  home: [html, rss, llms, markdown]
+  section: [html, rss, markdown]
+  page: [html, markdown]
+
 # Highlighting config
 pygmentsCodeFences: true
 pygmentsUseClasses: false

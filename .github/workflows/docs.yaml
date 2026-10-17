@@ -19,6 +19,7 @@ jobs:
       contents: write
     env:
       HUGO_VERSION: 0.152.2
+      BASE_URL: https://z5labs.github.io/humus/
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -45,7 +46,27 @@ jobs:
           hugo \
             --gc \
             --minify \
-            --baseURL "https://z5labs.github.io/humus/"
+            --baseURL "$BASE_URL"
+
+      - name: Check llms.txt and the Markdown copies
+        working-directory: ./docs/public
+        run: |
+          test -s llms.txt
+          links=$(grep -o '^- \[[^]]*\]([^)]*)' llms.txt | sed 's/.*](\(.*\))$/\1/')
+          test -n "$links"
+          for link in $links; do
+            file=${link#"$BASE_URL"}
+            if [ "$file" = "$link" ] || [ ! -s "$file" ]; then
+              echo "::error::llms.txt links to $link, which is not a Markdown copy on this site"
+              exit 1
+            fi
+          done
+          for file in $(find . -name index.html.md | sed 's|^\./||'); do
+            if ! printf '%s\n' $links | grep -qxF "$BASE_URL$file"; then
+              echo "::error::llms.txt does not list $file"
+              exit 1
+            fi
+          done
 
       - name: Deploy to Github Pages
         uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4
