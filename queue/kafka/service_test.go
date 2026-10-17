@@ -444,9 +444,10 @@ func TestService_failures(t *testing.T) {
 func TestService_keeps_serving_while_the_brokers_are_unreachable(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t) // nothing listens on it
+		tel := humustest.NewTelemetry()
 		p, status := humustest.Start(t, consumes(settings("127.0.0.1:9092"), func(context.Context, kafka.Message) error {
 			return nil
-		}), humustest.WithApp(humus.WithHost(h.Host())))
+		}), humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
 
 		time.Sleep(time.Minute)
 		select {
@@ -458,6 +459,7 @@ func TestService_keeps_serving_while_the_brokers_are_unreachable(t *testing.T) {
 
 		st := <-status
 		require.Zero(t, st.Code(), st.Cause())
+		require.Positive(t, sum(t, tel, kotelScope, "messaging.kafka.connect_errors.count"), "kotel counts each failed attempt")
 	})
 }
 

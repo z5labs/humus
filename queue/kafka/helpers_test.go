@@ -68,15 +68,6 @@ func produce(t *testing.T, h *humustest.Host, c *kfake.Cluster, n int, opts ...k
 // produceTo writes counts[p] records to each partition p of topic.
 func produceTo(t *testing.T, h *humustest.Host, c *kfake.Cluster, counts map[int32]int, opts ...kgo.Opt) {
 	t.Helper()
-	all := append([]kgo.Opt{
-		kgo.SeedBrokers(c.ListenAddrs()...),
-		kgo.Dialer(h.Dial),
-		kgo.RecordPartitioner(kgo.ManualPartitioner()),
-	}, opts...)
-	cl, err := kgo.NewClient(all...)
-	require.NoError(t, err)
-	defer cl.Close()
-
 	var records []*kgo.Record
 	for p, n := range counts {
 		for i := range n {
@@ -88,6 +79,21 @@ func produceTo(t *testing.T, h *humustest.Host, c *kfake.Cluster, counts map[int
 			})
 		}
 	}
+	produceRecords(t, h, c, records, opts...)
+}
+
+// produceRecords writes records, each to its own partition, through a
+// client that dials h with opts.
+func produceRecords(t *testing.T, h *humustest.Host, c *kfake.Cluster, records []*kgo.Record, opts ...kgo.Opt) {
+	t.Helper()
+	all := append([]kgo.Opt{
+		kgo.SeedBrokers(c.ListenAddrs()...),
+		kgo.Dialer(h.Dial),
+		kgo.RecordPartitioner(kgo.ManualPartitioner()),
+	}, opts...)
+	cl, err := kgo.NewClient(all...)
+	require.NoError(t, err)
+	defer cl.Close()
 	require.NoError(t, cl.ProduceSync(context.Background(), records...).FirstErr())
 }
 
