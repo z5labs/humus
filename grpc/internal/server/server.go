@@ -40,8 +40,10 @@ type Server struct {
 	mu      sync.Mutex
 	serving bool
 
-	// shutdown is set by the first Shutdown.
+	// shutdown is set by the first Shutdown, and stopped is closed when it
+	// returns.
 	shutdown atomic.Bool
+	stopped  chan struct{}
 }
 
 // New listens on addr with s.Host.Listen("tcp", addr), and builds the
@@ -66,7 +68,7 @@ func New(s *humus.Setup, addr string, opts ...grpc.ServerOption) (*Server, error
 	all := make([]grpc.ServerOption, 0, 1+len(opts))
 	all = append(all, grpc.WaitForHandlers(true))
 	all = append(all, opts...)
-	return &Server{ln: ln, srv: grpc.NewServer(all...)}, nil
+	return &Server{ln: ln, srv: grpc.NewServer(all...), stopped: make(chan struct{})}, nil
 }
 
 // closeListener closes ln. A listener that is already closed is not an
@@ -137,12 +139,17 @@ func (s *Server) Serve(context.Context) error {
 // accepting connections, sends every client a GOAWAY, and waits for the
 // RPCs in flight. If ctx is done first, or is done already, it calls Stop,
 // which closes every connection and cancels every RPC, waits for every
-// handler to return, and returns an error that wraps ctx's error. Calling
-// it again returns nil.
+// handler to return, and returns an error that wraps ctx's error.
+//
+// A call after the first one has returned returns nil. A call made while
+// the first is still running waits for it, and, if its own ctx is done
+// first, calls Stop and returns an error that wraps ctx's error, as the
+// first does.
 func (s *Server) Shutdown(ctx context.Context) error {
 	if !s.shutdown.CompareAndSwap(false, true) {
-		return nil
+		return s.awaitShutdown(ctx)
 	}
+	defer close(s.stopped)
 	// Before Serve, the *grpc.Server doesn't know the listener, so neither
 	// GracefulStop nor Stop closes it.
 	defer func() { _ = closeListener(s.ln) }()
@@ -165,5 +172,25 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	} else {
 		s.srv.Stop()
 	}
+	return fmt.Errorf("shutting down: %w", ctx.Err())
+}
+
+// awaitShutdown waits for the first Shutdown to return. If ctx is done
+// first, it calls Stop, which ends the graceful stop the first Shutdown is
+// waiting on, and returns an error that wraps ctx's error once the first
+// Shutdown has returned.
+func (s *Server) awaitShutdown(ctx context.Context) error {
+	select {
+	case <-s.stopped:
+		return nil
+	default:
+	}
+	select {
+	case <-s.stopped:
+		return nil
+	case <-ctx.Done():
+	}
+	s.srv.Stop()
+	<-s.stopped
 	return fmt.Errorf("shutting down: %w", ctx.Err())
 }

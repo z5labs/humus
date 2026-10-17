@@ -191,7 +191,7 @@ func TestMain_an_RPC_in_flight_finishes_during_shutdown(t *testing.T) {
 	})
 }
 
-func TestMain_the_grace_period_cuts_off_an_RPC_that_never_returns(t *testing.T) {
+func TestService_the_grace_period_cuts_off_an_RPC_that_never_returns(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
 		h := humustest.NewHost(t)
