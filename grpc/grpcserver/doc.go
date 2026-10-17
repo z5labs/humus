@@ -97,6 +97,49 @@
 // handler, so a handler that ignores its context holds the App up past the
 // grace period.
 //
+// # Telemetry
+//
+// The Service takes everything from the Setup's telemetry and never reads
+// or sets OpenTelemetry's globals. The first of humus's options is a stats
+// handler, OpenTelemetry's gRPC instrumentation, otelgrpc, given the
+// TracerProvider, the MeterProvider and the Propagator of s.Telemetry:
+//
+//	grpc.StatsHandler(otelgrpc.NewServerHandler(
+//		otelgrpc.WithTracerProvider(s.Telemetry.TracerProvider),
+//		otelgrpc.WithMeterProvider(s.Telemetry.MeterProvider),
+//		otelgrpc.WithPropagators(s.Telemetry.Propagator),
+//	))
+//
+// Each RPC gets one server span, named after the method without its
+// leading slash, such as "cart.v1.CartService/AddItem". Its parent is the
+// trace context the RPC's metadata brought in, extracted with the Setup's
+// propagator, so an RPC joins its caller's trace. The propagator comes from
+// the telemetry Builder, and it decides which metadata carries the trace
+// context: traceparent and tracestate, and baggage, with the default one.
+// The span carries the attributes of OpenTelemetry's RPC semantic
+// conventions, among them rpc.system.name, rpc.method, server.port and
+// rpc.response.status_code. Its status is Error for the codes those
+// conventions count as server errors, Unknown, DeadlineExceeded,
+// Unimplemented, Internal, Unavailable and DataLoss, and is left unset for
+// every other code, such as NotFound, which is the caller's error rather
+// than the server's.
+//
+// Each RPC also records the histogram rpc.server.call.duration on the
+// Setup's MeterProvider, in otelgrpc's instrumentation scope.
+//
+// The names above are those of the stable RPC conventions, which otelgrpc
+// uses unless OTEL_SEMCONV_STABILITY_OPT_IN, read from the real
+// environment, not the Process's, asks for the old ones with rpc/old or
+// rpc/dup.
+//
+// An end user who wants the metrics of gRFC A66, grpc-go's own
+// OpenTelemetry metrics, passes them in opts as a second stats handler,
+// which grpc-go calls after humus's:
+//
+//	grpcserver.NewService(s, settings, opentelemetry.ServerOption(opentelemetry.Options{
+//		MetricsOptions: opentelemetry.MetricsOptions{MeterProvider: s.Telemetry.MeterProvider},
+//	}))
+//
 // # Logging
 //
 // The Service writes no log record of its own: the App already logs that
