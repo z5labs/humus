@@ -99,6 +99,27 @@
 // server's error log, such as a TLS handshake error. Nothing reaches the
 // real standard error.
 //
+// # Panics
+//
+// A handler that panics aborts its request, which is recorded but isn't
+// answered. The Service recovers the panic, records it on the request's
+// span as an exception event with its stack trace, sets the span's status
+// to Error, and emits one ERROR record, "handler panicked", in the
+// request's context, so the record carries the span's trace and span IDs.
+// Then it panics again with [http.ErrAbortHandler], and net/http aborts the
+// response without logging it a second time: no 500 is written, and no
+// header the handler hadn't written. Over HTTP/2 the client sees its stream
+// reset, and over HTTP/1.1 its connection closed, even when the handler had
+// already written part of its response. The Service keeps serving every
+// other request.
+//
+// A protocol that defines an error response, such as REST, recovers in its
+// own handler and writes that response itself.
+//
+// A handler aborts a response without it being logged or recorded by
+// panicking with http.ErrAbortHandler itself, which the Service passes
+// through untouched.
+//
 // # Settings
 //
 // The server is configured with [Settings]: the address, the TLS config and
