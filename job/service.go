@@ -11,7 +11,9 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"github.com/z5labs/bedrock"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/z5labs/humus"
@@ -31,8 +33,10 @@ var errShutdown = fmt.Errorf("job: the Service was shut down: %w", context.Cance
 // Service is a humus.Service that runs a job once. It is safe for concurrent
 // use.
 type Service struct {
-	run    func(ctx context.Context) error
-	tracer trace.Tracer
+	run        func(ctx context.Context) error
+	tracer     trace.Tracer
+	propagator propagation.TextMapPropagator
+	env        bedrock.Environment
 
 	// serving is set once: by the first Serve, to that Serve's call, or by
 	// a Shutdown called before any Serve, to notServed.
@@ -54,14 +58,22 @@ var notServed = &call{}
 // run's context is done when the App starts shutting down or when Shutdown is
 // called, whichever comes first, and carries the span of the run.
 //
+// The span's parent is the trace context that s.Telemetry.Propagator
+// extracts from s.Process.Environment, with each of the propagator's keys
+// read as OpenTelemetry's environment-variable carriers name it: traceparent
+// as TRACEPARENT. When the environment carries none, or a malformed one, the
+// span is the root of a new trace.
+//
 // NewService panics if run is nil.
 func NewService(s *humus.Setup, run func(ctx context.Context) error) *Service {
 	if run == nil {
 		panic("job: NewService called with a nil run")
 	}
 	return &Service{
-		run:    run,
-		tracer: s.Telemetry.TracerProvider.Tracer(tracerName),
+		run:        run,
+		tracer:     s.Telemetry.TracerProvider.Tracer(tracerName),
+		propagator: s.Telemetry.Propagator,
+		env:        s.Process.Environment,
 	}
 }
 
@@ -86,7 +98,12 @@ func (s *Service) Serve(ctx context.Context) error {
 	}
 	defer close(c.served)
 
-	spanCtx, span := s.tracer.Start(runCtx, spanName, trace.WithSpanKind(trace.SpanKindInternal))
+	// The trace context of the process that started the job is the parent
+	// of the run's span, and its baggage is on the run's context. When the
+	// environment carries none, or a malformed one, Extract adds nothing to
+	// runCtx, and the span is a new root.
+	parentCtx := s.propagator.Extract(runCtx, envCarrier{env: s.env})
+	spanCtx, span := s.tracer.Start(parentCtx, spanName, trace.WithSpanKind(trace.SpanKindInternal))
 	err := s.run(spanCtx)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
