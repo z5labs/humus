@@ -121,7 +121,8 @@
 //	| authorization failure            |                                      |                                      |
 //	| a broker refuses the SASL        | the Service stops, and Serve returns | the same                             |
 //	| credentials                      | the error; exit 1                    |                                      |
-//	| the brokers are unreachable      | franz-go keeps retrying, and the     | the same                             |
+//	| the brokers are unreachable      | franz-go keeps retrying, kotel       | the same                             |
+//	|                                  | counts each failed attempt, and the  |                                      |
 //	|                                  | Service keeps serving                |                                      |
 //
 // A commit is refused for a fenced-out member with UNKNOWN_MEMBER_ID,
@@ -137,6 +138,65 @@
 // and the lifecycle logs it. Retries are the Processor's: a Processor that
 // would rather skip a record that always fails than stop on it returns nil,
 // after storing the record wherever it keeps dead letters.
+//
+// # Telemetry
+//
+// The Service reports through the Setup's telemetry and never through
+// OpenTelemetry's globals: its tracer and meter come from the SDK's
+// TracerProvider and MeterProvider, under the scope
+// github.com/z5labs/humus/queue/kafka, and its propagator is the SDK's
+// Propagator.
+//
+// Each record is processed under a span of its own, named "process
+// <topic>", of kind CONSUMER, whose context Process is given. The span's
+// parent is the trace context the propagator extracts from the record's
+// headers, so a producer's trace continues through the consumer, and the
+// producer's baggage, and only the producer's, is on Process's context too.
+// A record whose headers carry no trace context starts a new trace. Under
+// queue.AtMostOnce, the ERROR record of a failed record carries its span's
+// context. The span's attributes are
+// messaging.system (kafka), messaging.operation.type and
+// messaging.operation.name (both process), messaging.destination.name,
+// messaging.destination.partition.id, messaging.consumer.group.name and
+// messaging.kafka.offset. The record's key is not recorded. When Process
+// returns an error, under either Delivery, the error is recorded on the
+// span as an exception event, with error.type and an error status.
+//
+// The Service records three instruments of OpenTelemetry's messaging
+// conventions, as semconv v1.43.0 names them:
+//
+//   - messaging.client.consumed.messages counts the records handed to the
+//     Processor, with messaging.operation.name set to process;
+//   - messaging.process.duration is how long each Process took, in seconds,
+//     with messaging.operation.name set to process, and error.type when it
+//     failed;
+//   - messaging.client.operation.duration is how long each commit took, in
+//     seconds, with messaging.operation.name set to commit and
+//     messaging.operation.type to settle, and error.type when it failed.
+//
+// Each also has messaging.system, messaging.consumer.group.name,
+// messaging.destination.name and messaging.destination.partition.id.
+//
+// franz-go's broker metrics come from the Meter of franz-go's kotel plugin,
+// which the Service builds with the Setup's MeterProvider and nothing else,
+// and hands the client as hooks. Its instruments are kotel's, under kotel's
+// own scope, github.com/twmb/franz-go/plugin/kotel, with names such as
+// messaging.kafka.connects.count, messaging.kafka.connect_errors.count and
+// messaging.kafka.fetch_records.count. By broker, with a node_id attribute,
+// they count the connections opened, the connection errors and the
+// connections closed, the bytes read and written, and the read and write
+// errors. By broker and topic, with node_id and topic, they count the
+// records and the bytes fetched. kotel's produce counters stay empty,
+// because the Service produces nothing. kotel's tracer is not used.
+//
+// humus renames neither set of instruments. Their names are semconv's and
+// kotel's, at the versions this module pins, so a change to the names of
+// either, through a semconv or a kotel upgrade, is a breaking change to
+// this package.
+//
+// Against kfake, franz-go's fake cluster, a clean shutdown counts one read
+// error for the broker, during the shutdown and never before it. An alert on
+// messaging.kafka.read_errors.count should allow for it.
 //
 // # Settings
 //

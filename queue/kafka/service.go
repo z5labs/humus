@@ -18,16 +18,30 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/twmb/franz-go/plugin/kotel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/baggage"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/propagation"
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
+	"go.opentelemetry.io/otel/semconv/v1.43.0/messagingconv"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/queue"
 )
 
-// loggerName is the instrumentation scope of the Service's own logs.
-const loggerName = "github.com/z5labs/humus/queue/kafka"
+// scopeName is the instrumentation scope of the Service's own spans,
+// metrics and logs.
+const scopeName = "github.com/z5labs/humus/queue/kafka"
+
+// The names of the operations the Service reports, as
+// messaging.operation.name.
+const (
+	processOperation = "process"
+	commitOperation  = "commit"
+)
 
 // partitionsKey is the attribute that lists the partitions of a topic in
 // the records of an assignment, a revoke and a loss. OpenTelemetry's
@@ -49,6 +63,14 @@ type Service struct {
 	proc     queue.Processor[Message]
 	dial     dialFunc
 	logger   log.Logger
+
+	tracer     trace.Tracer
+	propagator propagation.TextMapPropagator
+	consumed   messagingconv.ClientConsumedMessages
+	processing messagingconv.ProcessDuration
+	operations messagingconv.ClientOperationDuration
+	// brokers is kotel's Meter: franz-go's broker metrics, as client hooks.
+	brokers *kotel.Meter
 
 	// stopped is done once Shutdown has been called.
 	stopped context.Context
@@ -74,6 +96,12 @@ var notServed = &call{}
 // NewService checks settings and returns a Service. It opens no connection:
 // Serve builds the client and joins the group.
 //
+// The Service reports through s.Telemetry: its spans, the three messaging
+// instruments and its own logs under the scope
+// github.com/z5labs/humus/queue/kafka, franz-go's logs under
+// github.com/twmb/franz-go/pkg/kgo, and franz-go's broker metrics, from
+// kotel's Meter, under github.com/twmb/franz-go/plugin/kotel.
+//
 // It reports every field of settings that fails its check in one error that
 // names each one, and it rejects a nil Processor. It builds no client and
 // registers no OnStop function, so an Init that fails after it leaks
@@ -82,14 +110,28 @@ func NewService(s *humus.Setup, settings Settings, p queue.Processor[Message]) (
 	if err := checkSettings(settings, p); err != nil {
 		return nil, fmt.Errorf("kafka: NewService: %w", err)
 	}
+	meter := s.Telemetry.MeterProvider.Meter(scopeName)
+	consumed, err1 := messagingconv.NewClientConsumedMessages(meter)
+	processing, err2 := messagingconv.NewProcessDuration(meter)
+	operations, err3 := messagingconv.NewClientOperationDuration(meter)
+	if err := errors.Join(err1, err2, err3); err != nil {
+		return nil, fmt.Errorf("kafka: NewService: creating the instruments: %w", err)
+	}
 	stopped, stop := context.WithCancel(context.Background())
 	return &Service{
-		settings: settings,
-		proc:     p,
-		dial:     tlsDialer(s.Host.Dial, settings.TLS),
-		logger:   s.Telemetry.LoggerProvider.Logger(loggerName),
-		stopped:  stopped,
-		stop:     stop,
+		settings:   settings,
+		proc:       p,
+		dial:       tlsDialer(s.Host.Dial, settings.TLS),
+		logger:     s.Telemetry.LoggerProvider.Logger(scopeName),
+		tracer:     s.Telemetry.TracerProvider.Tracer(scopeName),
+		propagator: s.Telemetry.Propagator,
+		consumed:   consumed,
+		processing: processing,
+		operations: operations,
+		// kotel's Meter creates its instruments and starts nothing.
+		brokers: kotel.NewMeter(kotel.MeterProvider(s.Telemetry.MeterProvider)),
+		stopped: stopped,
+		stop:    stop,
 	}, nil
 }
 
@@ -147,8 +189,12 @@ func (s *Service) Serve(ctx context.Context) error {
 	defer unregister()
 
 	g := &group{
-		svc:         s,
-		work:        work,
+		svc:  s,
+		work: work,
+		// A record's span has no parent but the one its headers carry,
+		// whatever span Serve's context has.
+		// So is its baggage: Process sees the producer's, or none.
+		spanBase:    baggage.ContextWithoutBaggage(trace.ContextWithSpanContext(work, trace.SpanContext{})),
 		logCtx:      context.WithoutCancel(ctx),
 		stopPolling: stopPolling,
 		parts:       make(map[topicPartition]*partition),
@@ -186,7 +232,7 @@ func (s *Service) clientOpts(g *group) []kgo.Opt {
 		kgo.OnPartitionsAssigned(g.assigned),
 		kgo.OnPartitionsRevoked(g.revoked),
 		kgo.OnPartitionsLost(g.lost),
-		kgo.WithHooks(connectHook{g: g}),
+		kgo.WithHooks(connectHook{g: g}, s.brokers),
 	}
 	if s.settings.SASL != nil {
 		opts = append(opts, kgo.SASL(s.settings.SASL))
@@ -258,6 +304,10 @@ type partition struct {
 	// pending is the last record run processed and has not committed. Only
 	// run uses it.
 	pending *kgo.Record
+
+	// attrs are the attributes of every measurement of the partition,
+	// besides messaging.system and messaging.operation.name.
+	attrs []attribute.KeyValue
 }
 
 func (p *partition) close() {
@@ -276,8 +326,11 @@ func (p *partition) quitting() bool {
 // group is one Serve's membership of the consumer group: the partitions it
 // is assigned and the first error that ends it.
 type group struct {
-	svc         *Service
-	work        context.Context
+	svc  *Service
+	work context.Context
+	// spanBase is work with no span and no baggage: the context a record's
+	// headers are extracted into.
+	spanBase    context.Context
 	logCtx      context.Context
 	stopPolling context.CancelFunc
 
@@ -449,6 +502,11 @@ func (g *group) assigned(_ context.Context, cl *kgo.Client, assigned map[string]
 				batches:        make(chan []*kgo.Record, 1),
 				quit:           make(chan struct{}),
 				done:           make(chan struct{}),
+				attrs: []attribute.KeyValue{
+					semconv.MessagingConsumerGroupName(g.svc.settings.GroupID),
+					semconv.MessagingDestinationName(topic),
+					semconv.MessagingDestinationPartitionID(strconv.FormatInt(int64(id), 10)),
+				},
 			}
 			g.parts[tp] = p
 			go g.run(cl, p)
@@ -546,7 +604,7 @@ func (g *group) atLeastOnce(cl *kgo.Client, p *partition, records []*kgo.Record)
 		if p.quitting() {
 			break
 		}
-		if err := g.process(r); err != nil {
+		if err := g.process(p, r); err != nil {
 			if g.work.Err() != nil {
 				// Shutdown's context cut the record short: nothing more
 				// is committed.
@@ -572,7 +630,7 @@ func (g *group) atMostOnce(cl *kgo.Client, p *partition, records []*kgo.Record) 
 		return false
 	}
 	last := records[len(records)-1]
-	if err := cl.CommitRecords(g.work, last); err != nil {
+	if err := g.commitRecord(cl, p, last); err != nil {
 		switch {
 		case g.work.Err() != nil:
 			return false
@@ -592,9 +650,9 @@ func (g *group) atMostOnce(cl *kgo.Client, p *partition, records []*kgo.Record) 
 		if g.work.Err() != nil {
 			return false
 		}
-		if err := g.process(r); err != nil && g.work.Err() == nil {
-			g.logProcessingError(r, err)
-		}
+		// process logs a failure itself, inside the record's span, so
+		// processing goes on.
+		_ = g.process(p, r)
 	}
 	return true
 }
@@ -608,7 +666,7 @@ func (g *group) commit(cl *kgo.Client, p *partition) bool {
 		return true
 	}
 	r := p.pending
-	err := cl.CommitRecords(g.work, r)
+	err := g.commitRecord(cl, p, r)
 	switch {
 	case err == nil:
 		p.pending = nil
@@ -624,9 +682,64 @@ func (g *group) commit(cl *kgo.Client, p *partition) bool {
 	}
 }
 
-// process hands r to the Processor. No panic is recovered.
-func (g *group) process(r *kgo.Record) error {
-	return g.svc.proc.Process(g.work, newMessage(r))
+// commitRecord commits r, which commits every record of p before it, and
+// records how long the commit took.
+func (g *group) commitRecord(cl *kgo.Client, p *partition, r *kgo.Record) error {
+	start := time.Now()
+	err := cl.CommitRecords(g.work, r)
+	attrs := append(p.attrs[:len(p.attrs):len(p.attrs)], semconv.MessagingOperationTypeSettle)
+	if err != nil {
+		attrs = append(attrs, semconv.ErrorType(err))
+	}
+	g.svc.operations.Record(g.work, time.Since(start).Seconds(), commitOperation, messagingconv.SystemKafka, attrs...)
+	return err
+}
+
+// process hands r, a record of p, to the Processor, under the record's
+// span, and records the record as consumed and how long processing it
+// took. No panic is recovered.
+//
+// The span's parent is the trace context the propagator extracts from r's
+// headers, whose baggage is on Process's context too. When the headers
+// carry none, the span is the root of a new trace.
+//
+// Under queue.AtMostOnce, process logs a failure itself, with the record's
+// span context, unless Shutdown's context cut processing short.
+func (g *group) process(p *partition, r *kgo.Record) error {
+	svc := g.svc
+	parent := svc.propagator.Extract(g.spanBase, (*headerCarrier)(&r.Headers))
+	ctx, span := svc.tracer.Start(parent, "process "+r.Topic,
+		trace.WithSpanKind(trace.SpanKindConsumer),
+		trace.WithAttributes(
+			semconv.MessagingSystemKafka,
+			semconv.MessagingOperationTypeProcess,
+			semconv.MessagingOperationName(processOperation),
+			semconv.MessagingDestinationName(r.Topic),
+			semconv.MessagingDestinationPartitionID(strconv.FormatInt(int64(r.Partition), 10)),
+			semconv.MessagingConsumerGroupName(svc.settings.GroupID),
+			semconv.MessagingKafkaOffset(int(r.Offset)),
+		),
+	)
+	defer span.End()
+
+	svc.consumed.Add(ctx, 1, processOperation, messagingconv.SystemKafka, p.attrs...)
+	start := time.Now()
+	err := svc.proc.Process(ctx, newMessage(r))
+	elapsed := time.Since(start).Seconds()
+
+	attrs := p.attrs
+	if err != nil {
+		errType := semconv.ErrorType(err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		span.SetAttributes(errType)
+		attrs = append(attrs[:len(attrs):len(attrs)], errType)
+		if svc.settings.Delivery == queue.AtMostOnce && g.work.Err() == nil {
+			g.logProcessingError(ctx, r, err)
+		}
+	}
+	svc.processing.Record(ctx, elapsed, processOperation, messagingconv.SystemKafka, attrs...)
+	return err
 }
 
 // logPartitions emits one INFO record per topic of m with body, naming the
@@ -645,7 +758,7 @@ func (g *group) logPartitions(body string, m map[string][]int32) {
 			ids[i] = int64(id)
 		}
 		slices.Sort(ids)
-		g.emit(log.SeverityInfo, body,
+		g.emit(g.logCtx, log.SeverityInfo, body,
 			semconv.MessagingSystemKafka,
 			semconv.MessagingConsumerGroupName(g.svc.settings.GroupID),
 			semconv.MessagingDestinationName(topic),
@@ -655,9 +768,9 @@ func (g *group) logPartitions(body string, m map[string][]int32) {
 }
 
 // logProcessingError emits an ERROR record for the error processing r
-// returned under queue.AtMostOnce.
-func (g *group) logProcessingError(r *kgo.Record, err error) {
-	g.emit(log.SeverityError, "processing a record failed",
+// returned under queue.AtMostOnce, with ctx, which carries r's span.
+func (g *group) logProcessingError(ctx context.Context, r *kgo.Record, err error) {
+	g.emit(ctx, log.SeverityError, "processing a record failed",
 		semconv.MessagingSystemKafka,
 		semconv.MessagingConsumerGroupName(g.svc.settings.GroupID),
 		semconv.MessagingDestinationName(r.Topic),
@@ -672,7 +785,7 @@ func (g *group) logProcessingError(r *kgo.Record, err error) {
 // is not processed under queue.AtMostOnce, because its commit was refused
 // with err.
 func (g *group) logSkippedBatch(first, last *kgo.Record, err error) {
-	g.emit(log.SeverityWarn, "batch skipped: its commit was refused",
+	g.emit(g.logCtx, log.SeverityWarn, "batch skipped: its commit was refused",
 		semconv.MessagingSystemKafka,
 		semconv.MessagingConsumerGroupName(g.svc.settings.GroupID),
 		semconv.MessagingDestinationName(first.Topic),
@@ -684,13 +797,13 @@ func (g *group) logSkippedBatch(first, last *kgo.Record, err error) {
 	)
 }
 
-// emit emits one record at sev, with body and attrs.
-func (g *group) emit(sev log.Severity, body string, attrs ...attribute.KeyValue) {
+// emit emits one record at sev, with ctx, body and attrs.
+func (g *group) emit(ctx context.Context, sev log.Severity, body string, attrs ...attribute.KeyValue) {
 	var r log.Record
 	r.SetTimestamp(time.Now())
 	r.SetSeverity(sev)
 	r.SetSeverityText(sev.String())
 	r.SetBody(attribute.StringValue(body))
 	r.AddAttributes(attrs...)
-	g.svc.logger.Emit(g.logCtx, r)
+	g.svc.logger.Emit(ctx, r)
 }
