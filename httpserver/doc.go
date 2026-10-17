@@ -24,6 +24,49 @@
 // that is already taken fails Init, and a connection that arrives before
 // Serve waits in the backlog.
 //
+// # Main and its defaults
+//
+// [Main] runs the end user's Init with the defaults an HTTP server behind a
+// load balancer needs. It is humus.Main with [Defaults] applied before the
+// end user's options, and does nothing else:
+//
+//	func main() {
+//		httpserver.Main(Init, humus.WithTelemetry(buildTelemetry))
+//	}
+//
+// The package exports no App. The end user's Init builds the Service with
+// NewService and returns it, along with any other Service the process
+// runs, such as a job or a queue consumer next to the API. Main runs no
+// health Service and serves no probes.
+//
+// Defaults sets two of humus.Main's defaults, and leaves the Host and the
+// telemetry Builder as humus.Main's:
+//
+//   - The drain is humus.DrainDelay(5 * time.Second). Kubernetes removes a
+//     terminating pod from a Service's endpoints asynchronously, so for a
+//     while after SIGTERM, load balancers still route requests to the pod.
+//     The Service keeps serving through the drain, so those requests are
+//     answered rather than refused.
+//   - The grace period is 10s. With telemetry's 5s shutdown after it, the
+//     drain and the grace period add up to 20s, inside the 25s that
+//     humus.Main budgets within Kubernetes' default
+//     terminationGracePeriodSeconds of 30s.
+//
+// The end user's options come after Defaults, so they win:
+// httpserver.Main(Init, humus.WithShutdownGracePeriod(15*time.Second)) has a
+// 15s grace period and still the 5s drain, and humus.WithDrain(nil) removes
+// the drain. An operator overrides both without a rebuild, with
+// HUMUS_SHUTDOWN_GRACE_PERIOD and HUMUS_SHUTDOWN_DRAIN_DELAY, in the same
+// manifest that sets terminationGracePeriodSeconds. A test runs the App on
+// the same defaults by passing Defaults to humustest.Start with
+// humustest.WithApp.
+//
+// Whether a process calls httpserver.Main or humus.Main depends on what a
+// load balancer routes to. A process uses httpserver.Main when a load
+// balancer routes to its HTTP server. A job's pod whose only HTTP server
+// serves probes or metrics isn't routed to, so it calls humus.Main, with no
+// drain.
+//
 // # TLS
 //
 // TLS is required. The Service serves HTTPS with Settings.TLS and nothing in
