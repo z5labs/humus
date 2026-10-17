@@ -126,7 +126,7 @@ wait. An operator overrides the grace period and the drain through their
 
 ## Runtime packages
 
-A [job]({{< relref "jobs" >}}), a queue consumer and the health Service
+A [job]({{< relref "jobs" >}}), a [queue consumer]({{< relref "kafka" >}}) and the health Service
 stop on `Serve`'s context, so they run on `humus.Main`'s defaults and need no `Main` of their own. A
 runtime package whose Services need a drain, such as an HTTP or gRPC server
 that keeps serving until `Shutdown`, wraps `Main` instead:
@@ -219,8 +219,8 @@ none.
 ## Service
 
 A [`Service`](https://pkg.go.dev/github.com/z5labs/humus#Service) is a
-long-running part of an App: an HTTP server, a gRPC server, a queue consumer
-or a job. It has two methods, `Serve` and `Shutdown`, and the App gives it two
+long-running part of an App: an HTTP server, a gRPC server, a
+[queue consumer]({{< relref "kafka" >}}) or a job. It has two methods, `Serve` and `Shutdown`, and the App gives it two
 shutdown signals, at different times:
 
 1. **`Serve`'s context is done** as soon as the App starts shutting down,
@@ -229,7 +229,8 @@ shutdown signals, at different times:
    its context's deadline.
 
 A Service may stop on the first, as a
-[job]({{< relref "jobs#the-two-signals" >}}), a queue consumer or the
+[job]({{< relref "jobs#the-two-signals" >}}), a
+[queue consumer]({{< relref "kafka#shutdown-and-rebalances" >}}) or the
 [health Service]({{< relref "health#the-health-service" >}}) does: the health
 Service turns not ready then, so a load balancer stops sending the App new
 traffic. Or it may keep serving until the second, as an HTTP or gRPC Service
@@ -301,7 +302,7 @@ return until after the drain. So, for an App with a Drain set:
 | a job, finished on its own | nothing: Run doesn't call the Drain |
 | a job, finished on its own, next to the health Service | nothing: Run calls the Drain, and its context is done at once |
 | a job, interrupted by a signal | until the run returns, at most the Drain's delay |
-| a queue consumer | until its records in flight are done, at most the Drain's delay |
+| a [queue consumer]({{< relref "kafka#shutdown-and-rebalances" >}}) | until its records in flight are done, at most the Drain's delay |
 | an HTTP or gRPC server, with or without the health Service | the Drain's whole delay |
 | a job and an HTTP server | the Drain's whole delay, unless both return first |
 

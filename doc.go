@@ -81,7 +81,11 @@
 // grpcserver package serves gRPC over TLS as a Service, ending every stream
 // at shutdown with Unavailable, and grpcserver.Main runs it with a drain and
 // a grace period for a server behind a Kubernetes Service, documented at
-// https://z5labs.github.io/humus/grpc/. The other runtime packages come back
+// https://z5labs.github.io/humus/grpc/. The queue and queue/kafka packages
+// have landed: queue is the contract between a Processor and any broker, and
+// queue/kafka consumes Kafka topics as a Service on Main's defaults, at least
+// or at most once, with franz-go, documented at
+// https://z5labs.github.io/humus/kafka/. The other runtime packages come back
 // through their own proposals.
 //
 // The plan is in the charter, Proposal: humus on the bedrock process model:
