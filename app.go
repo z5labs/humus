@@ -204,9 +204,12 @@ func (e *GracePeriodError) Unwrap() error {
 //     down";
 //  9. when it hasn't yet received every Serve's result, calls the drain
 //     with the Setup that Init was given and a context that keeps ctx's
-//     values, is not cancelled with it, and is done once every Serve has
-//     returned. It collects the Serve results that arrive while the drain
-//     runs, and waits for the drain to return;
+//     values, is not cancelled with it, is done once every Serve has
+//     returned, and gives ShutdownCause the shutdown's cause: the signal's
+//     cause after a signal, ctx's cause when ctx was cancelled, and an
+//     error wrapping ErrServiceReturned, and the error Serve returned if it
+//     failed, when a Service returned first. It collects the Serve results
+//     that arrive while the drain runs, and waits for the drain to return;
 //  10. calls Shutdown on every Service concurrently, waits for every Serve
 //     to return, and then runs the OnStop functions in reverse order of
 //     registration, all within one grace period, which starts after the
@@ -354,6 +357,7 @@ func (a App) run(ctx, sigCtx context.Context, stop context.CancelFunc, p bedrock
 	var errs []error
 	pending := len(services)
 	signalled := false
+	var returned error
 	if pending > 0 {
 		select {
 		case <-sigCtx.Done():
@@ -361,6 +365,7 @@ func (a App) run(ctx, sigCtx context.Context, stop context.CancelFunc, p bedrock
 		case err := <-served:
 			pending--
 			errs = appendServeErr(errs, err)
+			returned = serviceReturned(err)
 		}
 	}
 	cause := context.Cause(sigCtx)
@@ -368,7 +373,11 @@ func (a App) run(ctx, sigCtx context.Context, stop context.CancelFunc, p bedrock
 	cancelServe()
 	l.info("shutting down")
 	if pending > 0 && settings.drain != nil {
-		drainErrs, left, err := drain(ctx, settings.drain, setup, served, pending)
+		why := cause
+		if !signalled {
+			why = returned
+		}
+		drainErrs, left, err := drain(ctx, settings.drain, setup, served, pending, why)
 		errs = append(errs, drainErrs...)
 		pending = left
 		if err != nil {
