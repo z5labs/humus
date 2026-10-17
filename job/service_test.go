@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -19,12 +20,16 @@ import (
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/config"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
+	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/codes"
+	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/job"
+	"github.com/z5labs/humus/telemetry"
 )
 
 // runs returns an Init whose only Service is a job that runs run.
@@ -377,5 +382,156 @@ func TestNewService_panics_on_a_nil_run(t *testing.T) {
 	s := setup(t, humustest.NewTelemetry())
 	require.PanicsWithValue(t, "job: NewService called with a nil run", func() {
 		job.NewService(s, nil)
+	})
+}
+
+// traceparent is a valid W3C traceparent: its trace ID is
+// 4bf92f3577b34da6a3ce929d0e0e4736 and its span ID 00f067aa0ba902b7.
+const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+
+func TestService_joins_the_trace_in_TRACEPARENT(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		tel := humustest.NewTelemetry()
+		var schedule string
+		_, status := humustest.Start(t, runs(func(ctx context.Context) error {
+			schedule = baggage.FromContext(ctx).Member("schedule").Value()
+			return nil
+		}),
+			humustest.WithApp(humus.WithTelemetry(tel.Builder())),
+			humustest.WithEnv(map[string]string{
+				"TRACEPARENT": traceparent,
+				"BAGGAGE":     "schedule=nightly",
+			}),
+		)
+
+		require.Zero(t, (<-status).Code())
+		spans := tel.Spans()
+		require.Len(t, spans, 1)
+		span := spans[0]
+		require.Equal(t, "4bf92f3577b34da6a3ce929d0e0e4736", span.SpanContext().TraceID().String())
+		require.Equal(t, "00f067aa0ba902b7", span.Parent().SpanID().String())
+		require.True(t, span.Parent().IsRemote())
+		require.Equal(t, trace.SpanKindInternal, span.SpanKind())
+		require.Equal(t, "nightly", schedule)
+	})
+}
+
+func TestService_a_malformed_TRACEPARENT_starts_a_new_trace(t *testing.T) {
+	cases := []struct {
+		name string
+		env  map[string]string
+	}{
+		{"malformed", map[string]string{"TRACEPARENT": "00-not-a-trace-context-01"}},
+		{"an all-zero trace ID", map[string]string{"TRACEPARENT": "00-00000000000000000000000000000000-00f067aa0ba902b7-01"}},
+		{"unset", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				tel := humustest.NewTelemetry()
+				p, status := humustest.Start(t, runs(func(context.Context) error { return nil }),
+					humustest.WithApp(humus.WithTelemetry(tel.Builder())),
+					humustest.WithEnv(tc.env),
+				)
+
+				st := <-status
+				require.Zero(t, st.Code(), "cause: %v", st.Cause())
+				require.NoError(t, st.Cause())
+				spans := tel.Spans()
+				require.Len(t, spans, 1)
+				require.False(t, spans[0].Parent().IsValid(), "the span is the root of a new trace")
+				require.True(t, spans[0].SpanContext().IsValid())
+				require.NotEqual(t, "00000000000000000000000000000000", spans[0].SpanContext().TraceID().String())
+
+				require.Empty(t, p.Stderr())
+				for _, rec := range tel.Logs() {
+					body := strings.ToLower(rec.Body().AsString())
+					require.NotContains(t, body, "traceparent")
+					require.NotContains(t, body, "trace context")
+					require.Less(t, rec.Severity(), otellog.SeverityWarn, "record %q", rec.Body().AsString())
+				}
+			})
+		})
+	}
+}
+
+func TestService_TRACESTATE_reaches_the_spans_trace_state(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		tel := humustest.NewTelemetry()
+		_, status := humustest.Start(t, runs(func(context.Context) error { return nil }),
+			humustest.WithApp(humus.WithTelemetry(tel.Builder())),
+			humustest.WithEnv(map[string]string{
+				"TRACEPARENT": traceparent,
+				"TRACESTATE":  "congo=t61rcWkgMzE,rojo=00f067aa0ba902b7",
+			}),
+		)
+
+		require.Zero(t, (<-status).Code())
+		spans := tel.Spans()
+		require.Len(t, spans, 1)
+		require.Equal(t, "congo=t61rcWkgMzE,rojo=00f067aa0ba902b7", spans[0].SpanContext().TraceState().String())
+	})
+}
+
+func TestService_only_the_run_joins_the_trace(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		tel := humustest.NewTelemetry()
+		_, status := humustest.Start(t, func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+			_, span := s.Telemetry.TracerProvider.Tracer("init").Start(ctx, "init")
+			span.End()
+			return []humus.Service{job.NewService(s, func(context.Context) error { return nil })}, nil
+		},
+			humustest.WithApp(humus.WithTelemetry(tel.Builder())),
+			humustest.WithEnv(map[string]string{"TRACEPARENT": traceparent}),
+		)
+
+		require.Zero(t, (<-status).Code())
+		spans := tel.Spans()
+		require.Len(t, spans, 2)
+		initSpan, run := spans[0], spans[1]
+		require.Equal(t, "init", initSpan.Name())
+		require.Equal(t, "job", run.Name())
+		require.Equal(t, "4bf92f3577b34da6a3ce929d0e0e4736", run.SpanContext().TraceID().String())
+		require.False(t, initSpan.Parent().IsValid(), "Init's span is the root of a trace of its own")
+		require.NotEqual(t, run.SpanContext().TraceID(), initSpan.SpanContext().TraceID())
+	})
+}
+
+// testPropagator is a propagator of the test's own. Its only key is
+// x-test.parent, whose value is a W3C traceparent.
+type testPropagator struct{}
+
+func (testPropagator) Inject(context.Context, propagation.TextMapCarrier) {}
+
+func (testPropagator) Extract(ctx context.Context, c propagation.TextMapCarrier) context.Context {
+	return propagation.TraceContext{}.Extract(ctx, propagation.MapCarrier{"traceparent": c.Get("x-test.parent")})
+}
+
+func (testPropagator) Fields() []string { return []string{"x-test.parent"} }
+
+func TestService_reads_the_variables_of_the_Builders_propagator(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		tel := humustest.NewTelemetry()
+		build := func(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+			sdk, err := tel.Builder()(ctx, p, dial)
+			sdk.Propagator = testPropagator{}
+			return sdk, err
+		}
+		_, status := humustest.Start(t, runs(func(context.Context) error { return nil }),
+			humustest.WithApp(humus.WithTelemetry(build)),
+			humustest.WithEnv(map[string]string{
+				"X_TEST_PARENT": traceparent,
+				// W3C trace context's variable, which this propagator
+				// doesn't read.
+				"TRACEPARENT": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+			}),
+		)
+
+		require.Zero(t, (<-status).Code())
+		spans := tel.Spans()
+		require.Len(t, spans, 1)
+		require.Equal(t, "4bf92f3577b34da6a3ce929d0e0e4736", spans[0].SpanContext().TraceID().String())
+		require.Equal(t, "00f067aa0ba902b7", spans[0].Parent().SpanID().String())
+		require.True(t, spans[0].Parent().IsRemote())
 	})
 }

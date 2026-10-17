@@ -83,6 +83,22 @@
 // package writes no log records and records no metrics: the App already
 // logs the lifecycle, and the orchestrator sees every run.
 //
+// The run joins the trace of the process that started the job, such as a
+// workflow engine or a CI step, through the SDK's propagator. Serve
+// extracts a trace context from the Process's environment with the
+// Setup's propagator, reading each of the propagator's keys under the name
+// OpenTelemetry's environment-variable carriers give it, and the run's span
+// is that context's child, still of kind internal. The Builder's propagator
+// chooses the variables read: with telemetry.New's, they are TRACEPARENT,
+// TRACESTATE and BAGGAGE, and a propagator of another kind, such as B3,
+// reads its own keys the same way. humus defines none of their names. The
+// extracted context is the parent of the run's span and of nothing else:
+// the spans Init starts stay outside it. Its baggage is on the run's
+// context, so the run reads it with baggage.FromContext(ctx). When none of
+// the variables is set, or the trace context is malformed, the run starts a
+// new trace, with no error and nothing logged. Kubernetes sets none of
+// them.
+//
 // # Panics
 //
 // The package recovers no panic, and doesn't retry the run. A run that

@@ -19,24 +19,29 @@ import (
 
 // TestPackage_imports_only_what_a_job_needs checks the package's own
 // source, test files excluded. Every import is a standard library package,
-// the root package, or one of OpenTelemetry's trace and codes APIs, all of
-// which the core module already requires, so job adds no module
-// dependency. It imports neither OpenTelemetry's root package, which holds
-// the globals, nor a logging or metrics API, since the package writes no log
-// records and records no metrics. The source also has no go statement and
+// bedrock, the root package, or one of OpenTelemetry's trace, codes and
+// propagation APIs, all of which the core module already requires, so job
+// adds no module dependency. It imports neither OpenTelemetry's root
+// package, which holds the globals, nor a logging or metrics API, since the
+// package writes no log records and records no metrics, nor contrib's
+// envcar, which reads the OS process's environment rather than the
+// Process's: the carrier over the environment is job's own. The source also has no go statement and
 // no call to recover: the run runs on Serve's goroutine, and its panics
 // aren't recovered.
 func TestPackage_imports_only_what_a_job_needs(t *testing.T) {
 	t.Parallel()
 
 	allowed := map[string]bool{
-		"github.com/z5labs/humus":        true,
-		"go.opentelemetry.io/otel/codes": true,
-		"go.opentelemetry.io/otel/trace": true,
+		"github.com/z5labs/bedrock":            true,
+		"github.com/z5labs/humus":              true,
+		"go.opentelemetry.io/otel/codes":       true,
+		"go.opentelemetry.io/otel/propagation": true,
+		"go.opentelemetry.io/otel/trace":       true,
 	}
-	banned := map[string]bool{
-		"log":      true,
-		"log/slog": true,
+	banned := map[string]string{
+		"log":      "the package writes no log records",
+		"log/slog": "the package writes no log records",
+		"go.opentelemetry.io/contrib/propagators/envcar": "the carrier reads the Process's environment, not the OS process's",
 	}
 
 	files, err := filepath.Glob("*.go")
@@ -57,8 +62,8 @@ func TestPackage_imports_only_what_a_job_needs(t *testing.T) {
 			first, _, _ := strings.Cut(path, "/")
 			stdlib := !strings.Contains(first, ".")
 			switch {
-			case banned[path]:
-				t.Errorf("%s: imports %s, but the package writes no log records", fset.Position(imp.Pos()), path)
+			case banned[path] != "":
+				t.Errorf("%s: imports %s, but %s", fset.Position(imp.Pos()), path, banned[path])
 			case !stdlib && !allowed[path]:
 				t.Errorf("%s: imports %s, which a job doesn't need", fset.Position(imp.Pos()), path)
 			}
