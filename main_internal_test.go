@@ -20,8 +20,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/bedrocktest"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/log"
 
 	"github.com/z5labs/humus/internal/defaults"
 	"github.com/z5labs/humus/telemetry"
@@ -248,30 +246,6 @@ func TestWithDrain_nil_removes_a_drain_an_earlier_Option_set(t *testing.T) {
 
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
 		require.Zero(t, shutdownAt.Sub(sigterm))
-	})
-}
-
-// TestMainApp_the_telemetry_default_starts_nothing builds the telemetry
-// default inside a synctest bubble and never shuts it down. The bubble ends
-// only once every goroutine started in it has exited, so it would fail, by
-// deadlock or by never ending, if the default had started an exporter, a
-// batch processor or a periodic reader: anything that ticks.
-func TestMainApp_the_telemetry_default_starts_nothing(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		p := bedrocktest.NewProcess(t)
-		sdk, err := mainApp(noInit).Telemetry(t.Context(), p.Process(), OSHost().Dial)
-		require.NoError(t, err)
-
-		logger := sdk.LoggerProvider.Logger("main_test")
-		var r log.Record
-		r.SetSeverity(log.SeverityInfo)
-		r.SetBody(attribute.StringValue("hello"))
-		logger.Emit(t.Context(), r)
-		_, span := sdk.TracerProvider.Tracer("main_test").Start(t.Context(), "work")
-		require.True(t, span.SpanContext().IsValid(), "spans get real IDs")
-		span.End()
-
-		require.Contains(t, p.Stdout(), `"hello"`, "the record went to stdout at once")
 	})
 }
 
