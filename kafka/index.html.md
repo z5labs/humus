@@ -356,7 +356,7 @@ Which records are processed again, by Delivery:
 | `Process` returns an error | that record and every record after it, when the App restarts. The records before it are committed. | none: the error is logged and counted, and processing goes on |
 | the process crashes, or panics | every record after the partition's last commit | none: the records of the committed batch that weren't processed are lost |
 | a rebalance revokes the partition | none: the record in flight finishes and is committed before the partition moves | none: the batch in flight finishes before the partition moves |
-| the member is fenced out, and loses the partition | the records processed since the last commit, by the partition's new owner | none |
+| the member is fenced out, and gives up the partition | the records processed since the last commit, by the partition's new owner | none |
 | SIGTERM | none: the record in flight finishes and is committed | none: the batch in flight finishes |
 | the grace period runs out during a record | that record and every record after it | that record and the rest of its batch are lost |
 
@@ -385,7 +385,7 @@ other failure follows this table:
 |---|---|---|
 | `Process` returns an error | not committed; the Service stops as on shutdown, and `Serve` returns the error, naming the record; exit 1 | already committed; logged at ERROR, with the record's topic, partition and offset; processing goes on |
 | `Process` panics | the process crashes; nothing after the last commit is committed | the process crashes; the batch was committed |
-| a commit fails because the member was fenced out of the group, or the group is rebalancing | not an error: franz-go rejoins the group, and the records are committed by a later commit, or processed again by the partition's new owner | the same, and the batch whose commit failed is not processed. It is logged at WARN with its offsets, and if the partition stays with the member, the batch is lost |
+| a commit fails because the member was fenced out of the group, or the group is rebalancing | not an error: franz-go rejoins the group. A later commit covers the records only while the partition stays with the member, and otherwise its new owner processes them again | the same, and the batch whose commit failed is not processed. It is logged at WARN with its offsets, and if the partition stays with the member, the batch is lost |
 | any other commit fails | the Service stops, and `Serve` returns the error; exit 1 | the same |
 | a poll returns an error franz-go doesn't retry, such as an authorization failure | the Service stops, and `Serve` returns the error; exit 1 | the same |
 | a broker refuses the SASL credentials | the Service stops, and `Serve` returns the error; exit 1 | the same |
@@ -393,7 +393,9 @@ other failure follows this table:
 
 A commit is refused for a fenced-out member with `UNKNOWN_MEMBER_ID`,
 `ILLEGAL_GENERATION` or `FENCED_INSTANCE_ID`, and during a rebalance with
-`REBALANCE_IN_PROGRESS`. A poll's error ends the Service when it is an error
+`REBALANCE_IN_PROGRESS`. A commit the Service doesn't send, because the
+partition isn't held under the member ID franz-go would send it under, is
+handled the same way: see [Loss](#loss). A poll's error ends the Service when it is an error
 code from Kafka that franz-go doesn't retry; an error code franz-go retries,
 or a failure to connect, is franz-go's to recover from.
 
@@ -469,10 +471,19 @@ in flight.
 
 ### Loss
 
-When the member is fenced out of the group, its partitions are lost: another
-member may own them already, so a commit would fail. The Service stops them
-after their record in flight without committing, franz-go rejoins the group,
-and the partitions' new owner processes the uncommitted records again.
+When the member is fenced out of the group, another member may own its
+partitions already. franz-go may report them as lost or, when it learns of the
+fence from a refused commit and rejoins the group as a new member, as revoked.
+Either way, the Service stops them after their record in flight and commits
+nothing more for them, and the partitions' new owner processes the uncommitted
+records again.
+
+Kafka checks a commit's member ID and generation, but not who owns the
+partition, so it would accept a commit from the rejoined member for a
+partition another member now owns. So the Service sends a partition's commit
+only under the member ID the partition is held under: that of the rebalance
+that assigned it, or of a later one that kept it. A member that gets a
+partition back after a fence commits it under its new member ID.
 
 ## The defaults
 
@@ -650,10 +661,10 @@ The Service logs through the Setup's `LoggerProvider`, under its scope:
 | Record | Severity | When |
 |---|---|---|
 | `partitions assigned` | INFO | the group assigns the Service partitions |
-| `partitions revoked` | INFO | a rebalance revokes them, after their records in flight are committed |
+| `partitions revoked` | INFO | a rebalance revokes them, after their records in flight are committed; after a fence, nothing more is committed for them |
 | `partitions lost` | INFO | the member was fenced out of the group |
 | `processing a record failed` | ERROR | `Process` returned an error under `AtMostOnce`. It carries the record's span's context, its topic, partition and offset, and the error as `exception.message` and `error.type`. |
-| `batch skipped: its commit was refused` | WARN | under `AtMostOnce`, a batch's commit was refused for a member no longer in the group, so the batch wasn't processed |
+| `batch skipped: its commit was refused` | WARN | under `AtMostOnce`, a batch's commit was refused for a member no longer in the group, or not sent for a partition the member no longer holds, so the batch wasn't processed |
 
 The partition records carry `messaging.system`,
 `messaging.consumer.group.name`, `messaging.destination.name` and
