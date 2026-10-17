@@ -18,6 +18,12 @@
 // the message "internal error". The panic is recorded as an exception
 // event on the RPC's span and as one ERROR record, in the RPC's context,
 // through s.Telemetry's logger named after grpcserver.
+//
+// Inside the recovering stream interceptor, a second one gives every
+// streaming RPC's handler a context of its own, derived from the RPC's,
+// which Shutdown cancels when it starts. A stream whose handler then
+// returns nil or a context error ends with codes.Unavailable and the
+// message "server is shutting down". Unary RPCs are not cancelled.
 package server
 
 import (
@@ -37,8 +43,9 @@ import (
 // Server is a *grpc.Server, its listener, and the state that makes it a
 // humus.Service. It is safe for concurrent use.
 type Server struct {
-	ln  net.Listener
-	srv *grpc.Server
+	ln      net.Listener
+	srv     *grpc.Server
+	streams *streams
 
 	// mu orders RegisterService against Serve, so a registration either
 	// happens before Serve or is refused: grpc-go exits the process on one
@@ -54,7 +61,8 @@ type Server struct {
 
 // New listens on addr with s.Host.Listen("tcp", addr), and builds the
 // server with grpc.WaitForHandlers(true), a unary and a stream interceptor
-// that recover a panic, and then opts. A failure to listen, such as
+// that recover a panic, a stream interceptor inside it that gives each
+// stream's handler a context Shutdown cancels, and then opts. A failure to listen, such as
 // EADDRINUSE, is its error. It registers a function with s.OnStop that
 // closes the listener, so a listener whose Server never serves, because
 // Init failed after New, is still closed.
@@ -77,15 +85,21 @@ func New(s *humus.Setup, addr string, opts ...grpc.ServerOption) (*Server, error
 	// outermost interceptors, and a panic of an interceptor in opts is
 	// recovered too. A stats handler is not an interceptor, and stays
 	// outside them, so the RPC's span records the Internal code.
+	//
+	// The interceptor that ends streams at Shutdown is inside the
+	// recovery, so a panic of a handler it ran is still recovered, and
+	// outside opts, so every interceptor of the end user's sees the
+	// context Shutdown cancels.
 	logger := s.Telemetry.LoggerProvider.Logger(loggerName)
+	st := newStreams()
 	all := make([]grpc.ServerOption, 0, 3+len(opts))
 	all = append(all,
 		grpc.WaitForHandlers(true),
 		grpc.ChainUnaryInterceptor(recoverUnary(logger)),
-		grpc.ChainStreamInterceptor(recoverStream(logger)),
+		grpc.ChainStreamInterceptor(recoverStream(logger), st.interceptor()),
 	)
 	all = append(all, opts...)
-	return &Server{ln: ln, srv: grpc.NewServer(all...), stopped: make(chan struct{})}, nil
+	return &Server{ln: ln, srv: grpc.NewServer(all...), streams: st, stopped: make(chan struct{})}, nil
 }
 
 // closeListener closes ln. A listener that is already closed is not an
@@ -152,7 +166,12 @@ func (s *Server) Serve(context.Context) error {
 	return fmt.Errorf("serving: %w", err)
 }
 
-// Shutdown stops the server gracefully, with GracefulStop: it stops
+// Shutdown ends every streaming RPC: before anything else, it cancels the
+// context of every stream's handler, and of every stream that starts
+// after, and a stream whose handler then returns nil or a context error
+// ends with codes.Unavailable. Unary RPCs are not cancelled.
+//
+// Then it stops the server gracefully, with GracefulStop: it stops
 // accepting connections, sends every client a GOAWAY, and waits for the
 // RPCs in flight. If ctx is done first, or is done already, it calls Stop,
 // which closes every connection and cancels every RPC, waits for every
@@ -167,6 +186,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return s.awaitShutdown(ctx)
 	}
 	defer close(s.stopped)
+	s.streams.stop()
 	// Before Serve, the *grpc.Server doesn't know the listener, so neither
 	// GracefulStop nor Stop closes it.
 	defer func() { _ = closeListener(s.ln) }()

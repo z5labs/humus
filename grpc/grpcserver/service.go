@@ -43,7 +43,10 @@ var (
 //
 // humus's options also add a unary and a stream interceptor, the
 // outermost ones, that recover a panic of an RPC and fail only that RPC,
-// with codes.Internal, as the package doc describes under Panics.
+// with codes.Internal, as the package doc describes under Panics. Inside
+// them, a second stream interceptor gives each stream's handler a context
+// that Shutdown cancels, as the package doc describes under Streams at
+// shutdown.
 //
 // opts come after humus's own options, and humus's transport credentials
 // come after opts. An option that grpc-go keeps one value of, such as
@@ -128,8 +131,11 @@ func (svc *Service) Serve(ctx context.Context) error {
 	return nil
 }
 
-// Shutdown stops the server gracefully: it stops accepting connections,
-// sends every client a GOAWAY, and waits for the RPCs in flight. If ctx is
+// Shutdown ends every streaming RPC: it cancels each stream handler's
+// context, and a stream whose handler then returns nil or a context error
+// ends with codes.Unavailable. It stops the server gracefully: it stops
+// accepting connections, sends every client a GOAWAY, and waits for the
+// RPCs in flight. If ctx is
 // done first, it closes every connection, cancels every RPC, waits for
 // every handler to return, and returns an error that wraps ctx's error.
 func (svc *Service) Shutdown(ctx context.Context) error {
