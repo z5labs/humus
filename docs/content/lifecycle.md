@@ -137,9 +137,11 @@ that keeps serving until `Shutdown`, wraps `Main` instead:
   calls `humus.Main`. The end user's options come last, so they win over the
   package's.
 
-As a sketch, with the HTTP server foundation's proposed durations, a 5s drain
-and a 10s grace period, which fit inside the 25s budget with telemetry's 5s.
-That proposal decides the names and the values:
+The HTTP server's `Main` and defaults are `httpserver.Main` and
+`httpserver.Defaults`, with a 5s drain and a 10s grace period, which fit
+inside the 25s budget with telemetry's 5s:
+[Serving HTTP]({{< relref "http#the-defaults" >}}) explains them. The root package's tests don't import a runtime package, so the samples
+on this page use stand-ins of the same shape:
 
 ```go
 // httpDefaults stands in for a runtime package's defaults, such as
@@ -161,7 +163,8 @@ func httpMain(init func(ctx context.Context, s *humus.Setup) ([]humus.Service, e
 
 The end user's `main` calls the package's `Main`, and its test passes the
 package's defaults with `humustest.WithApp(httpDefaults())`, as
-[Testing]({{< relref "testing#runtime-packages" >}}) shows:
+[Testing]({{< relref "testing#runtime-packages" >}}) shows, or with the
+package's own `Start`, such as `httpservertest.Start`:
 
 ```go
 httpMain(Init, humus.WithTelemetry(buildTelemetry))
@@ -176,10 +179,9 @@ drain would make a finished job wait for the whole delay.
 **In a mixed process, the package's budget is everyone's.** A job or a
 consumer next to a server that is routed to runs on that server's package's
 `Main`, so its work in flight at a signal gets that package's drain and grace
-period: 15s on the HTTP server foundation's proposed defaults, not
-`humus.Main`'s 20s. An end user who needs more passes
-`humus.WithShutdownGracePeriod` after the package's defaults, within the 25s
-budget. An HTTP and a gRPC server in one process use either package's `Main`.
+period: 15s on `httpserver.Main`'s defaults, not `humus.Main`'s 20s. An end
+user who needs more passes `humus.WithShutdownGracePeriod` after the
+package's defaults, within the 25s budget. An HTTP and a gRPC server in one process use either package's `Main`.
 Each package's defaults set both the drain and the grace period, so passing
 the other package's defaults as well replaces both: the last one wins.
 

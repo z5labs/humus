@@ -73,8 +73,12 @@
 // status. The health package's core is back: monitors, probes and a health
 // Service that owns an App's readiness, and Main runs an App on the OS
 // process. The job package has landed: it runs a job once as a Service on
-// Main, and its run's error is the exit status. The other runtime packages
-// come back through their own proposals.
+// Main, and its run's error is the exit status. The httpserver package has
+// landed: it serves an http.Handler over TLS as a Service, with HTTP/2
+// preferred, and httpserver.Main runs it with a drain and a grace period for
+// a server behind a load balancer, documented at
+// https://z5labs.github.io/humus/http/. The other runtime packages come
+// back through their own proposals.
 //
 // The plan is in the charter, Proposal: humus on the bedrock process model:
 // https://github.com/z5labs/humus/discussions/629

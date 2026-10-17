@@ -26,7 +26,12 @@ same App in a test, on a test Host. The `health` package's core is back
 too: monitors, probes and a health Service that owns an App's readiness. The
 first runtime package, which exports Services for an `Init` to return, has
 landed: `job` runs a job once as a Service, and its run's error is the exit
-status. See [Jobs](https://z5labs.github.io/humus/jobs/). Earlier
+status. See [Jobs](https://z5labs.github.io/humus/jobs/). The
+`httpserver` package has landed too: it serves an `http.Handler` over TLS as a
+Service, with HTTP/2 preferred, and `httpserver.Main` runs it with a drain and
+a grace period for a server behind a load balancer, while `httpservertest`
+tests it on the same defaults. See
+[Serving HTTP](https://z5labs.github.io/humus/http/). Earlier
 releases remain available on [pkg.go.dev](https://pkg.go.dev/github.com/z5labs/humus?tab=versions).
 
 The plan is in the charter,
