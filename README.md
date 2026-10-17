@@ -24,8 +24,9 @@ is `func main() { humus.Main(app.Init) }`, and `humus.Main` runs the
 fit inside Kubernetes' termination budget, while `humustest.Start` runs the
 same App in a test, on a test Host. The `health` package's core is back
 too: monitors, probes and a health Service that owns an App's readiness. The
-runtime packages, which export Services for an `Init` to return, have not
-landed yet. Earlier
+first runtime package, which exports Services for an `Init` to return, has
+landed: `job` runs a job once as a Service, and its run's error is the exit
+status. See [Jobs](https://z5labs.github.io/humus/jobs/). Earlier
 releases remain available on [pkg.go.dev](https://pkg.go.dev/github.com/z5labs/humus?tab=versions).
 
 The plan is in the charter,

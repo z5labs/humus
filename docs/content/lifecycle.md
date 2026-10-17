@@ -126,8 +126,8 @@ wait. An operator overrides the grace period and the drain through their
 
 ## Runtime packages
 
-A job, a queue consumer and the health Service stop on `Serve`'s context,
-so they run on `humus.Main`'s defaults and need no `Main` of their own. A
+A [job]({{< relref "jobs" >}}), a queue consumer and the health Service
+stop on `Serve`'s context, so they run on `humus.Main`'s defaults and need no `Main` of their own. A
 runtime package whose Services need a drain, such as an HTTP or gRPC server
 that keeps serving until `Shutdown`, wraps `Main` instead:
 
@@ -215,7 +215,8 @@ shutdown signals, at different times:
 2. **`Shutdown` is called** after the drain, with the grace period as
    its context's deadline.
 
-A Service may stop on the first, as a job, a queue consumer or the
+A Service may stop on the first, as a
+[job]({{< relref "jobs#the-two-signals" >}}), a queue consumer or the
 [health Service]({{< relref "health#the-health-service" >}}) does: the health
 Service turns not ready then, so a load balancer stops sending the App new
 traffic. Or it may keep serving until the second, as an HTTP or gRPC Service

@@ -72,8 +72,9 @@
 // Setup.OnStop, shuts its telemetry down and turns the outcome into an exit
 // status. The health package's core is back: monitors, probes and a health
 // Service that owns an App's readiness, and Main runs an App on the OS
-// process. The runtime packages, whose Services run on Main, have not landed
-// yet.
+// process. The job package has landed: it runs a job once as a Service on
+// Main, and its run's error is the exit status. The other runtime packages
+// come back through their own proposals.
 //
 // The plan is in the charter, Proposal: humus on the bedrock process model:
 // https://github.com/z5labs/humus/discussions/629

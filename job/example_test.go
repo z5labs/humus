@@ -6,6 +6,7 @@
 package job_test
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -17,6 +18,10 @@ import (
 	"github.com/z5labs/humus/job"
 	"github.com/z5labs/humus/telemetry"
 )
+
+// The jobs page of the docs site quotes the code in this file, and
+// TestDocs_code_samples checks that every quote still matches it.
+// TestInit_runs_the_job_and_releases_its_dependencies runs Init.
 
 // exporter is the end user's job. Its Run method is the run.
 type exporter struct {
@@ -34,14 +39,17 @@ func (e *exporter) Run(ctx context.Context) error {
 	return err
 }
 
-// Init is the end user's Init: it builds the run's dependencies and returns
-// the job's Service.
+// Init is the end user's Init: it builds the run's dependencies, releases
+// them with s.OnStop, and returns the job's Service.
 func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	bucket, err := config.Env(s.Process.Environment, "EXPORT_BUCKET").Read(ctx)
 	if err != nil {
 		return nil, err // exit 78
 	}
-	e := &exporter{bucket: bucket, out: s.Process.Stdout}
+	out := bufio.NewWriter(s.Process.Stdout)
+	s.OnStop(func(context.Context) error { return out.Flush() })
+
+	e := &exporter{bucket: bucket, out: out}
 	return []humus.Service{job.NewService(s, e.Run)}, nil
 }
 
