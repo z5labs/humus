@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
@@ -102,7 +103,7 @@ func startKafka() (string, testcontainers.Container, error) {
 		ExposedPorts: []string{"9092/tcp"},
 		HostConfigModifier: func(hc *container.HostConfig) {
 			hc.PortBindings = network.PortMap{
-				network.MustParsePort("9092/tcp"): {{HostPort: port}},
+				network.MustParsePort("9092/tcp"): {{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: port}},
 			}
 		},
 		Env: map[string]string{
@@ -429,7 +430,7 @@ func TestKafka_cooperative_sticky_rebalance_moves_one_partition_after_its_record
 
 	const (
 		partitions = 2
-		n          = 40
+		n          = 80
 	)
 	adm := admin(t)
 	topic, group := newTopic(t, adm, partitions), unique("group")
@@ -488,6 +489,9 @@ func TestKafka_cooperative_sticky_rebalance_moves_one_partition_after_its_record
 		"the first App's last record of the moved partition was committed before the second App began")
 	require.Equal(t, startedAt[moved], after[0], "the second App began at the committed offset")
 	require.Equal(t, offsets(n), append(slices.Clone(before), after...), "no record of the moved partition was processed twice or skipped")
+	kept := 1 - moved
+	require.Equal(t, offsets(n), l.offsets("first")[kept], "the first App processed the partition it kept once, in order")
+	require.Empty(t, l.offsets("second")[kept], "the second App processed nothing of the partition the first App kept")
 	require.Equal(t, map[int32]int64{0: n, 1: n}, committedTo(t, adm, group, topic))
 
 	// The revoke of the moved partition alone began while the first App
@@ -532,14 +536,24 @@ func TestKafka_a_member_whose_revoke_outlasts_RebalanceTimeout_is_fenced(t *test
 	// The fenced member keeps heartbeating, and its session outlasts the
 	// test's rebalances, so only RebalanceTimeout can remove it.
 	s.SessionTimeout = 45 * time.Second
-	const hold = 25 * time.Second // the first App's records in flight, far past RebalanceTimeout
+
+	// The first App's records stay in flight until the test releases
+	// them, after the other Apps have processed both: far past
+	// RebalanceTimeout.
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseAll := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(releaseAll)
 
 	l := newLedger()
 	entered := make(chan int32, partitions)
 	tel := humustest.NewTelemetry()
-	first, firstStatus := startOnOS(t, s, l.processor("first", func(_ context.Context, m kafka.Message) error {
+	first, firstStatus := startOnOS(t, s, l.processor("first", func(ctx context.Context, m kafka.Message) error {
 		entered <- m.Partition
-		time.Sleep(hold)
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
 		return nil
 	}), humus.WithTelemetry(tel.Builder()))
 	for range partitions {
@@ -556,16 +570,22 @@ func TestKafka_a_member_whose_revoke_outlasts_RebalanceTimeout_is_fenced(t *test
 	eventually(t, 30*time.Second, func() bool { return len(records(tel.Logs(), "partitions revoked")) > 0 },
 		"the first App begins revoking a partition")
 	moved := attrs(records(tel.Logs(), "partitions revoked")[0])["messaging.destination.partition.ids"]
+	require.Contains(t, []string{"[0]", "[1]"}, moved, "the first App revoked one partition")
+	kept := "[0]" // the partition the first App still held when it was fenced
+	if moved == "[0]" {
+		kept = "[1]"
+	}
 
 	// The third App's join starts the rebalance the first App can't
 	// rejoin while its revoke waits.
 	third, thirdStatus := startOnOS(t, s, l.processor("third", nil))
-	eventually(t, hold, func() bool { return len(l.of("second"))+len(l.of("third")) == partitions },
-		"both partitions are processed again by the other Apps before the first App's records in flight finish")
+	eventually(t, time.Minute, func() bool { return len(l.of("second"))+len(l.of("third")) == partitions },
+		"both partitions are processed again by the other Apps while the first App's records are in flight")
 	require.Empty(t, l.of("first"), "the first App's records are still in flight")
+	releaseAll()
 
 	eventually(t, time.Minute, func() bool { return len(l.of("first")) == partitions }, "the first App's records in flight finish")
-	eventually(t, time.Minute, func() bool { return gaveUp(tel, moved) }, "the first App gives up the partition it kept")
+	eventually(t, time.Minute, func() bool { return gaveUp(tel, kept) }, "the first App gives up the partition it kept, %s", kept)
 	require.True(t, commitRefused(tel), "Kafka refused the fenced member's commit")
 
 	for _, app := range []struct {
@@ -587,13 +607,17 @@ func TestKafka_a_member_whose_revoke_outlasts_RebalanceTimeout_is_fenced(t *test
 	require.Equal(t, map[int32]int64{0: 1, 1: 1}, committedTo(t, adm, group, topic))
 }
 
-// gaveUp reports whether the App that recorded tel logged giving up a
-// partition other than the one in moved, the ids of the partition it
-// revoked first: as a revoke or as a loss.
-func gaveUp(tel *humustest.Telemetry, moved string) bool {
+// gaveUp reports whether the App that recorded tel logged giving up
+// exactly the partitions ids names, as a revoke or as a loss.
+//
+// Against Kafka, a fenced member gives up the partition it still held as a
+// revoke: franz-go rejoins as a new member, and the new assignment no longer
+// has it. So the Service's OnPartitionsLost path is not exercised against
+// Kafka here; kfake's tests cover it.
+func gaveUp(tel *humustest.Telemetry, ids string) bool {
 	for _, body := range []string{"partitions revoked", "partitions lost"} {
 		for _, r := range records(tel.Logs(), body) {
-			if ids := attrs(r)["messaging.destination.partition.ids"]; ids != moved {
+			if attrs(r)["messaging.destination.partition.ids"] == ids {
 				return true
 			}
 		}
@@ -603,7 +627,10 @@ func gaveUp(tel *humustest.Telemetry, moved string) bool {
 
 // commitRefused reports whether franz-go, in the App that recorded tel,
 // logged a commit refused because the coordinator no longer knew the
-// member, or no longer had its generation.
+// member, or no longer had its generation. It matches franz-go's own log
+// lines, such as "offset commit returned a fatal group member error,
+// triggering rejoin" with err UNKNOWN_MEMBER_ID, so a franz-go upgrade that
+// rewords them fails this check without the Service having changed.
 func commitRefused(tel *humustest.Telemetry) bool {
 	for _, r := range tel.Logs() {
 		if r.InstrumentationScope().Name != "github.com/twmb/franz-go/pkg/kgo" || !strings.Contains(r.Body().AsString(), "commit") {

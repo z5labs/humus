@@ -90,6 +90,13 @@ jobs:
             done
             exit "$failed"
 
+        # The tests behind the testcontainers tag run only in the Kafka
+        # (testcontainers) job, which is not required, so they are compiled
+        # and vetted here, without starting a container.
+        - name: Vet the testcontainers tests
+          if: ${{ !cancelled() }}
+          run: go -C queue/kafka vet -tags testcontainers ./...
+
         # The loopback half of humustest's conformance test opens real
         # sockets on 127.0.0.1 and 127.0.0.2, and telemetry's sets OTEL_*
         # variables in the real environment, so both are behind the
@@ -114,6 +121,7 @@ jobs:
   kafka-testcontainers:
     name: Kafka (testcontainers)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
