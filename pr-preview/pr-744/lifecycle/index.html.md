@@ -174,10 +174,15 @@ drain would make a finished job wait for the whole delay.
 **In a mixed process, the package's budget is everyone's.** A job or a
 consumer next to a server that is routed to runs on that server's package's
 `Main`, so its work in flight at a signal gets that package's drain and grace
-period: 15s on `httpserver.Main`'s defaults and 20s on `grpcserver.Main`'s,
-not `humus.Main`'s 20s with no drain. An end user who needs more passes
-`humus.WithShutdownGracePeriod` after the package's defaults, within the 25s
-budget. An HTTP and a gRPC server in one process use either package's `Main`.
+period: a 5s drain and a 10s grace period on `httpserver.Main`'s defaults, and
+a 5s drain and a 15s grace period on `grpcserver.Main`'s, rather than
+`humus.Main`'s 20s grace period with no drain. An end user who needs more
+passes `humus.WithShutdownGracePeriod` after the package's defaults. On
+`httpserver.Main`'s defaults that fits within the 25s budget up to a 15s grace
+period. `grpcserver.Main`'s defaults already use the whole 25s, so a longer
+grace period there needs `terminationGracePeriodSeconds` raised to match, as
+[gRPC services](/humus/pr-preview/pr-744/grpc/#terminationgraceperiodseconds)
+describes. An HTTP and a gRPC server in one process use either package's `Main`.
 Each package's defaults set both the drain and the grace period, so passing
 the other package's defaults as well replaces both: the last one wins.
 

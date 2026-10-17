@@ -343,6 +343,9 @@ func receive(stream grpc.ServerStreamingClient[testpb.StreamingOutputCallRespons
 			// The server is going away. Reconnect: the new stream lands on another pod.
 			return true, nil
 		}
+		if errors.Is(err, io.EOF) {
+			return false, nil // the server ended the stream with OK
+		}
 		if err != nil {
 			return false, err
 		}
