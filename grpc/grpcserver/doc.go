@@ -134,7 +134,8 @@
 //   - Serve's context being done changes nothing. The Service keeps serving
 //     connections and RPCs through the App's drain, while a load balancer
 //     stops sending it traffic.
-//   - Shutdown calls GracefulStop. It stops accepting connections, sends
+//   - Shutdown ends every stream, as Streams at shutdown describes, and
+//     calls GracefulStop. It stops accepting connections, sends
 //     every client a GOAWAY, so that clients open new connections
 //     elsewhere, and waits for the RPCs in flight to finish. gRPC
 //     connections are long-lived, and the GOAWAY is what moves a client off
@@ -147,6 +148,54 @@
 // grpc.WaitForHandlers(true), which humus sets, Stop waits for every
 // handler, so a handler that ignores its context holds the App up past the
 // grace period.
+//
+// # Streams at shutdown
+//
+// A stream that runs until its client leaves, such as a subscription,
+// would hold GracefulStop up until the grace period, and every deployment
+// would exit 1. So Shutdown ends every stream, with a status the client
+// can act on. A stream interceptor of humus's, inside the one that
+// recovers panics and outside the end user's, gives every streaming RPC's
+// handler a context of its own, derived from the RPC's, which Shutdown
+// cancels. That covers server, client and bidirectional streams. When
+// Shutdown starts:
+//
+//   - it cancels the context of every stream in flight, before it calls
+//     GracefulStop. A stream that starts after that gets a context that is
+//     already cancelled;
+//   - when a handler then returns nil, an error that is context.Canceled,
+//     or a status with codes.Canceled, the stream ends with codes.Unavailable
+//     and the message "server is shutting down". Without that, grpc-go
+//     would end it with Canceled, and a handler that returned nil, such as
+//     a download cut short, would end its stream with OK;
+//   - a handler that returns a status of its own, such as Aborted with
+//     details, keeps it;
+//   - unary RPCs are not cancelled. They finish within the grace period.
+//
+// GracefulStop keeps each connection open until its streams have ended,
+// so the status reaches the client, in the stream's trailers. Unavailable
+// is gRPC's code for a condition the client corrects by retrying:
+//
+//	resp, err := stream.Recv()
+//	if status.Code(err) == codes.Unavailable {
+//		// The server is going away. Reconnect: the new stream lands on another pod.
+//	}
+//
+// The streams are cancelled when Shutdown starts, after the drain, and not
+// when Serve's context is done. During the drain, a load balancer may still
+// route a client that reconnects back to this pod.
+//
+// A handler sees the shutdown through its context, and the Service doesn't
+// make Recv return when that context is cancelled. A handler that is
+// blocked in Recv, waiting for its client's next message, sees the
+// shutdown only when the client sends, or when Stop closes the connection
+// at the end of the grace period. A handler that has to notice shutdown
+// while it waits receives in a goroutine and selects on its context, as
+// it would for any call that takes no context.
+//
+// otelgrpc marks the span of each stream ended this way Error, as it does
+// for every Unavailable, so a rollout records one error span for each
+// stream that was open. That is accurate: the server ended those streams.
 //
 // # Telemetry
 //
