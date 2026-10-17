@@ -25,8 +25,11 @@ status Kubernetes retries on and a span that joins the trace of the process
 that started it. The `httpserver` package has landed:
 [Serving HTTP](/humus/http/) explains how a service serves an
 `http.Handler` over TLS, with HTTP/2 preferred, on `httpserver.Main`'s
-drain and grace period, and how to test it with `httpservertest`. The core
-of the `health` package has landed too:
+drain and grace period, and how to test it with `httpservertest`. The
+`grpc` module has landed: [gRPC services](/humus/grpc/) explains how
+a service serves gRPC over TLS with `grpcserver`, ends its streams and shuts
+down on `grpcserver.Main`'s drain and grace period, and how to test it with
+`grpcservertest`. The core of the `health` package has landed too:
 [Health](/humus/health/) explains monitors, liveness and readiness,
 and the health Service that owns an App's readiness.
 [Configuring a humus service](/humus/configuration/) explains how
