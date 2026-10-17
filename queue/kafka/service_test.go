@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"errors"
+	"strconv"
 	"sync"
 	"syscall"
 	"testing"
@@ -76,10 +77,11 @@ func TestService_SIGTERM_lets_the_record_in_flight_finish_and_commits_it(t *test
 
 		entered := make(chan struct{}, 5)
 		finished := make(chan int64, 5)
+		ctxErrs := make(chan error, 5)
 		p, status := humustest.Start(t, consumes(settings(c.ListenAddrs()...), func(ctx context.Context, m kafka.Message) error {
 			entered <- struct{}{}
 			time.Sleep(3 * time.Second)
-			require.NoError(t, ctx.Err(), "Process's context is not cancelled when shutdown starts")
+			ctxErrs <- ctx.Err()
 			finished <- m.Offset
 			return nil
 		}), humustest.WithApp(humus.WithHost(h.Host())))
@@ -88,6 +90,7 @@ func TestService_SIGTERM_lets_the_record_in_flight_finish_and_commits_it(t *test
 
 		st := <-status
 		require.Zero(t, st.Code(), st.Cause())
+		require.NoError(t, <-ctxErrs, "Process's context is not cancelled when shutdown starts")
 		require.Equal(t, int64(0), <-finished, "0 finished")
 		require.Len(t, finished, 0, "1 to 4 never started")
 		require.Equal(t, int64(1), committed(c)[0], "0 finished and is committed; 1 to 4 never started")
@@ -350,8 +353,20 @@ func TestService_revoke_commits_the_record_in_flight_before_the_partition_moves(
 		}
 		require.Equal(t, map[int32]int64{0: n, 1: n}, committed(c))
 
-		revoked := records(tel.Logs(), "partitions revoked")
-		require.NotEmpty(t, revoked)
+		var moved int32
+		for p := range startedAt {
+			moved = p
+		}
+		var rebalanced bool
+		for _, r := range records(tel.Logs(), "partitions revoked") {
+			a := attrs(r)
+			require.Equal(t, topic, a["messaging.destination.name"])
+			require.Equal(t, group, a["messaging.consumer.group.name"])
+			if a["messaging.destination.partition.ids"] == "["+strconv.Itoa(int(moved))+"]" {
+				rebalanced = true
+			}
+		}
+		require.True(t, rebalanced, "the first App logged the revoke of the moved partition alone")
 	})
 }
 
@@ -525,6 +540,7 @@ func TestService_SASL(t *testing.T) {
 			st := <-status
 			require.Equal(t, humus.ExitFailure, st.Code())
 			require.ErrorIs(t, st.Cause(), kerr.SaslAuthenticationFailed)
+			require.ErrorContains(t, st.Cause(), "kafka: authenticating to 127.0.0.1:", "the broker's refusal stopped the Service")
 		})
 	})
 }
@@ -658,5 +674,110 @@ func TestService_Process_context_keeps_Serve_context_values(t *testing.T) {
 		require.Equal(t, "from Serve", got)
 		require.Equal(t, int64(1), committed(c)[0])
 		require.NoError(t, svc.Shutdown(context.Background()), "Shutdown after Serve returned")
+	})
+}
+
+func TestService_at_least_once_failure_lets_the_other_partitions_finish(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := humustest.NewHost(t)
+		c := cluster(t, h, 2)
+		produceTo(t, h, c, map[int32]int{0: 5, 1: 5})
+
+		bad := errors.New("cannot process")
+		var (
+			mu   sync.Mutex
+			seen = map[int32][]int64{}
+		)
+		_, status := humustest.Start(t, consumes(settings(c.ListenAddrs()...), func(ctx context.Context, m kafka.Message) error {
+			if m.Partition == 0 {
+				// Partition 0 fails at its first record while partition
+				// 1 is in the middle of its first.
+				time.Sleep(time.Second)
+				return bad
+			}
+			time.Sleep(3 * time.Second)
+			mu.Lock()
+			seen[m.Partition] = append(seen[m.Partition], m.Offset)
+			mu.Unlock()
+			return nil
+		}), humustest.WithApp(humus.WithHost(h.Host())))
+
+		st := <-status
+		require.Equal(t, humus.ExitFailure, st.Code())
+		require.ErrorIs(t, st.Cause(), bad)
+		require.ErrorContains(t, st.Cause(), "orders, partition 0, offset 0")
+		require.Equal(t, []int64{0}, seen[1], "partition 1 finished its record in flight, and took no other")
+		require.Equal(t, map[int32]int64{1: 1}, committed(c), "partition 1 committed its record in flight; partition 0 committed nothing")
+	})
+}
+
+func TestService_at_most_once_skips_and_logs_a_batch_whose_commit_was_refused(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := humustest.NewHost(t)
+		c := cluster(t, h, 1)
+		produce(t, h, c, 3)
+		answerOffsetCommit(c, kerr.UnknownMemberID.Code, false)
+
+		s := settings(c.ListenAddrs()...)
+		s.Delivery = queue.AtMostOnce
+		var seen []int64
+		tel := humustest.NewTelemetry()
+		p, status := humustest.Start(t, consumes(s, func(ctx context.Context, m kafka.Message) error {
+			seen = append(seen, m.Offset)
+			return nil
+		}), humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+		synctest.Wait()
+
+		produce(t, h, c, 2) // offsets 3 and 4: the Service keeps serving
+		synctest.Wait()
+		p.Signal(syscall.SIGTERM)
+
+		st := <-status
+		require.Zero(t, st.Code(), st.Cause())
+		require.Equal(t, []int64{3, 4}, seen, "the batch 0 to 2 was not committed, so it was not processed")
+
+		skipped := records(tel.Logs(), "batch skipped: its commit was refused")
+		require.Len(t, skipped, 1)
+		require.Equal(t, "WARN", skipped[0].Severity().String())
+		a := attrs(skipped[0])
+		require.Equal(t, "0", a["messaging.kafka.offset.first"])
+		require.Equal(t, "2", a["messaging.kafka.offset.last"])
+		require.Equal(t, "0", a["messaging.destination.partition.id"])
+	})
+}
+
+func TestService_a_lost_partition_commits_nothing_and_is_processed_again(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := humustest.NewHost(t)
+		c := cluster(t, h, 1)
+		produce(t, h, c, 1)
+
+		var (
+			seen       []int64
+			committed0 []int64
+		)
+		first := true
+		p, status := humustest.Start(t, consumes(settings(c.ListenAddrs()...), func(ctx context.Context, m kafka.Message) error {
+			seen = append(seen, m.Offset)
+			if first {
+				first = false
+				// The coordinator forgets the member while offset 0 is in
+				// flight: the next heartbeat fails, and the partition is
+				// lost.
+				answerHeartbeat(c, kerr.UnknownMemberID.Code)
+				time.Sleep(10 * time.Second)
+				committed0 = append(committed0, committed(c)[0])
+			}
+			return nil
+		}), humustest.WithApp(humus.WithHost(h.Host())))
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		p.Signal(syscall.SIGTERM)
+
+		st := <-status
+		require.Zero(t, st.Code(), st.Cause())
+		require.Equal(t, []int64{0, 0}, seen, "offset 0 was processed again after the partition was lost and assigned again")
+		require.Equal(t, []int64{0}, committed0)
+		require.Equal(t, int64(1), committed(c)[0])
 	})
 }

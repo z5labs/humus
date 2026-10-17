@@ -111,8 +111,9 @@
 //	|                                  | the last commit is committed         | committed                            |
 //	| a commit fails because the       | not an error: franz-go rejoins the   | the same, and the batch whose commit |
 //	| member was fenced out of the     | group, and the records are committed | failed is not processed              |
-//	| group or the group is            | by a later commit, or processed      |                                      |
-//	| rebalancing                      | again by the partition's new owner   |                                      |
+//	| group or the group is            | by a later commit, or processed      | logged at WARN with its offsets; if  |
+//	| rebalancing                      | again by the partition's new owner   | the partition stays with the member, |
+//	|                                  |                                      | the batch is lost                    |
 //	| any other commit fails           | the Service stops, and Serve returns | the same                             |
 //	|                                  | the error; exit 1                    |                                      |
 //	| a poll returns an error franz-go | the Service stops, and Serve returns | the same                             |

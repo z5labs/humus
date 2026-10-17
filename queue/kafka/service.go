@@ -34,6 +34,13 @@ const loggerName = "github.com/z5labs/humus/queue/kafka"
 // messaging conventions name one partition, and these records name several.
 const partitionsKey = attribute.Key("messaging.destination.partition.ids")
 
+// firstOffsetKey and lastOffsetKey bound the offsets of a batch that was
+// skipped.
+const (
+	firstOffsetKey = attribute.Key("messaging.kafka.offset.first")
+	lastOffsetKey  = attribute.Key("messaging.kafka.offset.last")
+)
+
 // Service consumes Settings.Topics as a member of the consumer group
 // Settings.GroupID, and hands each record to a Processor. It is safe for
 // concurrent use.
@@ -277,6 +284,10 @@ type group struct {
 	mu    sync.Mutex
 	parts map[topicPartition]*partition
 	first error
+	// closing is set by stopAll: a partition assigned after it, while the
+	// group is being left, is never started, so nothing is left running
+	// once Serve returns.
+	closing bool
 }
 
 // poll polls until ctx is done or a poll returns an error franz-go doesn't
@@ -424,6 +435,9 @@ func (g *group) assigned(_ context.Context, cl *kgo.Client, assigned map[string]
 	g.logPartitions("partitions assigned", assigned)
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.closing {
+		return
+	}
 	for topic, partitions := range assigned {
 		for _, id := range partitions {
 			tp := topicPartition{topic, id}
@@ -461,6 +475,7 @@ func (g *group) lost(_ context.Context, _ *kgo.Client, lost map[string][]int32) 
 // what it processed.
 func (g *group) stopAll() {
 	g.mu.Lock()
+	g.closing = true
 	all := make(map[string][]int32)
 	for tp := range g.parts {
 		all[tp.topic] = append(all[tp.topic], tp.partition)
@@ -564,7 +579,9 @@ func (g *group) atMostOnce(cl *kgo.Client, p *partition, records []*kgo.Record) 
 		case notMember(err):
 			// The batch isn't committed, so it isn't processed either: a
 			// record processed here and again by the partition's new
-			// owner would be processed twice.
+			// owner would be processed twice. If the partition stays
+			// with this member, the batch is lost, so it is logged.
+			g.logSkippedBatch(records[0], last, err)
 			return true
 		default:
 			g.fail(fmt.Errorf("kafka: committing %s, partition %d, offset %d: %w", last.Topic, last.Partition, last.Offset, err))
@@ -646,6 +663,22 @@ func (g *group) logProcessingError(r *kgo.Record, err error) {
 		semconv.MessagingDestinationName(r.Topic),
 		semconv.MessagingDestinationPartitionID(strconv.FormatInt(int64(r.Partition), 10)),
 		semconv.MessagingKafkaOffset(int(r.Offset)),
+		semconv.ErrorType(err),
+		semconv.ExceptionMessage(err.Error()),
+	)
+}
+
+// logSkippedBatch emits a WARN record for the batch from first to last that
+// is not processed under queue.AtMostOnce, because its commit was refused
+// with err.
+func (g *group) logSkippedBatch(first, last *kgo.Record, err error) {
+	g.emit(log.SeverityWarn, "batch skipped: its commit was refused",
+		semconv.MessagingSystemKafka,
+		semconv.MessagingConsumerGroupName(g.svc.settings.GroupID),
+		semconv.MessagingDestinationName(first.Topic),
+		semconv.MessagingDestinationPartitionID(strconv.FormatInt(int64(first.Partition), 10)),
+		firstOffsetKey.Int64(first.Offset),
+		lastOffsetKey.Int64(last.Offset),
 		semconv.ErrorType(err),
 		semconv.ExceptionMessage(err.Error()),
 	)
