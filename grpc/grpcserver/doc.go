@@ -8,6 +8,108 @@
 // It is in the nested module github.com/z5labs/humus/grpc, which is
 // always built against the core module in the same commit.
 //
+// [NewService] builds a [Service], in the end user's Init, from [Settings]
+// the end user sources. The end user registers their generated services on
+// it, as they would on a *grpc.Server, and returns it:
+//
+//	func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+//		settings, err := readSettings(ctx, s) // grpcserver.Settings, sourced with config.Struct
+//		if err != nil {
+//			return nil, err
+//		}
+//		svc, err := grpcserver.NewService(s, settings, grpc.ChainUnaryInterceptor(authenticate))
+//		if err != nil {
+//			return nil, err
+//		}
+//		cartpb.RegisterCartServiceServer(svc, carts)
+//		return []humus.Service{svc}, nil
+//	}
+//
+// NewService listens on the address through the Setup's Host, so a port
+// that is already taken fails Init, and a connection that arrives before
+// Serve waits in the backlog. If Init fails after NewService, the listener
+// is closed by a function NewService registers with the Setup's OnStop.
+//
+// # TLS
+//
+// TLS is required. The Service serves gRPC with Settings.TLS and nothing in
+// plain text. Its transport credentials are built from Settings.TLS and
+// passed after the end user's options, and grpc-go keeps the last
+// grpc.Creds it is given, so a grpc.Creds in opts, such as
+// grpc.Creds(insecure.NewCredentials()), has no effect. A plaintext client
+// fails to connect.
+//
+// # Options
+//
+// Everything about the server that isn't a setting is a grpc.ServerOption
+// the end user passes to NewService: their interceptors, keepalive
+// parameters, message size limits, a second stats handler. They come after
+// humus's own options, and grpc-go keeps one value of some options and
+// chains others:
+//
+//   - An option that chains, such as grpc.ChainUnaryInterceptor or
+//     grpc.ChainStreamInterceptor, adds the end user's interceptors inside
+//     humus's, so humus's run first.
+//   - An option that grpc-go keeps one value of, such as
+//     grpc.MaxRecvMsgSize, replaces humus's.
+//   - grpc.WaitForHandlers(false) replaces humus's
+//     grpc.WaitForHandlers(true), and lets a handler outlive Shutdown. That
+//     breaks the humus.Service contract, and humustest.TestService reports
+//     the handler's goroutine as a leak.
+//
+// # Registration
+//
+// [Service.RegisterService] must be called before Serve, as with a
+// *grpc.Server. grpc-go exits the process on three registration mistakes:
+// a registration after Serve, a service registered twice, and an
+// implementation that doesn't implement the service's interface. The
+// Service checks for the same three first, and panics instead, with the
+// service's name in the message. All three are programming errors, so the
+// panic fails the end user's Init in the first test or the first start,
+// without leaving the process through os.Exit.
+//
+// # Reflection
+//
+// The Service registers no server reflection: reflection exposes the
+// service's schema to anyone who can reach its port. An end user who wants
+// it registers it in their Init, which [Service.GetServiceInfo] makes work:
+//
+//	reflection.Register(svc)
+//
+// # Shutdown
+//
+// The Service follows the two shutdown signals of a humus App:
+//
+//   - Serve's context being done changes nothing. The Service keeps serving
+//     connections and RPCs through the App's drain, while a load balancer
+//     stops sending it traffic.
+//   - Shutdown calls GracefulStop. It stops accepting connections, sends
+//     every client a GOAWAY, so that clients open new connections
+//     elsewhere, and waits for the RPCs in flight to finish. gRPC
+//     connections are long-lived, and the GOAWAY is what moves a client off
+//     a terminating pod. When the grace period runs out first, Shutdown
+//     calls Stop, which closes every connection and cancels every RPC's
+//     context, waits for every handler to return, and the App exits with a
+//     *humus.GracePeriodError.
+//
+// A handler should return once its context is done. With
+// grpc.WaitForHandlers(true), which humus sets, Stop waits for every
+// handler, so a handler that ignores its context holds the App up past the
+// grace period.
+//
+// # Logging
+//
+// The Service writes no log record of its own: the App already logs that
+// it is serving, shutting down and stopped.
+//
+// grpc-go's own logger is an ambient leak. Its grpclog package reads
+// GRPC_GO_LOG_SEVERITY_LEVEL, GRPC_GO_LOG_VERBOSITY_LEVEL and
+// GRPC_GO_LOG_FORMATTER, and its internal/envconfig package reads its other
+// GRPC_ variables, from the real environment, not the Process's, and it
+// writes to the real standard error. Replacing it means
+// grpclog.SetLoggerV2, which is global state, and humus sets none. An end
+// user who wants grpc-go's logs in their telemetry sets the logger in main.
+//
 // # Settings
 //
 // [Settings] holds what an operator changes from one deployment to the
