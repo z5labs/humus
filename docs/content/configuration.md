@@ -100,7 +100,8 @@ func CheckMaxConns(n int) error {
 
 In a real service these come from the package, as `httpserver.Settings`,
 `httpserver.DefaultSettings()` and `httpserver.CheckReadTimeout`, and you
-never copy a range out of godoc.
+never copy a range out of godoc. [Serving HTTP]({{< relref "http#settings" >}})
+sources `httpserver.Settings` this way.
 
 ## Sourcing Settings in Init
 
