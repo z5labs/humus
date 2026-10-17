@@ -31,7 +31,12 @@ status. See [Jobs](https://z5labs.github.io/humus/jobs/). The
 Service, with HTTP/2 preferred, and `httpserver.Main` runs it with a drain and
 a grace period for a server behind a load balancer, while `httpservertest`
 tests it on the same defaults. See
-[Serving HTTP](https://z5labs.github.io/humus/http/). Earlier
+[Serving HTTP](https://z5labs.github.io/humus/http/). The `grpc` module has
+landed as well: `grpcserver` serves gRPC over TLS as a Service, ending every
+stream at shutdown with `Unavailable`, and `grpcserver.Main` runs it with a
+drain and a grace period for a server behind a Kubernetes Service, while
+`grpcservertest` tests it on the same defaults. See
+[gRPC services](https://z5labs.github.io/humus/grpc/). Earlier
 releases remain available on [pkg.go.dev](https://pkg.go.dev/github.com/z5labs/humus?tab=versions).
 
 The plan is in the charter,
