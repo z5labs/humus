@@ -104,6 +104,8 @@ github.com/twmb/franz-go/pkg/kfake v0.0.0-20261013022759-7b6cac30a57a h1:dUzXDhE
 github.com/twmb/franz-go/pkg/kfake v0.0.0-20261013022759-7b6cac30a57a/go.mod h1:7XoYdOMQWHU4FLD9qg991kFuEiUua9DqluFE+JVdXjM=
 github.com/twmb/franz-go/pkg/kmsg v1.15.0 h1:mILdOQm4JkWojbSYVQ7KJNJ1qMdYNsLrdNOBUVKM6IA=
 github.com/twmb/franz-go/pkg/kmsg v1.15.0/go.mod h1:sGkGxKexpRLBThFHJLjjywcyfkK09qB/g+X+wFWZQ/A=
+github.com/twmb/franz-go/pkg/kmsg/v2 v2.0.1 h1:DToARrl154rtwWJFIpGopaAK+t9MIz1239bNl/n2Gvc=
+github.com/twmb/franz-go/pkg/kmsg/v2 v2.0.1/go.mod h1:6OeA4WSQXVfDmkVW65VZJn0Xg7HT5ApIn+XB1fSpuWQ=
 github.com/twmb/franz-go/plugin/kotel v1.7.1 h1:bVJ/qai5rNIkAxMX+Em2fsMOe1v6n12N9c9Rm6upv0E=
 github.com/twmb/franz-go/plugin/kotel v1.7.1/go.mod h1:Cq5tsiazIWro0y/SNpYEwoVW0C6KK1dIYyhccDXV9bs=
 github.com/yusufpapurcu/wmi v1.2.4 h1:zFUKzehAFReQwLys1b/iSMl+JQGSCSjtVqQn9bBrPo0=
