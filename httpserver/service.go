@@ -54,7 +54,8 @@ type Service struct {
 // settings.HTTP2Only is set, then any others settings.TLS lists.
 //
 // h is served wrapped in the Service's instrumentation, which takes its
-// providers and propagator from s.Telemetry.
+// providers and propagator from s.Telemetry, and which records a panic of h
+// and aborts its response.
 func NewService(s *humus.Setup, settings Settings, h http.Handler) (*Service, error) {
 	if err := checkSettings(settings, h); err != nil {
 		return nil, fmt.Errorf("httpserver: NewService: %w", err)
@@ -85,8 +86,9 @@ func NewService(s *humus.Setup, settings Settings, h http.Handler) (*Service, er
 	// The operation name is empty, so otelhttp names each span after the
 	// method and the request's route pattern, as the semantic conventions
 	// do. Every provider and the propagator are passed, so otelhttp never
-	// falls back to OpenTelemetry's globals.
-	instrumented := otelhttp.NewHandler(h, "",
+	// falls back to OpenTelemetry's globals. recordPanics runs inside it, so
+	// a panic is recorded on the request's span before the span ends.
+	instrumented := otelhttp.NewHandler(recordPanics{next: h, logger: logger}, "",
 		otelhttp.WithTracerProvider(s.Telemetry.TracerProvider),
 		otelhttp.WithMeterProvider(s.Telemetry.MeterProvider),
 		otelhttp.WithPropagators(s.Telemetry.Propagator),
