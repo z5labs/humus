@@ -57,9 +57,9 @@
 // done returns ctx.Err(), as almost all Go code already does, and the cause
 // is "serve: context canceled". A run that wants the signal in its cause
 // returns context.Cause(ctx) instead, and the cause is then, for example,
-// "serve: terminated signal received". A run that returns nil after a
-// signal finished, or chose to treat stopping early as done: it exits 0, with
-// the signal as the cause.
+// "serve: terminated signal received". When a run returns nil after a
+// signal, the run has either finished its work or chosen to treat stopping
+// early as done, and the App exits 0, with the signal as the cause.
 //
 // # The two signals
 //
