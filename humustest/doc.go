@@ -5,9 +5,13 @@
 
 // Package humustest runs a whole humus App inside a test.
 //
-// bedrocktest supplies the process an App runs on: its arguments,
-// environment, output and signals, and Start, which runs an App on it.
-// humustest supplies what a humus App needs beyond the process:
+// A whole-App test hands the end user's Init to [Start], which runs the App
+// that humus.Main would run for it, with the same defaults, on a new
+// bedrocktest Process and a [Host] of this package in place of
+// humus.OSHost(). Start takes humus's options, with [WithApp], and the
+// Process's environment, arguments and stdin, with [WithEnv], [WithArgs]
+// and [WithStdin], in one list, so the test needs no bedrocktest options.
+// humustest also supplies what a humus App needs beyond the process:
 //
 //   - a [Host], whose in-memory network the App listens on and the test
 //     dials, and whose filesystem is confined to the test's own temp
@@ -17,19 +21,18 @@
 //     emits in memory, for a test to assert on;
 //   - [TestService], the contract every humus.Service must pass.
 //
-// A whole-App test imports both. The network opens no real socket and
-// starts no goroutines, so the App runs inside a testing/synctest bubble,
-// with no real environment, no real time and no file outside the test's
-// temp directory. Here httpApp returns a humus.App on h whose Service
-// serves hello over HTTP on ":8080":
+// The network opens no real socket and starts no goroutines, so the App
+// runs inside a testing/synctest bubble, with no real environment, no real
+// time and no file outside the test's temp directory. Here helloInit is the
+// end user's Init, whose Service serves hello over HTTP on ":8080" of its
+// Setup's Host, and the test passes its own Host to dial it:
 //
-//	func TestApp_Run_HTTP_a_whole_App_on_a_test_Host(t *testing.T) {
+//	func TestInit_serves_hello(t *testing.T) {
 //		synctest.Test(t, func(t *testing.T) {
 //			h := humustest.NewHost(t)
-//			hello := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-//				_, _ = io.WriteString(w, "hello")
-//			})
-//			p, status := bedrocktest.Start(t, httpApp(h, hello))
+//			p, status := humustest.Start(t, helloInit,
+//				humustest.WithApp(humus.WithHost(h.Host())),
+//			)
 //
 //			// Wait until every goroutine in the bubble is blocked, which
 //			// includes the App blocked in Accept on :8080.
@@ -48,6 +51,13 @@
 //			}
 //		})
 //	}
+//
+// Start returns bedrocktest's Process and the App's status channel
+// unwrapped, and a test calls their methods without importing bedrocktest.
+// humustest builds on bedrocktest and bedrock, so a helper that names the
+// Process or the status, as *bedrocktest.Process or bedrock.ExitStatus,
+// imports bedrocktest and bedrock. A test of an App value it builds itself,
+// rather than of the end user's Init, runs it with bedrocktest.Start.
 //
 // The App reaches the network and the filesystem only through the Host in
 // its Setup: its Services listen with s.Host.Listen and open files with
