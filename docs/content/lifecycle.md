@@ -140,8 +140,12 @@ that keeps serving until `Shutdown`, wraps `Main` instead:
 The HTTP server's `Main` and defaults are `httpserver.Main` and
 `httpserver.Defaults`, with a 5s drain and a 10s grace period, which fit
 inside the 25s budget with telemetry's 5s:
-[Serving HTTP]({{< relref "http#the-defaults" >}}) explains them. The root package's tests don't import a runtime package, so the samples
-on this page use stand-ins of the same shape:
+[Serving HTTP]({{< relref "http#the-defaults" >}}) explains them. The gRPC
+server's are `grpcserver.Main` and `grpcserver.Defaults`, with a 5s drain and
+a 15s grace period, which use the whole 25s budget with telemetry's 5s:
+[gRPC services]({{< relref "grpc#the-defaults" >}}) explains them. The root
+package's tests don't import a runtime package, so the samples on this page
+use stand-ins of the same shape:
 
 ```go
 // httpDefaults stands in for a runtime package's defaults, such as
@@ -164,7 +168,8 @@ func httpMain(init func(ctx context.Context, s *humus.Setup) ([]humus.Service, e
 The end user's `main` calls the package's `Main`, and its test passes the
 package's defaults with `humustest.WithApp(httpDefaults())`, as
 [Testing]({{< relref "testing#runtime-packages" >}}) shows, or with the
-package's own `Start`, such as `httpservertest.Start`:
+package's own `Start`, such as `httpservertest.Start` or
+`grpcservertest.Start`:
 
 ```go
 httpMain(Init, humus.WithTelemetry(buildTelemetry))
@@ -179,9 +184,15 @@ drain would make a finished job wait for the whole delay.
 **In a mixed process, the package's budget is everyone's.** A job or a
 consumer next to a server that is routed to runs on that server's package's
 `Main`, so its work in flight at a signal gets that package's drain and grace
-period: 15s on `httpserver.Main`'s defaults, not `humus.Main`'s 20s. An end
-user who needs more passes `humus.WithShutdownGracePeriod` after the
-package's defaults, within the 25s budget. An HTTP and a gRPC server in one process use either package's `Main`.
+period: a 5s drain and a 10s grace period on `httpserver.Main`'s defaults, and
+a 5s drain and a 15s grace period on `grpcserver.Main`'s, rather than
+`humus.Main`'s 20s grace period with no drain. An end user who needs more
+passes `humus.WithShutdownGracePeriod` after the package's defaults. On
+`httpserver.Main`'s defaults that fits within the 25s budget up to a 15s grace
+period. `grpcserver.Main`'s defaults already use the whole 25s, so a longer
+grace period there needs `terminationGracePeriodSeconds` raised to match, as
+[gRPC services]({{< relref "grpc#terminationgraceperiodseconds" >}})
+describes. An HTTP and a gRPC server in one process use either package's `Main`.
 Each package's defaults set both the drain and the grace period, so passing
 the other package's defaults as well replaces both: the last one wins.
 
@@ -732,6 +743,14 @@ explicitly from `Setup`:
 - Any resource detector the end user opts into in `Settings.ResourceOptions`,
   which reads the real host, such as `/etc`, `/proc` and cgroups, or dials a
   metadata server rather than through `Host.Dial`.
+- **grpc-go's logger.** Its `grpclog` package reads
+  `GRPC_GO_LOG_SEVERITY_LEVEL`, `GRPC_GO_LOG_VERBOSITY_LEVEL` and
+  `GRPC_GO_LOG_FORMATTER`, and its `internal/envconfig` package reads its
+  other `GRPC_*` variables, from the real environment, and it writes to the
+  real standard error. Replacing it means `grpclog.SetLoggerV2`, which is
+  process-wide state, so `grpcserver` sets none: an end user who wants
+  grpc-go's logs in their telemetry sets the logger in `main`, as
+  [gRPC services]({{< relref "grpc#grpc-gos-logger" >}}) describes.
 
 `flag`, `exec.Cmd`, `http.ProxyFromEnvironment` and `slog.Default` are on
 [bedrock's own list](https://pkg.go.dev/github.com/z5labs/bedrock#hdr-Ambient_leaks).

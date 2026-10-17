@@ -77,8 +77,12 @@
 // landed: it serves an http.Handler over TLS as a Service, with HTTP/2
 // preferred, and httpserver.Main runs it with a drain and a grace period for
 // a server behind a load balancer, documented at
-// https://z5labs.github.io/humus/http/. The other runtime packages come
-// back through their own proposals.
+// https://z5labs.github.io/humus/http/. The grpc module has landed: its
+// grpcserver package serves gRPC over TLS as a Service, ending every stream
+// at shutdown with Unavailable, and grpcserver.Main runs it with a drain and
+// a grace period for a server behind a Kubernetes Service, documented at
+// https://z5labs.github.io/humus/grpc/. The other runtime packages come back
+// through their own proposals.
 //
 // The plan is in the charter, Proposal: humus on the bedrock process model:
 // https://github.com/z5labs/humus/discussions/629

@@ -26,9 +26,11 @@ import (
 	"google.golang.org/grpc/codes"
 	testpb "google.golang.org/grpc/interop/grpc_testing"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/stats/opentelemetry"
 	"google.golang.org/grpc/status"
 
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/grpc/grpcserver"
 	"github.com/z5labs/humus/grpc/grpcserver/grpcservertest"
 	"github.com/z5labs/humus/humustest"
 )
@@ -192,6 +194,50 @@ func TestService_measures_each_RPC(t *testing.T) {
 		require.True(t, ok, "rpc.server.call.duration is a %T, want a float64 histogram", found.Data)
 		require.Len(t, hist.DataPoints, 1)
 		require.Equal(t, uint64(1), hist.DataPoints[0].Count)
+	})
+}
+
+func TestService_records_gRFC_A66_metrics_with_a_second_stats_handler(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ca := humustest.NewCA(t)
+		h := humustest.NewHost(t)
+		tel := humustest.NewTelemetry()
+		settings := settingsFor(t, ca, ":9090")
+		init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+			svc, err := grpcserver.NewService(s, settings, opentelemetry.ServerOption(opentelemetry.Options{
+				MetricsOptions: opentelemetry.MetricsOptions{MeterProvider: s.Telemetry.MeterProvider},
+			}))
+			if err != nil {
+				return nil, err
+			}
+			testpb.RegisterTestServiceServer(svc, &testServer{})
+			return []humus.Service{svc}, nil
+		}
+		p, exit := humustest.Start(t, init, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+		<-h.Listening("carts:9090")
+
+		client := testpb.NewTestServiceClient(grpcservertest.NewClient(t, h, "carts:9090", ca.Pool()))
+		_, err := client.EmptyCall(t.Context(), &testpb.Empty{})
+		require.NoError(t, err)
+
+		// The stats handlers record the RPC's metrics after its status is
+		// sent, so they are read once the App has exited and every handler
+		// has returned.
+		p.Signal(syscall.SIGTERM)
+		st := <-exit
+		require.Zero(t, st.Code(), "cause: %v", st.Cause())
+
+		rm, err := tel.Metrics(t.Context())
+		require.NoError(t, err)
+		names := make(map[string][]string)
+		for _, sm := range rm.ScopeMetrics {
+			for _, m := range sm.Metrics {
+				names[m.Name] = append(names[m.Name], sm.Scope.Name)
+			}
+		}
+		require.Contains(t, names, "grpc.server.call.duration", "the A66 metric, from the second stats handler")
+		require.Equal(t, []string{otelgrpc.ScopeName}, names["rpc.server.call.duration"], "otelgrpc's metric, from humus's stats handler")
+		require.Len(t, serverSpans(tel), 1, "the second stats handler adds no span")
 	})
 }
 

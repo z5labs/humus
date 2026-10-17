@@ -228,7 +228,11 @@ forget the defaults. `httpserver` ships `httpservertest`, with `Start`, which
 is `humustest.Start` with `httpserver.Defaults()` applied before the test's
 options, and `NewClient`, which returns an HTTP/2 client for the test Host
 that trusts the test's CA. [Serving HTTP]({{< relref "http#testing" >}})
-shows both.
+shows both. `grpcserver` ships `grpcservertest`, with `Start`, which is
+`humustest.Start` with `grpcserver.Defaults()` applied before the test's
+options, and `NewClient`, which returns a gRPC client that dials the Service
+through the test Host, over TLS, trusting the test's CA.
+[gRPC services]({{< relref "grpc#testing" >}}) shows both.
 
 ### Helpers
 
@@ -365,6 +369,22 @@ fmt.Println(string(b))
 // before Listen, refused: true
 // hello from every name
 ```
+
+### Resolvers inside synctest
+
+The Host never resolves a name, so a client that dials it must not resolve one
+either. A gRPC client's target must not use the `dns` resolver, grpc-go's
+default for a target with no scheme, such as `carts:9090`. That resolver looks
+the host up with `net.DefaultResolver`, whatever dialler the client has, on
+the real network, where a name that exists only on the test Host is not
+found. Inside a `synctest` bubble the lookup crashes the test binary with
+`fatal error: send on synctest channel from outside bubble`.
+
+`grpcservertest.NewClient` targets `passthrough:///` and the address, and
+dials through the Host, so no lookup is made. A test that builds a gRPC client
+of its own does the same, as
+[gRPC services]({{< relref "grpc#the-dns-resolver-and-synctest" >}})
+describes.
 
 ## Files
 

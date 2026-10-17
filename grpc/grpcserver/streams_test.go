@@ -8,6 +8,7 @@ package grpcserver_test
 import (
 	"context"
 	"errors"
+	"io"
 	"syscall"
 	"testing"
 	"testing/synctest"
@@ -64,6 +65,120 @@ func TestMain_shutdown_ends_a_stream_with_Unavailable(t *testing.T) {
 
 		st := <-exit
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
+	})
+}
+
+// receive is the end user's client of a subscription: it receives from
+// stream until the stream ends, and reports whether the client should
+// subscribe again.
+func receive(stream grpc.ServerStreamingClient[testpb.StreamingOutputCallResponse]) (bool, error) {
+	for {
+		_, err := stream.Recv()
+		if status.Code(err) == codes.Unavailable {
+			// The server is going away. Reconnect: the new stream lands on another pod.
+			return true, nil
+		}
+		if errors.Is(err, io.EOF) {
+			return false, nil // the server ended the stream with OK
+		}
+		if err != nil {
+			return false, err
+		}
+	}
+}
+
+// finite's StreamingOutputCall sends one response and returns nil, so its
+// stream ends with OK before any shutdown.
+type finite struct {
+	testpb.UnimplementedTestServiceServer
+}
+
+func (finite) StreamingOutputCall(_ *testpb.StreamingOutputCallRequest, stream grpc.ServerStreamingServer[testpb.StreamingOutputCallResponse]) error {
+	return stream.Send(&testpb.StreamingOutputCallResponse{})
+}
+
+func TestMain_a_client_reconnects_when_shutdown_ends_its_stream(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ca := humustest.NewCA(t)
+		h := humustest.NewHost(t)
+		p, exit := grpcservertest.Start(t, serves(settingsFor(t, ca, ":9090"), subscriber{}),
+			humustest.WithApp(humus.WithHost(h.Host())),
+		)
+		<-h.Listening("carts:9090")
+
+		client := testpb.NewTestServiceClient(grpcservertest.NewClient(t, h, "carts:9090", ca.Pool()))
+		stream, err := client.StreamingOutputCall(t.Context(), &testpb.StreamingOutputCallRequest{})
+		require.NoError(t, err)
+		type result struct {
+			reconnect bool
+			err       error
+		}
+		got := make(chan result, 1)
+		go func() {
+			reconnect, err := receive(stream)
+			got <- result{reconnect, err}
+		}()
+
+		<-p.Notified(syscall.SIGTERM)
+		p.Signal(syscall.SIGTERM)
+		r := <-got
+		require.NoError(t, r.err)
+		require.True(t, r.reconnect, "a stream ended by Shutdown tells the client to reconnect")
+
+		st := <-exit
+		require.Zero(t, st.Code(), "cause: %v", st.Cause())
+	})
+
+	t.Run("and does not reconnect when the stream ends with OK", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ca := humustest.NewCA(t)
+			h := humustest.NewHost(t)
+			p, exit := grpcservertest.Start(t, serves(settingsFor(t, ca, ":9090"), finite{}),
+				humustest.WithApp(humus.WithHost(h.Host())),
+			)
+			<-h.Listening("carts:9090")
+
+			client := testpb.NewTestServiceClient(grpcservertest.NewClient(t, h, "carts:9090", ca.Pool()))
+			stream, err := client.StreamingOutputCall(t.Context(), &testpb.StreamingOutputCallRequest{})
+			require.NoError(t, err)
+			reconnect, err := receive(stream)
+			require.NoError(t, err)
+			require.False(t, reconnect)
+
+			<-p.Notified(syscall.SIGTERM)
+			p.Signal(syscall.SIGTERM)
+			st := <-exit
+			require.Zero(t, st.Code(), "cause: %v", st.Cause())
+		})
+	})
+
+	t.Run("and does not reconnect when the handler ends the stream with a status of its own at shutdown", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ca := humustest.NewCA(t)
+			h := humustest.NewHost(t)
+			ws := &waitingServer{
+				entered: make(chan struct{}),
+				end:     func(context.Context) error { return status.Error(codes.Aborted, "gone") },
+			}
+			p, exit := grpcservertest.Start(t, serves(settingsFor(t, ca, ":9090"), ws),
+				humustest.WithApp(humus.WithHost(h.Host())),
+			)
+			<-h.Listening("carts:9090")
+
+			client := testpb.NewTestServiceClient(grpcservertest.NewClient(t, h, "carts:9090", ca.Pool()))
+			stream, err := client.StreamingOutputCall(t.Context(), &testpb.StreamingOutputCallRequest{})
+			require.NoError(t, err)
+			<-ws.entered
+
+			<-p.Notified(syscall.SIGTERM)
+			p.Signal(syscall.SIGTERM)
+			reconnect, err := receive(stream)
+			require.False(t, reconnect)
+			require.Equal(t, codes.Aborted, status.Code(err), err)
+
+			st := <-exit
+			require.Zero(t, st.Code(), "cause: %v", st.Cause())
+		})
 	})
 }
 
