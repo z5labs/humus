@@ -607,6 +607,284 @@ func TestKafka_a_member_whose_revoke_outlasts_RebalanceTimeout_is_fenced(t *test
 	require.Equal(t, map[int32]int64{0: 1, 1: 1}, committedTo(t, adm, group, topic))
 }
 
+// gates holds a fenced App's records, by partition and offset, until a test
+// releases them, and reports each record held as it begins.
+type gates struct {
+	held    map[at]chan struct{}
+	once    map[at]*sync.Once
+	entered chan at
+}
+
+// at names one record of a partition.
+type at struct {
+	partition int32
+	offset    int64
+}
+
+func newGates(records ...at) *gates {
+	g := &gates{held: map[at]chan struct{}{}, once: map[at]*sync.Once{}, entered: make(chan at, len(records))}
+	for _, r := range records {
+		g.held[r] = make(chan struct{})
+		g.once[r] = new(sync.Once)
+	}
+	return g
+}
+
+// work holds m until it is released, if it is one of g's records.
+func (g *gates) work(ctx context.Context, m kafka.Message) error {
+	gate, ok := g.held[at{m.Partition, m.Offset}]
+	if !ok {
+		return nil
+	}
+	g.entered <- at{m.Partition, m.Offset}
+	select {
+	case <-gate:
+	case <-ctx.Done():
+	}
+	return nil
+}
+
+// release lets r finish.
+func (g *gates) release(r at) {
+	g.once[r].Do(func() { close(g.held[r]) })
+}
+
+// releaseAll lets every record finish.
+func (g *gates) releaseAll() {
+	for r := range g.held {
+		g.release(r)
+	}
+}
+
+// await fails the test unless the App begins each of rs, in any order,
+// within d.
+func (g *gates) await(t *testing.T, d time.Duration, rs ...at) {
+	t.Helper()
+	want := map[at]bool{}
+	for _, r := range rs {
+		want[r] = true
+	}
+	deadline := time.After(d)
+	for len(want) > 0 {
+		select {
+		case r := <-g.entered:
+			delete(want, r)
+		case <-deadline:
+			t.Fatalf("the App did not begin %v within %v", want, d)
+		}
+	}
+}
+
+// fence runs the fence of TestKafka_a_member_whose_revoke_outlasts_RebalanceTimeout_is_fenced
+// on a topic of two partitions with one record each: the first App, which
+// holds g's records, is stuck revoking one partition when the third App's
+// join starts another rebalance, and Kafka drops it and gives both
+// partitions to the second App and the third. It returns the partition the
+// first App revoked, the one it still held, and a function per App that
+// terminates it. Under AtLeastOnce it returns once the other Apps have
+// processed both records again; under AtMostOnce the records were committed
+// before the first App processed them, so the other Apps have nothing to
+// process.
+func fence(t *testing.T, s kafka.Settings, l *ledger, g *gates, tel *humustest.Telemetry) (moved, kept int32, apps []func() bedrock.ExitStatus) {
+	t.Helper()
+	topic := s.Topics[0]
+	produceAt(t, topic, map[int32]int{0: 1, 1: 1})
+
+	run := func(name string, work func(context.Context, kafka.Message) error, opts ...humus.Option) {
+		p, status := startOnOS(t, s, l.processor(name, work), opts...)
+		apps = append(apps, func() bedrock.ExitStatus { return terminate(t, p, status) })
+	}
+	run("first", g.work, humus.WithTelemetry(tel.Builder()))
+	g.await(t, 30*time.Second, at{0, 0}, at{1, 0})
+
+	// The second App's join moves one partition, whose revoke waits for
+	// the record in flight.
+	run("second", nil)
+	eventually(t, 30*time.Second, func() bool { return len(records(tel.Logs(), "partitions revoked")) > 0 },
+		"the first App begins revoking a partition")
+	ids := attrs(records(tel.Logs(), "partitions revoked")[0])["messaging.destination.partition.ids"]
+	require.Contains(t, []string{"[0]", "[1]"}, ids, "the first App revoked one partition")
+	moved, kept = 0, 1
+	if ids == "[1]" {
+		moved, kept = 1, 0
+	}
+
+	// The third App's join starts the rebalance the first App can't rejoin
+	// while its revoke waits.
+	run("third", nil)
+	if s.Delivery == queue.AtLeastOnce {
+		eventually(t, time.Minute, func() bool { return len(l.of("second"))+len(l.of("third")) == 2 },
+			"both partitions are processed again by the other Apps while the first App's records are in flight")
+	}
+	require.Empty(t, l.of("first"), "the first App's records are still in flight")
+	return moved, kept, apps
+}
+
+// owner returns the App, other than the first, that processed partition p.
+func owner(l *ledger, p int32) string {
+	for _, app := range []string{"second", "third"} {
+		if len(l.offsets(app)[p]) > 0 {
+			return app
+		}
+	}
+	return ""
+}
+
+// logged returns how many messages containing body franz-go logged, in the
+// App that recorded tel.
+func logged(tel *humustest.Telemetry, body string) int {
+	n := 0
+	for _, r := range tel.Logs() {
+		if r.InstrumentationScope().Name == "github.com/twmb/franz-go/pkg/kgo" && strings.Contains(r.Body().AsString(), body) {
+			n++
+		}
+	}
+	return n
+}
+
+func TestKafka_at_least_once_a_fenced_member_does_not_rewind_the_new_owners_commit(t *testing.T) {
+	// kfake can fence a member the same way, and its unit test shows the
+	// commit isn't sent. Here Kafka's own coordinator fences the member,
+	// answers its rejoin with UNKNOWN_MEMBER_ID, so that franz-go rejoins
+	// as a new member, and would accept a commit from that member for a
+	// partition another member owns: the check is all that stands between
+	// the revoke's commit and __consumer_offsets. A fresh member then
+	// resumes from the offset Kafka reads back from there.
+	t.Parallel()
+
+	adm := admin(t)
+	topic, group := newTopic(t, adm, 2), unique("group")
+	s := realSettings(t, group, topic)
+	s.RebalanceTimeout = 5 * time.Second
+	// The fenced member keeps heartbeating, and its session outlasts the
+	// test's rebalances, so only RebalanceTimeout can remove it.
+	s.SessionTimeout = 45 * time.Second
+
+	// The first App holds each partition's offset 0. It holds offset 1 of
+	// each too, in case the partition it keeps polls the records after the
+	// fence before it gives the partition up.
+	g := newGates(at{0, 0}, at{1, 0}, at{0, 1}, at{1, 1})
+	t.Cleanup(g.releaseAll)
+	l := newLedger()
+	tel := humustest.NewTelemetry()
+	moved, kept, apps := fence(t, s, l, g, tel)
+
+	// The kept partition's new owner processes ten more records and
+	// commits past them, while the first App has offset 0 in flight.
+	produceAt(t, topic, map[int32]int{kept: 10}) // offsets 1 to 10
+	newOwner := owner(l, kept)
+	eventually(t, 30*time.Second, func() bool { return len(l.offsets(newOwner)[kept]) == 11 },
+		"the new owner processes offsets 0 to 10 of partition %d", kept)
+	eventually(t, 30*time.Second, func() bool { return committedTo(t, adm, group, topic)[kept] == 11 },
+		"the new owner commits offset 11 of partition %d", kept)
+
+	// The first App's record of the kept partition finishes, and Kafka
+	// refuses its commit: the member was fenced out. Offset 0 stays
+	// pending.
+	g.release(at{kept, 0})
+	eventually(t, 30*time.Second, func() bool { return commitRefused(tel) }, "Kafka refuses the fenced member's commit")
+
+	// The moved partition's record finishes and its revoke ends. franz-go
+	// rejoins as a new member, which the new assignment gives nothing, and
+	// revokes the kept partition, whose revoke commits what it has pending:
+	// an offset below the 11 the new owner committed.
+	g.release(at{moved, 0})
+	eventually(t, time.Minute, func() bool { return gaveUp(tel, "["+strconv.Itoa(int(kept))+"]") },
+		"the first App gives up the partition it kept, %d", kept)
+	require.Positive(t, logged(tel, "rejoining without a member id"), "franz-go rejoined as a new member")
+	g.releaseAll()
+
+	st := apps[0]()
+	require.Zero(t, st.Code(), "the refused commit is not an error: %v", st.Cause())
+	first := l.offsets("first")
+	require.Equal(t, []int64{0}, first[moved])
+	require.Contains(t, [][]int64{{0}, {0, 1}}, first[kept], "the first App stopped the kept partition after its record in flight")
+	require.Equal(t, int64(11), committedTo(t, adm, group, topic)[kept],
+		"after the first App gave the partition up and exited, the committed offset is still the new owner's")
+	for _, stop := range apps[1:] {
+		st := stop()
+		require.Zero(t, st.Code(), st.Cause())
+	}
+	require.Equal(t, map[int32]int64{moved: 1, kept: 11}, committedTo(t, adm, group, topic))
+
+	// A fresh member processes only the records after the new owner's
+	// commit.
+	produceAt(t, topic, map[int32]int{kept: 1}) // offset 11
+	p, status := startOnOS(t, s, l.processor("fresh", nil))
+	eventually(t, 30*time.Second, func() bool { return len(l.of("fresh")) > 0 }, "the fresh member processes a record")
+	st = terminate(t, p, status)
+	require.Zero(t, st.Code(), st.Cause())
+	require.Equal(t, map[int32][]int64{kept: {11}}, l.offsets("fresh"))
+}
+
+func TestKafka_at_most_once_a_fenced_member_does_not_commit_or_process_a_batch_polled_while_it_rejoins(t *testing.T) {
+	// kfake can't show this. The commit is called while franz-go joins the
+	// group, and waits for the join on a mutex, which synctest doesn't
+	// count as durably blocked, so kfake's clock would stop. Here the
+	// commit waits for Kafka's coordinator to answer the join, and then
+	// goes out under the member ID the join returned, which Kafka would
+	// accept for a partition another member owns.
+	t.Parallel()
+
+	adm := admin(t)
+	topic, group := newTopic(t, adm, 2), unique("group")
+	s := realSettings(t, group, topic)
+	s.Delivery = queue.AtMostOnce
+	s.RebalanceTimeout = 5 * time.Second
+	s.SessionTimeout = 45 * time.Second
+
+	g := newGates(at{0, 0}, at{1, 0})
+	t.Cleanup(g.releaseAll)
+	l := newLedger()
+	tel := humustest.NewTelemetry()
+	moved, kept, apps := fence(t, s, l, g, tel)
+
+	// The kept partition's new owner commits and processes ten more
+	// records. The first App polls them too, while it has offset 0 in
+	// flight.
+	produceAt(t, topic, map[int32]int{kept: 10}) // offsets 1 to 10
+	var newOwner string
+	eventually(t, time.Minute, func() bool {
+		newOwner = owner(l, kept)
+		return len(l.offsets(newOwner)[kept]) == 10
+	}, "the new owner processes offsets 1 to 10 of partition %d", kept)
+	require.Equal(t, int64(11), committedTo(t, adm, group, topic)[kept])
+	time.Sleep(time.Second) // the first App's fetch returns the ten records
+
+	// The moved partition's record finishes and its revoke ends, so
+	// franz-go rejoins. Once it is joining, the kept partition's record
+	// finishes, and the partition calls the commit of the batch the first
+	// App polled after the fence: offsets 1 to 10.
+	joins := logged(tel, "blocking commits from join&sync")
+	g.release(at{moved, 0})
+	eventually(t, 30*time.Second, func() bool { return logged(tel, "blocking commits from join&sync") > joins },
+		"franz-go begins to rejoin")
+	g.release(at{kept, 0})
+
+	eventually(t, time.Minute, func() bool { return gaveUp(tel, "["+strconv.Itoa(int(kept))+"]") },
+		"the first App gives up the partition it kept, %d", kept)
+	require.Positive(t, logged(tel, "rejoining without a member id"), "franz-go rejoined as a new member")
+	skipped := records(tel.Logs(), "batch skipped: its commit was refused")
+	require.Len(t, skipped, 1, "the batch polled while franz-go rejoined is skipped")
+	a := attrs(skipped[0])
+	require.Equal(t, strconv.Itoa(int(kept)), a["messaging.destination.partition.id"])
+	require.Equal(t, "1", a["messaging.kafka.offset.first"])
+	require.Equal(t, "10", a["messaging.kafka.offset.last"])
+	require.Equal(t, "WARN", skipped[0].Severity().String())
+
+	for _, stop := range apps {
+		st := stop()
+		require.Zero(t, st.Code(), st.Cause())
+	}
+	require.Equal(t, map[int32][]int64{moved: {0}, kept: {0}}, l.offsets("first"),
+		"the first App processed only the records it had in flight when it was fenced")
+	require.Equal(t, []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, l.offsets(newOwner)[kept])
+	for _, o := range l.offsets(newOwner)[kept] {
+		require.NotContains(t, l.offsets("first")[kept], o, "offset %d of partition %d was processed by both members", o, kept)
+	}
+	require.Equal(t, map[int32]int64{moved: 1, kept: 11}, committedTo(t, adm, group, topic))
+}
+
 // gaveUp reports whether the App that recorded tel logged giving up
 // exactly the partitions ids names, as a revoke or as a loss.
 //

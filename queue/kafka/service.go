@@ -18,6 +18,7 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/twmb/franz-go/pkg/kmsg"
 	"github.com/twmb/franz-go/plugin/kotel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/baggage"
@@ -305,6 +306,11 @@ type partition struct {
 	// run commits nothing more.
 	lost atomic.Bool
 
+	// member is the member ID the partition is held under: that of the
+	// session that assigned it, and of each later session that kept it.
+	// A commit franz-go would send under another member ID is not sent.
+	member atomic.Pointer[string]
+
 	// pending is the last record run processed and has not committed. Only
 	// run uses it.
 	pending *kgo.Record
@@ -416,9 +422,10 @@ func fatalPollError(fetches kgo.Fetches) error {
 //
 // Everything else is franz-go's to recover from. A connection error is
 // retried, with backoff, which is how the Service keeps serving while the
-// brokers are unreachable. A fenced-out member rejoins the group, and its
-// partitions are lost and assigned again. A cancelled context or a closed
-// client is the Service stopping.
+// brokers are unreachable. A fenced-out member rejoins the group, and
+// franz-go reports the partitions it held as lost or as revoked; either way
+// the Service commits nothing more for them under the old member's claim. A
+// cancelled context or a closed client is the Service stopping.
 func isFatal(err error) bool {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, kgo.ErrClientClosed) {
 		return false
@@ -455,14 +462,24 @@ func refused(err error) bool {
 }
 
 // notMember reports whether err says the member is no longer in the group's
-// current generation: it was fenced out, or the group is rebalancing.
-// franz-go rejoins the group on it, so it is not the Service's failure.
+// current generation, or no longer holds the partition: it was fenced out,
+// or the group is rebalancing. Kafka refused the commit, or, with
+// errNotHeld, the Service did not send it. franz-go rejoins the group on
+// it, so it is not the Service's failure.
 func notMember(err error) bool {
-	return errors.Is(err, kerr.UnknownMemberID) ||
+	return errors.Is(err, errNotHeld) ||
+		errors.Is(err, kerr.UnknownMemberID) ||
 		errors.Is(err, kerr.IllegalGeneration) ||
 		errors.Is(err, kerr.FencedInstanceID) ||
 		errors.Is(err, kerr.RebalanceInProgress)
 }
+
+// errNotHeld is a commit the Service did not send, because franz-go would
+// have sent it under a member ID the partition is not held under: the member
+// was fenced out and rejoined the group as a new member. Kafka checks a
+// commit's member ID and generation, but not who owns the partition, so it
+// would have accepted the commit for a partition another member may own.
+var errNotHeld = errors.New("the partition is not held under the group's current member ID")
 
 // fail records err as the error Serve returns, if it is the first, and
 // stops polling, so the Service stops as on shutdown.
@@ -487,13 +504,21 @@ func (g *group) partition(tp topicPartition) *partition {
 	return g.parts[tp]
 }
 
-// assigned starts a goroutine for each partition newly assigned.
+// assigned starts a goroutine for each partition newly assigned, and holds
+// every partition the Service still has under the session's member ID.
+// franz-go calls it at the end of every join, even when nothing new is
+// assigned, so a partition a member keeps after rejoining as a new member is
+// held under the new member ID.
 func (g *group) assigned(_ context.Context, cl *kgo.Client, assigned map[string][]int32) {
 	g.logPartitions("partitions assigned", assigned)
+	member, _ := cl.GroupMetadata()
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.closing {
 		return
+	}
+	for _, p := range g.parts {
+		p.member.Store(&member)
 	}
 	for topic, partitions := range assigned {
 		for _, id := range partitions {
@@ -512,6 +537,7 @@ func (g *group) assigned(_ context.Context, cl *kgo.Client, assigned map[string]
 					semconv.MessagingDestinationPartitionID(strconv.FormatInt(int64(id), 10)),
 				},
 			}
+			p.member.Store(&member)
 			g.parts[tp] = p
 			go g.run(cl, p)
 		}
@@ -519,15 +545,18 @@ func (g *group) assigned(_ context.Context, cl *kgo.Client, assigned map[string]
 }
 
 // revoked stops each revoked partition after its record in flight, which
-// commits what it processed, and returns once they have all stopped.
+// commits what it processed, and returns once they have all stopped. When
+// the member was fenced out and rejoined as a new member, franz-go reports
+// the partitions it held as revoked, and their commit is not sent: they are
+// not held under the new member ID.
 func (g *group) revoked(_ context.Context, _ *kgo.Client, revoked map[string][]int32) {
 	g.logPartitions("partitions revoked", revoked)
 	g.stop(revoked, false)
 }
 
 // lost stops each lost partition after its record in flight, without
-// committing: a commit would fail, and its new owner processes the records
-// again.
+// committing: another member may own it already, and its new owner
+// processes the uncommitted records again.
 func (g *group) lost(_ context.Context, _ *kgo.Client, lost map[string][]int32) {
 	g.logPartitions("partitions lost", lost)
 	g.stop(lost, true)
@@ -663,8 +692,11 @@ func (g *group) atMostOnce(cl *kgo.Client, p *partition, records []*kgo.Record) 
 
 // commit commits p.pending, unless p was lost, and reports whether p goes
 // on. A commit refused because the member is no longer in the group's
-// current generation is not a failure: franz-go rejoins, p.pending stays
-// pending, and the next commit covers it.
+// current generation, or not sent because p is not held under the member ID
+// franz-go would send it under, is not a failure: franz-go rejoins and
+// p.pending stays pending. A later commit covers it only while p stays with
+// this member; once p is revoked or lost, nothing more is committed for it,
+// and its new owner decides its committed offset.
 func (g *group) commit(cl *kgo.Client, p *partition) bool {
 	if p.pending == nil || p.lost.Load() {
 		return true
@@ -688,9 +720,21 @@ func (g *group) commit(cl *kgo.Client, p *partition) bool {
 
 // commitRecord commits r, which commits every record of p before it, and
 // records how long the commit took.
+//
+// The commit is sent only under the member ID p is held under, and it
+// returns errNotHeld otherwise. The check runs as franz-go sends the commit,
+// not as CommitRecords is called: a commit called while franz-go joins the
+// group waits for the join to finish, and then goes out under the member ID
+// the join returned.
 func (g *group) commitRecord(cl *kgo.Client, p *partition, r *kgo.Record) error {
 	start := time.Now()
-	err := cl.CommitRecords(g.work, r)
+	ctx := kgo.PreCommitFnContext(g.work, func(req *kmsg.OffsetCommitRequest) error {
+		if m := p.member.Load(); m == nil || req.MemberID != *m {
+			return errNotHeld
+		}
+		return nil
+	})
+	err := cl.CommitRecords(ctx, r)
 	attrs := append(p.attrs[:len(p.attrs):len(p.attrs)], semconv.MessagingOperationTypeSettle)
 	if err != nil {
 		attrs = append(attrs, semconv.ErrorType(err))
@@ -787,7 +831,7 @@ func (g *group) logProcessingError(ctx context.Context, r *kgo.Record, err error
 
 // logSkippedBatch emits a WARN record for the batch from first to last that
 // is not processed under queue.AtMostOnce, because its commit was refused
-// with err.
+// with err, or, with errNotHeld, not sent.
 func (g *group) logSkippedBatch(first, last *kgo.Record, err error) {
 	g.emit(g.logCtx, log.SeverityWarn, "batch skipped: its commit was refused",
 		semconv.MessagingSystemKafka,

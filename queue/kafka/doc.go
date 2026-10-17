@@ -87,10 +87,19 @@
 // partition's new owner starts after the last record this one processed.
 // All of that has to fit in RebalanceTimeout.
 //
-// When the member is fenced out of the group, its partitions are lost:
-// another member may own them already, so the Service stops them after
-// their record in flight without committing, and their new owner processes
-// the uncommitted records again.
+// When the member is fenced out of the group, another member may own its
+// partitions already. franz-go may report them as lost or, when it learns of
+// the fence from a refused commit and rejoins the group as a new member, as
+// revoked. Either way, the Service stops them after their record in flight
+// and commits nothing more for them, and their new owner processes their
+// uncommitted records again.
+//
+// Kafka checks a commit's member ID and generation, but not who owns the
+// partition. So the Service sends a partition's commit only under the member
+// ID the partition is held under: that of the rebalance that assigned it, or
+// of a later one that kept it. A commit franz-go would send under another
+// member ID, for a partition the new member wasn't given, is not sent, and
+// so can't move its new owner's committed offset.
 //
 // The Service logs, at INFO, the partitions it is assigned, has revoked and
 // loses, with the topic and the partitions as attributes, through the
@@ -110,10 +119,11 @@
 //	| Process panics                   | the process crashes; nothing after   | the process crashes; the batch was   |
 //	|                                  | the last commit is committed         | committed                            |
 //	| a commit fails because the       | not an error: franz-go rejoins the   | the same, and the batch whose commit |
-//	| member was fenced out of the     | group, and the records are committed | failed is not processed              |
-//	| group or the group is            | by a later commit, or processed      | logged at WARN with its offsets; if  |
-//	| rebalancing                      | again by the partition's new owner   | the partition stays with the member, |
-//	|                                  |                                      | the batch is lost                    |
+//	| member was fenced out of the     | group; a later commit covers the     | failed is not processed: it is       |
+//	| group or the group is            | records only while the partition     | logged at WARN with its offsets; if  |
+//	| rebalancing                      | stays with the member, and           | the partition stays with the member, |
+//	|                                  | otherwise its new owner processes    | the batch is lost                    |
+//	|                                  | them again                           |                                      |
 //	| any other commit fails           | the Service stops, and Serve returns | the same                             |
 //	|                                  | the error; exit 1                    |                                      |
 //	| a poll returns an error franz-go | the Service stops, and Serve returns | the same                             |
@@ -127,7 +137,9 @@
 //
 // A commit is refused for a fenced-out member with UNKNOWN_MEMBER_ID,
 // ILLEGAL_GENERATION or FENCED_INSTANCE_ID, and during a rebalance with
-// REBALANCE_IN_PROGRESS. A poll's error ends the Service when it is an error
+// REBALANCE_IN_PROGRESS. A commit the Service doesn't send, because the
+// partition isn't held under the member ID franz-go would send it under, is
+// handled the same way. A poll's error ends the Service when it is an error
 // code from Kafka that franz-go doesn't retry; an error code franz-go
 // retries, or a failure to connect, is franz-go's to recover from.
 //
