@@ -127,10 +127,18 @@ func buildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Diale
 	return telemetry.New(ctx, s, dial, p.Stdout)
 }
 
-// The main function of a humus App is one call to bedrock.Main. This example
+// The main function of a humus service is one call to humus.Main, with the
+// end user's Init and the options that change Main's defaults. This example
 // has no Output comment, so it is compiled but never run: running it would
 // exit the test binary.
 func Example_main() {
+	humus.Main(Init, humus.WithTelemetry(buildTelemetry))
+}
+
+// A main that wants none of humus.Main's defaults runs an App literal with
+// bedrock.Main, and sets every field itself. Like Example_main, it is
+// compiled but never run.
+func Example_withoutDefaults() {
 	bedrock.Main(humus.App{
 		Host:                humus.OSHost(),
 		ShutdownGracePeriod: 30 * time.Second,                  // when HUMUS_SHUTDOWN_GRACE_PERIOD is not set
