@@ -14,10 +14,13 @@ import (
 	"syscall"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/twmb/franz-go/plugin/kotel"
+	"github.com/z5labs/bedrock"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/baggage"
@@ -393,6 +396,12 @@ func TestService_records_a_processing_error(t *testing.T) {
 				}
 				require.True(t, exception, "the error is recorded on the span as an exception event")
 				require.Equal(t, codes.Unset, spanAt(t, spans, 0).Status().Code)
+				if d == queue.AtMostOnce {
+					logged := records(tel.Logs(), "processing a record failed")
+					require.Len(t, logged, 1)
+					require.Equal(t, failed.SpanContext().TraceID(), logged[0].TraceID(), "the ERROR record carries the record's span")
+					require.Equal(t, failed.SpanContext().SpanID(), logged[0].SpanID())
+				}
 
 				var failures, successes uint64
 				for _, dp := range histogramPoints(t, tel, "messaging.process.duration") {
@@ -436,7 +445,7 @@ func TestService_records_the_messaging_instruments(t *testing.T) {
 			commits := histogramPoints(t, tel, "messaging.client.operation.duration")
 			require.Len(t, commits, 1)
 			require.NotZero(t, commits[0].Count)
-			require.Equal(t, with("messaging.operation.name", "commit"), setAttrs(commits[0].Attributes))
+			require.Equal(t, with("messaging.operation.name", "commit", "messaging.operation.type", "settle"), setAttrs(commits[0].Attributes))
 		})
 	})
 
@@ -456,7 +465,7 @@ func TestService_records_the_messaging_instruments(t *testing.T) {
 				require.Equal(t, "commit", a["messaging.operation.name"])
 				if a["error.type"] != "" {
 					failed = true
-					require.Equal(t, with("messaging.operation.name", "commit", "error.type", a["error.type"]), a)
+					require.Equal(t, with("messaging.operation.name", "commit", "messaging.operation.type", "settle", "error.type", a["error.type"]), a)
 					continue
 				}
 				succeeded = true
@@ -464,6 +473,97 @@ func TestService_records_the_messaging_instruments(t *testing.T) {
 			require.True(t, failed, "the refused commit is recorded with error.type")
 			require.True(t, succeeded, "the later commit is recorded without it")
 		})
+	})
+}
+
+// TestKotel_instrument_names pins the name of every instrument kotel's
+// Meter creates, including those a consumer on kfake never records, such as
+// the write and connection errors, by calling each of its hooks.
+func TestKotel_instrument_names(t *testing.T) {
+	t.Parallel()
+
+	reader := sdkmetric.NewManualReader()
+	m := kotel.NewMeter(kotel.MeterProvider(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))))
+	meta := kgo.BrokerMetadata{NodeID: 1, Host: "127.0.0.1", Port: 9092}
+	failed := errors.New("failed")
+	m.OnBrokerConnect(meta, time.Millisecond, nil, nil)
+	m.OnBrokerConnect(meta, time.Millisecond, nil, failed)
+	m.OnBrokerDisconnect(meta, nil)
+	m.OnBrokerWrite(meta, 0, 10, 0, 0, nil)
+	m.OnBrokerWrite(meta, 0, 0, 0, 0, failed)
+	m.OnBrokerRead(meta, 0, 10, 0, 0, nil)
+	m.OnBrokerRead(meta, 0, 0, 0, 0, failed)
+	m.OnProduceBatchWritten(meta, topic, 0, kgo.ProduceBatchMetrics{NumRecords: 1, UncompressedBytes: 10})
+	m.OnFetchBatchRead(meta, topic, 0, kgo.FetchBatchMetrics{NumRecords: 1, UncompressedBytes: 10})
+
+	var rm metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(t.Context(), &rm))
+	var names []string
+	for _, sm := range rm.ScopeMetrics {
+		require.Equal(t, kotelScope, sm.Scope.Name)
+		for _, metric := range sm.Metrics {
+			names = append(names, metric.Name)
+		}
+	}
+	slices.Sort(names)
+	require.Equal(t, []string{
+		"messaging.kafka.connect_errors.count",
+		"messaging.kafka.connects.count",
+		"messaging.kafka.disconnects.count",
+		"messaging.kafka.fetch_bytes.count",
+		"messaging.kafka.fetch_records.count",
+		"messaging.kafka.produce_bytes.count",
+		"messaging.kafka.produce_records.count",
+		"messaging.kafka.read_bytes.count",
+		"messaging.kafka.read_errors.count",
+		"messaging.kafka.write_bytes",
+		"messaging.kafka.write_errors.count",
+	}, names)
+}
+
+func TestService_Process_sees_only_the_producers_baggage(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := humustest.NewHost(t)
+		c := cluster(t, h, 1)
+		produceRecords(t, h, c, []*kgo.Record{
+			{Topic: topic, Value: []byte("0")},
+			{Topic: topic, Value: []byte("1"), Headers: producerHeaders(t, producerSpanContext(t))},
+		})
+
+		tel := humustest.NewTelemetry()
+		sdk, err := tel.Builder()(t.Context(), bedrock.Process{}, nil)
+		require.NoError(t, err)
+		var (
+			mu      sync.Mutex
+			members = map[int64][]string{}
+		)
+		svc, err := kafka.NewService(&humus.Setup{Host: h.Host(), Telemetry: sdk}, settings(c.ListenAddrs()...),
+			queue.ProcessorFunc[kafka.Message](func(ctx context.Context, m kafka.Message) error {
+				mu.Lock()
+				defer mu.Unlock()
+				for _, b := range baggage.FromContext(ctx).Members() {
+					members[m.Offset] = append(members[m.Offset], b.Key()+"="+b.Value())
+				}
+				return nil
+			}))
+		require.NoError(t, err)
+
+		// Serve's context carries a span and baggage of its own.
+		served, err := baggage.NewMember("served", "yes")
+		require.NoError(t, err)
+		b, err := baggage.New(served)
+		require.NoError(t, err)
+		ctx := baggage.ContextWithBaggage(trace.ContextWithSpanContext(t.Context(), producerSpanContext(t)), b)
+		done := make(chan error, 1)
+		go func() { done <- svc.Serve(ctx) }()
+		synctest.Wait()
+		require.NoError(t, svc.Shutdown(t.Context()))
+		require.NoError(t, <-done)
+
+		require.Empty(t, members[0], "a record with no headers sees no baggage, not Serve's")
+		require.Equal(t, []string{"tenant=acme"}, members[1], "a record sees its producer's baggage, and only it")
+		untraced := spanAt(t, spansNamed(tel, processSpan), 0)
+		require.False(t, untraced.Parent().IsValid(), "Serve's span is not the parent of a record's span")
 	})
 }
 
@@ -482,8 +582,10 @@ func (p *countingPropagator) Extract(ctx context.Context, _ propagation.TextMapC
 
 func (p *countingPropagator) Fields() []string { return []string{"traceparent"} }
 
-// This test sets OpenTelemetry's globals, so it doesn't run in parallel,
-// and it restores them when it ends.
+// This test sets OpenTelemetry's globals, so it doesn't run in parallel. It
+// sets them back when it ends, but the delegates OpenTelemetry handed out
+// before the first Set stay bound to this test's recorders for the rest of
+// the process: harmless, since the package uses no globals.
 func TestService_uses_no_OpenTelemetry_globals(t *testing.T) {
 	spans := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.AlwaysSample()), sdktrace.WithSpanProcessor(spans))

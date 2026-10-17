@@ -20,6 +20,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/plugin/kotel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/propagation"
@@ -192,7 +193,8 @@ func (s *Service) Serve(ctx context.Context) error {
 		work: work,
 		// A record's span has no parent but the one its headers carry,
 		// whatever span Serve's context has.
-		spanBase:    trace.ContextWithSpanContext(work, trace.SpanContext{}),
+		// So is its baggage: Process sees the producer's, or none.
+		spanBase:    baggage.ContextWithoutBaggage(trace.ContextWithSpanContext(work, trace.SpanContext{})),
 		logCtx:      context.WithoutCancel(ctx),
 		stopPolling: stopPolling,
 		parts:       make(map[topicPartition]*partition),
@@ -326,8 +328,8 @@ func (p *partition) quitting() bool {
 type group struct {
 	svc  *Service
 	work context.Context
-	// spanBase is work with no span: the context a record's headers are
-	// extracted into.
+	// spanBase is work with no span and no baggage: the context a record's
+	// headers are extracted into.
 	spanBase    context.Context
 	logCtx      context.Context
 	stopPolling context.CancelFunc
@@ -648,9 +650,9 @@ func (g *group) atMostOnce(cl *kgo.Client, p *partition, records []*kgo.Record) 
 		if g.work.Err() != nil {
 			return false
 		}
-		if err := g.process(p, r); err != nil && g.work.Err() == nil {
-			g.logProcessingError(r, err)
-		}
+		// process logs a failure itself, inside the record's span, so
+		// processing goes on.
+		_ = g.process(p, r)
 	}
 	return true
 }
@@ -685,9 +687,9 @@ func (g *group) commit(cl *kgo.Client, p *partition) bool {
 func (g *group) commitRecord(cl *kgo.Client, p *partition, r *kgo.Record) error {
 	start := time.Now()
 	err := cl.CommitRecords(g.work, r)
-	attrs := p.attrs
+	attrs := append(p.attrs[:len(p.attrs):len(p.attrs)], semconv.MessagingOperationTypeSettle)
 	if err != nil {
-		attrs = append(attrs[:len(attrs):len(attrs)], semconv.ErrorType(err))
+		attrs = append(attrs, semconv.ErrorType(err))
 	}
 	g.svc.operations.Record(g.work, time.Since(start).Seconds(), commitOperation, messagingconv.SystemKafka, attrs...)
 	return err
@@ -700,6 +702,9 @@ func (g *group) commitRecord(cl *kgo.Client, p *partition, r *kgo.Record) error 
 // The span's parent is the trace context the propagator extracts from r's
 // headers, whose baggage is on Process's context too. When the headers
 // carry none, the span is the root of a new trace.
+//
+// Under queue.AtMostOnce, process logs a failure itself, with the record's
+// span context, unless Shutdown's context cut processing short.
 func (g *group) process(p *partition, r *kgo.Record) error {
 	svc := g.svc
 	parent := svc.propagator.Extract(g.spanBase, (*headerCarrier)(&r.Headers))
@@ -729,6 +734,9 @@ func (g *group) process(p *partition, r *kgo.Record) error {
 		span.SetStatus(codes.Error, err.Error())
 		span.SetAttributes(errType)
 		attrs = append(attrs[:len(attrs):len(attrs)], errType)
+		if svc.settings.Delivery == queue.AtMostOnce && g.work.Err() == nil {
+			g.logProcessingError(ctx, r, err)
+		}
 	}
 	svc.processing.Record(ctx, elapsed, processOperation, messagingconv.SystemKafka, attrs...)
 	return err
@@ -750,7 +758,7 @@ func (g *group) logPartitions(body string, m map[string][]int32) {
 			ids[i] = int64(id)
 		}
 		slices.Sort(ids)
-		g.emit(log.SeverityInfo, body,
+		g.emit(g.logCtx, log.SeverityInfo, body,
 			semconv.MessagingSystemKafka,
 			semconv.MessagingConsumerGroupName(g.svc.settings.GroupID),
 			semconv.MessagingDestinationName(topic),
@@ -760,9 +768,9 @@ func (g *group) logPartitions(body string, m map[string][]int32) {
 }
 
 // logProcessingError emits an ERROR record for the error processing r
-// returned under queue.AtMostOnce.
-func (g *group) logProcessingError(r *kgo.Record, err error) {
-	g.emit(log.SeverityError, "processing a record failed",
+// returned under queue.AtMostOnce, with ctx, which carries r's span.
+func (g *group) logProcessingError(ctx context.Context, r *kgo.Record, err error) {
+	g.emit(ctx, log.SeverityError, "processing a record failed",
 		semconv.MessagingSystemKafka,
 		semconv.MessagingConsumerGroupName(g.svc.settings.GroupID),
 		semconv.MessagingDestinationName(r.Topic),
@@ -777,7 +785,7 @@ func (g *group) logProcessingError(r *kgo.Record, err error) {
 // is not processed under queue.AtMostOnce, because its commit was refused
 // with err.
 func (g *group) logSkippedBatch(first, last *kgo.Record, err error) {
-	g.emit(log.SeverityWarn, "batch skipped: its commit was refused",
+	g.emit(g.logCtx, log.SeverityWarn, "batch skipped: its commit was refused",
 		semconv.MessagingSystemKafka,
 		semconv.MessagingConsumerGroupName(g.svc.settings.GroupID),
 		semconv.MessagingDestinationName(first.Topic),
@@ -789,13 +797,13 @@ func (g *group) logSkippedBatch(first, last *kgo.Record, err error) {
 	)
 }
 
-// emit emits one record at sev, with body and attrs.
-func (g *group) emit(sev log.Severity, body string, attrs ...attribute.KeyValue) {
+// emit emits one record at sev, with ctx, body and attrs.
+func (g *group) emit(ctx context.Context, sev log.Severity, body string, attrs ...attribute.KeyValue) {
 	var r log.Record
 	r.SetTimestamp(time.Now())
 	r.SetSeverity(sev)
 	r.SetSeverityText(sev.String())
 	r.SetBody(attribute.StringValue(body))
 	r.AddAttributes(attrs...)
-	g.svc.logger.Emit(g.logCtx, r)
+	g.svc.logger.Emit(ctx, r)
 }

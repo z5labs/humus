@@ -151,8 +151,10 @@
 // <topic>", of kind CONSUMER, whose context Process is given. The span's
 // parent is the trace context the propagator extracts from the record's
 // headers, so a producer's trace continues through the consumer, and the
-// producer's baggage is on Process's context too. A record whose headers
-// carry no trace context starts a new trace. The span's attributes are
+// producer's baggage, and only the producer's, is on Process's context too.
+// A record whose headers carry no trace context starts a new trace. Under
+// queue.AtMostOnce, the ERROR record of a failed record carries its span's
+// context. The span's attributes are
 // messaging.system (kafka), messaging.operation.type and
 // messaging.operation.name (both process), messaging.destination.name,
 // messaging.destination.partition.id, messaging.consumer.group.name and
@@ -164,14 +166,15 @@
 // conventions, as semconv v1.43.0 names them:
 //
 //   - messaging.client.consumed.messages counts the records handed to the
-//     Processor;
+//     Processor, with messaging.operation.name set to process;
 //   - messaging.process.duration is how long each Process took, in seconds,
-//     with error.type when it failed;
+//     with messaging.operation.name set to process, and error.type when it
+//     failed;
 //   - messaging.client.operation.duration is how long each commit took, in
-//     seconds, with messaging.operation.name set to commit, and error.type
-//     when it failed.
+//     seconds, with messaging.operation.name set to commit and
+//     messaging.operation.type to settle, and error.type when it failed.
 //
-// Each has messaging.system, messaging.consumer.group.name,
+// Each also has messaging.system, messaging.consumer.group.name,
 // messaging.destination.name and messaging.destination.partition.id.
 //
 // franz-go's broker metrics come from the Meter of franz-go's kotel plugin,
