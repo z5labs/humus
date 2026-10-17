@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
@@ -36,6 +37,10 @@ var (
 // field in one error that names each one, listens on settings.Addr through
 // s.Host, and builds the server.
 //
+// The first of humus's options is a stats handler, otelgrpc's, that traces
+// and measures every RPC with s.Telemetry's TracerProvider, MeterProvider
+// and Propagator. A grpc.StatsHandler in opts is added after it.
+//
 // opts come after humus's own options, and humus's transport credentials
 // come after opts. An option that grpc-go keeps one value of, such as
 // grpc.MaxRecvMsgSize, replaces humus's. An option that chains, such as
@@ -49,10 +54,20 @@ func NewService(s *humus.Setup, settings Settings, opts ...grpc.ServerOption) (*
 		return nil, fmt.Errorf("grpcserver: NewService: %w", err)
 	}
 
+	// The stats handler comes first, so it is the first one grpc-go calls,
+	// and a stats handler in opts is a second one. Every provider and the
+	// propagator are passed, so otelgrpc never falls back to
+	// OpenTelemetry's globals.
+	//
 	// The credentials come last, so grpc-go keeps them over any grpc.Creds
 	// in opts. credentials.NewTLS clones the config, so the end user's is
 	// never changed.
-	all := make([]grpc.ServerOption, 0, len(opts)+1)
+	all := make([]grpc.ServerOption, 0, 1+len(opts)+1)
+	all = append(all, grpc.StatsHandler(otelgrpc.NewServerHandler(
+		otelgrpc.WithTracerProvider(s.Telemetry.TracerProvider),
+		otelgrpc.WithMeterProvider(s.Telemetry.MeterProvider),
+		otelgrpc.WithPropagators(s.Telemetry.Propagator),
+	)))
 	all = append(all, opts...)
 	all = append(all, grpc.Creds(credentials.NewTLS(settings.TLS)))
 
