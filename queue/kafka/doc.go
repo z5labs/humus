@@ -121,9 +121,9 @@
 //	| authorization failure            |                                      |                                      |
 //	| a broker refuses the SASL        | the Service stops, and Serve returns | the same                             |
 //	| credentials                      | the error; exit 1                    |                                      |
-//	| the brokers are unreachable      | franz-go keeps retrying, kotel       | the same                             |
-//	|                                  | counts each failed attempt, and the  |                                      |
-//	|                                  | Service keeps serving                |                                      |
+//	| the brokers are unreachable      | franz-go keeps retrying, logs each   | the same                             |
+//	|                                  | failed attempt at WARN, and kotel    |                                      |
+//	|                                  | counts it; the Service keeps serving |                                      |
 //
 // A commit is refused for a fenced-out member with UNKNOWN_MEMBER_ID,
 // ILLEGAL_GENERATION or FENCED_INSTANCE_ID, and during a rebalance with
@@ -197,6 +197,26 @@
 // Against kfake, franz-go's fake cluster, a clean shutdown counts one read
 // error for the broker, during the shutdown and never before it. An alert on
 // messaging.kafka.read_errors.count should allow for it.
+//
+// franz-go's own logs go through the same LoggerProvider, under the scope
+// github.com/twmb/franz-go/pkg/kgo, and never to standard error or the log
+// package's default logger. They include a broker it can't reach, which it
+// logs on every attempt while it retries, a rebalance and a retried
+// request. Each of franz-go's messages is one record: the message is its
+// body, and franz-go's key-value pairs are its attributes, where a string,
+// a number or a bool keeps its type, an error is its text, and any other
+// value is its fmt text. franz-go's levels are its severities: error is
+// ERROR, warn is WARN, info is INFO and debug is DEBUG.
+//
+// The Service asks the Logger of that scope which severities it is enabled
+// for, and franz-go builds no message below the lowest of them. A
+// LoggerProvider with no severity filter is enabled for every severity, so
+// with one franz-go logs at DEBUG: a record for every request it writes and
+// every response it reads. The end user's Builder quiets franz-go as it does
+// any scope: with a
+// LoggerProvider whose Logger for github.com/twmb/franz-go/pkg/kgo is
+// enabled only from, say, WARN, franz-go logs nothing at INFO or DEBUG, and
+// with one enabled for nothing, franz-go logs nothing at all.
 //
 // # Settings
 //
