@@ -8,16 +8,19 @@
     "style": "native"
   },
   "verify": [
-    "golangci-lint run",
-    "go build ./...",
-    "go test -race -cover -tags testcontainers ./..."
+    "modules=$(.github/scripts/go-modules.sh) && failed=0 && for m in $modules; do (cd \"$m\" && golangci-lint run) || failed=1; done && test \"$failed\" = 0",
+    "modules=$(.github/scripts/go-modules.sh) && failed=0 && for m in $modules; do go -C \"$m\" build ./... || failed=1; done && test \"$failed\" = 0",
+    "modules=$(.github/scripts/go-modules.sh) && failed=0 && for m in $modules; do go -C \"$m\" test -race -cover -tags testcontainers ./... || failed=1; done && test \"$failed\" = 0"
   ],
   "merge": {
     "label": "auto-merge",
     "workflow": "auto-merge.yaml"
   },
   "review": {
-    "reviewers": ["copilot", "local"],
+    "reviewers": [
+      "copilot",
+      "local"
+    ],
     "app": {
       "idEnv": "Z5LABS_REVIEW_APP_ID",
       "keyEnv": "Z5LABS_REVIEW_APP_KEY"
