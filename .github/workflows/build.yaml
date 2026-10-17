@@ -80,15 +80,22 @@ jobs:
             for module in $(cat "$RUNNER_TEMP/modules.txt"); do
               echo "::group::go test ($module)"
               rm -f "$RUNNER_TEMP/module-coverage.out"
-              go -C "$module" test -race -cover -tags testcontainers \
+              go -C "$module" test -race -cover \
                 -coverprofile="$RUNNER_TEMP/module-coverage.out" ./... || failed=1
               cat "$RUNNER_TEMP/module-coverage.out" >> "$RUNNER_TEMP/coverage.out" || failed=1
-              go -C "$module" list -tags testcontainers ./... > "$RUNNER_TEMP/module-packages.txt" || failed=1
+              go -C "$module" list ./... > "$RUNNER_TEMP/module-packages.txt" || failed=1
               awk -v examples="$examples" '$0 != examples && index($0, examples "/") != 1' \
                 "$RUNNER_TEMP/module-packages.txt" >> "$RUNNER_TEMP/packages.txt" || failed=1
               echo "::endgroup::"
             done
             exit "$failed"
+
+        # The tests behind the testcontainers tag run only in the Kafka
+        # (testcontainers) job, which is not required, so they are compiled
+        # and vetted here, without starting a container.
+        - name: Vet the testcontainers tests
+          if: ${{ !cancelled() }}
+          run: go -C queue/kafka vet -tags testcontainers ./...
 
         # The loopback half of humustest's conformance test opens real
         # sockets on 127.0.0.1 and 127.0.0.2, and telemetry's sets OTEL_*
@@ -106,3 +113,25 @@ jobs:
         - name: Test the coverage gate
           if: ${{ !cancelled() }}
           run: .github/scripts/coverage-gate_test.sh
+
+  # The tests behind the testcontainers build tag run Kafka in a container
+  # and open real sockets, so they run here rather than in Build: they don't
+  # slow the unit tests, they don't count toward the coverage gate, and this
+  # job is not a required check.
+  kafka-testcontainers:
+    name: Kafka (testcontainers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+        - name: Checkout
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+          with:
+            go-version: '1.27.2'
+            cache-dependency-path: '**/go.sum'
+
+        - name: Test
+          run: go -C queue/kafka test -race -tags testcontainers ./...
