@@ -6,7 +6,9 @@
 package kafka_test
 
 import (
+	"bytes"
 	"context"
+	stdlog "log"
 	"syscall"
 	"testing"
 	"testing/synctest"
@@ -109,6 +111,14 @@ const enabledForNothing = log.SeverityFatal4 + 1
 // with SIGTERM. It returns the Level of the Service's franz-go logger.
 func serveUnreachable(t *testing.T, b telemetry.Builder) kgo.LogLevel {
 	t.Helper()
+	// The log package's default logger writes to the real standard error;
+	// it is captured for the run. The tests that call this don't run in
+	// parallel.
+	var std bytes.Buffer
+	prev := stdlog.Writer()
+	stdlog.SetOutput(&std)
+	defer stdlog.SetOutput(prev)
+
 	h := humustest.NewHost(t)
 	var level kgo.LogLevel
 	p, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
@@ -125,6 +135,7 @@ func serveUnreachable(t *testing.T, b telemetry.Builder) kgo.LogLevel {
 	st := <-status
 	require.Zero(t, st.Code(), st.Cause())
 	require.Empty(t, p.Stderr(), "franz-go wrote to standard error")
+	require.Empty(t, std.String(), "franz-go wrote to the log package's default logger")
 	return level
 }
 

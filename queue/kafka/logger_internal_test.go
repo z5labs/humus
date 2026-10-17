@@ -49,6 +49,11 @@ func recordAttrs(r sdklog.Record) map[string]attribute.Value {
 	return out
 }
 
+// nilError is an error whose Error panics on a nil receiver.
+type nilError struct{ msg string }
+
+func (e *nilError) Error() string { return e.msg }
+
 func TestKgoLogger_Log(t *testing.T) {
 	t.Run("each level is its severity", func(t *testing.T) {
 		for level, want := range map[kgo.LogLevel]log.Severity{
@@ -98,30 +103,32 @@ func TestKgoLogger_Log(t *testing.T) {
 				"duration", 1500*time.Millisecond,
 				"struct", opaque{A: 1},
 				"nil", nil,
+				"nil error", (*nilError)(nil),
 			)
 
 			got := recordAttrs(onlyRecord(t, tel))
 			require.Equal(t, map[string]attribute.Value{
-				"string":   attribute.StringValue("s"),
-				"bool":     attribute.BoolValue(true),
-				"int":      attribute.Int64Value(1),
-				"int8":     attribute.Int64Value(-8),
-				"int16":    attribute.Int64Value(16),
-				"int32":    attribute.Int64Value(-32),
-				"int64":    attribute.Int64Value(64),
-				"uint":     attribute.Int64Value(1),
-				"uint8":    attribute.Int64Value(8),
-				"uint16":   attribute.Int64Value(16),
-				"uint32":   attribute.Int64Value(32),
-				"uint64":   attribute.Int64Value(64),
-				"uintptr":  attribute.Int64Value(7),
-				"huge":     attribute.StringValue("18446744073709551615"),
-				"float32":  attribute.Float64Value(0.5),
-				"float64":  attribute.Float64Value(2.25),
-				"err":      attribute.StringValue("connection refused"),
-				"duration": attribute.StringValue("1.5s"),
-				"struct":   attribute.StringValue("{1}"),
-				"nil":      attribute.StringValue("<nil>"),
+				"string":    attribute.StringValue("s"),
+				"bool":      attribute.BoolValue(true),
+				"int":       attribute.Int64Value(1),
+				"int8":      attribute.Int64Value(-8),
+				"int16":     attribute.Int64Value(16),
+				"int32":     attribute.Int64Value(-32),
+				"int64":     attribute.Int64Value(64),
+				"uint":      attribute.Int64Value(1),
+				"uint8":     attribute.Int64Value(8),
+				"uint16":    attribute.Int64Value(16),
+				"uint32":    attribute.Int64Value(32),
+				"uint64":    attribute.Int64Value(64),
+				"uintptr":   attribute.Int64Value(7),
+				"huge":      attribute.StringValue("18446744073709551615"),
+				"float32":   attribute.Float64Value(0.5),
+				"float64":   attribute.Float64Value(2.25),
+				"err":       attribute.StringValue("connection refused"),
+				"duration":  attribute.StringValue("1.5s"),
+				"struct":    attribute.StringValue("{1}"),
+				"nil":       attribute.StringValue("<nil>"),
+				"nil error": attribute.StringValue("<nil>"),
 			}, got)
 		})
 	})

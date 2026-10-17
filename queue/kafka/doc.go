@@ -209,8 +209,11 @@
 // ERROR, warn is WARN, info is INFO and debug is DEBUG.
 //
 // The Service asks the Logger of that scope which severities it is enabled
-// for, and franz-go builds no message below the lowest of them. So the end
-// user's Builder quiets franz-go as it does any scope: with a
+// for, and franz-go builds no message below the lowest of them. A
+// LoggerProvider with no severity filter is enabled for every severity, so
+// with one franz-go logs at DEBUG: a record for every request it writes and
+// every response it reads. The end user's Builder quiets franz-go as it does
+// any scope: with a
 // LoggerProvider whose Logger for github.com/twmb/franz-go/pkg/kgo is
 // enabled only from, say, WARN, franz-go logs nothing at INFO or DEBUG, and
 // with one enabled for nothing, franz-go logs nothing at all.

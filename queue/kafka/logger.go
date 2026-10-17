@@ -128,7 +128,9 @@ func kgoValue(v any) attribute.Value {
 	case float64:
 		return attribute.Float64Value(v)
 	case error:
-		return attribute.StringValue(v.Error())
+		// fmt calls Error, and recovers when Error panics on a nil
+		// receiver, so a value can't crash franz-go's goroutine.
+		return attribute.StringValue(fmt.Sprint(v))
 	default:
 		return attribute.StringValue(fmt.Sprint(v))
 	}
