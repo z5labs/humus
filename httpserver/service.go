@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/log"
 
@@ -51,6 +52,9 @@ type Service struct {
 // The Service serves a clone of settings.TLS, so the end user's config is
 // never changed. The clone's ALPN protocols are h2, then http/1.1 unless
 // settings.HTTP2Only is set, then any others settings.TLS lists.
+//
+// h is served wrapped in the Service's instrumentation, which takes its
+// providers and propagator from s.Telemetry.
 func NewService(s *humus.Setup, settings Settings, h http.Handler) (*Service, error) {
 	if err := checkSettings(settings, h); err != nil {
 		return nil, fmt.Errorf("httpserver: NewService: %w", err)
@@ -78,10 +82,20 @@ func NewService(s *humus.Setup, settings Settings, h http.Handler) (*Service, er
 		return nil
 	})
 
+	// The operation name is empty, so otelhttp names each span after the
+	// method and the request's route pattern, as the semantic conventions
+	// do. Every provider and the propagator are passed, so otelhttp never
+	// falls back to OpenTelemetry's globals.
+	instrumented := otelhttp.NewHandler(h, "",
+		otelhttp.WithTracerProvider(s.Telemetry.TracerProvider),
+		otelhttp.WithMeterProvider(s.Telemetry.MeterProvider),
+		otelhttp.WithPropagators(s.Telemetry.Propagator),
+	)
+
 	return &Service{
 		ln: ln,
 		srv: &http.Server{
-			Handler:           h,
+			Handler:           instrumented,
 			TLSConfig:         cfg,
 			ReadHeaderTimeout: settings.ReadHeaderTimeout,
 			ReadTimeout:       settings.ReadTimeout,
