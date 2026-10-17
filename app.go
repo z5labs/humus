@@ -62,10 +62,12 @@ type Service interface {
 }
 
 // App is a bedrock.App that runs Services with humus's lifecycle. Host,
-// Telemetry and Init are required.
+// Telemetry and Init are required. Main runs one on the OS process, with
+// defaults for every field but Init; a main that wants no defaults runs an
+// App literal with bedrock.Main.
 type App struct {
-	// Host is the network and filesystem the App runs on: OSHost() in
-	// main, and a Host the test controls in a test.
+	// Host is the network and filesystem the App runs on: OSHost(), which
+	// is Main's default, in main, and a Host the test controls in a test.
 	Host Host
 
 	// ShutdownGracePeriod is the grace period when the environment does not
@@ -75,7 +77,7 @@ type App struct {
 	//
 	// The grace period must be positive, so a zero ShutdownGracePeriod fails
 	// startup, exiting ExitConfig, unless HUMUS_SHUTDOWN_GRACE_PERIOD is set.
-	// A runtime package's App sets its own.
+	// Main's default is 20s.
 	ShutdownGracePeriod time.Duration
 
 	// Drain is the App's drain when the environment does not set
@@ -85,7 +87,8 @@ type App struct {
 	// called once the drain returns. It gives a load balancer, such as a
 	// Kubernetes Service removing the pod from its endpoints, time to stop
 	// sending new connections before the Services stop accepting them. The
-	// grace period starts after it. A nil Drain doesn't wait.
+	// grace period starts after it. A nil Drain doesn't wait, and Main has
+	// none.
 	//
 	// When HUMUS_SHUTDOWN_DRAIN_DELAY is set, the drain is DrainDelay of its
 	// value in place of Drain, whatever Drain is, so an operator replaces a
@@ -93,8 +96,10 @@ type App struct {
 	Drain Drain
 
 	// Telemetry builds the App's telemetry.SDK. It is required: the end
-	// user's own Builder in main, and telemetry.NoopBuilder or the Builder of
-	// humustest's recorder, humustest.Telemetry, in tests.
+	// user's own Builder in main, or Main's default, which calls
+	// telemetry.New with telemetry.DefaultSettings(), and
+	// telemetry.NoopBuilder or the Builder of humustest's recorder,
+	// humustest.Telemetry, in tests.
 	//
 	// Run calls it after it starts listening for signals and before Init,
 	// with a context that a signal cancels, the Process, and the Host's

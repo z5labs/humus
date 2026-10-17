@@ -7,16 +7,23 @@
 // bedrock's process model: HTTP and REST APIs, gRPC services, queue consumers
 // and jobs, with telemetry, health and graceful shutdown built in.
 //
-// Every humus application is a bedrock.App, and its main is
+// Every humus application is an [App], which is a bedrock.App, and a
+// service's main is
 //
-//	func main() { bedrock.Main(app) }
+//	func main() { humus.Main(app.Init) }
+//
+// where app.Init is the end user's Init. [Main] runs the App on the OS
+// process with defaults that fit inside Kubernetes' termination budget, and
+// [Option] values, such as [WithTelemetry], change them.
 //
 // Nothing in humus reads os.Args, the environment, the standard streams or
-// signals, and nothing in it exits the process; all of that comes through the
-// bedrock.Process an App is run with. humus sets the conventions bedrock
-// leaves open, such as environment variable names, exit codes, default ports,
-// telemetry exporters and health endpoints, and every one of them is a default
-// that code can override.
+// signals; all of that comes through the bedrock.Process an App is run with.
+// humus.Main is the one place that hands an App the real process, through
+// bedrock.Main, and so the one place that exits it. It never runs in a
+// test, which runs the same App on a test Process. humus sets the
+// conventions bedrock leaves open, such as environment variable names, exit
+// codes, default ports, telemetry exporters and health endpoints, and every
+// one of them is a default that code can override.
 //
 // # The App lifecycle
 //
@@ -64,8 +71,9 @@
 // down within a grace period, releases what Init registered with
 // Setup.OnStop, shuts its telemetry down and turns the outcome into an exit
 // status. The health package's core is back: monitors, probes and a health
-// Service that owns an App's readiness. The runtime packages that build their
-// Apps on it have not landed yet.
+// Service that owns an App's readiness, and Main runs an App on the OS
+// process. The runtime packages, whose Services run on Main, have not landed
+// yet.
 //
 // The plan is in the charter, Proposal: humus on the bedrock process model:
 // https://github.com/z5labs/humus/discussions/629
