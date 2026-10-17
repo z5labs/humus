@@ -213,10 +213,13 @@ stand-in on the lifecycle page. Otherwise the test runs on `humus.Main`'s
 defaults, with no drain, and not on the ones production runs with.
 
 A runtime package may also ship a test package of its own, named after it,
-such as `httpservertest`, whose `Start` is `humustest.Start` with the
-package's defaults, along with helpers such as a client wired to the test
-Host. A test that uses it can't forget the defaults. The package's proposal
-decides whether it ships one.
+whose `Start` is `humustest.Start` with the package's defaults, along with
+helpers such as a client wired to the test Host. A test that uses it can't
+forget the defaults. `httpserver` ships `httpservertest`, with `Start`, which
+is `humustest.Start` with `httpserver.Defaults()` applied before the test's
+options, and `NewClient`, which returns an HTTP/2 client for the test Host
+that trusts the test's CA. [Serving HTTP](/humus/http/#testing)
+shows both.
 
 ### Helpers
 
@@ -507,6 +510,13 @@ func tlsFromPKCS12(ctx context.Context, s *humus.Setup) (*tls.Config, error) {
 
 `h.HTTPClient()` returns a new client, with a new `*http.Transport`, on every
 call, so setting its `TLSClientConfig` changes no other client.
+
+A `Transport` with a dialer or a `TLSClientConfig` of its own negotiates only
+HTTP/1.1 unless `ForceAttemptHTTP2` or `Protocols` says otherwise, so the
+client above, which has both, speaks HTTP/1.1. For an HTTP/2 client, such as one for a Service from
+`httpserver`, use `httpservertest.NewClient(h, ca.Pool())`: it trusts only the
+CA's pool and speaks only HTTP/2, as
+[Serving HTTP](/humus/http/#testing) describes.
 
 A server that takes a `tls.Certificate` rather than a file serves
 `cert.TLS()` instead, and a client that dials the Host itself trusts the CA's

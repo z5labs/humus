@@ -22,7 +22,11 @@ ends once nothing is serving. The first of the runtime packages, which export
 Services for an `Init` to return, has landed: [Jobs](/humus/jobs/)
 explains the `job` package, which runs a job once as a Service, with the exit
 status Kubernetes retries on and a span that joins the trace of the process
-that started it. The core of the `health` package has landed too:
+that started it. The `httpserver` package has landed:
+[Serving HTTP](/humus/http/) explains how a service serves an
+`http.Handler` over TLS, with HTTP/2 preferred, on `httpserver.Main`'s
+drain and grace period, and how to test it with `httpservertest`. The core
+of the `health` package has landed too:
 [Health](/humus/health/) explains monitors, liveness and readiness,
 and the health Service that owns an App's readiness.
 [Configuring a humus service](/humus/configuration/) explains how
