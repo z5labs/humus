@@ -36,7 +36,11 @@ landed as well: `grpcserver` serves gRPC over TLS as a Service, ending every
 stream at shutdown with `Unavailable`, and `grpcserver.Main` runs it with a
 drain and a grace period for a server behind a Kubernetes Service, while
 `grpcservertest` tests it on the same defaults. See
-[gRPC services](https://z5labs.github.io/humus/grpc/). Earlier
+[gRPC services](https://z5labs.github.io/humus/grpc/). The `queue` and
+`queue/kafka` packages have landed too: `queue` is the contract between a
+`Processor` and any broker, and `queue/kafka` consumes Kafka topics as a
+Service on `humus.Main`'s defaults, at least or at most once, with franz-go.
+See [Consuming Kafka](https://z5labs.github.io/humus/kafka/). Earlier
 releases remain available on [pkg.go.dev](https://pkg.go.dev/github.com/z5labs/humus?tab=versions).
 
 The plan is in the charter,
