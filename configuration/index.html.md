@@ -1,7 +1,9 @@
 # Configuring a humus service
 
 humus packages are configured with plain Go values. They read no environment
-variables, define no variable names and read no files on your behalf. Every
+variables for their settings, define no variable names and read no files on
+your behalf; the few variables humus does read are
+[listed below](#the-variables-humus-reads). Every
 value is sourced in your own `Init`, with whatever names and formats your
 service already uses: an environment variable called `READ_TIMEOUT` or
 `MYSVC_HTTP_READ_TIMEOUT`, a duration written `5s`, a file of PEM, a flag. The
@@ -256,24 +258,41 @@ reaches it: the bad value has already exited 78, named after its variable.
 
 ## The variables humus reads
 
-humus reads exactly two variables, both in the lifecycle:
-`HUMUS_SHUTDOWN_GRACE_PERIOD` and `HUMUS_SHUTDOWN_DRAIN_DELAY`. `humus.App.Run`
-reads them before it calls `Init`, with defaults from `App`'s own fields, and
-checks each after its default, as on this page:
+humus reads the environment in two places, and neither is a setting of a
+package:
 
-- `HUMUS_SHUTDOWN_GRACE_PERIOD` defaults to the App's `ShutdownGracePeriod`
-  field: `humus.Main`'s 20s, or whatever an option, such as a runtime
-  package's defaults or `humus.WithShutdownGracePeriod`, or an App literal
-  set it to.
-- `HUMUS_SHUTDOWN_DRAIN_DELAY`, when it is set, replaces the App's `Drain`,
-  whatever that is, with `humus.DrainDelay` of its value, and adds a drain
-  to an App that has none. When it is not set, the App's `Drain` is the
-  drain.
+- **The lifecycle reads its two variables**, `HUMUS_SHUTDOWN_GRACE_PERIOD`
+  and `HUMUS_SHUTDOWN_DRAIN_DELAY`. `humus.App.Run` reads them before it
+  calls `Init`, with defaults from `App`'s own fields, and checks each after
+  its default, as on this page:
+  - `HUMUS_SHUTDOWN_GRACE_PERIOD` defaults to the App's `ShutdownGracePeriod`
+    field: `humus.Main`'s 20s, or whatever an option, such as a runtime
+    package's defaults or `humus.WithShutdownGracePeriod`, or an App literal
+    set it to.
+  - `HUMUS_SHUTDOWN_DRAIN_DELAY`, when it is set, replaces the App's `Drain`,
+    whatever that is, with `humus.DrainDelay` of its value, and adds a drain
+    to an App that has none. When it is not set, the App's `Drain` is the
+    drain.
 
-[The lifecycle's settings](/humus/lifecycle/#settings) describes
-them. That is the one exception to "humus defines no variable names", and no
-humus package adds another. The `telemetry` package reads no `OTEL_*`
-variable either: a `Builder` that wants them maps them onto
+  [The lifecycle's settings](/humus/lifecycle/#settings) describes
+  them.
+- **`job` reads the variables its propagator's keys name.** A job's run
+  joins the trace of the process that started it: `job.Service` extracts a
+  trace context from the Process's environment with the telemetry's
+  propagator, reading each of the propagator's keys under the name
+  OpenTelemetry's environment-variable carriers give it. With
+  `telemetry.New`'s propagator, those are `TRACEPARENT`, `TRACESTATE` and
+  `BAGGAGE`; a `Builder` with a propagator of another kind, such as B3,
+  changes them. When none is set, or the value is malformed, the run starts
+  a new trace and nothing fails.
+  [Jobs](/humus/jobs/#joining-the-trace-that-started-the-job)
+  describes them.
+
+Apart from the lifecycle's two, humus still defines no variable names. The
+names `job` reads are OpenTelemetry's: its specification names them, from
+the propagator's keys, so a process that starts a job sets the same
+variables whatever language the job is written in. The `telemetry` package
+reads no `OTEL_*` variable either: a `Builder` that wants them maps them onto
 `telemetry.Settings` itself, as [Telemetry](/humus/telemetry/#settings)
 shows.
 

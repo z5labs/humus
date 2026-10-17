@@ -27,8 +27,20 @@ anything that can report whether it is healthy right now: a database ping, a
 flag the service sets once it has started, a check of a queue&amp;rsquo;s depth. It has
 one method, &lt;code&gt;Healthy(ctx context.Context) (bool, error)&lt;/code&gt;, which returns
 &lt;code&gt;false&lt;/code&gt;, or an error, when the monitor is not healthy. Two
-monitors come with the package:&lt;/p&gt;</description></item><item><title>Configuring a humus service</title><link>https://z5labs.github.io/humus/configuration/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/configuration/</guid><description>&lt;p&gt;humus packages are configured with plain Go values. They read no environment
-variables, define no variable names and read no files on your behalf. Every
+monitors come with the package:&lt;/p&gt;</description></item><item><title>Jobs</title><link>https://z5labs.github.io/humus/jobs/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/jobs/</guid><description>&lt;p&gt;A job is a process that does one piece of work and exits. The
+&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/job"&gt;&lt;code&gt;job&lt;/code&gt;&lt;/a&gt; package turns that
+work, the run, into a &lt;code&gt;humus.Service&lt;/code&gt; that runs it once, stops it on either
+shutdown signal and records one span around it. The job runs on
+&lt;code&gt;humus.Main&lt;/code&gt;&amp;rsquo;s defaults, and the run&amp;rsquo;s error is the exit status, so
+Kubernetes retries a job that failed or was interrupted and completes one
+that finished.&lt;/p&gt;
+&lt;p&gt;The package is &lt;code&gt;job.NewService&lt;/code&gt; and nothing else: no App, no &lt;code&gt;Main&lt;/code&gt;, no
+&lt;code&gt;Settings&lt;/code&gt;. The design behind everything on this page is in
+&lt;a href="https://github.com/z5labs/humus/discussions/682"&gt;Proposal: jobs&lt;/a&gt; and
+&lt;a href="https://github.com/z5labs/humus/discussions/682#discussioncomment-18988201"&gt;its revision&lt;/a&gt;.&lt;/p&gt;</description></item><item><title>Configuring a humus service</title><link>https://z5labs.github.io/humus/configuration/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/configuration/</guid><description>&lt;p&gt;humus packages are configured with plain Go values. They read no environment
+variables for their settings, define no variable names and read no files on
+your behalf; the few variables humus does read are
+&lt;a href="#the-variables-humus-reads"&gt;listed below&lt;/a&gt;. Every
 value is sourced in your own &lt;code&gt;Init&lt;/code&gt;, with whatever names and formats your
 service already uses: an environment variable called &lt;code&gt;READ_TIMEOUT&lt;/code&gt; or
 &lt;code&gt;MYSVC_HTTP_READ_TIMEOUT&lt;/code&gt;, a duration written &lt;code&gt;5s&lt;/code&gt;, a file of PEM, a flag. The
