@@ -1,0 +1,5 @@
+// Code blocks are coloured by class (markup.highlight.noClasses: false in
+// hugo.yaml), so they need a palette for each theme. Docsy's code-dark scopes
+// its light and dark Chroma palettes to the data-bs-theme attribute that the
+// navbar's light / dark toggle sets.
+@import 'td/code-dark';

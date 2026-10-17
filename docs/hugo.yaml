@@ -29,12 +29,6 @@ outputs:
   section: [html, rss, markdown]
   page: [html, markdown]
 
-# Highlighting config
-pygmentsCodeFences: true
-pygmentsUseClasses: false
-pygmentsUseClassic: false
-pygmentsStyle: tango
-
 # Image processing configuration
 imaging:
   resampleFilter: CatmullRom
@@ -46,8 +40,11 @@ markup:
   goldmark:
     renderer:
       unsafe: true
+  # Chroma emits CSS classes rather than inline styles, so the theme's
+  # stylesheet colours code blocks and they follow the light / dark toggle.
+  # assets/scss/_styles_project.scss imports the dark palette.
   highlight:
-    style: tango
+    noClasses: false
 
 # Site params
 params:
@@ -67,6 +64,9 @@ params:
     breadcrumb_disable: false
     sidebar_search_disable: false
     navbar_logo: true
+    # Light / dark / auto toggle in the navbar. Auto follows the OS setting,
+    # and the reader's choice is kept in localStorage across page loads.
+    showLightDarkModeMenu: true
 
   # Links
   links:
