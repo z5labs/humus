@@ -25,10 +25,11 @@
 // Its Init builds the App's dependencies from a [Setup], which carries that
 // telemetry, registers their release with [Setup.OnStop], and returns the
 // [Service] values to run. Run calls Serve on each of them, and when a signal
-// arrives or the first Service returns, it cancels Serve's context, waits the
-// drain delay, calls Shutdown on every Service and runs the OnStop functions,
-// all within one grace period, and then shuts the telemetry down. The outcome
-// is the exit status: 0, [ExitFailure] or [ExitConfig].
+// arrives or the first Service returns, it cancels Serve's context, waits for
+// the drain, a [Drain] that ends once every Serve has returned, calls
+// Shutdown on every Service and runs the OnStop functions, all within one
+// grace period, and then shuts the telemetry down. The outcome is the exit
+// status: 0, [ExitFailure] or [ExitConfig].
 //
 // The lifecycle logs through the App's telemetry: its own records at INFO,
 // and every failure after the telemetry is built at ERROR. Standard error
@@ -36,12 +37,13 @@
 // down telemetry, a malformed setting, and OpenTelemetry's export errors,
 // through the process-wide error handler Run sets.
 //
-// Run reads the grace period from HUMUS_SHUTDOWN_GRACE_PERIOD and the drain
-// delay from HUMUS_SHUTDOWN_DRAIN_DELAY, through the Process's environment,
-// with the App's ShutdownGracePeriod and DrainDelay fields as their defaults.
-// An operator tunes either without a rebuild, and a bad default fails at
-// startup with ExitConfig, as a bad variable does. These are the only
-// environment variables the root package reads.
+// Run reads the grace period from HUMUS_SHUTDOWN_GRACE_PERIOD, through the
+// Process's environment, with the App's ShutdownGracePeriod field as its
+// default, and a bad default fails at startup with ExitConfig, as a bad
+// variable does. The drain is the App's Drain field, unless
+// HUMUS_SHUTDOWN_DRAIN_DELAY is set: then it is [DrainDelay] of the
+// variable's value. An operator tunes either without a rebuild. These are
+// the only environment variables the root package reads.
 //
 // An App reaches the network and the filesystem only through its [Host]:
 // [OSHost] in main, and a Host the test controls in a test, so a whole App

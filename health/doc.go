@@ -55,8 +55,8 @@
 // [Readiness], and returns it next to the App's other Services. Its
 // readiness turns true once its Serve starts, and false as soon as its
 // Serve context is done, which is when the App starts shutting down, before
-// the drain delay. A load balancer then stops sending the App traffic while
-// it drains. [Service.Probes] returns its probes:
+// the drain. A load balancer then stops sending the App traffic while it
+// drains. [Service.Probes] returns its probes:
 //
 //	hs := health.NewService(health.Readiness(health.MonitorFunc(func(ctx context.Context) (bool, error) {
 //		return pool.Ping(ctx) == nil, nil
@@ -65,7 +65,7 @@
 //
 // health serves no protocol: nothing in it opens a port or answers an
 // orchestrator's probes, and it depends on nothing but the standard library.
-// Exposing probes is Proposal: exposing health probes, in wave 3 of the
+// Exposing probes is Proposal: exposing health probes, in wave 4 of the
 // charter,
-// https://github.com/z5labs/humus/discussions/629#discussioncomment-18979083.
+// https://github.com/z5labs/humus/discussions/629#discussioncomment-18983765.
 package health

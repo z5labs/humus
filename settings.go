@@ -21,9 +21,9 @@ type settings struct {
 	// every OnStop function share it.
 	gracePeriod time.Duration
 
-	// drainDelay is the pause between shutdown starting and Shutdown being
-	// called on the Services.
-	drainDelay time.Duration
+	// drain is the App's drain: DrainDelay of HUMUS_SHUTDOWN_DRAIN_DELAY
+	// when it is set, and App.Drain otherwise. A nil drain doesn't wait.
+	drain Drain
 }
 
 // The causes of a lifecycle setting that fails its check.
@@ -35,8 +35,8 @@ var (
 // readSettings reads the lifecycle's settings from env, defaulting each to
 // the App's field.
 //
-// Each value is checked after its default, so a bad default fails the same
-// way as a bad variable: with a *config.Error naming the variable. Both
+// The grace period is checked after its default, so a bad default fails the
+// same way as a bad variable: with a *config.Error naming the variable. Both
 // values are read even when one fails, and every failure is returned, joined.
 func (a App) readSettings(ctx context.Context, env bedrock.Environment) (settings, error) {
 	return config.Struct(func(r *config.Resolver) settings {
@@ -47,11 +47,12 @@ func (a App) readSettings(ctx context.Context, env bedrock.Environment) (setting
 					Default(a.ShutdownGracePeriod).
 					Validate(checkGracePeriod),
 			),
-			drainDelay: r.Get(
+			drain: r.Get(
 				config.Env(env, "HUMUS_SHUTDOWN_DRAIN_DELAY").
 					Parse(time.ParseDuration).
-					Default(a.DrainDelay).
-					Validate(checkDrainDelay),
+					Validate(checkDrainDelay).
+					Map(DrainDelay).
+					Default(a.Drain),
 			),
 		}
 	}).Read(ctx)

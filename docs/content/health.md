@@ -129,9 +129,9 @@ The Service's own readiness follows the [lifecycle]({{< relref "lifecycle#what-r
 1. **Not ready until it is serving.** It is not ready from `NewService`
    until the App calls its `Serve`.
 2. **Ready while it serves**, as long as its readiness monitors are healthy.
-3. **Not ready from the moment shutdown starts, through the drain delay.**
+3. **Not ready from the moment shutdown starts, through the drain.**
    The App cancels `Serve`'s context as soon as it starts shutting down,
-   before the drain delay, and the Service turns not ready then, for good. A
+   before the drain, and the Service turns not ready then, for good. A
    load balancer checking readiness stops sending the App new traffic while
    the App's HTTP and gRPC Services, which keep serving until `Shutdown`,
    answer what is still draining towards them.
@@ -159,8 +159,8 @@ serving traffic, so there is nothing for a load balancer to route to it.
 The health Service serves no protocol: nothing in the `health` package opens
 a port or answers an orchestrator's probes. Its `Probes` are monitors, and
 whatever exposes them calls `Healthy` on them. Serving them over HTTP and
-gRPC is planned in wave 3 of
-[the charter](https://github.com/z5labs/humus/discussions/629#discussioncomment-18979083),
+gRPC is planned in wave 4 of
+[the charter](https://github.com/z5labs/humus/discussions/629#discussioncomment-18983765),
 and isn't available yet.
 
 ## Testing
@@ -168,22 +168,23 @@ and isn't available yet.
 A health Service is tested in a whole App, with
 [bedrocktest](https://pkg.go.dev/github.com/z5labs/bedrock/bedrocktest)'s
 fake process and a [humustest]({{< relref "testing" >}}) Host, under
-[`testing/synctest`](https://pkg.go.dev/testing/synctest), so the drain delay
+[`testing/synctest`](https://pkg.go.dev/testing/synctest), so the drain
 passes in fake time and readiness can be checked while it runs. This is
-`health`'s own test that the Service is not ready during the drain delay:
+`health`'s own test that the Service is not ready during the drain:
 
 ```go
 func TestServiceIsNotReadyDuringTheDrainDelay(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		hs := health.NewService()
 		readiness := hs.Probes().Readiness
+		api := newServer() // keeps serving, so the drain lasts its whole delay
 		app := humus.App{
 			Host:                humustest.NewHost(t).Host(),
 			Telemetry:           telemetry.NoopBuilder,
 			ShutdownGracePeriod: 10 * time.Second,
-			DrainDelay:          5 * time.Second,
+			Drain:               humus.DrainDelay(5 * time.Second),
 			Init: func(context.Context, *humus.Setup) ([]humus.Service, error) {
-				return []humus.Service{hs}, nil
+				return []humus.Service{api, hs}, nil
 			},
 		}
 
@@ -197,13 +198,15 @@ func TestServiceIsNotReadyDuringTheDrainDelay(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, ready)
 
+		sigterm := time.Now()
 		p.Signal(syscall.SIGTERM)
-		synctest.Wait() // shutdown has started; the drain delay is running
+		synctest.Wait() // shutdown has started; the drain is running
 		ready, err = readiness.Healthy(t.Context())
 		require.NoError(t, err)
 		require.False(t, ready)
 
 		require.Zero(t, (<-status).Code())
+		require.Equal(t, 5*time.Second, time.Since(sigterm))
 	})
 }
 ```
@@ -211,7 +214,11 @@ func TestServiceIsNotReadyDuringTheDrainDelay(t *testing.T) {
 `<-p.Notified(syscall.SIGTERM)` waits until the App listens for signals, and
 `synctest.Wait` until every goroutine in the test, `Serve` included, is
 blocked, so the first check sees the Service serving. After the SIGTERM,
-`synctest.Wait` returns while the App waits out its five-second drain delay,
-and readiness is already false. A test of an App's own readiness monitors
-works the same way: take the probes from the Service, run the App, and check
-them at each point of the lifecycle.
+`synctest.Wait` returns while the App waits out its five-second drain, and
+readiness is already false. The drain ends once every `Serve` has returned,
+and the health Service's `Serve` returns as soon as shutdown starts, so the
+test runs it next to `api`, a Service that keeps serving until `Shutdown` as
+an HTTP or gRPC Service does: that is what keeps the drain running for its
+whole five seconds. A test of an App's own readiness monitors works the
+same way: take the probes from the Service, run the App, and check them at
+each point of the lifecycle.

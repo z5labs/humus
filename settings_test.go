@@ -18,24 +18,26 @@ import (
 	"github.com/z5labs/bedrock/config"
 
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/telemetry"
 )
 
 // Every test in this file reads the lifecycle's settings through Run: the
 // root package exports no API that reads the environment.
 
-// shutdownTiming runs app on p with one Service, sends SIGTERM once the App
-// listens for it, and returns how long after SIGTERM Shutdown was called and
-// how much of the grace period its context had left.
+// shutdownTiming runs app on p with one Service, which keeps serving until
+// Shutdown so that the drain lasts its whole delay, sends SIGTERM once the
+// App listens for it, and returns how long after SIGTERM Shutdown was called
+// and how much of the grace period its context had left.
 func shutdownTiming(t *testing.T, app humus.App, p *bedrocktest.Process) (drain, grace time.Duration) {
 	t.Helper()
 	var shutdownAt time.Time
-	svc := &fakeService{shutdown: func(ctx context.Context) error {
+	svc := serving(func(ctx context.Context) error {
 		shutdownAt = time.Now()
 		deadline, _ := ctx.Deadline()
 		grace = time.Until(deadline)
 		return nil
-	}}
+	})
 	app.Init = servicesOf(svc)
 	status := start(t, app, p)
 
@@ -58,7 +60,7 @@ func TestApp_Run_settings_default_to_the_App_fields(t *testing.T) {
 		app := humus.App{
 			Host:                humus.OSHost(),
 			ShutdownGracePeriod: 4 * time.Second,
-			DrainDelay:          2 * time.Second,
+			Drain:               humus.DrainDelay(2 * time.Second),
 			Telemetry:           telemetry.NoopBuilder,
 		}
 		p := bedrocktest.NewProcess(t)
@@ -66,7 +68,7 @@ func TestApp_Run_settings_default_to_the_App_fields(t *testing.T) {
 		drain, grace := shutdownTiming(t, app, p)
 
 		if drain != 2*time.Second {
-			t.Errorf("Shutdown called %s after SIGTERM, want the 2s DrainDelay", drain)
+			t.Errorf("Shutdown called %s after SIGTERM, want the 2s Drain", drain)
 		}
 		if grace != 4*time.Second {
 			t.Errorf("Shutdown had %s of the grace period, want the 4s ShutdownGracePeriod", grace)
@@ -74,24 +76,48 @@ func TestApp_Run_settings_default_to_the_App_fields(t *testing.T) {
 	})
 }
 
-func TestApp_Run_HUMUS_SHUTDOWN_DRAIN_DELAY_overrides_DrainDelay(t *testing.T) {
+func TestApp_Run_HUMUS_SHUTDOWN_DRAIN_DELAY_replaces_the_Drain(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		d := &countedDrain{}
 		app := humus.App{
-			Host:                humus.OSHost(),
+			Host:                humustest.NewHost(t).Host(),
 			ShutdownGracePeriod: 4 * time.Second,
+			Drain:               d.Drain,
 			Telemetry:           telemetry.NoopBuilder,
 		}
 		p := bedrocktest.NewProcess(t, bedrocktest.WithEnv(map[string]string{
-			"HUMUS_SHUTDOWN_DRAIN_DELAY": "3s",
+			"HUMUS_SHUTDOWN_DRAIN_DELAY": "1s",
 		}))
 
 		drain, grace := shutdownTiming(t, app, p)
 
-		if drain != 3*time.Second {
-			t.Errorf("Shutdown called %s after SIGTERM, want 3s", drain)
+		if drain != time.Second {
+			t.Errorf("Shutdown called %s after SIGTERM, want 1s", drain)
+		}
+		if n := d.count(); n != 0 {
+			t.Errorf("the App's Drain was called %d times, want never", n)
 		}
 		if grace != 4*time.Second {
 			t.Errorf("Shutdown had %s of the grace period, want 4s", grace)
+		}
+	})
+}
+
+func TestApp_Run_HUMUS_SHUTDOWN_DRAIN_DELAY_adds_a_drain(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		app := humus.App{
+			Host:                humustest.NewHost(t).Host(),
+			ShutdownGracePeriod: 4 * time.Second,
+			Telemetry:           telemetry.NoopBuilder,
+		}
+		p := bedrocktest.NewProcess(t, bedrocktest.WithEnv(map[string]string{
+			"HUMUS_SHUTDOWN_DRAIN_DELAY": "1s",
+		}))
+
+		drain, _ := shutdownTiming(t, app, p)
+
+		if drain != time.Second {
+			t.Errorf("Shutdown called %s after SIGTERM, want 1s", drain)
 		}
 	})
 }
@@ -121,9 +147,8 @@ func TestApp_Run_HUMUS_SHUTDOWN_GRACE_PERIOD_overrides_ShutdownGracePeriod(t *te
 func TestApp_Run_variables_override_fields_that_would_fail(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		app := humus.App{
-			Host:       humus.OSHost(),
-			DrainDelay: -time.Second, // ShutdownGracePeriod is zero
-			Telemetry:  telemetry.NoopBuilder,
+			Host:      humus.OSHost(),
+			Telemetry: telemetry.NoopBuilder, // ShutdownGracePeriod is zero
 		}
 		p := bedrocktest.NewProcess(t, bedrocktest.WithEnv(map[string]string{
 			"HUMUS_SHUTDOWN_GRACE_PERIOD": "2s",
@@ -214,39 +239,31 @@ func TestApp_Run_a_grace_period_that_is_not_positive_exits_78(t *testing.T) {
 }
 
 func TestApp_Run_negative_drain_delay_exits_78(t *testing.T) {
-	cases := []struct {
-		name  string
-		delay time.Duration
-		env   map[string]string
-	}{
-		{name: "DrainDelay", delay: -time.Second},
-		{name: "HUMUS_SHUTDOWN_DRAIN_DELAY", env: map[string]string{"HUMUS_SHUTDOWN_DRAIN_DELAY": "-1s"}},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				app := humus.App{
-					Host:                humus.OSHost(),
-					ShutdownGracePeriod: 10 * time.Second,
-					DrainDelay:          c.delay,
-					Telemetry:           telemetry.NoopBuilder,
-				}
+	synctest.Test(t, func(t *testing.T) {
+		d := &countedDrain{}
+		app := humus.App{
+			Host:                humus.OSHost(),
+			ShutdownGracePeriod: 10 * time.Second,
+			Drain:               d.Drain,
+			Telemetry:           telemetry.NoopBuilder,
+		}
 
-				cause := runConfigFailure(t, app, c.env)
+		cause := runConfigFailure(t, app, map[string]string{"HUMUS_SHUTDOWN_DRAIN_DELAY": "-1s"})
 
-				if want := "config HUMUS_SHUTDOWN_DRAIN_DELAY: must not be negative"; cause.Error() != want {
-					t.Errorf("cause = %q, want %q", cause, want)
-				}
-				cerr, ok := errors.AsType[*config.Error](cause)
-				if !ok {
-					t.Fatalf("cause = %v, want a *config.Error", cause)
-				}
-				if cerr.Name != "HUMUS_SHUTDOWN_DRAIN_DELAY" {
-					t.Errorf("config.Error.Name = %q, want HUMUS_SHUTDOWN_DRAIN_DELAY", cerr.Name)
-				}
-			})
-		})
-	}
+		if want := "config HUMUS_SHUTDOWN_DRAIN_DELAY: must not be negative"; cause.Error() != want {
+			t.Errorf("cause = %q, want %q", cause, want)
+		}
+		cerr, ok := errors.AsType[*config.Error](cause)
+		if !ok {
+			t.Fatalf("cause = %v, want a *config.Error", cause)
+		}
+		if cerr.Name != "HUMUS_SHUTDOWN_DRAIN_DELAY" {
+			t.Errorf("config.Error.Name = %q, want HUMUS_SHUTDOWN_DRAIN_DELAY", cerr.Name)
+		}
+		if n := d.count(); n != 0 {
+			t.Errorf("the Drain was called %d times, want never", n)
+		}
+	})
 }
 
 func TestApp_Run_malformed_settings_are_reported_together(t *testing.T) {
