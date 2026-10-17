@@ -30,7 +30,7 @@ func TestPackage_imports_only_what_a_job_needs(t *testing.T) {
 	t.Parallel()
 
 	allowed := map[string]bool{
-		"github.com/z5labs/humus":         true,
+		"github.com/z5labs/humus":        true,
 		"go.opentelemetry.io/otel/codes": true,
 		"go.opentelemetry.io/otel/trace": true,
 	}
