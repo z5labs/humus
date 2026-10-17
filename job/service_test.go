@@ -342,8 +342,8 @@ func TestService_runs_once(t *testing.T) {
 			require.ErrorIs(t, err, context.Canceled)
 
 			select {
-			case <-served:
-				t.Fatal("Serve returned before the run did")
+			case err := <-served:
+				t.Fatalf("Serve returned %v before the run did", err)
 			default:
 			}
 			require.ErrorIs(t, <-served, errLate)
