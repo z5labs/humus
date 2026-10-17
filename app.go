@@ -30,8 +30,8 @@ import (
 // the bedrock.ExitStatus, not by its code.
 const (
 	// ExitFailure is the code of an App whose telemetry could not be built
-	// or shut down, whose Init, a Service, a Service's Shutdown or an OnStop
-	// function failed, or whose shutdown ran past the grace period.
+	// or shut down, whose Init, a Service, the drain, a Service's Shutdown or
+	// an OnStop function failed, or whose shutdown ran past the grace period.
 	ExitFailure = 1
 
 	// ExitConfig is the code of an App with a setting that is missing or
@@ -48,13 +48,13 @@ type Service interface {
 	// done. It returns nil when Shutdown stopped it or it finished.
 	//
 	// ctx is done as soon as the App starts shutting down, before the
-	// App's drain delay. A Service may stop on it, as a job, a queue
-	// consumer or a health Service does, or keep serving until Shutdown,
-	// as an HTTP or gRPC Service does.
+	// App's drain. A Service may stop on it, as a job, a queue consumer or
+	// a health Service does, or keep serving until Shutdown, as an HTTP or
+	// gRPC Service does. The drain ends once every Serve has returned.
 	Serve(ctx context.Context) error
 
 	// Shutdown stops the Service gracefully. The App calls it on every
-	// Service after the App's drain delay, including one whose Serve has
+	// Service after the App's drain, including one whose Serve has
 	// already returned. If ctx is done before the Service has stopped,
 	// Shutdown stops it at once and returns an error that wraps ctx's
 	// error.
@@ -78,18 +78,19 @@ type App struct {
 	// A runtime package's App sets its own.
 	ShutdownGracePeriod time.Duration
 
-	// DrainDelay is the drain delay when the environment does not set
-	// HUMUS_SHUTDOWN_DRAIN_DELAY. The drain delay is the pause between
-	// shutdown starting and Shutdown being called on the Services: Serve's
-	// context is done at once, and Shutdown is called a drain delay later.
-	// It gives a load balancer, such as a Kubernetes Service removing the pod
-	// from its endpoints, time to stop sending new connections before the
-	// Services stop accepting them. The grace period starts after it.
+	// Drain is the App's drain when the environment does not set
+	// HUMUS_SHUTDOWN_DRAIN_DELAY, such as DrainDelay(5 * time.Second). The
+	// drain is the pause between shutdown starting and Shutdown being called
+	// on the Services: Serve's context is done at once, and Shutdown is
+	// called once the drain returns. It gives a load balancer, such as a
+	// Kubernetes Service removing the pod from its endpoints, time to stop
+	// sending new connections before the Services stop accepting them. The
+	// grace period starts after it. A nil Drain doesn't wait.
 	//
-	// The drain delay must not be negative, so a negative DrainDelay fails
-	// startup, exiting ExitConfig, unless HUMUS_SHUTDOWN_DRAIN_DELAY is set.
-	// Zero means no pause. A runtime package's App sets its own.
-	DrainDelay time.Duration
+	// When HUMUS_SHUTDOWN_DRAIN_DELAY is set, the drain is DrainDelay of its
+	// value in place of Drain, whatever Drain is, so an operator replaces a
+	// Drain without a rebuild.
+	Drain Drain
 
 	// Telemetry builds the App's telemetry.SDK. It is required: the end
 	// user's own Builder in main, and telemetry.NoopBuilder or the Builder of
@@ -178,12 +179,14 @@ func (e *GracePeriodError) Unwrap() error {
 
 // Run implements bedrock.App. In order, it:
 //
-//  1. reads the grace period from HUMUS_SHUTDOWN_GRACE_PERIOD and the
-//     drain delay from HUMUS_SHUTDOWN_DRAIN_DELAY in p.Environment, each a
-//     time.ParseDuration string such as "30s" defaulting to the App's
-//     ShutdownGracePeriod and DrainDelay. It exits ExitConfig, naming every
-//     variable at fault, if either is malformed or, after its default, a
-//     grace period is not positive or a drain delay is negative;
+//  1. reads the grace period from HUMUS_SHUTDOWN_GRACE_PERIOD in
+//     p.Environment, a time.ParseDuration string such as "30s" defaulting to
+//     the App's ShutdownGracePeriod, and the drain: DrainDelay of
+//     HUMUS_SHUTDOWN_DRAIN_DELAY, a time.ParseDuration string such as "5s",
+//     when it is set, in place of the App's Drain, and the App's Drain when
+//     it is not. It exits ExitConfig, naming every variable at fault, if
+//     either variable is malformed, the grace period is not positive after
+//     its default, or HUMUS_SHUTDOWN_DRAIN_DELAY is negative;
 //  2. listens for an interrupt and SIGTERM through p.NotifyContext;
 //  3. builds the App's telemetry by calling App.Telemetry with the context
 //     a signal cancels, p and Host.Dial. It exits ExitConfig when a
@@ -199,20 +202,26 @@ func (e *GracePeriodError) Unwrap() error {
 //  8. stops listening for signals, so a second one takes its default
 //     action, cancels the context passed to Serve, and logs "shutting
 //     down";
-//  9. waits the drain delay;
+//  9. when it hasn't yet received every Serve's result, calls the drain
+//     with the Setup that Init was given and a context that keeps ctx's
+//     values, is not cancelled with it, and is done once every Serve has
+//     returned. It collects the Serve results that arrive while the drain
+//     runs, and waits for the drain to return;
 //  10. calls Shutdown on every Service concurrently, waits for every Serve
 //     to return, and then runs the OnStop functions in reverse order of
 //     registration, all within one grace period, which starts after the
-//     drain delay, and logs "stopped";
+//     drain, and logs "stopped";
 //  11. shuts the telemetry down, with a context that keeps ctx's values but
 //     not its cancellation, separately from the grace period.
 //
-// An Init that returns no Services ends the App at once, without a drain
-// delay, as there is nothing to drain. Neither a cancelled ctx nor a second
-// signal cuts the drain delay short: the second signal takes its default
-// action, which ends the process. Run waits for every Serve, Shutdown and OnStop call it
-// made to return: the grace period reaches them through the context they
-// are given, which they must honour.
+// An Init that returns no Services, and a Service that returns on its own
+// when it is the only one, end the App without calling the drain, as there
+// is nothing to drain. Neither a cancelled ctx nor a second signal cuts the
+// drain short: the second signal takes its default action, which ends the
+// process. A drain that fails is joined into the cause as "drain: " and its
+// error, and Shutdown is still called on every Service. Run waits for every
+// Serve, Shutdown and OnStop call it made to return: the grace period
+// reaches them through the context they are given, which they must honour.
 //
 // The status is 0, with the signal as its cause, after a signal; 0 with no
 // cause when a Service returned nil on its own; ExitFailure with a
@@ -227,7 +236,7 @@ func (e *GracePeriodError) Unwrap() error {
 // build telemetry, one line per error; the export errors the handler of
 // step 4 writes; and a failure to shut telemetry down, which is joined into
 // the cause and turns an exit 0 into ExitFailure. Run never recovers a
-// panic.
+// panic, including one in the drain.
 func (a App) Run(ctx context.Context, p bedrock.Process) bedrock.ExitStatus {
 	stderr := &lockedWriter{w: p.Stderr}
 	settings, err := a.readSettings(ctx, p.Environment)
@@ -358,9 +367,13 @@ func (a App) run(ctx, sigCtx context.Context, stop context.CancelFunc, p bedrock
 	stop()
 	cancelServe()
 	l.info("shutting down")
-	if len(services) > 0 {
-		// time.Sleep returns at once for a drain delay of zero.
-		time.Sleep(settings.drainDelay)
+	if pending > 0 && settings.drain != nil {
+		drainErrs, left, err := drain(ctx, settings.drain, setup, served, pending)
+		errs = append(errs, drainErrs...)
+		pending = left
+		if err != nil {
+			errs = append(errs, fmt.Errorf("drain: %w", err))
+		}
 	}
 
 	stopServices := func(graceCtx context.Context) []error {

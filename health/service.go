@@ -52,7 +52,7 @@ func Readiness(m Monitor) Option {
 // Its own readiness is false until its Serve starts, true while Serve runs,
 // and false for good from the moment Serve's context is done or Shutdown is
 // called. The App cancels Serve's context as soon as it starts shutting
-// down, before its drain delay, so a load balancer checking readiness stops
+// down, before its drain, so a load balancer checking readiness stops
 // sending the App traffic while it drains.
 //
 // An App that builds a Service but doesn't return it from its Init never

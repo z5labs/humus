@@ -148,7 +148,7 @@ func TestApp_Run_a_whole_App(t *testing.T) {
 		app := humus.App{
 			Host:                humus.OSHost(), // the fake Services never use it
 			ShutdownGracePeriod: 10 * time.Second,
-			DrainDelay:          5 * time.Second,
+			Drain:               humus.DrainDelay(5 * time.Second),
 			Telemetry:           telemetry.NoopBuilder,
 			Init: func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
 				s.OnStop(func(context.Context) error {
@@ -178,7 +178,7 @@ func TestApp_Run_a_whole_App(t *testing.T) {
 			t.Errorf("consumer stopped %s after SIGTERM, want at once", got)
 		}
 		if got := shutdownAt.Sub(sigterm); got != 5*time.Second {
-			t.Errorf("Shutdown called %s after SIGTERM, want after the 5s drain delay", got)
+			t.Errorf("Shutdown called %s after SIGTERM, want after the 5s drain", got)
 		}
 		if api.calls() != 1 || consumer.calls() != 1 {
 			t.Errorf("Shutdown called %d and %d times, want once each", api.calls(), consumer.calls())
@@ -227,137 +227,6 @@ func TestApp_Run_SIGTERM_exits_0_with_the_signal_as_its_cause(t *testing.T) {
 		}
 		if got := p.Stderr(); got != "" {
 			t.Errorf("stderr = %q, want nothing", got)
-		}
-	})
-}
-
-func TestApp_Run_DrainDelay_pauses_before_Shutdown(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		serveCtxDone := make(chan struct{})
-		var (
-			shutdownAt        time.Time
-			serveDoneAtCall   bool
-			shutdownRemaining time.Duration
-		)
-		svc := &fakeService{
-			serve: func(ctx context.Context) error {
-				<-ctx.Done()
-				close(serveCtxDone)
-				return nil
-			},
-			shutdown: func(ctx context.Context) error {
-				shutdownAt = time.Now()
-				select {
-				case <-serveCtxDone:
-					serveDoneAtCall = true
-				default:
-				}
-				deadline, _ := ctx.Deadline()
-				shutdownRemaining = time.Until(deadline)
-				return nil
-			},
-		}
-		app := appWith(servicesOf(svc))
-		app.DrainDelay = 3 * time.Second
-
-		p := bedrocktest.NewProcess(t, bedrocktest.WithEnv(map[string]string{
-			"HUMUS_SHUTDOWN_GRACE_PERIOD": "2s",
-		}))
-		status := start(t, app, p)
-
-		<-p.Notified(syscall.SIGTERM)
-		sigterm := time.Now()
-		p.Signal(syscall.SIGTERM)
-		st := <-status
-
-		if st.Code() != 0 {
-			t.Errorf("code = %d, want 0: %v", st.Code(), st.Cause())
-		}
-		if n := svc.calls(); n != 1 {
-			t.Fatalf("Shutdown called %d times, want 1", n)
-		}
-		if got := shutdownAt.Sub(sigterm); got != 3*time.Second {
-			t.Errorf("Shutdown called %s after SIGTERM, want exactly 3s", got)
-		}
-		if !serveDoneAtCall {
-			t.Error("Serve's context was not done when Shutdown was called")
-		}
-		// The grace period starts after the drain delay, so Shutdown is
-		// given all of it.
-		if shutdownRemaining != 2*time.Second {
-			t.Errorf("Shutdown had %s of the grace period left, want 2s", shutdownRemaining)
-		}
-	})
-}
-
-func TestApp_Run_no_DrainDelay_calls_Shutdown_without_a_pause(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		var shutdownAt time.Time
-		svc := &fakeService{shutdown: func(context.Context) error {
-			shutdownAt = time.Now()
-			return nil
-		}}
-
-		p := bedrocktest.NewProcess(t)
-		status := start(t, appWith(servicesOf(svc)), p)
-
-		<-p.Notified(syscall.SIGTERM)
-		sigterm := time.Now()
-		p.Signal(syscall.SIGTERM)
-		st := <-status
-
-		if st.Code() != 0 {
-			t.Errorf("code = %d, want 0: %v", st.Code(), st.Cause())
-		}
-		if n := svc.calls(); n != 1 {
-			t.Fatalf("Shutdown called %d times, want 1", n)
-		}
-		if got := shutdownAt.Sub(sigterm); got != 0 {
-			t.Errorf("Shutdown called %s after SIGTERM, want no pause", got)
-		}
-	})
-}
-
-func TestApp_Run_DrainDelay_follows_a_Service_returning_on_its_own(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		var shutdownAt time.Time
-		job := &fakeService{
-			serve: func(context.Context) error { return nil },
-			shutdown: func(context.Context) error {
-				shutdownAt = time.Now()
-				return nil
-			},
-		}
-		app := appWith(servicesOf(job))
-		app.DrainDelay = time.Second
-		p := bedrocktest.NewProcess(t)
-
-		begin := time.Now()
-		st := app.Run(t.Context(), p.Process())
-
-		if st.Code() != 0 || st.Cause() != nil {
-			t.Errorf("status = (%d, %v), want (0, nil)", st.Code(), st.Cause())
-		}
-		if got := shutdownAt.Sub(begin); got != time.Second {
-			t.Errorf("Shutdown called %s after the Service returned, want exactly 1s", got)
-		}
-	})
-}
-
-func TestApp_Run_no_Services_skips_the_DrainDelay(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		app := appWith(servicesOf())
-		app.DrainDelay = time.Minute
-		p := bedrocktest.NewProcess(t)
-
-		begin := time.Now()
-		st := app.Run(t.Context(), p.Process())
-
-		if st.Code() != 0 || st.Cause() != nil {
-			t.Errorf("status = (%d, %v), want (0, nil)", st.Code(), st.Cause())
-		}
-		if elapsed := time.Since(begin); elapsed != 0 {
-			t.Errorf("Run took %s, want no pause", elapsed)
 		}
 	})
 }

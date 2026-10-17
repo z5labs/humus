@@ -27,17 +27,27 @@ import (
 // Service satisfies humus.Service without health importing humus.
 var _ humus.Service = (*health.Service)(nil)
 
+// server serves until Shutdown, as an HTTP or gRPC Service does.
+type server struct{ stopped chan struct{} }
+
+func newServer() *server { return &server{stopped: make(chan struct{})} }
+
+func (s *server) Serve(context.Context) error { <-s.stopped; return nil }
+
+func (s *server) Shutdown(context.Context) error { close(s.stopped); return nil }
+
 func TestServiceIsNotReadyDuringTheDrainDelay(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		hs := health.NewService()
 		readiness := hs.Probes().Readiness
+		api := newServer() // keeps serving, so the drain lasts its whole delay
 		app := humus.App{
 			Host:                humustest.NewHost(t).Host(),
 			Telemetry:           telemetry.NoopBuilder,
 			ShutdownGracePeriod: 10 * time.Second,
-			DrainDelay:          5 * time.Second,
+			Drain:               humus.DrainDelay(5 * time.Second),
 			Init: func(context.Context, *humus.Setup) ([]humus.Service, error) {
-				return []humus.Service{hs}, nil
+				return []humus.Service{api, hs}, nil
 			},
 		}
 
@@ -51,13 +61,15 @@ func TestServiceIsNotReadyDuringTheDrainDelay(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, ready)
 
+		sigterm := time.Now()
 		p.Signal(syscall.SIGTERM)
-		synctest.Wait() // shutdown has started; the drain delay is running
+		synctest.Wait() // shutdown has started; the drain is running
 		ready, err = readiness.Healthy(t.Context())
 		require.NoError(t, err)
 		require.False(t, ready)
 
 		require.Zero(t, (<-status).Code())
+		require.Equal(t, 5*time.Second, time.Since(sigterm))
 	})
 }
 
@@ -374,7 +386,7 @@ func TestService_returned_from_Init(t *testing.T) {
 			Host:                humustest.NewHost(t).Host(),
 			Telemetry:           telemetry.NoopBuilder,
 			ShutdownGracePeriod: 10 * time.Second,
-			DrainDelay:          5 * time.Second,
+			Drain:               humus.DrainDelay(5 * time.Second),
 			Init: func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 				hs := health.NewService(
 					health.Liveness(&working),

@@ -133,8 +133,8 @@ func buildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Diale
 func Example_main() {
 	bedrock.Main(humus.App{
 		Host:                humus.OSHost(),
-		ShutdownGracePeriod: 30 * time.Second, // when HUMUS_SHUTDOWN_GRACE_PERIOD is not set
-		DrainDelay:          5 * time.Second,  // when HUMUS_SHUTDOWN_DRAIN_DELAY is not set
+		ShutdownGracePeriod: 30 * time.Second,                  // when HUMUS_SHUTDOWN_GRACE_PERIOD is not set
+		Drain:               humus.DrainDelay(5 * time.Second), // when HUMUS_SHUTDOWN_DRAIN_DELAY is not set
 		Telemetry:           buildTelemetry,
 		Init:                Init,
 	})

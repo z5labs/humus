@@ -345,14 +345,14 @@ func TestApp_Run_HTTP_a_job_ends_the_App_and_stops_the_other_Services(t *testing
 	})
 }
 
-func TestApp_Run_HTTP_DrainDelay_keeps_serving(t *testing.T) {
+func TestApp_Run_HTTP_the_drain_keeps_serving(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
 		handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = io.WriteString(w, "still serving")
 		})
 		app := httpApp(h, handler)
-		app.DrainDelay = 3 * time.Second
+		app.Drain = humus.DrainDelay(3 * time.Second)
 		p, status := bedrocktest.Start(t, app)
 
 		<-h.Listening("localhost:8080")
@@ -372,12 +372,12 @@ func TestApp_Run_HTTP_DrainDelay_keeps_serving(t *testing.T) {
 		var st bedrock.ExitStatus
 		select {
 		case st = <-status:
-			t.Fatalf("the App exited during the drain delay: %d %v", st.Code(), st.Cause())
+			t.Fatalf("the App exited during the drain: %d %v", st.Code(), st.Cause())
 		default:
 		}
 		st = <-status
 		if elapsed := time.Since(sigterm); elapsed != 3*time.Second {
-			t.Errorf("the App exited %s after SIGTERM, want after the 3s drain delay", elapsed)
+			t.Errorf("the App exited %s after SIGTERM, want after the 3s drain", elapsed)
 		}
 		if st.Code() != 0 {
 			t.Errorf("code = %d, want 0: %v", st.Code(), st.Cause())

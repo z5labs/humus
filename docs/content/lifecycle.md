@@ -44,7 +44,7 @@ An App has five fields:
 |---|---|---|
 | `Host` | yes | the network and filesystem the App runs on: `humus.OSHost()` in `main`, and a Host the test controls in a test |
 | `ShutdownGracePeriod` | yes, unless `HUMUS_SHUTDOWN_GRACE_PERIOD` is set | the grace period when `HUMUS_SHUTDOWN_GRACE_PERIOD` is not set. It must be positive, so the zero value fails startup |
-| `DrainDelay` | no | the drain delay when `HUMUS_SHUTDOWN_DRAIN_DELAY` is not set: the pause between shutdown starting and `Shutdown` being called on the Services. It must not be negative; zero means no pause |
+| `Drain` | no | the drain when `HUMUS_SHUTDOWN_DRAIN_DELAY` is not set: a `humus.Drain`, such as `humus.DrainDelay(5 * time.Second)`, that runs between shutdown starting and `Shutdown` being called on the Services, and whose context is done once every `Serve` has returned. A nil `Drain` means no pause |
 | `Telemetry` | yes | the [`telemetry.Builder`](https://pkg.go.dev/github.com/z5labs/humus/telemetry#Builder) that builds the App's telemetry: the end user's own `Builder` in `main`, and `telemetry.NoopBuilder` or the `Builder` of humustest's recorder, `humustest.Telemetry`, in tests |
 | `Init` | yes | builds the App's dependencies and returns the Services to run |
 
@@ -54,8 +54,8 @@ touches the real process:
 ```go
 bedrock.Main(humus.App{
 	Host:                humus.OSHost(),
-	ShutdownGracePeriod: 30 * time.Second, // when HUMUS_SHUTDOWN_GRACE_PERIOD is not set
-	DrainDelay:          5 * time.Second,  // when HUMUS_SHUTDOWN_DRAIN_DELAY is not set
+	ShutdownGracePeriod: 30 * time.Second,                  // when HUMUS_SHUTDOWN_GRACE_PERIOD is not set
+	Drain:               humus.DrainDelay(5 * time.Second), // when HUMUS_SHUTDOWN_DRAIN_DELAY is not set
 	Telemetry:           buildTelemetry,
 	Init:                Init,
 })
@@ -73,10 +73,10 @@ func buildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Diale
 }
 ```
 
-`ShutdownGracePeriod` and `DrainDelay` are defaults: an operator overrides
+`ShutdownGracePeriod` and `Drain` are defaults: an operator overrides
 either through its [variable](#settings) without a rebuild. humus has no
 default grace period of its own, so an App sets `ShutdownGracePeriod` unless
-its environment always sets the variable; a `DrainDelay` left at zero means no
+its environment always sets the variable; a `Drain` left nil means no
 pause. How long to pause and how long to allow for shutdown depend on the kind
 of App — a REST or gRPC App needs time for a load balancer to stop sending it
 connections, and a job does not — so each runtime package's App sets its own.
@@ -89,8 +89,8 @@ or a job. It has two methods, `Serve` and `Shutdown`, and the App gives it two
 shutdown signals, at different times:
 
 1. **`Serve`'s context is done** as soon as the App starts shutting down,
-   before the drain delay.
-2. **`Shutdown` is called** after the drain delay, with the grace period as
+   before the drain.
+2. **`Shutdown` is called** after the drain, with the grace period as
    its context's deadline.
 
 A Service may stop on the first, as a job, a queue consumer or the
@@ -241,18 +241,21 @@ the context each is given is done when the grace period runs out.
 8. Stops listening for signals, so that a second interrupt or SIGTERM takes
    its default action and ends the process at once, cancels the context
    passed to `Serve`, and logs `shutting down`.
-9. Waits the drain delay: `HUMUS_SHUTDOWN_DRAIN_DELAY`, defaulting to
-   `App.DrainDelay`.
+9. When it hasn't yet received every `Serve`'s result, calls the drain:
+   `humus.DrainDelay` of `HUMUS_SHUTDOWN_DRAIN_DELAY` when that is set, and
+   `App.Drain` otherwise. Its context is done once every `Serve` has
+   returned, and the App waits for it to return.
 10. Calls `Shutdown` on every Service concurrently, waits for every `Serve` to
     return, and then runs the OnStop functions in reverse order of
     registration. All of this happens within one grace period,
-    `HUMUS_SHUTDOWN_GRACE_PERIOD`, which starts after the drain delay. Then it
+    `HUMUS_SHUTDOWN_GRACE_PERIOD`, which starts after the drain. Then it
     logs `stopped`.
 11. Shuts the telemetry down.
 12. Returns the [exit status](#exit-codes).
 
-An `Init` that returns no Services ends the App at once, without a drain
-delay, as there is nothing to drain. A cancelled root context still gets a
+An `Init` that returns no Services, and a Service that returns on its own
+when it is the only one, end the App without calling the drain, as there is
+nothing to drain. A cancelled root context still gets a
 graceful shutdown: the grace period keeps the context's values but not its
 cancellation. Every failure is the cause of the exit status. Once the
 telemetry is built, each failure is logged through it, one record per error;
@@ -313,7 +316,7 @@ exit 0 into 1.
 | Variable | Default | Meaning |
 |---|---|---|
 | `HUMUS_SHUTDOWN_GRACE_PERIOD` | `App.ShutdownGracePeriod` | bounds the whole shutdown: every Service's `Shutdown` and every OnStop function share it. A [`time.ParseDuration`](https://pkg.go.dev/time#ParseDuration) string, such as `30s`, that must be positive. |
-| `HUMUS_SHUTDOWN_DRAIN_DELAY` | `App.DrainDelay` | the pause between shutdown starting and `Shutdown` being called on the Services. A `time.ParseDuration` string, such as `5s`, that must not be negative; `0s` means no pause. |
+| `HUMUS_SHUTDOWN_DRAIN_DELAY` | `App.Drain` | the drain, in place of `App.Drain`, whatever that is: `humus.DrainDelay` of a `time.ParseDuration` string, such as `5s`, that must not be negative; `0s` means no pause. |
 
 These are the only variables the lifecycle reads, and the root package is the
 one place humus reads them. Each value is checked after its default, so a bad
@@ -347,7 +350,7 @@ An App runs whole inside a test. [bedrocktest](https://pkg.go.dev/github.com/z5l
 hands it a fake process, whose arguments and environment the test sets, whose
 output the test reads, and to which the test sends fake signals; and
 [`testing/synctest`](https://pkg.go.dev/testing/synctest) runs it in fake
-time, so a five-second drain delay passes at once and is measured exactly.
+time, so a five-second drain passes at once and is measured exactly.
 The lifecycle's own tests run it with fake Services:
 
 ```go
@@ -412,7 +415,7 @@ func TestApp_Run_a_whole_App(t *testing.T) {
 		app := humus.App{
 			Host:                humus.OSHost(), // the fake Services never use it
 			ShutdownGracePeriod: 10 * time.Second,
-			DrainDelay:          5 * time.Second,
+			Drain:               humus.DrainDelay(5 * time.Second),
 			Telemetry:           telemetry.NoopBuilder,
 			Init: func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
 				s.OnStop(func(context.Context) error {
@@ -442,7 +445,7 @@ func TestApp_Run_a_whole_App(t *testing.T) {
 			t.Errorf("consumer stopped %s after SIGTERM, want at once", got)
 		}
 		if got := shutdownAt.Sub(sigterm); got != 5*time.Second {
-			t.Errorf("Shutdown called %s after SIGTERM, want after the 5s drain delay", got)
+			t.Errorf("Shutdown called %s after SIGTERM, want after the 5s drain", got)
 		}
 		if api.calls() != 1 || consumer.calls() != 1 {
 			t.Errorf("Shutdown called %d and %d times, want once each", api.calls(), consumer.calls())
