@@ -12,6 +12,12 @@
 // grpcserver.Settings: the transport credentials, if any, are among the
 // options it is given. grpcserver.NewService builds on it with TLS
 // required, and a plaintext health server can be built on it too.
+//
+// Its outermost interceptors recover a panic of an RPC's handler, or of an
+// interceptor inside them, and fail only that RPC, with codes.Internal and
+// the message "internal error". The panic is recorded as an exception
+// event on the RPC's span and as one ERROR record, in the RPC's context,
+// through s.Telemetry's logger named after grpcserver.
 package server
 
 import (
@@ -47,10 +53,11 @@ type Server struct {
 }
 
 // New listens on addr with s.Host.Listen("tcp", addr), and builds the
-// server with grpc.WaitForHandlers(true) and then opts. A failure to
-// listen, such as EADDRINUSE, is its error. It registers a function with
-// s.OnStop that closes the listener, so a listener whose Server never
-// serves, because Init failed after New, is still closed.
+// server with grpc.WaitForHandlers(true), a unary and a stream interceptor
+// that recover a panic, and then opts. A failure to listen, such as
+// EADDRINUSE, is its error. It registers a function with s.OnStop that
+// closes the listener, so a listener whose Server never serves, because
+// Init failed after New, is still closed.
 func New(s *humus.Setup, addr string, opts ...grpc.ServerOption) (*Server, error) {
 	ln, err := s.Host.Listen("tcp", addr)
 	if err != nil {
@@ -65,8 +72,18 @@ func New(s *humus.Setup, addr string, opts ...grpc.ServerOption) (*Server, error
 	// WaitForHandlers comes first, so Stop waits for every handler to
 	// return and no handler outlives Shutdown. An option in opts may
 	// still replace it.
-	all := make([]grpc.ServerOption, 0, 1+len(opts))
-	all = append(all, grpc.WaitForHandlers(true))
+	//
+	// The recovering interceptors come before opts, so they are the
+	// outermost interceptors, and a panic of an interceptor in opts is
+	// recovered too. A stats handler is not an interceptor, and stays
+	// outside them, so the RPC's span records the Internal code.
+	logger := s.Telemetry.LoggerProvider.Logger(loggerName)
+	all := make([]grpc.ServerOption, 0, 3+len(opts))
+	all = append(all,
+		grpc.WaitForHandlers(true),
+		grpc.ChainUnaryInterceptor(recoverUnary(logger)),
+		grpc.ChainStreamInterceptor(recoverStream(logger)),
+	)
 	all = append(all, opts...)
 	return &Server{ln: ln, srv: grpc.NewServer(all...), stopped: make(chan struct{})}, nil
 }

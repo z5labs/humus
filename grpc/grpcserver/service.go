@@ -41,6 +41,10 @@ var (
 // and measures every RPC with s.Telemetry's TracerProvider, MeterProvider
 // and Propagator. A grpc.StatsHandler in opts is added after it.
 //
+// humus's options also add a unary and a stream interceptor, the
+// outermost ones, that recover a panic of an RPC and fail only that RPC,
+// with codes.Internal, as the package doc describes under Panics.
+//
 // opts come after humus's own options, and humus's transport credentials
 // come after opts. An option that grpc-go keeps one value of, such as
 // grpc.MaxRecvMsgSize, replaces humus's. An option that chains, such as
