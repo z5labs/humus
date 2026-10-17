@@ -29,7 +29,12 @@ drain and grace period, and how to test it with `httpservertest`. The
 `grpc` module has landed: [gRPC services](/humus/grpc/) explains how
 a service serves gRPC over TLS with `grpcserver`, ends its streams and shuts
 down on `grpcserver.Main`'s drain and grace period, and how to test it with
-`grpcservertest`. The core of the `health` package has landed too:
+`grpcservertest`. The `queue` and `queue/kafka` packages have landed:
+[Consuming Kafka](/humus/kafka/) explains the contract a
+`queue.Processor` keeps, and how a service consumes Kafka topics with
+`kafka.NewService` on `humus.Main`'s defaults, what each delivery commits,
+and how to test a consumer on kfake. The core of the `health` package has
+landed too:
 [Health](/humus/health/) explains monitors, liveness and readiness,
 and the health Service that owns an App's readiness.
 [Configuring a humus service](/humus/configuration/) explains how

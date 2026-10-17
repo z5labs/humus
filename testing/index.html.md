@@ -225,6 +225,12 @@ options, and `NewClient`, which returns a gRPC client that dials the Service
 through the test Host, over TLS, trusting the test's CA.
 [gRPC services](/humus/grpc/#testing) shows both.
 
+A runtime package with no defaults of its own needs no test package.
+`queue/kafka` ships none: a consumer runs on `humus.Main`'s defaults, so
+`humustest.Start` already runs it on the ones production uses, and the fake
+Kafka cluster a test runs it against listens on the test Host with one option.
+[Consuming Kafka](/humus/kafka/#testing) shows how.
+
 ### Helpers
 
 `Start` returns bedrocktest's `Process` and the App's status channel
