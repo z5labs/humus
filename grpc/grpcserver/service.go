@@ -135,9 +135,9 @@ func (svc *Service) Serve(ctx context.Context) error {
 // context, and a stream whose handler then returns nil or a context error
 // ends with codes.Unavailable. It stops the server gracefully: it stops
 // accepting connections, sends every client a GOAWAY, and waits for the
-// RPCs in flight. If ctx is
-// done first, it closes every connection, cancels every RPC, waits for
-// every handler to return, and returns an error that wraps ctx's error.
+// RPCs in flight. If ctx is done first, it closes every connection,
+// cancels every RPC, waits for every handler to return, and returns an
+// error that wraps ctx's error.
 func (svc *Service) Shutdown(ctx context.Context) error {
 	if err := svc.srv.Shutdown(ctx); err != nil {
 		return fmt.Errorf("grpcserver: %w", err)

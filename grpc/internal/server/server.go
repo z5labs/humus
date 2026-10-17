@@ -62,10 +62,10 @@ type Server struct {
 // New listens on addr with s.Host.Listen("tcp", addr), and builds the
 // server with grpc.WaitForHandlers(true), a unary and a stream interceptor
 // that recover a panic, a stream interceptor inside it that gives each
-// stream's handler a context Shutdown cancels, and then opts. A failure to listen, such as
-// EADDRINUSE, is its error. It registers a function with s.OnStop that
-// closes the listener, so a listener whose Server never serves, because
-// Init failed after New, is still closed.
+// stream's handler a context Shutdown cancels, and then opts. A failure to
+// listen, such as EADDRINUSE, is its error. It registers a function with
+// s.OnStop that closes the listener, so a listener whose Server never
+// serves, because Init failed after New, is still closed.
 func New(s *humus.Setup, addr string, opts ...grpc.ServerOption) (*Server, error) {
 	ln, err := s.Host.Listen("tcp", addr)
 	if err != nil {

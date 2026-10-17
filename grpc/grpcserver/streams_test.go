@@ -360,3 +360,37 @@ func TestService_a_stream_ended_by_Shutdown_records_an_Error_span(t *testing.T) 
 		require.Equal(t, "UNAVAILABLE", attributes(spans[0])["rpc.response.status_code"].AsString())
 	})
 }
+
+func TestService_the_end_users_stream_interceptors_see_the_context_Shutdown_cancels(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ca := humustest.NewCA(t)
+		h := humustest.NewHost(t)
+		entered := make(chan struct{})
+		// waits never calls its handler: it waits for the context it is
+		// given, as a handler would.
+		waits := func(_ any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, _ grpc.StreamHandler) error {
+			close(entered)
+			<-ss.Context().Done()
+			return ss.Context().Err()
+		}
+		p, exit := grpcservertest.Start(t, serves(settingsFor(t, ca, ":9090"), subscriber{}, grpc.ChainStreamInterceptor(waits)),
+			humustest.WithApp(humus.WithHost(h.Host())),
+		)
+		<-h.Listening("carts:9090")
+
+		client := testpb.NewTestServiceClient(grpcservertest.NewClient(t, h, "carts:9090", ca.Pool()))
+		stream, err := client.StreamingOutputCall(t.Context(), &testpb.StreamingOutputCallRequest{})
+		require.NoError(t, err)
+		<-entered
+
+		<-p.Notified(syscall.SIGTERM)
+		sigterm := time.Now()
+		p.Signal(syscall.SIGTERM)
+		_, err = stream.Recv()
+		require.Equal(t, codes.Unavailable, status.Code(err), err)
+		require.Equal(t, 5*time.Second, time.Since(sigterm), "the interceptor's context was cancelled when Shutdown started")
+
+		st := <-exit
+		require.Zero(t, st.Code(), "cause: %v", st.Cause())
+	})
+}
