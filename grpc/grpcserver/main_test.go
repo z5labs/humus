@@ -175,6 +175,7 @@ func TestInit_serves_with_a_certificate_from_a_PKCS12_file(t *testing.T) {
 			st := <-exit
 			require.Equal(t, humus.ExitConfig, st.Code(), "cause: %v", st.Cause())
 			require.ErrorContains(t, st.Cause(), "config GRPC_TLS_P12_PASSWORD:")
+			require.NotContains(t, st.Cause().Error(), env["GRPC_TLS_P12_PASSWORD"], "the password stays out of the exit cause")
 		})
 	})
 }

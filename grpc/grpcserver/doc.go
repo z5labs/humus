@@ -63,9 +63,12 @@
 // terminationGracePeriodSeconds of 30s.
 //
 // The end user's options come after Defaults, so they win:
-// grpcserver.Main(Init, humus.WithShutdownGracePeriod(25*time.Second)) has a
-// 25s grace period and still the 5s drain, and humus.WithDrain(nil) removes
-// the drain. An operator overrides both without a rebuild, with
+// grpcserver.Main(Init, humus.WithShutdownGracePeriod(10*time.Second)) has a
+// 10s grace period and still the 5s drain, and humus.WithDrain(nil) removes
+// the drain. A drain and a grace period that add up to more than 25s need a
+// terminationGracePeriodSeconds raised to match, or the kubelet kills the
+// pod before shutdown finishes. An operator overrides both without a
+// rebuild, with
 // HUMUS_SHUTDOWN_GRACE_PERIOD and HUMUS_SHUTDOWN_DRAIN_DELAY, in the same
 // manifest that sets terminationGracePeriodSeconds. A test runs the App on
 // the same defaults with grpcservertest.Start, or by passing Defaults to

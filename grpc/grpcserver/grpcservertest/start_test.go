@@ -75,6 +75,12 @@ func TestStart_applies_the_defaults_before_the_test_options(t *testing.T) {
 			grace: 2 * time.Second,
 		},
 		{
+			name:  "keep the drain when HUMUS_SHUTDOWN_GRACE_PERIOD overrides the grace period",
+			opts:  []humustest.Option{humustest.WithEnv(map[string]string{"HUMUS_SHUTDOWN_GRACE_PERIOD": "2s"})},
+			want:  7 * time.Second,
+			grace: 2 * time.Second,
+		},
+		{
 			name:  "keep the grace period when HUMUS_SHUTDOWN_DRAIN_DELAY overrides the drain",
 			opts:  []humustest.Option{humustest.WithEnv(map[string]string{"HUMUS_SHUTDOWN_DRAIN_DELAY": "1s"})},
 			want:  16 * time.Second,
