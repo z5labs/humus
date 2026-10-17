@@ -71,7 +71,25 @@
 // A connection a handler hijacks, such as a WebSocket, isn't tracked by
 // Shutdown or by the close that follows it: the handler closes it itself.
 //
-// # Logs
+// # Telemetry
+//
+// The Service takes everything from the Setup's telemetry and never reads
+// or sets OpenTelemetry's globals. h is served wrapped in OpenTelemetry's
+// net/http instrumentation, otelhttp, given the TracerProvider, the
+// MeterProvider and the Propagator of s.Telemetry.
+//
+// Each request gets one server span. Its parent is the trace context the
+// request brought in, extracted with the Setup's propagator, so a request
+// joins its caller's trace. The propagator comes from the telemetry
+// Builder, and it decides which headers carry the trace context: the
+// W3C traceparent and tracestate headers, and baggage, with the default
+// one. The span is named after the method and the route pattern, such as
+// "GET /hello/{name}", when the handler sets Request.Pattern, as an
+// http.ServeMux does. Otherwise it is named after the method alone, such as
+// "GET".
+//
+// Each request also records OpenTelemetry's HTTP server metrics, such as
+// http.server.request.duration, on the Setup's MeterProvider.
 //
 // The Service logs through the LoggerProvider of the Setup's telemetry,
 // with the OpenTelemetry Logs API and the logger name
