@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"errors"
+	"slices"
 	"strconv"
 	"sync"
 	"syscall"
@@ -24,6 +25,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kmsg"
 	"github.com/twmb/franz-go/pkg/sasl/plain"
 	"github.com/z5labs/bedrock"
+	"github.com/z5labs/bedrock/bedrocktest"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/humustest"
@@ -781,5 +783,174 @@ func TestService_a_lost_partition_commits_nothing_and_is_processed_again(t *test
 		require.Equal(t, []int64{0, 0}, seen, "offset 0 was processed again after the partition was lost and assigned again")
 		require.Equal(t, []int64{0}, committed0)
 		require.Equal(t, int64(1), committed(c)[0])
+	})
+}
+
+func TestService_a_fenced_member_commits_nothing_more_for_the_partitions_it_held(t *testing.T) {
+	// The first App is stuck in a revoke, its records in flight, while the
+	// third App's join starts another rebalance. kfake waits
+	// RebalanceTimeout for it to rejoin, then drops it and gives both its
+	// partitions away. franz-go learns of the fence from a refused commit,
+	// rejoins as a new member, and reports the partition the first App
+	// still held as revoked. kfake, like Kafka, checks a commit's member ID
+	// and generation and not who owns the partition, so the revoke's commit,
+	// sent under the new member ID, would rewind the new owner's committed
+	// offset.
+	//
+	// The first App's records are released one at a time so that no commit
+	// is called while franz-go joins: such a commit waits on a mutex, which
+	// synctest doesn't count as durably blocked, so time would stop. The
+	// container tests cover that case against Kafka.
+	synctest.Test(t, func(t *testing.T) {
+		h := humustest.NewHost(t)
+		c := cluster(t, h, 2)
+		produceTo(t, h, c, map[int32]int{0: 1, 1: 1})
+
+		// sent is every OffsetCommit that reached the cluster.
+		type commit struct {
+			member    string
+			partition int32
+			offset    int64
+		}
+		var (
+			mu   sync.Mutex
+			sent []commit
+		)
+		c.ControlKey(kmsg.OffsetCommit.Int16(), func(req kmsg.Request) (kmsg.Response, error, bool) {
+			c.KeepControl()
+			r := req.(*kmsg.OffsetCommitRequest)
+			mu.Lock()
+			defer mu.Unlock()
+			for _, rt := range r.Topics {
+				for _, rp := range rt.Partitions {
+					sent = append(sent, commit{r.MemberID, rp.Partition, rp.Offset})
+				}
+			}
+			return nil, nil, false
+		})
+
+		s := settings(c.ListenAddrs()...)
+		s.RebalanceTimeout = 5 * time.Second
+
+		// gates holds the first App's records of each partition, by
+		// offset, until the test releases them.
+		type at struct {
+			partition int32
+			offset    int64
+		}
+		gates := map[at]chan struct{}{
+			{0, 0}: make(chan struct{}), {1, 0}: make(chan struct{}),
+			{0, 1}: make(chan struct{}), {1, 1}: make(chan struct{}),
+		}
+		var (
+			pmu       sync.Mutex
+			processed = map[string]map[int32][]int64{}
+		)
+		processor := func(app string) queue.ProcessorFunc[kafka.Message] {
+			return func(ctx context.Context, m kafka.Message) error {
+				if gate, ok := gates[at{m.Partition, m.Offset}]; ok && app == "first" {
+					select {
+					case <-gate:
+					case <-ctx.Done():
+					}
+				}
+				pmu.Lock()
+				defer pmu.Unlock()
+				if processed[app] == nil {
+					processed[app] = map[int32][]int64{}
+				}
+				processed[app][m.Partition] = append(processed[app][m.Partition], m.Offset)
+				return nil
+			}
+		}
+		type app struct {
+			p      *bedrocktest.Process
+			status <-chan bedrock.ExitStatus
+		}
+		start := func(name string, opts ...humus.Option) app {
+			p, status := humustest.Start(t, consumes(s, processor(name)),
+				humustest.WithApp(append([]humus.Option{humus.WithHost(h.Host())}, opts...)...))
+			return app{p, status}
+		}
+
+		tel := humustest.NewTelemetry()
+		first := start("first", humus.WithTelemetry(tel.Builder()))
+		time.Sleep(10 * time.Second) // the first App is mid-record on both partitions
+		synctest.Wait()
+
+		// The second App's join moves one partition, whose revoke waits
+		// for the record in flight.
+		second := start("second")
+		time.Sleep(4 * time.Second) // within RebalanceTimeout
+		synctest.Wait()
+		revoked := records(tel.Logs(), "partitions revoked")
+		require.Len(t, revoked, 1, "the first App begins revoking a partition")
+		var moved, kept int32 = 0, 1 // kept is the partition the first App still holds when it is fenced
+		if attrs(revoked[0])["messaging.destination.partition.ids"] == "[1]" {
+			moved, kept = 1, 0
+		}
+
+		// The third App's join starts the rebalance the first App can't
+		// rejoin while its revoke waits: it is fenced, and the other Apps
+		// process both partitions.
+		third := start("third")
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		// The kept partition's new owner processes ten more records and
+		// commits past them.
+		produceTo(t, h, c, map[int32]int{kept: 10}) // offsets 1 to 10
+		time.Sleep(10 * time.Second)
+		synctest.Wait()
+		require.Equal(t, map[int32]int64{moved: 1, kept: 11}, committed(c))
+
+		// The kept partition's record in flight finishes, and its commit
+		// is refused: the member was fenced out. The partition takes the
+		// batch the first App polled after the fence, and holds offset 1
+		// in flight.
+		close(gates[at{kept, 0}])
+		time.Sleep(time.Second)
+		synctest.Wait()
+
+		// The moved partition's record in flight finishes, and the revoke
+		// ends. franz-go rejoins as a new member, which the new assignment
+		// gives nothing, so it revokes the kept partition, whose revoke
+		// waits for offset 1.
+		close(gates[at{moved, 0}])
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		require.Len(t, records(tel.Logs(), "partitions revoked"), 2, "the first App revokes the partition it kept")
+		require.Equal(t, "["+strconv.Itoa(int(kept))+"]", attrs(records(tel.Logs(), "partitions revoked")[1])["messaging.destination.partition.ids"])
+
+		close(gates[at{kept, 1}])
+		close(gates[at{moved, 1}])
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		require.Equal(t, map[int32]int64{moved: 1, kept: 11}, committed(c), "the new owner's committed offset is unchanged")
+
+		for _, a := range []app{first, second, third} {
+			a.p.Signal(syscall.SIGTERM)
+			st := <-a.status
+			require.Zero(t, st.Code(), st.Cause())
+		}
+		require.Equal(t, map[int32][]int64{moved: {0}, kept: {0, 1}}, processed["first"])
+		require.Equal(t, map[int32]int64{moved: 1, kept: 11}, committed(c))
+
+		// The first App's member IDs, as franz-go logged them: the first
+		// is the one it was fenced out under.
+		var members []string
+		for _, r := range tel.Logs() {
+			if m := attrs(r)["member_id"]; r.InstrumentationScope().Name == "github.com/twmb/franz-go/pkg/kgo" && m != "" && !slices.Contains(members, m) {
+				members = append(members, m)
+			}
+		}
+		require.Greater(t, len(members), 1, "the first App rejoined as a new member")
+		mu.Lock()
+		defer mu.Unlock()
+		for _, cm := range sent {
+			if cm.partition == kept && slices.Contains(members[1:], cm.member) {
+				t.Errorf("the first App sent a commit of partition %d, offset %d, under its new member ID %s", kept, cm.offset, cm.member)
+			}
+		}
 	})
 }
