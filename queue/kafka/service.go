@@ -63,6 +63,8 @@ type Service struct {
 	proc     queue.Processor[Message]
 	dial     dialFunc
 	logger   log.Logger
+	// kgoLogger is the Logger of franz-go's own logs.
+	kgoLogger log.Logger
 
 	tracer     trace.Tracer
 	propagator propagation.TextMapPropagator
@@ -123,6 +125,7 @@ func NewService(s *humus.Setup, settings Settings, p queue.Processor[Message]) (
 		proc:       p,
 		dial:       tlsDialer(s.Host.Dial, settings.TLS),
 		logger:     s.Telemetry.LoggerProvider.Logger(scopeName),
+		kgoLogger:  s.Telemetry.LoggerProvider.Logger(kgoScope),
 		tracer:     s.Telemetry.TracerProvider.Tracer(scopeName),
 		propagator: s.Telemetry.Propagator,
 		consumed:   consumed,
@@ -233,6 +236,7 @@ func (s *Service) clientOpts(g *group) []kgo.Opt {
 		kgo.OnPartitionsRevoked(g.revoked),
 		kgo.OnPartitionsLost(g.lost),
 		kgo.WithHooks(connectHook{g: g}, s.brokers),
+		kgo.WithLogger(kgoLogger{ctx: g.logCtx, logger: s.kgoLogger}),
 	}
 	if s.settings.SASL != nil {
 		opts = append(opts, kgo.SASL(s.settings.SASL))

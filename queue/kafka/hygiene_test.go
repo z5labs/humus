@@ -9,6 +9,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -140,4 +141,50 @@ func TestPackage_uses_kotels_Meter_alone(t *testing.T) {
 		})
 	}
 	require.True(t, used["NewMeter"], "the package builds kotel's Meter")
+}
+
+// TestModule_imports_no_logging_bridge checks that franz-go's logs reach
+// the Setup's LoggerProvider through the package's own adapter: the module
+// requires neither franz-go's kslog plugin nor any of OpenTelemetry's
+// logging bridges, and the package's own source imports neither.
+func TestModule_imports_no_logging_bridge(t *testing.T) {
+	t.Parallel()
+
+	bridge := func(path string) bool {
+		return path == "github.com/twmb/franz-go/plugin/kslog" ||
+			strings.HasPrefix(path, "go.opentelemetry.io/contrib/bridges/")
+	}
+
+	mod, err := os.ReadFile("go.mod")
+	require.NoError(t, err)
+	for _, line := range strings.Split(string(mod), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if fields[0] == "require" && len(fields) > 1 {
+			fields = fields[1:]
+		}
+		if bridge(fields[0]) {
+			t.Errorf("go.mod requires %s", fields[0])
+		}
+	}
+
+	names, err := filepath.Glob("*.go")
+	require.NoError(t, err)
+	fset := token.NewFileSet()
+	for _, name := range names {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, parser.ImportsOnly)
+		require.NoError(t, err)
+		for _, imp := range f.Imports {
+			path, err := strconv.Unquote(imp.Path.Value)
+			require.NoError(t, err)
+			if bridge(path) {
+				t.Errorf("%s: imports %s", fset.Position(imp.Pos()), path)
+			}
+		}
+	}
 }
