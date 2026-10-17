@@ -142,8 +142,9 @@
 //
 // # Logging
 //
-// The Service writes no log record of its own: the App already logs that
-// it is serving, shutting down and stopped.
+// The Service writes no log record of its own but one for each panic, as
+// described under Panics: the App already logs that it is serving,
+// shutting down and stopped.
 //
 // grpc-go's own logger is an ambient leak. Its grpclog package reads
 // GRPC_GO_LOG_SEVERITY_LEVEL, GRPC_GO_LOG_VERBOSITY_LEVEL and
@@ -152,6 +153,32 @@
 // writes to the real standard error. Replacing it means
 // grpclog.SetLoggerV2, which is global state, and humus sets none. An end
 // user who wants grpc-go's logs in their telemetry sets the logger in main.
+//
+// # Panics
+//
+// A handler that panics fails only its own RPC. grpc-go recovers nothing,
+// so the outermost of humus's interceptors, a unary and a stream one, do:
+// they run inside the stats handler and outside the end user's
+// interceptors, so the panic of an interceptor in opts is recovered too.
+//
+// The RPC fails with codes.Internal and the message "internal error", so
+// the panic's value never reaches the client. A stream that had already
+// sent messages ends with that status. The panic is recorded on the RPC's
+// span as an exception event, and the span's status is Error, from the
+// Internal code. One ERROR record, "RPC panicked", is emitted through the
+// Setup's logger named github.com/z5labs/humus/grpc/grpcserver, in the
+// RPC's context, so it carries the span's trace and span IDs. It has the
+// attributes rpc.method, exception.type, exception.message and
+// exception.stacktrace, the stack of the panic. Every other RPC, and the
+// server, carry on.
+//
+// The cost is that of net/http's recovery: whatever the handler left
+// half-changed stays that way. A lock it held is never released, and a
+// structure it was updating is left as it was when it panicked, for the
+// RPCs that come after.
+//
+// Only RPCs are recovered. The lifecycle itself, the end user's Init and
+// the Service's Serve and Shutdown, never recovers a panic.
 //
 // # Settings
 //
