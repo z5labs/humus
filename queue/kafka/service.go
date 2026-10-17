@@ -1,0 +1,663 @@
+// Copyright (c) 2026 Z5Labs and Contributors
+//
+// This software is released under the MIT License.
+// https://opensource.org/licenses/MIT
+
+package kafka
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"slices"
+	"strconv"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/twmb/franz-go/pkg/kerr"
+	"github.com/twmb/franz-go/pkg/kgo"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/log"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
+
+	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/queue"
+)
+
+// loggerName is the instrumentation scope of the Service's own logs.
+const loggerName = "github.com/z5labs/humus/queue/kafka"
+
+// partitionsKey is the attribute that lists the partitions of a topic in
+// the records of an assignment, a revoke and a loss. OpenTelemetry's
+// messaging conventions name one partition, and these records name several.
+const partitionsKey = attribute.Key("messaging.destination.partition.ids")
+
+// Service consumes Settings.Topics as a member of the consumer group
+// Settings.GroupID, and hands each record to a Processor. It is safe for
+// concurrent use.
+type Service struct {
+	settings Settings
+	proc     queue.Processor[Message]
+	dial     dialFunc
+	logger   log.Logger
+
+	// stopped is done once Shutdown has been called.
+	stopped context.Context
+	stop    context.CancelFunc
+
+	// serving is set once: by the first Serve, to that Serve's call, or by
+	// a Shutdown called before any Serve, to notServed.
+	serving atomic.Pointer[call]
+}
+
+// call is one call of Serve: the function that cancels the context of
+// processing, committing and leaving the group, and served, which is closed
+// when Serve returns.
+type call struct {
+	abort  context.CancelFunc
+	served chan struct{}
+}
+
+// notServed is the call of a Service that was shut down before it was
+// served.
+var notServed = &call{}
+
+// NewService checks settings and returns a Service. It opens no connection:
+// Serve builds the client and joins the group.
+//
+// It reports every field of settings that fails its check in one error that
+// names each one, and it rejects a nil Processor. It builds no client and
+// registers no OnStop function, so an Init that fails after it leaks
+// nothing.
+func NewService(s *humus.Setup, settings Settings, p queue.Processor[Message]) (*Service, error) {
+	if err := checkSettings(settings, p); err != nil {
+		return nil, fmt.Errorf("kafka: NewService: %w", err)
+	}
+	stopped, stop := context.WithCancel(context.Background())
+	return &Service{
+		settings: settings,
+		proc:     p,
+		dial:     tlsDialer(s.Host.Dial, settings.TLS),
+		logger:   s.Telemetry.LoggerProvider.Logger(loggerName),
+		stopped:  stopped,
+		stop:     stop,
+	}, nil
+}
+
+// checkSettings runs every check on settings, and rejects a nil Processor.
+// It reports every failure in one error, each naming its field.
+func checkSettings(settings Settings, p queue.Processor[Message]) error {
+	var errs []error
+	check := func(field string, err error) {
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s %w", field, err))
+		}
+	}
+	check("Settings.Brokers", CheckBrokers(settings.Brokers))
+	check("Settings.GroupID", CheckGroupID(settings.GroupID))
+	check("Settings.Topics", CheckTopics(settings.Topics))
+	check("Settings.Delivery", queue.CheckDelivery(settings.Delivery))
+	check("Settings.SessionTimeout", CheckSessionTimeout(settings.SessionTimeout))
+	check("Settings.RebalanceTimeout", CheckRebalanceTimeout(settings.RebalanceTimeout))
+	check("Settings.FetchMaxBytes", CheckFetchMaxBytes(settings.FetchMaxBytes))
+	check("Settings.MaxPollRecords", CheckMaxPollRecords(settings.MaxPollRecords))
+	if p == nil {
+		errs = append(errs, errors.New("the Processor must not be nil"))
+	}
+	return errors.Join(errs...)
+}
+
+// Serve joins the group and processes records until ctx is done, Shutdown
+// is called, or the Service fails. It then stops polling, lets each
+// partition's record in flight finish, commits, leaves the group, closes
+// the client and returns.
+//
+// It returns nil when it stopped because ctx was done or Shutdown was
+// called, including when Shutdown's context ran out first. It returns an
+// error when processing a record failed under queue.AtLeastOnce, when a
+// commit failed for a reason other than the member being fenced out of the
+// group, and when a poll returned an error franz-go doesn't retry.
+//
+// A Service is served once. A Serve called after Shutdown, or after an
+// earlier Serve, returns nil at once.
+func (s *Service) Serve(ctx context.Context) error {
+	// work is the context of processing, committing and leaving the group:
+	// it keeps ctx's values but not its cancellation, and only Shutdown
+	// cancels it, when its own context is done.
+	work, abort := context.WithCancel(context.WithoutCancel(ctx))
+	defer abort()
+	c := &call{abort: abort, served: make(chan struct{})}
+	if !s.serving.CompareAndSwap(nil, c) {
+		return nil
+	}
+	defer close(c.served)
+
+	polling, stopPolling := context.WithCancel(ctx)
+	defer stopPolling()
+	unregister := context.AfterFunc(s.stopped, stopPolling)
+	defer unregister()
+
+	g := &group{
+		svc:         s,
+		work:        work,
+		logCtx:      context.WithoutCancel(ctx),
+		stopPolling: stopPolling,
+		parts:       make(map[topicPartition]*partition),
+	}
+	cl, err := kgo.NewClient(s.clientOpts(g)...)
+	if err != nil {
+		return fmt.Errorf("kafka: building the client: %w", err)
+	}
+
+	g.poll(polling, cl)
+
+	g.stopAll()
+	cl.AllowRebalance()
+	// Leaving makes the group rebalance at once, so the other members take
+	// the partitions without waiting for the session timeout. A leave that
+	// fails, or that Shutdown's context cuts short, ends in the same place:
+	// the coordinator drops the member when its session times out.
+	_ = cl.LeaveGroupContext(work)
+	cl.Close()
+	return g.err()
+}
+
+// clientOpts returns the options of the client that consumes for g.
+func (s *Service) clientOpts(g *group) []kgo.Opt {
+	opts := []kgo.Opt{
+		kgo.SeedBrokers(s.settings.Brokers...),
+		kgo.Dialer(s.dial),
+		kgo.ConsumerGroup(s.settings.GroupID),
+		kgo.ConsumeTopics(s.settings.Topics...),
+		kgo.DisableAutoCommit(),
+		kgo.BlockRebalanceOnPoll(),
+		kgo.SessionTimeout(s.settings.SessionTimeout),
+		kgo.RebalanceTimeout(s.settings.RebalanceTimeout),
+		kgo.FetchMaxBytes(s.settings.FetchMaxBytes),
+		kgo.OnPartitionsAssigned(g.assigned),
+		kgo.OnPartitionsRevoked(g.revoked),
+		kgo.OnPartitionsLost(g.lost),
+		kgo.WithHooks(connectHook{g: g}),
+	}
+	if s.settings.SASL != nil {
+		opts = append(opts, kgo.SASL(s.settings.SASL))
+	}
+	return opts
+}
+
+// Shutdown stops Serve and waits for it to return. Serve stops polling, lets
+// each partition's record in flight finish, commits and leaves the group.
+//
+// If ctx is done first, or is done already, Shutdown cancels the context the
+// records in flight are processed with, and the leave, waits for Serve to
+// return, and returns an error that wraps ctx's error. The records whose
+// processing was cut short are not committed.
+//
+// Shutdown returns nil at once when Serve was never called, after which
+// Serve returns nil at once, and when Serve has already returned, so a
+// second Shutdown returns nil.
+func (s *Service) Shutdown(ctx context.Context) error {
+	s.serving.CompareAndSwap(nil, notServed)
+	s.stop()
+	c := s.serving.Load()
+	if c == notServed {
+		return nil
+	}
+	select {
+	case <-c.served:
+		return nil
+	default:
+	}
+	if ctx.Err() == nil {
+		select {
+		case <-c.served:
+			return nil
+		case <-ctx.Done():
+		}
+	}
+	c.abort()
+	<-c.served
+	return fmt.Errorf("kafka: shutting down the Service: %w", ctx.Err())
+}
+
+// topicPartition names one partition of a topic.
+type topicPartition struct {
+	topic     string
+	partition int32
+}
+
+// partition is one assigned partition, whose records one goroutine, run,
+// processes in offset order.
+type partition struct {
+	topicPartition
+
+	// batches hands run the records of each poll. It holds one batch, so a
+	// partition can have one batch waiting while it processes another.
+	batches chan []*kgo.Record
+
+	// quit is closed to stop run after its record in flight.
+	quit     chan struct{}
+	quitOnce sync.Once
+
+	// done is closed when run has returned.
+	done chan struct{}
+
+	// lost is set before quit is closed when the partition was lost, so
+	// run commits nothing more.
+	lost atomic.Bool
+
+	// pending is the last record run processed and has not committed. Only
+	// run uses it.
+	pending *kgo.Record
+}
+
+func (p *partition) close() {
+	p.quitOnce.Do(func() { close(p.quit) })
+}
+
+func (p *partition) quitting() bool {
+	select {
+	case <-p.quit:
+		return true
+	default:
+		return false
+	}
+}
+
+// group is one Serve's membership of the consumer group: the partitions it
+// is assigned and the first error that ends it.
+type group struct {
+	svc         *Service
+	work        context.Context
+	logCtx      context.Context
+	stopPolling context.CancelFunc
+
+	mu    sync.Mutex
+	parts map[topicPartition]*partition
+	first error
+}
+
+// poll polls until ctx is done or a poll returns an error franz-go doesn't
+// retry, and hands each partition's records to that partition.
+//
+// The records are taken from the poll while rebalancing is blocked, so they
+// all belong to partitions that are still assigned. They are handed out
+// after rebalancing is allowed again, to the partitions as they were at the
+// poll: a partition revoked in between has stopped, and its records are
+// dropped, uncommitted, for its new owner to process.
+func (g *group) poll(ctx context.Context, cl *kgo.Client) {
+	type delivery struct {
+		part    *partition
+		records []*kgo.Record
+	}
+	for {
+		fetches := cl.PollRecords(ctx, g.svc.settings.MaxPollRecords)
+		if ctx.Err() != nil {
+			cl.AllowRebalance()
+			return
+		}
+		if err := fatalPollError(fetches); err != nil {
+			cl.AllowRebalance()
+			g.fail(err)
+			return
+		}
+		var deliveries []delivery
+		fetches.EachPartition(func(p kgo.FetchTopicPartition) {
+			if len(p.Records) == 0 {
+				return
+			}
+			if part := g.partition(topicPartition{p.Topic, p.Partition}); part != nil {
+				deliveries = append(deliveries, delivery{part: part, records: p.Records})
+			}
+		})
+		cl.AllowRebalance()
+
+		for _, d := range deliveries {
+			select {
+			case d.part.batches <- d.records:
+			case <-d.part.done:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
+}
+
+// fatalPollError returns the first error of fetches that ends the Service,
+// or nil when there is none.
+func fatalPollError(fetches kgo.Fetches) error {
+	var fatal error
+	fetches.EachError(func(topic string, partition int32, err error) {
+		if fatal != nil || !isFatal(err) {
+			return
+		}
+		if topic == "" {
+			fatal = fmt.Errorf("kafka: consuming: %w", err)
+			return
+		}
+		fatal = fmt.Errorf("kafka: fetching %s, partition %d: %w", topic, partition, err)
+	})
+	return fatal
+}
+
+// isFatal reports whether an error from a poll ends the Service: an error
+// code from Kafka that franz-go doesn't retry, such as an authorization
+// failure.
+//
+// Everything else is franz-go's to recover from. A connection error is
+// retried, with backoff, which is how the Service keeps serving while the
+// brokers are unreachable. A fenced-out member rejoins the group, and its
+// partitions are lost and assigned again. A cancelled context or a closed
+// client is the Service stopping.
+func isFatal(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, kgo.ErrClientClosed) {
+		return false
+	}
+	ke, ok := errors.AsType[*kerr.Error](err)
+	if !ok {
+		return false
+	}
+	return !ke.Retriable && !notMember(err)
+}
+
+// connectHook fails g when a broker refuses the Service's credentials.
+// franz-go retries every connection that fails, and it would retry a
+// password that will never be accepted for as long as the Service ran,
+// without a poll ever returning the error.
+type connectHook struct {
+	g *group
+}
+
+// OnBrokerConnect implements kgo.HookBrokerConnect.
+func (h connectHook) OnBrokerConnect(meta kgo.BrokerMetadata, _ time.Duration, _ net.Conn, err error) {
+	if err == nil || !refused(err) {
+		return
+	}
+	h.g.fail(fmt.Errorf("kafka: authenticating to %s: %w", net.JoinHostPort(meta.Host, strconv.Itoa(int(meta.Port))), err))
+}
+
+// refused reports whether err is a broker refusing to authenticate the
+// Service.
+func refused(err error) bool {
+	return errors.Is(err, kerr.SaslAuthenticationFailed) ||
+		errors.Is(err, kerr.UnsupportedSaslMechanism) ||
+		errors.Is(err, kerr.IllegalSaslState)
+}
+
+// notMember reports whether err says the member is no longer in the group's
+// current generation: it was fenced out, or the group is rebalancing.
+// franz-go rejoins the group on it, so it is not the Service's failure.
+func notMember(err error) bool {
+	return errors.Is(err, kerr.UnknownMemberID) ||
+		errors.Is(err, kerr.IllegalGeneration) ||
+		errors.Is(err, kerr.FencedInstanceID) ||
+		errors.Is(err, kerr.RebalanceInProgress)
+}
+
+// fail records err as the error Serve returns, if it is the first, and
+// stops polling, so the Service stops as on shutdown.
+func (g *group) fail(err error) {
+	g.mu.Lock()
+	if g.first == nil {
+		g.first = err
+	}
+	g.mu.Unlock()
+	g.stopPolling()
+}
+
+func (g *group) err() error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.first
+}
+
+func (g *group) partition(tp topicPartition) *partition {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.parts[tp]
+}
+
+// assigned starts a goroutine for each partition newly assigned.
+func (g *group) assigned(_ context.Context, cl *kgo.Client, assigned map[string][]int32) {
+	g.logPartitions("partitions assigned", assigned)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for topic, partitions := range assigned {
+		for _, id := range partitions {
+			tp := topicPartition{topic, id}
+			if _, ok := g.parts[tp]; ok {
+				continue
+			}
+			p := &partition{
+				topicPartition: tp,
+				batches:        make(chan []*kgo.Record, 1),
+				quit:           make(chan struct{}),
+				done:           make(chan struct{}),
+			}
+			g.parts[tp] = p
+			go g.run(cl, p)
+		}
+	}
+}
+
+// revoked stops each revoked partition after its record in flight, which
+// commits what it processed, and returns once they have all stopped.
+func (g *group) revoked(_ context.Context, _ *kgo.Client, revoked map[string][]int32) {
+	g.logPartitions("partitions revoked", revoked)
+	g.stop(revoked, false)
+}
+
+// lost stops each lost partition after its record in flight, without
+// committing: a commit would fail, and its new owner processes the records
+// again.
+func (g *group) lost(_ context.Context, _ *kgo.Client, lost map[string][]int32) {
+	g.logPartitions("partitions lost", lost)
+	g.stop(lost, true)
+}
+
+// stopAll stops every partition after its record in flight, which commits
+// what it processed.
+func (g *group) stopAll() {
+	g.mu.Lock()
+	all := make(map[string][]int32)
+	for tp := range g.parts {
+		all[tp.topic] = append(all[tp.topic], tp.partition)
+	}
+	g.mu.Unlock()
+	g.stop(all, false)
+}
+
+// stop stops the partitions in m and waits for each to return.
+func (g *group) stop(m map[string][]int32, lost bool) {
+	var stopping []*partition
+	g.mu.Lock()
+	for topic, partitions := range m {
+		for _, id := range partitions {
+			tp := topicPartition{topic, id}
+			p, ok := g.parts[tp]
+			if !ok {
+				continue
+			}
+			delete(g.parts, tp)
+			if lost {
+				p.lost.Store(true)
+			}
+			p.close()
+			stopping = append(stopping, p)
+		}
+	}
+	g.mu.Unlock()
+	for _, p := range stopping {
+		<-p.done
+	}
+}
+
+// run processes p's batches, one at a time, until p is stopped or a batch
+// ends it.
+func (g *group) run(cl *kgo.Client, p *partition) {
+	defer close(p.done)
+	for {
+		// A partition being stopped takes no more batches, even when one
+		// is waiting.
+		if p.quitting() {
+			g.commit(cl, p)
+			return
+		}
+		select {
+		case <-p.quit:
+			g.commit(cl, p)
+			return
+		case records := <-p.batches:
+			var ok bool
+			if g.svc.settings.Delivery == queue.AtMostOnce {
+				ok = g.atMostOnce(cl, p, records)
+			} else {
+				ok = g.atLeastOnce(cl, p, records)
+			}
+			if !ok {
+				return
+			}
+		}
+	}
+}
+
+// atLeastOnce processes records in order, and then commits the last one it
+// processed. It stops after the record in flight when p is stopped. It
+// reports whether p goes on.
+func (g *group) atLeastOnce(cl *kgo.Client, p *partition, records []*kgo.Record) bool {
+	for _, r := range records {
+		if p.quitting() {
+			break
+		}
+		if err := g.process(r); err != nil {
+			if g.work.Err() != nil {
+				// Shutdown's context cut the record short: nothing more
+				// is committed.
+				return false
+			}
+			g.fail(fmt.Errorf("kafka: processing %s, partition %d, offset %d: %w", r.Topic, r.Partition, r.Offset, err))
+			// The records before it were processed, so they are
+			// committed, and it and the rest of the batch are not.
+			g.commit(cl, p)
+			return false
+		}
+		p.pending = r
+	}
+	return g.commit(cl, p)
+}
+
+// atMostOnce commits records before it processes any of them, and then
+// processes every one: they are committed, so stopping between them would
+// lose them. A processing error is logged, and processing goes on. It
+// reports whether p goes on.
+func (g *group) atMostOnce(cl *kgo.Client, p *partition, records []*kgo.Record) bool {
+	if p.quitting() || p.lost.Load() {
+		return false
+	}
+	last := records[len(records)-1]
+	if err := cl.CommitRecords(g.work, last); err != nil {
+		switch {
+		case g.work.Err() != nil:
+			return false
+		case notMember(err):
+			// The batch isn't committed, so it isn't processed either: a
+			// record processed here and again by the partition's new
+			// owner would be processed twice.
+			return true
+		default:
+			g.fail(fmt.Errorf("kafka: committing %s, partition %d, offset %d: %w", last.Topic, last.Partition, last.Offset, err))
+			return false
+		}
+	}
+	for _, r := range records {
+		if g.work.Err() != nil {
+			return false
+		}
+		if err := g.process(r); err != nil && g.work.Err() == nil {
+			g.logProcessingError(r, err)
+		}
+	}
+	return true
+}
+
+// commit commits p.pending, unless p was lost, and reports whether p goes
+// on. A commit refused because the member is no longer in the group's
+// current generation is not a failure: franz-go rejoins, p.pending stays
+// pending, and the next commit covers it.
+func (g *group) commit(cl *kgo.Client, p *partition) bool {
+	if p.pending == nil || p.lost.Load() {
+		return true
+	}
+	r := p.pending
+	err := cl.CommitRecords(g.work, r)
+	switch {
+	case err == nil:
+		p.pending = nil
+		return true
+	case g.work.Err() != nil:
+		// Shutdown's context cut the commit short.
+		return false
+	case notMember(err):
+		return true
+	default:
+		g.fail(fmt.Errorf("kafka: committing %s, partition %d, offset %d: %w", r.Topic, r.Partition, r.Offset, err))
+		return false
+	}
+}
+
+// process hands r to the Processor. No panic is recovered.
+func (g *group) process(r *kgo.Record) error {
+	return g.svc.proc.Process(g.work, newMessage(r))
+}
+
+// logPartitions emits one INFO record per topic of m with body, naming the
+// topic and its partitions.
+func (g *group) logPartitions(body string, m map[string][]int32) {
+	topics := make([]string, 0, len(m))
+	for topic, partitions := range m {
+		if len(partitions) > 0 {
+			topics = append(topics, topic)
+		}
+	}
+	slices.Sort(topics)
+	for _, topic := range topics {
+		ids := make([]int64, len(m[topic]))
+		for i, id := range m[topic] {
+			ids[i] = int64(id)
+		}
+		slices.Sort(ids)
+		g.emit(log.SeverityInfo, body,
+			semconv.MessagingSystemKafka,
+			semconv.MessagingConsumerGroupName(g.svc.settings.GroupID),
+			semconv.MessagingDestinationName(topic),
+			partitionsKey.Int64Slice(ids),
+		)
+	}
+}
+
+// logProcessingError emits an ERROR record for the error processing r
+// returned under queue.AtMostOnce.
+func (g *group) logProcessingError(r *kgo.Record, err error) {
+	g.emit(log.SeverityError, "processing a record failed",
+		semconv.MessagingSystemKafka,
+		semconv.MessagingConsumerGroupName(g.svc.settings.GroupID),
+		semconv.MessagingDestinationName(r.Topic),
+		semconv.MessagingDestinationPartitionID(strconv.FormatInt(int64(r.Partition), 10)),
+		semconv.MessagingKafkaOffset(int(r.Offset)),
+		semconv.ErrorType(err),
+		semconv.ExceptionMessage(err.Error()),
+	)
+}
+
+// emit emits one record at sev, with body and attrs.
+func (g *group) emit(sev log.Severity, body string, attrs ...attribute.KeyValue) {
+	var r log.Record
+	r.SetTimestamp(time.Now())
+	r.SetSeverity(sev)
+	r.SetSeverityText(sev.String())
+	r.SetBody(attribute.StringValue(body))
+	r.AddAttributes(attrs...)
+	g.svc.logger.Emit(g.logCtx, r)
+}
