@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/z5labs/bedrock/bedrocktest"
 	"github.com/z5labs/bedrock/config"
 
 	"github.com/z5labs/humus"
@@ -144,8 +143,8 @@ func readFile(fsys humus.FS) func(name string) (string, error) {
 	}
 }
 
-// runGreeter runs the App of Example_settings on a bedrocktest Process with
-// env and a humustest Host holding files, and prints what the App wrote, the
+// runGreeter runs the App of Example_settings with humustest.Start, with
+// env and on a humustest Host holding files, and prints what the App wrote, the
 // errors it logged and its exit code.
 func runGreeter(env map[string]string, files map[string][]byte) {
 	t := new(exampleTB)
@@ -153,20 +152,17 @@ func runGreeter(env map[string]string, files map[string][]byte) {
 
 	h := humustest.NewHost(t, humustest.WithFiles(files))
 	tel := humustest.NewTelemetry()
-	app := humus.App{
-		Host:                h.Host(),
-		ShutdownGracePeriod: 10 * time.Second,
-		Telemetry:           tel.Builder(),
-		Init:                GreeterInit,
-	}
-	fp := bedrocktest.NewProcess(t, bedrocktest.WithEnv(env))
-	status := app.Run(context.Background(), fp.Process())
+	p, status := humustest.Start(t, GreeterInit,
+		humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+		humustest.WithEnv(env),
+	)
+	st := <-status
 
-	fmt.Print(fp.Stdout())
+	fmt.Print(p.Stdout())
 	for _, msg := range errorLogs(tel) {
 		fmt.Println(msg)
 	}
-	fmt.Println("exit code:", status.Code())
+	fmt.Println("exit code:", st.Code())
 }
 
 // An App's Init sources the Settings of the packages it uses, with config.

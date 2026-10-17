@@ -27,9 +27,10 @@ import (
 // checks that every quote still matches it.
 
 // exampleTB stands in for the *testing.T an Example does not have. In a
-// test, pass t to bedrocktest.NewProcess and humustest.NewHost instead. It
-// implements only the methods they call: Helper, Errorf, Fatalf, Cleanup and
-// TempDir. Any other method panics on the nil testing.TB.
+// test, pass t to humustest.Start, bedrocktest.NewProcess and
+// humustest.NewHost instead. It implements only the methods they call:
+// Helper, Errorf, Fatalf, Cleanup, TempDir and Context. Any other method
+// panics on the nil testing.TB.
 type exampleTB struct {
 	testing.TB
 	cleanups []func()
@@ -58,6 +59,12 @@ func (tb *exampleTB) TempDir() string {
 	}
 	tb.Cleanup(func() { _ = os.RemoveAll(dir) })
 	return dir
+}
+
+// Context returns context.Background(), the context an Example runs an App
+// with, where a test's t.Context() is cancelled just before its cleanups.
+func (*exampleTB) Context() context.Context {
+	return context.Background()
 }
 
 func (tb *exampleTB) runCleanups() {

@@ -269,7 +269,17 @@ reaches it: the bad value has already exited 78, named after its variable.
 humus reads exactly two variables, both in the lifecycle:
 `HUMUS_SHUTDOWN_GRACE_PERIOD` and `HUMUS_SHUTDOWN_DRAIN_DELAY`. `humus.App.Run`
 reads them before it calls `Init`, with defaults from `App`'s own fields, and
-checks each after its default, as on this page.
+checks each after its default, as on this page:
+
+- `HUMUS_SHUTDOWN_GRACE_PERIOD` defaults to the App's `ShutdownGracePeriod`
+  field: `humus.Main`'s 20s, or whatever an option, such as a runtime
+  package's defaults or `humus.WithShutdownGracePeriod`, or an App literal
+  set it to.
+- `HUMUS_SHUTDOWN_DRAIN_DELAY`, when it is set, replaces the App's `Drain`,
+  whatever that is, with `humus.DrainDelay` of its value, and adds a drain
+  to an App that has none. When it is not set, the App's `Drain` is the
+  drain.
+
 [The lifecycle's settings]({{< relref "lifecycle#settings" >}}) describes
 them. That is the one exception to "humus defines no variable names", and no
 humus package adds another. The `telemetry` package reads no `OTEL_*`
@@ -294,10 +304,10 @@ error says what is wrong without quoting the input.
 
 ## Testing it
 
-Settings are tested by running the whole App: a
-[bedrocktest](https://pkg.go.dev/github.com/z5labs/bedrock/bedrocktest)
-Process with the variables set, and a
-[humustest](https://pkg.go.dev/github.com/z5labs/humus/humustest) Host with the
+Settings are tested by running the whole App with
+[`humustest.Start`](https://pkg.go.dev/github.com/z5labs/humus/humustest#Start):
+`humustest.WithEnv` sets the variables, and a
+[humustest](https://pkg.go.dev/github.com/z5labs/humus/humustest) Host holds the
 files the settings name. One of the root package's
 [examples](https://pkg.go.dev/github.com/z5labs/humus#pkg-examples)
 runs the App above this way:
@@ -305,23 +315,25 @@ runs the App above this way:
 ```go
 h := humustest.NewHost(t, humustest.WithFiles(files))
 tel := humustest.NewTelemetry()
-app := humus.App{
-	Host:                h.Host(),
-	ShutdownGracePeriod: 10 * time.Second,
-	Telemetry:           tel.Builder(),
-	Init:                GreeterInit,
-}
-fp := bedrocktest.NewProcess(t, bedrocktest.WithEnv(env))
-status := app.Run(context.Background(), fp.Process())
+p, status := humustest.Start(t, GreeterInit,
+	humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+	humustest.WithEnv(env),
+)
+st := <-status
 ```
 
-`Telemetry` is `humustest.Telemetry`'s `Builder`, so the example prints the
-errors the App logged from the recorder's `Logs()`.
+`humus.WithHost` replaces the Host `Start` builds with one the example made
+with its files, and `humus.WithTelemetry` passes `humustest.Telemetry`'s
+`Builder`, so the example prints the errors the App logged from the
+recorder's `Logs()`. Both are humus's own options, passed with
+`humustest.WithApp` as `main` passes them to `humus.Main`.
 
-`ShutdownGracePeriod` is the lifecycle's own setting, not the Greeter's. The
-grace period must be positive and humus has no default of its own, so an App
-sets it unless `HUMUS_SHUTDOWN_GRACE_PERIOD` is always set; left at zero, the
-App would exit 78 naming that variable before `Init` ran.
+The App runs with `Main`'s defaults, so its grace period is `Main`'s 20s, as
+in production, and a `HUMUS_SHUTDOWN_GRACE_PERIOD` or
+`HUMUS_SHUTDOWN_DRAIN_DELAY` the test passes in `WithEnv` overrides it, as an
+operator's would. `WithEnv` given twice keeps only the last map, so a test
+that adds to a base environment merges the maps itself, as
+[Testing a humus App]({{< relref "testing#a-base-environment" >}}) shows.
 
 A relative name given to the humustest Host's `FS` is relative to the test's
 temp directory, and an absolute one, from `h.Path`, must be inside it, so a

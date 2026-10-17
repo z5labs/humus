@@ -2,49 +2,87 @@
 title: Testing a humus App
 linkTitle: Testing
 description: >
-  How to run a whole humus App inside a test with bedrocktest and humustest:
-  under synctest, with no real socket, no file outside the test's temp
-  directory and no secret in the repository.
+  How to run a whole humus App inside a test with humustest.Start: the App
+  humus.Main would run, under synctest, with no real socket, no file outside
+  the test's temp directory and no secret in the repository.
 type: docs
 weight: 20
 ---
 
-A humus App runs whole inside a test. Two packages make that possible, and a
-whole-App test imports both:
+A humus App runs whole inside a test.
+[humustest](https://pkg.go.dev/github.com/z5labs/humus/humustest) makes that
+possible:
 
-- [bedrocktest](https://pkg.go.dev/github.com/z5labs/bedrock/bedrocktest)
-  supplies the process the App runs on: its arguments and environment, which
-  the test sets, its output, which the test reads, and its signals, which the
-  test sends. `bedrocktest.Start` runs an App on a new process and hands back
-  the process and a channel for the App's exit status.
-- [humustest](https://pkg.go.dev/github.com/z5labs/humus/humustest) supplies
-  what a humus App needs beyond the process: a `Host`, whose in-memory network
-  the App listens on and the test dials, and whose filesystem is confined to
-  the test's own temp directory; a certificate authority, `NewCA`, generated
-  for each test; and `TestService`, the contract every Service must pass.
+- **`humustest.Start`** hands the end user's `Init` to the App that
+  `humus.Main` would run for it, with the same defaults, on a test Host in
+  place of `humus.OSHost()` and on a new process from
+  [bedrocktest](https://pkg.go.dev/github.com/z5labs/bedrock/bedrocktest):
+  its arguments, environment and stdin, which the test sets, its output, which
+  the test reads, and its signals, which the test sends. It returns the
+  process and a channel for the App's exit status.
+- a **`Host`**, whose in-memory network the App listens on and the test
+  dials, and whose filesystem is confined to the test's own temp directory;
+- a certificate authority, **`NewCA`**, generated for each test;
+- **`Telemetry`**, a recorder of what an App emits, covered on the
+  [Telemetry]({{< relref "telemetry#testing" >}}) page;
+- and **`TestService`**, the contract every Service must pass.
 
 The network opens no real socket and starts no goroutines, so the App runs in a
 [`testing/synctest`](https://pkg.go.dev/testing/synctest) bubble. It needs no
 real environment, no real time and no file outside the test's temp directory.
 
 The design behind everything on this page is in
-[Proposal: humustest](https://github.com/z5labs/humus/discussions/633#discussioncomment-18964655).
-Recording an App's telemetry in a test, with `humustest.NewTelemetry()`, is
-covered on the [Telemetry]({{< relref "telemetry#testing" >}}) page.
+[Proposal: humustest](https://github.com/z5labs/humus/discussions/633#discussioncomment-18964655),
+and `Start` is in
+[Proposal: humus.Main](https://github.com/z5labs/humus/discussions/687),
+with its [revision 1](https://github.com/z5labs/humus/discussions/687#discussioncomment-18983867)
+and [revision 2](https://github.com/z5labs/humus/discussions/687#discussioncomment-18986870).
 
 ## A whole-App test
 
-This test runs an App whose Service serves HTTP on `:8080`, sends it a request
-and stops it with SIGTERM:
+`helloInit` is the end user's `Init`. Its Service serves hello over HTTP on
+`:8080` of its `Setup`'s Host, and keeps serving until `Shutdown`:
 
 ```go
-func TestApp_Run_HTTP_a_whole_App_on_a_test_Host(t *testing.T) {
+// helloService serves hello over HTTP on ":8080" of its Setup's Host, as
+// the end user's HTTP Service would. It keeps serving until Shutdown.
+type helloService struct {
+	setup *humus.Setup
+	srv   http.Server
+}
+
+func (h *helloService) Serve(context.Context) error {
+	ln, err := h.setup.Host.Listen("tcp", ":8080")
+	if err != nil {
+		return err
+	}
+	h.srv.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "hello")
+	})
+	if err := h.srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}
+
+func (h *helloService) Shutdown(ctx context.Context) error { return h.srv.Shutdown(ctx) }
+
+// helloInit is the end user's Init of the package doc's example.
+func helloInit(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	return []humus.Service{&helloService{setup: s}}, nil
+}
+```
+
+This test hands `helloInit` to `Start`, sends the App a request and stops it
+with SIGTERM:
+
+```go
+func TestInit_serves_hello(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
-		hello := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = io.WriteString(w, "hello")
-		})
-		p, status := bedrocktest.Start(t, httpApp(h, hello))
+		p, status := humustest.Start(t, helloInit,
+			humustest.WithApp(humus.WithHost(h.Host())),
+		)
 
 		// Wait until every goroutine in the bubble is blocked, which
 		// includes the App blocked in Accept on :8080.
@@ -56,11 +94,8 @@ func TestApp_Run_HTTP_a_whole_App_on_a_test_Host(t *testing.T) {
 		}
 		b, err := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(b) != "hello" {
-			t.Errorf("body = %q, want hello", b)
+		if err != nil || string(b) != "hello" {
+			t.Errorf("body = %q, %v, want hello", b, err)
 		}
 
 		p.Signal(syscall.SIGTERM)
@@ -68,35 +103,152 @@ func TestApp_Run_HTTP_a_whole_App_on_a_test_Host(t *testing.T) {
 		if st.Code() != 0 {
 			t.Errorf("code = %d, want 0: %v", st.Code(), st.Cause())
 		}
-		requireSignalCause(t, st.Cause())
-		requireRefused(t, h, "localhost:8080")
 	})
 }
 ```
 
-`httpApp` builds the App on the Host. Its `Host` field is `h.Host()`, the
-`humus.Host` of the test Host, just as a test passes `p.Process()` where a
-`bedrock.Process` is wanted:
+The Service listens through `s.Host.Listen`, never through `net.Listen`, so it
+listens on the test Host. `Start` builds a Host of its own, and
+`humus.WithHost(h.Host())` replaces it with one the test holds, so that the
+test can dial it: `h.HTTPClient()` is an `http.Client` that dials the Host,
+with keep-alives off so that no idle connection outlives a request.
+`h.Host()` is the `humus.Host` of the test Host, just as `p.Process()` is the
+`bedrock.Process` of bedrocktest's process.
+
+Build the Host, and a CA, inside the bubble that uses them, with the bubble's
+`t`, and call `Start` there too, so that everything they make belongs to that
+bubble.
+
+## Start
+
+`humustest.Start(t, init, opts...)` runs the App that `humus.Main` would run
+for `init`. With no options, that App has:
+
+- a new humustest Host, in place of `humus.OSHost()`;
+- `Main`'s telemetry default, so its log records reach `p.Stdout()` as JSON
+  lines;
+- `Main`'s 20s grace period, and no drain.
+
+Its options are of two kinds, in one list, so a whole-App test needs no
+bedrocktest options:
+
+- **`humustest.WithApp(opts...)`** carries humus's own options, the ones
+  `main` passes to `humus.Main`, such as `humus.WithHost`,
+  `humus.WithTelemetry`, `humus.WithShutdownGracePeriod` and
+  `humus.WithDrain`. They are applied after `Start`'s defaults, in order, and
+  `WithApp` given more than once applies every one's options in the order
+  they were given, so a later option wins. An option sees the test Host and
+  `Init`, and may wrap them.
+- **`humustest.WithEnv`, `WithArgs` and `WithStdin`** set the process's
+  environment, its arguments after the program name, and its standard input,
+  as bedrocktest's options of the same names do.
+
+This test sets all three for an `Init` that reads them:
 
 ```go
-func httpApp(h *humustest.Host, handler http.Handler, more ...humus.Service) humus.App {
-	return humus.App{
-		Host:                h.Host(),
-		ShutdownGracePeriod: 10 * time.Second,
-		Telemetry:           telemetry.NoopBuilder,
-		Init: func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
-			return append([]humus.Service{newHTTPService(s, ":8080", handler)}, more...), nil
-		},
+_, status := humustest.Start(t, init,
+	humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
+	humustest.WithEnv(map[string]string{"EXPORT_BUCKET": "nightly"}),
+	humustest.WithArgs("-dry-run", "rows.csv"),
+	humustest.WithStdin(strings.NewReader("row 1\nrow 2\n")),
+)
+```
+
+`Init` then sees `s.Process.Args` as `bedrocktest.ProgramName` followed by
+`-dry-run` and `rows.csv`, `EXPORT_BUCKET` as `nightly`, and the two rows on
+`s.Process.Stdin`.
+
+### Sharing main's options
+
+A test runs the App `main` runs only if it passes the options `main` passes.
+An end user whose `main` passes options that a test should keep, such as a
+grace period, puts them in one function that returns them:
+
+```go
+// mainOptions returns the options main passes to humus.Main, so that a
+// test passes them too and runs with production's grace period.
+func mainOptions() []humus.Option {
+	return []humus.Option{
+		humus.WithTelemetry(buildTelemetry),
+		humus.WithShutdownGracePeriod(30 * time.Second),
 	}
 }
 ```
 
-The Service listens through `s.Host.Listen`, never through `net.Listen`, so it
-listens on the test Host. `h.HTTPClient()` is an `http.Client` that dials the
-Host, with keep-alives off so that no idle connection outlives a request.
+`main` passes its result to `humus.Main`:
 
-Build the Host, and a CA, inside the bubble that uses them, with the bubble's
-`t`, so that everything they make belongs to that bubble.
+```go
+humus.Main(Init, mainOptions()...)
+```
+
+And the test passes it with `WithApp`, before its own Host and telemetry, so
+that those win:
+
+```go
+p, status := humustest.Start(t, Init,
+	humustest.WithApp(mainOptions()...),
+	humustest.WithApp(humus.WithTelemetry(tel.Builder())),
+	withEnv(nil),
+)
+```
+
+### A base environment
+
+`WithEnv`, `WithArgs` and `WithStdin` work like bedrocktest's options: if one
+is given more than once, the last one wins. A second `WithEnv` replaces the
+first map rather than adding to it. So a helper that sets a base environment,
+and lets a test add to it, merges the maps itself:
+
+```go
+// withEnv sets the environment Init needs, and adds more to it. Given more
+// than once, humustest.WithEnv keeps only the last one, so a helper that
+// sets a base environment merges the maps itself.
+func withEnv(more map[string]string) humustest.Option {
+	env := map[string]string{"DATABASE_URL": "postgres://db.internal:5432/greeter"}
+	maps.Copy(env, more)
+	return humustest.WithEnv(env)
+}
+```
+
+### Runtime packages
+
+A runtime package whose Services need a drain has a `Main` of its own, with
+its defaults, such as a drain and a shorter grace period, as one
+`humus.Option` ([Runtime packages]({{< relref "lifecycle#runtime-packages" >}})).
+A test of a `main` that calls the package's `Main` passes the same defaults
+with `WithApp`, before any options of its own, as
+`humustest.Start(t, Init, humustest.WithApp(httpDefaults()))` does with the
+stand-in on the lifecycle page. Otherwise the test runs on `humus.Main`'s
+defaults, with no drain, and not on the ones production runs with.
+
+A runtime package may also ship a test package of its own, named after it,
+such as `httpservertest`, whose `Start` is `humustest.Start` with the
+package's defaults, along with helpers such as a client wired to the test
+Host. A test that uses it can't forget the defaults. The package's proposal
+decides whether it ships one.
+
+### Helpers
+
+`Start` returns bedrocktest's `Process` and the App's status channel
+unwrapped. A test calls their methods, such as `p.Signal` and `p.Stdout()`,
+without importing bedrocktest. A helper that names the process or the status,
+as `*bedrocktest.Process` or `bedrock.ExitStatus`, imports bedrocktest and
+bedrock, since humustest builds on them:
+
+```go
+// stopApp sends SIGTERM once the App listens for it and every goroutine in
+// the bubble is blocked, and returns the App's exit status. It names
+// bedrocktest's Process and bedrock's ExitStatus, so it imports both.
+func stopApp(p *bedrocktest.Process, status <-chan bedrock.ExitStatus) bedrock.ExitStatus {
+	<-p.Notified(syscall.SIGTERM)
+	synctest.Wait()
+	p.Signal(syscall.SIGTERM)
+	return <-status
+}
+```
+
+A test of an App value it builds itself, rather than of the end user's
+`Init`, runs it with `bedrocktest.Start`, as the lifecycle's own tests do.
 
 ## The network
 
@@ -270,7 +422,8 @@ nothing is shared between tests.
 
 This App reads its certificate from a PKCS#12 bundle, through its Host, and
 serves HTTPS. The test writes the bundle with `WithFiles`, passes its path and
-password in settings, and trusts the CA through `ca.Pool()`:
+password in settings, set with `humustest.WithEnv`, and trusts the CA through
+`ca.Pool()`:
 
 ```go
 func TestApp_Run_HTTPS_with_a_PKCS12_bundle_from_NewCA(t *testing.T) {
@@ -283,22 +436,20 @@ func TestApp_Run_HTTPS_with_a_PKCS12_bundle_from_NewCA(t *testing.T) {
 		hello := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = io.WriteString(w, "hello over TLS")
 		})
-		app := humus.App{
-			Host:                h.Host(),
-			ShutdownGracePeriod: 10 * time.Second,
-			Telemetry:           telemetry.NoopBuilder,
-			Init: func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-				cfg, err := tlsFromPKCS12(ctx, s)
-				if err != nil {
-					return nil, err
-				}
-				return []humus.Service{newHTTPSService(s, ":8443", cfg, hello)}, nil
-			},
+		init := func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+			cfg, err := tlsFromPKCS12(ctx, s)
+			if err != nil {
+				return nil, err
+			}
+			return []humus.Service{newHTTPSService(s, ":8443", cfg, hello)}, nil
 		}
-		p, status := bedrocktest.Start(t, app, bedrocktest.WithEnv(map[string]string{
-			"TLS_PKCS12_FILE":     h.Path("etc/tls/server.p12"),
-			"TLS_PKCS12_PASSWORD": password,
-		}))
+		p, status := humustest.Start(t, init,
+			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+			humustest.WithEnv(map[string]string{
+				"TLS_PKCS12_FILE":     h.Path("etc/tls/server.p12"),
+				"TLS_PKCS12_PASSWORD": password,
+			}),
+		)
 		synctest.Wait()
 
 		client := h.HTTPClient()
@@ -447,8 +598,9 @@ see, and the test then hangs until its timeout.
 Every package proposal, and every package that lands from one, shows in its
 tests that:
 
-1. **Its App or Service runs whole under `synctest`** with bedrocktest and
-   humustest.
+1. **Its Service runs whole under `synctest`**, returned by an `Init` that
+   the test hands to `humustest.Start`, with the package's defaults when it
+   has any.
 2. **No test calls `t.Setenv`, opens a real socket or touches a file outside
    its own temp directory**, except integration tests behind a build tag.
 3. **Negative tests assert why something failed** — the cause, with

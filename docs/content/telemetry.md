@@ -12,9 +12,10 @@ weight: 17
 A humus App builds its OpenTelemetry providers before `Init`, hands them to
 `Init` as one value, logs through them, and shuts them down last. The
 [`telemetry`](https://pkg.go.dev/github.com/z5labs/humus/telemetry) package
-builds them from a plain `Settings` value, and the service's own `Builder`
-sources that value, the same way `Init` sources any other package's
-[settings]({{< relref "configuration" >}}).
+builds them from a plain `Settings` value. `humus.Main` builds them from
+`telemetry.DefaultSettings()` unless the service passes a `Builder` of its
+own, which sources that value the same way `Init` sources any other
+package's [settings]({{< relref "configuration" >}}).
 
 The design behind everything on this page is in
 [Proposal: OpenTelemetry without globals, Revision 2](https://github.com/z5labs/humus/discussions/632#discussioncomment-18966249).
@@ -50,11 +51,49 @@ in `Init`, from `s.Telemetry`. That is your decision and your global state,
 not humus's. The one piece of global state humus does set is OpenTelemetry's
 [error handler](#the-error-handler).
 
-## Writing the Builder
+## Main's default
 
 `App.Telemetry` is a
-[`telemetry.Builder`](https://pkg.go.dev/github.com/z5labs/humus/telemetry#Builder),
-and the end user writes it. It is given the context a signal cancels, the
+[`telemetry.Builder`](https://pkg.go.dev/github.com/z5labs/humus/telemetry#Builder).
+`humus.Main` defaults it to one that calls `telemetry.New` with
+`telemetry.DefaultSettings()`, the Host's `Dial` and the Process's stdout. So
+a service that passes no `Builder`:
+
+- writes its log records to standard output, as JSON lines in
+  [the console log format](#the-console-log-format);
+- gives its spans real trace and span IDs, which its log records carry, and
+  exports none;
+- builds no exporter that dials out, so it needs no collector, and a
+  service that forgets its `Builder` doesn't fail.
+
+[The defaults](#the-defaults) below describe what `DefaultSettings()` does in
+full. `humustest.Start` keeps the same default, so a whole-App test that
+passes no `Builder` sees on `p.Stdout()` the JSON lines production would
+write. This example runs the App of this page that way:
+
+```go
+p, status := humustest.Start(t, CartsInit)
+st := <-status
+
+printConsoleLogs(p.Stdout(), "carts")
+fmt.Println("exit code:", st.Code())
+// Output:
+// INFO "cart created" map[cart.id:c-123], trace context: true
+// INFO "cart created, untraced" map[], trace context: false
+// exit code: 0
+```
+
+**A service that exports anything passes its own `Builder`**, with
+`humus.WithTelemetry`, and so does one that names itself, since
+`DefaultSettings()` names every service `unknown_service`:
+
+```go
+humus.Main(CartsInit, humus.WithTelemetry(buildCartsTelemetry))
+```
+
+## Writing the Builder
+
+The end user's `Builder` is given the context a signal cancels, the
 `bedrock.Process` and the Host's `Dial`, and it does three things:
 
 1. sources `telemetry.Settings` from `p.Environment` with
@@ -317,24 +356,21 @@ With the defaults, the first line on standard output has `trace_id`,
 
 ## Testing
 
-A test that asserts on what an App emits runs it with
+A test that asserts on what an App emits runs it with `humustest.Start`, and
+passes
 [`humustest.NewTelemetry()`](https://pkg.go.dev/github.com/z5labs/humus/humustest#Telemetry)'s
-`Builder` in place of the one production uses. The recorder uses the real
+`Builder` with `humustest.WithApp(humus.WithTelemetry(…))`, in place of the
+one production uses. The recorder uses the real
 OpenTelemetry SDK with in-memory exporters, records every severity, samples
 every span, starts no goroutine, so it works under `synctest`, and keeps what
 it recorded after the App has shut it down:
 
 ```go
-h := humustest.NewHost(t)
 tel := humustest.NewTelemetry()
-app := humus.App{
-	Host:                h.Host(),
-	ShutdownGracePeriod: 10 * time.Second,
-	Telemetry:           tel.Builder(),
-	Init:                CartsInit,
-}
-fp := bedrocktest.NewProcess(t)
-status := app.Run(context.Background(), fp.Process())
+_, status := humustest.Start(t, CartsInit,
+	humustest.WithApp(humus.WithTelemetry(tel.Builder())),
+)
+st := <-status
 ```
 
 Once the App has exited, `tel.Spans()`, `tel.Metrics(ctx)` and `tel.Logs()`
@@ -357,11 +393,12 @@ The lifecycle's own records, `serving`, `shutting down`, `stopped` and every
 failure after the telemetry is built, are in `tel.Logs()` too, under the scope
 `github.com/z5labs/humus`.
 
-A test that does not assert on telemetry uses `telemetry.NoopBuilder`, whose
-SDK discards everything. A test of the `Builder` itself runs the App with it
-and a `bedrocktest` Process whose environment the test sets, and reads
-standard output, where the console logs go, and standard error, where a bad
-variable goes. The root package's
+A test that does not assert on telemetry keeps `Main`'s
+[default](#mains-default), or passes `telemetry.NoopBuilder`, whose SDK
+discards everything. A test of the `Builder` itself passes it with
+`humustest.WithApp(humus.WithTelemetry(…))`, sets the environment it reads
+with `humustest.WithEnv`, and reads standard output, where the console logs
+go, and standard error, where a bad variable goes. The root package's
 [examples](https://pkg.go.dev/github.com/z5labs/humus#pkg-examples) run the
 `Builder` above that way.
 
