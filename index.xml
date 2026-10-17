@@ -1,15 +1,19 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>Humus</title><link>https://z5labs.github.io/humus/</link><description>Recent content on Humus</description><generator>Hugo</generator><language>en-us</language><atom:link href="https://z5labs.github.io/humus/index.xml" rel="self" type="application/rss+xml"/><item><title>The App lifecycle</title><link>https://z5labs.github.io/humus/lifecycle/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/lifecycle/</guid><description>&lt;p&gt;Every humus application is a &lt;a href="https://pkg.go.dev/github.com/z5labs/bedrock#App"&gt;&lt;code&gt;bedrock.App&lt;/code&gt;&lt;/a&gt;,
 and the root package&amp;rsquo;s &lt;a href="https://pkg.go.dev/github.com/z5labs/humus#App"&gt;&lt;code&gt;humus.App&lt;/code&gt;&lt;/a&gt;
-is the lifecycle every humus app type is built on. It reads its settings,
-listens for signals, builds its telemetry and the user&amp;rsquo;s dependencies, runs
-one or more Services, shuts them down within a grace period, releases what was
+is the lifecycle every humus service runs. It reads its settings, listens for
+signals, builds its telemetry and the user&amp;rsquo;s dependencies, runs one or more
+Services, drains and shuts them down within a grace period, releases what was
 built, shuts its telemetry down and turns the outcome into an exit status.&lt;/p&gt;
-&lt;p&gt;Most applications will not use &lt;code&gt;humus.App&lt;/code&gt; directly. Each runtime package —
-REST, gRPC, jobs, queues — provides an App of its own, built on &lt;code&gt;humus.App&lt;/code&gt;
-with that package&amp;rsquo;s defaults, and that is the API most users touch. Using
-&lt;code&gt;humus.App&lt;/code&gt; directly, for example to run a REST API and a gRPC service in one
-process, is the advanced path. Read this page before taking it; read it, too,
-to understand what the App a runtime package builds for you does.&lt;/p&gt;</description></item><item><title>Health</title><link>https://z5labs.github.io/humus/health/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/health/</guid><description>&lt;p&gt;A service reports its health as &lt;a href="#monitors"&gt;monitors&lt;/a&gt; it combines into two
+&lt;p&gt;A service&amp;rsquo;s &lt;code&gt;main&lt;/code&gt; is &lt;code&gt;func main() { humus.Main(app.Init) }&lt;/code&gt;, where
+&lt;code&gt;app.Init&lt;/code&gt; is the end user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt;. &lt;a href="#main"&gt;&lt;code&gt;humus.Main&lt;/code&gt;&lt;/a&gt; builds the
+&lt;code&gt;humus.App&lt;/code&gt; from its &lt;a href="#the-defaults"&gt;defaults&lt;/a&gt; and that &lt;code&gt;Init&lt;/code&gt;, applies the
+options it is given, and runs the App on the OS process. Options change the
+App&amp;rsquo;s fields, so everything this page says about &lt;code&gt;humus.App&lt;/code&gt; is what &lt;code&gt;Main&lt;/code&gt;
+runs. The runtime packages — REST, gRPC, jobs, queues — export Services for
+&lt;code&gt;Init&lt;/code&gt; to return, not Apps, and one whose Services need a drain wraps &lt;code&gt;Main&lt;/code&gt;
+with defaults of its own: see &lt;a href="#runtime-packages"&gt;Runtime packages&lt;/a&gt;. An App
+that mixes runtimes, such as a REST API and a gRPC service in one process,
+needs nothing more.&lt;/p&gt;</description></item><item><title>Health</title><link>https://z5labs.github.io/humus/health/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/health/</guid><description>&lt;p&gt;A service reports its health as &lt;a href="#monitors"&gt;monitors&lt;/a&gt; it combines into two
 &lt;a href="#liveness-and-readiness"&gt;probes&lt;/a&gt;, liveness and readiness, and an App&amp;rsquo;s
 readiness is owned by a &lt;a href="#the-health-service"&gt;health Service&lt;/a&gt; it returns
 from &lt;code&gt;Init&lt;/code&gt; like any other Service. All of it is in the
@@ -33,25 +37,30 @@ usual tool is bedrock&amp;rsquo;s
 this page uses it throughout.&lt;/p&gt;</description></item><item><title>Telemetry</title><link>https://z5labs.github.io/humus/telemetry/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/telemetry/</guid><description>&lt;p&gt;A humus App builds its OpenTelemetry providers before &lt;code&gt;Init&lt;/code&gt;, hands them to
 &lt;code&gt;Init&lt;/code&gt; as one value, logs through them, and shuts them down last. The
 &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/telemetry"&gt;&lt;code&gt;telemetry&lt;/code&gt;&lt;/a&gt; package
-builds them from a plain &lt;code&gt;Settings&lt;/code&gt; value, and the service&amp;rsquo;s own &lt;code&gt;Builder&lt;/code&gt;
-sources that value, the same way &lt;code&gt;Init&lt;/code&gt; sources any other package&amp;rsquo;s
-&lt;a href="https://z5labs.github.io/humus/configuration/"&gt;settings&lt;/a&gt;.&lt;/p&gt;
+builds them from a plain &lt;code&gt;Settings&lt;/code&gt; value. &lt;code&gt;humus.Main&lt;/code&gt; builds them from
+&lt;code&gt;telemetry.DefaultSettings()&lt;/code&gt; unless the service passes a &lt;code&gt;Builder&lt;/code&gt; of its
+own, which sources that value the same way &lt;code&gt;Init&lt;/code&gt; sources any other
+package&amp;rsquo;s &lt;a href="https://z5labs.github.io/humus/configuration/"&gt;settings&lt;/a&gt;.&lt;/p&gt;
 &lt;p&gt;The design behind everything on this page is in
 &lt;a href="https://github.com/z5labs/humus/discussions/632#discussioncomment-18966249"&gt;Proposal: OpenTelemetry without globals, Revision 2&lt;/a&gt;.
 &lt;a href="https://z5labs.github.io/humus/lifecycle/#telemetry"&gt;The lifecycle&lt;/a&gt; describes when the App
-builds its telemetry and shuts it down.&lt;/p&gt;</description></item><item><title>Testing a humus App</title><link>https://z5labs.github.io/humus/testing/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/testing/</guid><description>&lt;p&gt;A humus App runs whole inside a test. Two packages make that possible, and a
-whole-App test imports both:&lt;/p&gt;
+builds its telemetry and shuts it down.&lt;/p&gt;</description></item><item><title>Testing a humus App</title><link>https://z5labs.github.io/humus/testing/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/testing/</guid><description>&lt;p&gt;A humus App runs whole inside a test.
+&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/humustest"&gt;humustest&lt;/a&gt; makes that
+possible:&lt;/p&gt;
 &lt;ul&gt;
-&lt;li&gt;&lt;a href="https://pkg.go.dev/github.com/z5labs/bedrock/bedrocktest"&gt;bedrocktest&lt;/a&gt;
-supplies the process the App runs on: its arguments and environment, which
-the test sets, its output, which the test reads, and its signals, which the
-test sends. &lt;code&gt;bedrocktest.Start&lt;/code&gt; runs an App on a new process and hands back
-the process and a channel for the App&amp;rsquo;s exit status.&lt;/li&gt;
-&lt;li&gt;&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/humustest"&gt;humustest&lt;/a&gt; supplies
-what a humus App needs beyond the process: a &lt;code&gt;Host&lt;/code&gt;, whose in-memory network
-the App listens on and the test dials, and whose filesystem is confined to
-the test&amp;rsquo;s own temp directory; a certificate authority, &lt;code&gt;NewCA&lt;/code&gt;, generated
-for each test; and &lt;code&gt;TestService&lt;/code&gt;, the contract every Service must pass.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;&lt;code&gt;humustest.Start&lt;/code&gt;&lt;/strong&gt; hands the end user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt; to the App that
+&lt;code&gt;humus.Main&lt;/code&gt; would run for it, with the same defaults, on a test Host in
+place of &lt;code&gt;humus.OSHost()&lt;/code&gt; and on a new process from
+&lt;a href="https://pkg.go.dev/github.com/z5labs/bedrock/bedrocktest"&gt;bedrocktest&lt;/a&gt;:
+its arguments, environment and stdin, which the test sets, its output, which
+the test reads, and its signals, which the test sends. It returns the
+process and a channel for the App&amp;rsquo;s exit status.&lt;/li&gt;
+&lt;li&gt;a &lt;strong&gt;&lt;code&gt;Host&lt;/code&gt;&lt;/strong&gt;, whose in-memory network the App listens on and the test
+dials, and whose filesystem is confined to the test&amp;rsquo;s own temp directory;&lt;/li&gt;
+&lt;li&gt;a certificate authority, &lt;strong&gt;&lt;code&gt;NewCA&lt;/code&gt;&lt;/strong&gt;, generated for each test;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;&lt;code&gt;Telemetry&lt;/code&gt;&lt;/strong&gt;, a recorder of what an App emits, covered on the
+&lt;a href="https://z5labs.github.io/humus/telemetry/#testing"&gt;Telemetry&lt;/a&gt; page;&lt;/li&gt;
+&lt;li&gt;and &lt;strong&gt;&lt;code&gt;TestService&lt;/code&gt;&lt;/strong&gt;, the contract every Service must pass.&lt;/li&gt;
 &lt;/ul&gt;
 &lt;p&gt;The network opens no real socket and starts no goroutines, so the App runs in a
 &lt;a href="https://pkg.go.dev/testing/synctest"&gt;&lt;code&gt;testing/synctest&lt;/code&gt;&lt;/a&gt; bubble. It needs no
