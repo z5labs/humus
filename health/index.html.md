@@ -256,6 +256,18 @@ health checking.
 One health Service's `Probes` can go to `NewHandler` and `NewServer` both,
 to answer HTTP and gRPC probes from one state.
 
+The kubelet presents no credentials, so attached probes must stay open on a
+server that requires authentication. `httphealth.NewHandler` on the end
+user's mux is open as long as nothing wraps it: `openapi.Security` covers
+only the API's operations, and `auth.NewHandler` only the handler it is
+given, so it wraps the API rather than the whole mux. `grpchealth.NewServer`
+passes through `grpcauth`'s interceptors like every RPC, so its `Check`,
+`Watch` and `List` are opened by name with `auth.Disabled()`, as
+[gRPC services](/humus/grpc/#authentication) shows. A probes server
+has no authentication.
+[Authentication and authorization](/humus/auth/#probes-and-other-open-paths)
+covers both.
+
 ### Probes servers
 
 [`httphealth.NewService`](https://pkg.go.dev/github.com/z5labs/humus/httphealth#NewService)

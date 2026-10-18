@@ -125,7 +125,18 @@ user sources. The &lt;code&gt;Client&lt;/code&gt; is a &lt;code&gt;grpc.ClientCo
 takes it as it takes a &lt;code&gt;*grpc.ClientConn&lt;/code&gt;. Its calls go through the Setup&amp;rsquo;s
 Host, are traced and measured with the Setup&amp;rsquo;s telemetry, are retried as the
 end user&amp;rsquo;s &lt;code&gt;Classify&lt;/code&gt; decides, and fail at once while a circuit breaker says
-the dependency keeps failing.&lt;/p&gt;</description></item><item><title>Configuring a humus service</title><link>https://z5labs.github.io/humus/configuration/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/configuration/</guid><description>&lt;p&gt;humus packages are configured with plain Go values. They read no environment
+the dependency keeps failing.&lt;/p&gt;</description></item><item><title>Authentication and authorization</title><link>https://z5labs.github.io/humus/auth/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/auth/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/auth"&gt;&lt;code&gt;auth&lt;/code&gt;&lt;/a&gt; package
+authenticates and authorizes the requests a humus service serves, over HTTP
+and gRPC alike. A &lt;strong&gt;scheme&lt;/strong&gt; is a typed value whose verify function turns a
+request&amp;rsquo;s credential into the end user&amp;rsquo;s own principal, which a handler reads
+back with the scheme&amp;rsquo;s &lt;code&gt;From&lt;/code&gt;. A &lt;strong&gt;requirement&lt;/strong&gt; is what a request must have:
+a scheme, a scheme with scopes, several schemes, or nothing at all. Three
+places enforce requirements, one for each way humus serves requests:
+&lt;code&gt;openapi.Security&lt;/code&gt; for an &lt;a href="https://z5labs.github.io/humus/openapi/"&gt;OpenAPI API&lt;/a&gt;,
+&lt;code&gt;auth.NewHandler&lt;/code&gt; for a plain &lt;code&gt;http.Handler&lt;/code&gt; served by
+&lt;a href="https://z5labs.github.io/humus/http/"&gt;&lt;code&gt;httpserver&lt;/code&gt;&lt;/a&gt;, and
+&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/grpc/grpcauth"&gt;&lt;code&gt;grpcauth&lt;/code&gt;&lt;/a&gt;&amp;rsquo;s
+&lt;code&gt;Interceptors&lt;/code&gt; for a &lt;a href="https://z5labs.github.io/humus/grpc/"&gt;&lt;code&gt;grpcserver&lt;/code&gt;&lt;/a&gt; Service.&lt;/p&gt;</description></item><item><title>Configuring a humus service</title><link>https://z5labs.github.io/humus/configuration/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/configuration/</guid><description>&lt;p&gt;humus packages are configured with plain Go values. They read no environment
 variables for their settings, define no variable names and read no files on
 your behalf; the few variables humus does read are
 &lt;a href="#the-variables-humus-reads"&gt;listed below&lt;/a&gt;. Every

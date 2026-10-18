@@ -65,7 +65,13 @@ for. The `health` package has landed too, with
 [Health](/humus/health/) explains monitors, liveness and readiness,
 the health Service that owns an App's readiness, and how a pod's probes reach
 Kubernetes, attached to a server it already runs or on a probes port of its
-own.
+own. The `auth` and `auth/jwt` packages and the `grpc` module's `grpcauth`
+package have landed:
+[Authentication and authorization](/humus/auth/) explains schemes
+and their typed principals, requirements and scopes, opening a path with
+`auth.Disabled()`, how `openapi.Security`, `auth.NewHandler` and
+`grpcauth.Interceptors` enforce them and answer, leaving probes open,
+verifying JWTs with `auth/jwt`, and how to test an App that requires tokens.
 [Configuring a humus service](/humus/configuration/) explains how
 a service's settings are sourced, [Telemetry](/humus/telemetry/)
 explains how a service gets its OpenTelemetry providers, and
