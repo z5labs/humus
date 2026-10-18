@@ -69,7 +69,8 @@
 //	TLS_PKCS12_PASSWORD   the bundle's password; required
 //	DATABASE_URL          the Postgres connection URL; required
 //	JWKS_URL              the identity provider's JSON Web Key Set, its
-//	                      jwks_uri: an https URL; required
+//	                      jwks_uri: an https URL, with no user info or
+//	                      fragment; required
 //	JWKS_CA_FILE          a PEM file of the CA certificates the key set's
 //	                      server is trusted through, a path on the Host's
 //	                      filesystem; the system's roots without it
@@ -304,11 +305,19 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 }
 
 // checkKeySetURL rejects a key set URL that isn't an absolute https URL
-// with a host. A key set fetched in plain text would let anyone on the path
-// add a key, and sign tokens the service accepts.
+// with a host, and one with user info or a fragment. A key set fetched in
+// plain text would let anyone on the path add a key, and sign tokens the
+// service accepts. User info is a credential, which a URL would carry into
+// every error and record that names it, and a fragment is never sent. A
+// query is kept: some providers' jwks_uri has one.
 func checkKeySetURL(u *url.URL) error {
-	if u.Scheme != "https" || u.Host == "" {
+	switch {
+	case u.Scheme != "https" || u.Host == "":
 		return errors.New("must be an absolute https URL")
+	case u.User != nil:
+		return errors.New("must not hold user info")
+	case u.Fragment != "" || u.RawFragment != "":
+		return errors.New("must not have a fragment")
 	}
 	return nil
 }

@@ -505,6 +505,29 @@ func TestInit_without_its_settings_exits_78(t *testing.T) {
 	})
 }
 
+func TestInit_with_a_bad_key_set_URL_exits_78(t *testing.T) {
+	for name, jwksURL := range map[string]string{
+		"plain text": "http://idp.internal:9443" + jwksPath,
+		"relative":   jwksPath,
+		"user info":  "https://shoppingcart:" + rand.Text() + "@idp.internal:9443" + jwksPath,
+		"a fragment": "https://idp.internal:9443" + jwksPath + "#keys",
+	} {
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				_, status := httpservertest.Start(t, Init,
+					humustest.WithApp(humus.WithHost(humustest.NewHost(t).Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+					humustest.WithEnv(map[string]string{"JWKS_URL": jwksURL}),
+				)
+
+				st := <-status
+				require.Equal(t, humus.ExitConfig, st.Code())
+				require.ErrorContains(t, st.Cause(), "config JWKS_URL: must")
+				require.NotContains(t, st.Cause().Error(), jwksURL)
+			})
+		})
+	}
+}
+
 func TestInit_serves_its_document(t *testing.T) {
 	var doc []byte
 	synctest.Test(t, func(t *testing.T) {
