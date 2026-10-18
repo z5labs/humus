@@ -1044,9 +1044,13 @@ a child of its `send` span, and inside a `Process`, the `send` span is a child
 of the `process` span: one trace runs from the first producer through every
 topic a record passes through, its dead letter included.
 
-A record `Produce` rejected for having no topic, and the records of a call
-whose context was already done, were never handed to franz-go: they start no
-span.
+**When a span starts.** `Produce` first checks the call: a record with no
+topic, a `ctx` already done, a closed client or a broker's earlier refusal
+of the credentials returns it at once, and starts no span. Only then does
+each record's span start, and its headers get the trace context, before the
+call goes through the breaker. So a call the breaker rejects has a span for
+each record, which records the rejection, and a call that never got past
+the checks has none.
 
 ### The instruments
 
@@ -1379,7 +1383,9 @@ test reads it back with a client of its own, after the App has exited:
 ```go
 // readAll returns every record of topic, in each partition's order,
 // through a client that dials h with opts. It polls until a poll finds
-// nothing new for a second, which inside a bubble takes no real time.
+// nothing new for a second, which inside a bubble takes no real time, and
+// fails the test on any error but the poll's own deadline, so a client that
+// can't read the topic isn't mistaken for an empty one.
 func readAll(t *testing.T, h *humustest.Host, c *kfake.Cluster, topic string, opts ...kgo.Opt) []*kgo.Record {
 	t.Helper()
 	cl, err := kgo.NewClient(append([]kgo.Opt{
@@ -1396,6 +1402,11 @@ func readAll(t *testing.T, h *humustest.Host, c *kfake.Cluster, topic string, op
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		fetches := cl.PollFetches(ctx)
 		cancel()
+		fetches.EachError(func(_ string, _ int32, err error) {
+			if !errors.Is(err, context.DeadlineExceeded) {
+				require.NoError(t, err, "reading %s", topic)
+			}
+		})
 		n := 0
 		fetches.EachRecord(func(r *kgo.Record) {
 			out = append(out, r)
@@ -1423,15 +1434,33 @@ require.Equal(t, "{", string(dead[0].Value))
 require.Len(t, spansNamed(tel, "send "+dlqTopic), 1)
 ```
 
-**Let fake time pass before `synctest.Wait`.** A `Producer` dials on its
-first `Produce`, and franz-go waits on timers while it connects. `Wait`
-doesn't advance fake time, so it can return while the dead letter waits for
-its connection, and the SIGTERM then finds the next record unprocessed. A
-`time.Sleep(time.Second)` before the `Wait` lets the timers fire, and costs
-the test nothing. A `Producer` that is the whole of an App, such as one
-called from a job, is tested the same way: `queue/kafka`'s own tests run
-each `Produce` inside a [job](/humus/pr-preview/pr-792/jobs/) whose `Init` builds the
-`Producer`.
+**Wait for the commit, not only for `synctest.Wait`.** `Wait` returns as
+soon as every other goroutine in the bubble is durably blocked, and a
+`Produce` waiting on one of franz-go's timers is, while fake time passes only
+once the test's goroutine blocks too. So `Wait` can return while the dead
+letter is still on its way, and a SIGTERM then finds the next record
+unprocessed. The test waits for the condition it needs instead, the offset
+it expects committed, letting fake time pass meanwhile, which costs it
+nothing:
+
+```go
+// waitCommitted lets fake time pass until the group has committed offset on
+// partition 0 of topic, failing the test if a minute of it passes first.
+// synctest.Wait isn't enough once a Processor produces: Wait returns as
+// soon as every other goroutine is durably blocked, and a Produce waiting
+// on one of franz-go's timers is, while fake time passes only once the
+// test's goroutine blocks too.
+func waitCommitted(t *testing.T, c *kfake.Cluster, offset int64) {
+	t.Helper()
+	for start := time.Now(); committed(c)[0] < offset; time.Sleep(10 * time.Millisecond) {
+		require.Less(t, time.Since(start), time.Minute, "offset %d is never committed", offset)
+	}
+}
+```
+
+A `Producer` that is the whole of an App, such as one called from a job, is
+tested the same way: `queue/kafka`'s own tests run each `Produce` inside a
+[job](/humus/pr-preview/pr-792/jobs/) whose `Init` builds the `Producer`.
 
 ### The Service contract
 
