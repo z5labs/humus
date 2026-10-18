@@ -21,7 +21,7 @@ type Settings struct {
 	// listens on every name, and port 0 picks a free port, which
 	// Service.Addr reports.
 	//
-	// Default: none. Valid: host:port, with a port from 0 to 65535.
+	// Default: none. Valid: host:port, with a numeric port from 0 to 65535.
 	// Check: CheckAddr.
 	Addr string
 
@@ -39,8 +39,10 @@ type Settings struct {
 
 // CheckAddr rejects an address that Host.Listen can't listen on, without
 // naming the field: one that is not host:port, such as "" or an address
-// with no port, or one whose port is not a number from 0 to 65535. An
-// empty host and port 0 are valid.
+// with no port, or one whose port is not a number from 0 to 65535, a
+// service name such as "https" included. An empty host and port 0 are
+// valid. It checks the address's form, not that the host resolves or that
+// the port is free: Host.Listen reports those when the Service listens.
 func CheckAddr(addr string) error {
 	_, port, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -57,7 +59,9 @@ func CheckAddr(addr string) error {
 // ClientAuth requires a client certificate, which the kubelet never
 // presents, without naming the field. A ClientAuth of
 // VerifyClientCertIfGiven is valid: a probe that presents no certificate
-// is still served.
+// is still served. When GetConfigForClient is set, the config it returns
+// governs each handshake, and CheckTLS can't check that one: it must not
+// require a client certificate either.
 func CheckTLS(c *tls.Config) error {
 	if c == nil {
 		return errors.New("must not be nil")
