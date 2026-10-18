@@ -72,7 +72,10 @@ deadlock for example. **Liveness checks no dependencies by default**, which
 is `And` with no monitors: restarting a pod doesn't fix a database that is
 down, and a liveness probe that checks one restarts every pod of the service
 while the database is down. Dependency checks go in readiness, which takes
-the pod out of the load balancer until the database is back.
+the pod out of the load balancer until the database is back. A gRPC
+dependency, called through a `grpcclient` Client, has a readiness monitor
+of its own, `Connected`, which latches once the Client has first connected,
+as [A gRPC dependency's readiness](#a-grpc-dependencys-readiness) describes.
 
 Here readiness checks that the service has started and that its database
 answers `ping`, and liveness checks nothing:
@@ -575,6 +578,58 @@ stalls at its progress deadline, with the old pods still consuming, rather
 than replacing them with pods that never consume. A broker outage after the
 first join doesn't make the consumer unready: it hits every pod at once, and
 would only block a rollout that might be the fix.
+
+### A gRPC dependency's readiness
+
+**A service that calls a gRPC dependency is ready once its Client has
+connected.** [`Connected`](/humus/grpc-client/#readiness-connected)
+returns a `health.Monitor` that is unhealthy until the
+[`grpcclient`](/humus/grpc-client/) Client's connection to its
+`Addr` is first ready, its TLS handshake done, and healthy from then until
+the connection is closed. It makes no RPC. Here a gRPC service, on a cluster
+whose `grpc` probes can't use TLS, puts it in the readiness of its probes
+port:
+
+```go
+carts, err := grpcclient.NewClient(s, cartsSettings)
+if err != nil {
+	return nil, err
+}
+svc, err := grpcserver.NewService(s, serverSettings)
+if err != nil {
+	return nil, err
+}
+testpb.RegisterTestServiceServer(svc, &api{carts: testpb.NewTestServiceClient(carts)})
+
+// The service turns ready once its Client has connected to
+// carts, and stays ready through an outage of carts after
+// that.
+probes, err := grpchealth.NewService(s, probeSettings, health.Readiness(carts.Connected()))
+if err != nil {
+	return nil, err
+}
+return []humus.Service{svc, probes}, nil
+```
+
+`NewClient` dials nothing, so without it a release with a wrong address, a
+CA that doesn't trust the dependency, or a dependency it can't reach turns
+ready, replaces the pods that worked, and fails every RPC. With it, the
+rollout stalls at its progress deadline, with the old pods still serving.
+Its first check dials, and waits until the connection is ready or the
+probe's own timeout ends the check.
+
+**`Connected` latches,** as `Joined` does, for the same reason. Once the
+connection has been ready, the monitor stays healthy whatever the
+connection's state, through a GOAWAY, a lost connection or an outage of the
+dependency. An outage hits every pod at once: turning them all unready would
+take the service out of its load balancer, so its callers would get no
+answer instead of its own error, and the parts of it that don't need the
+dependency would stop too, and it would block a rollout that might be the
+fix. A monitor that calls the dependency's `grpc.health.v1` service is the
+end user's own, and turns unhealthy in exactly that outage, as
+[Calling gRPC services](/humus/grpc-client/#a-monitor-of-the-dependencys-grpchealthv1)
+shows. **`Connected` is for readiness only:** restarting the pod doesn't
+bring a dependency back.
 
 **`Joined` is for readiness only.** In liveness, it would restart a pod
 that starts while the brokers are unreachable, before it has ever joined,

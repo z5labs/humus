@@ -34,7 +34,13 @@ each dependency, and how to test the calls against a fake dependency. The
 `grpc` module has landed: [gRPC services](/humus/grpc/) explains how
 a service serves gRPC over TLS with `grpcserver`, ends its streams and shuts
 down on `grpcserver.Main`'s drain and grace period, and how to test it with
-`grpcservertest`. The `queue` and `queue/kafka` packages have landed:
+`grpcservertest`. Its `grpcclient` package has landed too:
+[Calling gRPC services](/humus/grpc-client/) explains how a service
+calls each of its gRPC dependencies with a `Client` built in `Init`, how
+names and load behave behind a Kubernetes Service, which calls are retried
+and how the end user's `Classify` decides what a code means, the circuit
+breaker in front of each dependency, readiness with `Connected`, and how to
+test the end user's whole App next to a `grpcserver` backend. The `queue` and `queue/kafka` packages have landed:
 [Consuming and producing Kafka](/humus/kafka/) explains the contract
 a `queue.Processor` keeps, how a service consumes Kafka topics with
 `kafka.NewService` on `humus.Main`'s defaults and what each delivery commits,
