@@ -58,8 +58,7 @@ func receiverName(recv ast.Expr) string {
 
 // TestPackage_exports_only_its_API checks the package's exported names,
 // and the exported methods of its exported types, against revision 1's
-// auth/jwt block of the authentication proposal, #870, but RemoteKeySet
-// and NewRemoteKeySet, which #885 adds.
+// auth/jwt block of the authentication proposal, #870.
 func TestPackage_exports_only_its_API(t *testing.T) {
 	t.Parallel()
 
@@ -101,10 +100,10 @@ func TestPackage_exports_only_its_API(t *testing.T) {
 	require.Equal(t, []string{
 		"Algorithm", "CheckAlgorithms", "CheckAudience", "CheckIssuer", "CheckLeeway", "CheckMaxKeyAge",
 		"CheckMinRefreshInterval", "DefaultSettings", "ES256", "ES384", "ES512", "EdDSA", "Key", "KeySet",
-		"KeySetError", "NewVerifier", "PS256", "PS384", "PS512", "RS256", "RS384", "RS512", "Settings", "Verifier",
+		"KeySetError", "NewRemoteKeySet", "NewVerifier", "PS256", "PS384", "PS512", "RS256", "RS384", "RS512", "RemoteKeySet", "Settings", "Verifier",
 	}, exported)
 	slices.Sort(methods)
-	require.Equal(t, []string{"KeySetError.Error", "KeySetError.Unwrap", "Verifier.Verify"}, methods)
+	require.Equal(t, []string{"KeySetError.Error", "KeySetError.Unwrap", "RemoteKeySet.Keys", "Verifier.Verify"}, methods)
 }
 
 // TestPackage_keeps_go_jose_out_of_its_API checks that no exported
