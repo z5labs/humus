@@ -498,7 +498,8 @@ func TestKafka_cooperative_sticky_rebalance_moves_one_partition_after_its_record
 	// was processing its last record of it, and that record finished.
 	var revokedAt time.Time
 	for _, r := range records(tel.Logs(), "partitions revoked") {
-		if attrs(r)["messaging.destination.partition.ids"] == "["+strconv.Itoa(int(moved))+"]" {
+		require.NotContains(t, attrs(r), "messaging.destination.partition.ids", "the partitions are humus's own attribute")
+		if attrs(r)["humus.messaging.destination.partition.ids"] == "["+strconv.Itoa(int(moved))+"]" {
 			revokedAt = r.Timestamp()
 			break
 		}
@@ -569,7 +570,7 @@ func TestKafka_a_member_whose_revoke_outlasts_RebalanceTimeout_is_fenced(t *test
 	second, secondStatus := startOnOS(t, s, l.processor("second", nil))
 	eventually(t, 30*time.Second, func() bool { return len(records(tel.Logs(), "partitions revoked")) > 0 },
 		"the first App begins revoking a partition")
-	moved := attrs(records(tel.Logs(), "partitions revoked")[0])["messaging.destination.partition.ids"]
+	moved := attrs(records(tel.Logs(), "partitions revoked")[0])["humus.messaging.destination.partition.ids"]
 	require.Contains(t, []string{"[0]", "[1]"}, moved, "the first App revoked one partition")
 	kept := "[0]" // the partition the first App still held when it was fenced
 	if moved == "[0]" {
@@ -702,7 +703,7 @@ func fence(t *testing.T, s kafka.Settings, l *ledger, g *gates, tel *humustest.T
 	run("second", nil)
 	eventually(t, 30*time.Second, func() bool { return len(records(tel.Logs(), "partitions revoked")) > 0 },
 		"the first App begins revoking a partition")
-	ids := attrs(records(tel.Logs(), "partitions revoked")[0])["messaging.destination.partition.ids"]
+	ids := attrs(records(tel.Logs(), "partitions revoked")[0])["humus.messaging.destination.partition.ids"]
 	require.Contains(t, []string{"[0]", "[1]"}, ids, "the first App revoked one partition")
 	moved, kept = 0, 1
 	if ids == "[1]" {
@@ -868,8 +869,10 @@ func TestKafka_at_most_once_a_fenced_member_does_not_commit_or_process_a_batch_p
 	require.Len(t, skipped, 1, "the batch polled while franz-go rejoined is skipped")
 	a := attrs(skipped[0])
 	require.Equal(t, strconv.Itoa(int(kept)), a["messaging.destination.partition.id"])
-	require.Equal(t, "1", a["messaging.kafka.offset.first"])
-	require.Equal(t, "10", a["messaging.kafka.offset.last"])
+	require.Equal(t, "1", a["humus.messaging.kafka.offset.first"])
+	require.Equal(t, "10", a["humus.messaging.kafka.offset.last"])
+	require.NotContains(t, a, "messaging.kafka.offset.first", "the offsets are humus's own attributes")
+	require.NotContains(t, a, "messaging.kafka.offset.last", "the offsets are humus's own attributes")
 	require.Equal(t, "WARN", skipped[0].Severity().String())
 
 	for _, stop := range apps {
@@ -895,7 +898,7 @@ func TestKafka_at_most_once_a_fenced_member_does_not_commit_or_process_a_batch_p
 func gaveUp(tel *humustest.Telemetry, ids string) bool {
 	for _, body := range []string{"partitions revoked", "partitions lost"} {
 		for _, r := range records(tel.Logs(), body) {
-			if attrs(r)["messaging.destination.partition.ids"] == ids {
+			if attrs(r)["humus.messaging.destination.partition.ids"] == ids {
 				return true
 			}
 		}
@@ -946,7 +949,7 @@ func TestKafka_after_SIGTERM_the_other_member_takes_the_partitions_at_once(t *te
 	second, secondStatus := startOnOS(t, s, l.processor("second", nil), humus.WithTelemetry(tel2.Builder()))
 	eventually(t, 30*time.Second, func() bool { return len(records(tel2.Logs(), "partitions assigned")) > 0 },
 		"the second App is assigned a partition")
-	assigned := attrs(records(tel2.Logs(), "partitions assigned")[0])["messaging.destination.partition.ids"]
+	assigned := attrs(records(tel2.Logs(), "partitions assigned")[0])["humus.messaging.destination.partition.ids"]
 	require.Contains(t, []string{"[0]", "[1]"}, assigned, "the second App took one partition")
 	var kept int32 // the partition the first App kept
 	if assigned == "[0]" {

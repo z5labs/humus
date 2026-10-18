@@ -364,7 +364,8 @@ func TestService_revoke_commits_the_record_in_flight_before_the_partition_moves(
 			a := attrs(r)
 			require.Equal(t, topic, a["messaging.destination.name"])
 			require.Equal(t, group, a["messaging.consumer.group.name"])
-			if a["messaging.destination.partition.ids"] == "["+strconv.Itoa(int(moved))+"]" {
+			require.NotContains(t, a, "messaging.destination.partition.ids", "the partitions are humus's own attribute")
+			if a["humus.messaging.destination.partition.ids"] == "["+strconv.Itoa(int(moved))+"]" {
 				rebalanced = true
 			}
 		}
@@ -578,10 +579,10 @@ func TestService_logs_the_partitions_it_is_assigned_revoked_and_loses(t *testing
 			r := rs[0]
 			require.Equal(t, "INFO", r.Severity().String(), body)
 			require.Equal(t, map[string]string{
-				"messaging.system":                    "kafka",
-				"messaging.consumer.group.name":       group,
-				"messaging.destination.name":          topic,
-				"messaging.destination.partition.ids": "[0,1]",
+				"messaging.system":                          "kafka",
+				"messaging.consumer.group.name":             group,
+				"messaging.destination.name":                topic,
+				"humus.messaging.destination.partition.ids": "[0,1]",
 			}, attrs(r), body)
 		}
 		require.Len(t, records(tel.Logs(), "partitions assigned"), 2, "assigned when it joined, and again when it rejoined")
@@ -744,8 +745,10 @@ func TestService_at_most_once_skips_and_logs_a_batch_whose_commit_was_refused(t 
 		require.Len(t, skipped, 1)
 		require.Equal(t, "WARN", skipped[0].Severity().String())
 		a := attrs(skipped[0])
-		require.Equal(t, "0", a["messaging.kafka.offset.first"])
-		require.Equal(t, "2", a["messaging.kafka.offset.last"])
+		require.Equal(t, "0", a["humus.messaging.kafka.offset.first"])
+		require.Equal(t, "2", a["humus.messaging.kafka.offset.last"])
+		require.NotContains(t, a, "messaging.kafka.offset.first", "the offsets are humus's own attributes")
+		require.NotContains(t, a, "messaging.kafka.offset.last", "the offsets are humus's own attributes")
 		require.Equal(t, "0", a["messaging.destination.partition.id"])
 	})
 }
@@ -886,7 +889,7 @@ func TestService_a_fenced_member_commits_nothing_more_for_the_partitions_it_held
 		revoked := records(tel.Logs(), "partitions revoked")
 		require.Len(t, revoked, 1, "the first App begins revoking a partition")
 		var moved, kept int32 = 0, 1 // kept is the partition the first App still holds when it is fenced
-		if attrs(revoked[0])["messaging.destination.partition.ids"] == "[1]" {
+		if attrs(revoked[0])["humus.messaging.destination.partition.ids"] == "[1]" {
 			moved, kept = 1, 0
 		}
 
@@ -920,7 +923,7 @@ func TestService_a_fenced_member_commits_nothing_more_for_the_partitions_it_held
 		time.Sleep(time.Minute)
 		synctest.Wait()
 		require.Len(t, records(tel.Logs(), "partitions revoked"), 2, "the first App revokes the partition it kept")
-		require.Equal(t, "["+strconv.Itoa(int(kept))+"]", attrs(records(tel.Logs(), "partitions revoked")[1])["messaging.destination.partition.ids"])
+		require.Equal(t, "["+strconv.Itoa(int(kept))+"]", attrs(records(tel.Logs(), "partitions revoked")[1])["humus.messaging.destination.partition.ids"])
 
 		close(gates[at{kept, 1}])
 		close(gates[at{moved, 1}])
