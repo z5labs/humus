@@ -3,9 +3,10 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-// Package kube reaches a Kubernetes API server with humus's lifecycle, with
-// client-go, Kubernetes' own client, and no controller-runtime, and
-// declares custom resources, whose CRDs it reflects from Go types.
+// Package kube writes Kubernetes controllers as humus Services, with
+// client-go, Kubernetes' own client, and no controller-runtime. It reaches
+// an API server with humus's lifecycle, declares custom resources, whose
+// CRDs it reflects from Go types, and reconciles their objects.
 //
 // It is in the nested module github.com/z5labs/humus/kube, so client-go and
 // apimachinery stay out of the module graph of end users who don't talk to
@@ -362,6 +363,141 @@
 // a CRD outlives the controller's pods. Whatever deploys the controller,
 // such as its Helm chart or its kubectl apply, applies the YAML.
 //
+// # The Controller
+//
+// A [Controller] reconciles the objects of one Resource. [NewController]
+// builds it, and opens no connection; it is a humus.Service:
+//
+//	ctrl, err := kube.NewController(s, client, settings, Memcached, Reconciler{Kube: kc})
+//	if err != nil {
+//		return nil, err
+//	}
+//	return []humus.Service{ctrl}, nil
+//
+// NewController returns one error that names every mistake it finds: each
+// field of the Settings that fails its check, the bounds between them, each
+// mistake in the Resource, as [Resource.CRD] reports it, a Settings.Namespace
+// for a cluster-scoped Resource, and a nil Reconciler.
+//
+// A [Reconciler] is handed its object, and returns what the object's status
+// is now:
+//
+//	type Reconciler struct{ Kube kubernetes.Interface }
+//
+//	func (r Reconciler) Reconcile(ctx context.Context, m kube.Object[MemcachedSpec, MemcachedStatus]) (kube.Result[MemcachedStatus], error) {
+//		d, err := r.Kube.AppsV1().Deployments(m.Namespace).Apply(ctx, deployment(m), metav1.ApplyOptions{FieldManager: "memcached-controller", Force: true})
+//		st := m.Status
+//		if err != nil {
+//			meta.SetStatusCondition(&st.Conditions, metav1.Condition{
+//				Type: "Available", Status: metav1.ConditionUnknown, Reason: "ApplyFailed",
+//				Message: err.Error(), ObservedGeneration: m.Generation,
+//			})
+//			return kube.Result[MemcachedStatus]{Status: &st}, err
+//		}
+//		st.ReadyReplicas = d.Status.ReadyReplicas
+//		meta.SetStatusCondition(&st.Conditions, metav1.Condition{
+//			Type: "Available", Status: metav1.ConditionTrue, Reason: "DeploymentApplied",
+//			ObservedGeneration: m.Generation,
+//		})
+//		return kube.Result[MemcachedStatus]{Status: &st}, nil
+//	}
+//
+// The object comes from the controller's cache, decoded into a new
+// [Object], so it is the Reconciler's own copy, and there is no Get and no
+// not-found to handle: an object gone from the cache is never reconciled,
+// and what it owned is garbage collected through its owner references. An
+// object being deleted is left alone.
+//
+// When [Result.Status] isn't nil and its JSON encoding differs from the
+// object's status, the controller applies it to the status subresource
+// with server-side apply, under the field manager Settings.Name, forcing,
+// since the controller owns the status whole. So a status write never fails
+// with "the object has been modified", and needs no Get after it. It is
+// applied whether or not Reconcile returned an error, so a failure can be a
+// condition and an error together: the condition is what kubectl get shows,
+// and the error retries the object. A nil Status leaves the status alone,
+// so an error path that returns a zero Result can't wipe the conditions.
+//
+// Each reconcile settles its object one way:
+//   - an error retries it after a backoff of its own, from RetryBaseDelay,
+//     doubling to RetryMaxDelay, under an overall limit of 10 retries a
+//     second, bursting to 100. The error never ends the Service;
+//   - otherwise, a positive [Result.After] reconciles it again after that
+//     long, unless it changes first;
+//   - otherwise it is reconciled again when it changes, or when the resync
+//     comes, every Settings.Resync.
+//
+// Reconciles are level-triggered: a Reconciler isn't told what changed,
+// only handed the object as it is now, and brings the cluster to what it
+// declares. Applying a status changes the object, so it is reconciled once
+// more, returns the same status, which isn't applied, and settles: two
+// reconciles in all. Settings.Workers objects are reconciled at once, and
+// one object is never reconciled twice at once.
+//
+// # Serving
+//
+// [Controller.Serve] first lists the resource once, with a limit of 1. An
+// error, such as a CRD that isn't installed, ends Serve with an error that
+// names the resource, so the App exits 1, rather than leave a controller
+// that waits forever. It then starts an informer on the resource, limited to
+// Settings.Namespace, waits for its cache to sync, and campaigns for the
+// Lease.
+//
+// Every controller elects a leader, on a Lease named Settings.Name, in
+// LeaderElection.Namespace, as LeaderElection.Identity. There is no option
+// to turn it off: two replicas without it would apply the same objects
+// twice. Every replica keeps its cache warm, and only the Lease's holder
+// reconciles, so a new leader starts at once. When the Lease's renewal
+// fails for RenewDeadline, or another replica takes it, the controller
+// stops taking keys, cancels the reconciles in flight, and Serve returns
+// [ErrLostLeadership], so the App exits 1. Another replica may already be
+// reconciling; the pod campaigns again when it restarts.
+//
+// On Serve's context, as when the App shuts down, the controller stops
+// taking keys, and each worker finishes the reconcile it has in flight. The
+// backlog is left for the next leader, which lists every object when its
+// informer starts: the work queue is shut down, never drained. Then the
+// controller releases the Lease, so the next replica takes it without
+// waiting out LeaseDuration, stops its informer, and Serve returns nil, so
+// the App exits 0. A reconcile's context is cancelled only when
+// [Controller.Shutdown]'s context is done or the Lease is lost: then
+// Shutdown cancels the reconciles in flight, waits for them, and returns an
+// error that wraps the context's error. humus.Main's defaults, a 20s grace
+// period and no drain, fit a controller.
+//
+// [Controller.Synced] is unhealthy until the cache has synced, and healthy
+// from then until Serve returns, on every replica, leader or not, so a
+// rollout isn't held up by the replicas waiting for the Lease. It is for
+// readiness, served with the health probes:
+//
+//	health.Readiness(ctrl.Synced())
+//
+// # RBAC
+//
+// humus generates no RBAC. A Controller needs these rules itself, and the
+// end user adds their Reconciler's own:
+//   - get, list and watch on its resource, and patch on it and on its
+//     status;
+//   - get, create and update on Leases, in the Lease's namespace.
+//
+// # Telemetry
+//
+// A Controller reports through s.Telemetry, under the scope
+// github.com/z5labs/humus/kube:
+//   - every reconcile is a root span, "reconcile <Kind>", with
+//     k8s.namespace.name for a namespaced object, and
+//     humus.kube.object.name. Reconcile's context carries it. An error sets
+//     its status to Error;
+//   - a failed reconcile is one WARN record, "reconcile failed", in the
+//     span's context, with the object and the error;
+//   - client-go's own records, from the reflector, the work queue and
+//     leader election, reach the LoggerProvider through a logger the
+//     controller puts in their context. Those klog writes by default arrive:
+//     an Info at verbosity 0, as an INFO record, and every Error, as an
+//     ERROR record. Nothing reaches the real stderr;
+//   - every API request is a client span from otelhttp, as the Client
+//     traces them.
+//
 // # What client-go still reaches
 //
 // client-go's feature gates read KUBE_FEATURE_* variables from the real
@@ -370,6 +506,12 @@
 // humus never calls it: this is an ambient leak humus can't close. Like the
 // other ambient leaks the lifecycle documents, it isn't the end user's to
 // pass in.
+//
+// client-go falls back to klog's global logger, which writes to the real
+// stderr, wherever it finds no logger in its context. The Controller puts
+// one in the context of everything of client-go's it runs. Its work queue
+// has no name, so it registers no metrics with client-go's global
+// provider.
 //
 // The package sets no global of client-go's: no klog setting, no feature
 // gate, and no metrics provider. Lint denies each of them in every humus

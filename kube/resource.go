@@ -82,6 +82,16 @@ func (r Resource[Spec, Status]) GVR() schema.GroupVersionResource {
 // CRD doesn't compile CEL. The API server compiles every rule when the CRD
 // is applied.
 func (r Resource[Spec, Status]) CRD() (*apiextensionsv1.CustomResourceDefinition, error) {
+	crd, errs := r.crd()
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("kube: the CRD of %s: %w", r.name(), errors.Join(errs...))
+	}
+	return crd, nil
+}
+
+// crd returns the resource's CustomResourceDefinition, or every mistake CRD
+// reports, each on its own.
+func (r Resource[Spec, Status]) crd() (*apiextensionsv1.CustomResourceDefinition, []error) {
 	var errs []error
 	missing := func(field, v string) {
 		if v == "" {
@@ -102,7 +112,7 @@ func (r Resource[Spec, Status]) CRD() (*apiextensionsv1.CustomResourceDefinition
 	root := ref.root(reflect.TypeFor[Spec](), reflect.TypeFor[Status]())
 	errs = append(errs, ref.errs...)
 	if len(errs) > 0 {
-		return nil, fmt.Errorf("kube: the CRD of %s: %w", r.name(), errors.Join(errs...))
+		return nil, errs
 	}
 
 	return &apiextensionsv1.CustomResourceDefinition{
