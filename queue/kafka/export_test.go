@@ -24,3 +24,9 @@ func CloseProducer(p *Producer) {
 
 // Classify is the Producer's breaker classifier.
 var Classify = classify
+
+// StripRecord is svc's strip of the failure scenario of a record, m, whose
+// context under its process span is ctx.
+func StripRecord(svc *Service, ctx context.Context, m Message) context.Context {
+	return svc.strip(ctx, m)
+}

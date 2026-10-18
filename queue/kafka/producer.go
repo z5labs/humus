@@ -26,6 +26,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/fault"
 )
 
 // sendOperation is the name of the operation the Producer reports, as
@@ -68,6 +69,11 @@ type Producer struct {
 
 	// metrics are humus's own instruments of the breaker.
 	metrics *instruments
+
+	// faults is the App's failure injection, from the Setup, and forward
+	// is ProducerSettings.ForwardScenario.
+	faults  fault.Injector
+	forward bool
 
 	// closed is set once the OnStop function has flushed the client and is
 	// about to close it.
@@ -123,6 +129,8 @@ func NewProducer(s *humus.Setup, settings ProducerSettings) (*Producer, error) {
 		propagator:      s.Telemetry.Propagator,
 		logger:          s.Telemetry.LoggerProvider.Logger(scopeName),
 		metrics:         metrics,
+		faults:          s.Faults,
+		forward:         settings.ForwardScenario,
 		refused:         make(chan struct{}),
 	}
 	breaker, err := circuit.New(settings.Breaker, settings.BreakerPolicy, metrics.countCalls(classify), p.observe)
@@ -275,10 +283,18 @@ func (p *Producer) stop(ctx context.Context) error {
 // Each record it hands to the client is sent under a span of its own, a
 // child of the span in ctx. The record's headers whose keys the propagator
 // writes are removed, and the propagator writes the span's context and
-// ctx's baggage in their place. The span ends, and the record is
+// ctx's baggage in their place, less a failure scenario unless
+// ProducerSettings.ForwardScenario is set. The span ends, and the record is
 // measured, when its result arrives, which may be after Produce returns. A
 // record the breaker rejected was never sent: its span records the
 // rejection as a failure, and neither messaging instrument counts it.
+//
+// With failure injection, each record of a call the breaker admits
+// evaluates its point, kafka:<topic>, as the package doc's Failure
+// injection describes. The call waits the longest Delay of its records,
+// inside DeliveryTimeout, and when any record's fault aborts, every record
+// of the call fails unsent with that point's *fault.InjectedError, which
+// the breaker counts as a failure.
 func (p *Producer) Produce(ctx context.Context, records ...Record) error {
 	if len(records) == 0 {
 		return nil
@@ -310,10 +326,6 @@ func (p *Producer) Produce(ctx context.Context, records ...Record) error {
 		krs[i] = p.send(ctx, call, start, fields, r)
 	}
 
-	// Wave 5's failure injection has its seam here: every record's span
-	// has started and its headers carry the trace context, and nothing has
-	// gone through the breaker.
-
 	t, err := p.breaker.Allow(call)
 	if err != nil {
 		p.metrics.rejected(call)
@@ -335,10 +347,21 @@ func (p *Producer) Produce(ctx context.Context, records ...Record) error {
 		}
 	}()
 
+	// Failure injection has its point here, just after Allow: each record
+	// evaluates kafka:<topic> with its own context, so a call the breaker
+	// rejected evaluates nothing, and the breaker counts a call a fault
+	// ended as it counts any other.
+	inj := p.evaluate(krs)
+
 	results := make(chan error, 1)
 	go func() {
 		defer cancel()
-		err := produceError(krs, p.client.ProduceSync(call, krs...))
+		var err error
+		if injected := inj.inject(call); injected != nil {
+			err = failUnsent(krs, injected)
+		} else {
+			err = produceError(krs, p.client.ProduceSync(call, krs...))
+		}
 		// Settled before the result is handed back, so a caller's next
 		// call meets the breaker this one left.
 		t.Done(err)
@@ -371,7 +394,8 @@ type sendingKey struct{}
 //
 // The record's headers are r's, less every header whose key is one of
 // fields, the propagator's, and then the span's context and ctx's baggage,
-// which the propagator injects. The record's context is call, carrying the
+// which the propagator injects, less the failure scenario unless the
+// Producer forwards it. The record's context is call, carrying the
 // span and its sending, which the hook ends and measures.
 func (p *Producer) send(ctx, call context.Context, start time.Time, fields []string, r Record) *kgo.Record {
 	ctx, span := p.tracer.Start(ctx, sendOperation+" "+r.Topic,
@@ -391,7 +415,7 @@ func (p *Producer) send(ctx, call context.Context, start time.Time, fields []str
 			headers = append(headers, kgo.RecordHeader{Key: h.Key, Value: h.Value})
 		}
 	}
-	p.propagator.Inject(ctx, (*headerCarrier)(&headers))
+	p.propagator.Inject(p.headersContext(ctx, span), (*headerCarrier)(&headers))
 
 	return &kgo.Record{
 		Topic:     r.Topic,
