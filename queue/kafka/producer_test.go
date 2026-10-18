@@ -48,16 +48,16 @@ func produces(settings kafka.ProducerSettings, run func(ctx context.Context, p *
 }
 
 // readAll returns every record of topic, in each partition's order,
-// through a client that dials h. It polls until a poll finds nothing new
-// for a second, which inside a bubble takes no real time.
-func readAll(t *testing.T, h *humustest.Host, c *kfake.Cluster, topic string) []*kgo.Record {
+// through a client that dials h with opts. It polls until a poll finds
+// nothing new for a second, which inside a bubble takes no real time.
+func readAll(t *testing.T, h *humustest.Host, c *kfake.Cluster, topic string, opts ...kgo.Opt) []*kgo.Record {
 	t.Helper()
-	cl, err := kgo.NewClient(
+	cl, err := kgo.NewClient(append([]kgo.Opt{
 		kgo.SeedBrokers(c.ListenAddrs()...),
 		kgo.Dialer(h.Dial),
 		kgo.ConsumeTopics(topic),
 		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
-	)
+	}, opts...)...)
 	require.NoError(t, err)
 	defer cl.Close()
 

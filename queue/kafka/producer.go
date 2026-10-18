@@ -18,6 +18,7 @@ import (
 	"github.com/twmb/franz-go/plugin/kotel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/propagation"
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"go.opentelemetry.io/otel/semconv/v1.43.0/messagingconv"
@@ -58,10 +59,16 @@ type Producer struct {
 	deliveryTimeout time.Duration
 	tracer          trace.Tracer
 	propagator      propagation.TextMapPropagator
+	logger          log.Logger
 
 	// closed is set once the OnStop function has flushed the client and is
 	// about to close it.
 	closed atomic.Bool
+
+	// refusal is the first refusal of the credentials by a broker, nil
+	// until there is one. refused is closed once it is set.
+	refusal atomic.Pointer[error]
+	refused chan struct{}
 }
 
 // NewProducer runs every check on settings, reporting every bad field in
@@ -70,10 +77,18 @@ type Producer struct {
 // s.OnStop that flushes the client and closes it.
 //
 // The Producer dials every broker through s.Host. It reports through
-// s.Telemetry: its spans and the two messaging instruments under the scope
-// github.com/z5labs/humus/queue/kafka, franz-go's logs under
+// s.Telemetry: its spans, the two messaging instruments and its own logs
+// under the scope github.com/z5labs/humus/queue/kafka, franz-go's logs under
 // github.com/twmb/franz-go/pkg/kgo, and franz-go's broker metrics, from
 // kotel's Meter, under github.com/twmb/franz-go/plugin/kotel.
+//
+// A Producer can't stop the App, so when a broker refuses settings.SASL's
+// credentials, with SASL_AUTHENTICATION_FAILED, UNSUPPORTED_SASL_MECHANISM
+// or ILLEGAL_SASL_STATE, it fails every call instead: it emits one ERROR
+// record naming the broker, the calls waiting on their records return the
+// refusal, and every later Produce returns it at once, with nothing sent.
+// Credentials don't fix themselves while the process runs, so the Producer
+// never tries them again.
 func NewProducer(s *humus.Setup, settings ProducerSettings) (*Producer, error) {
 	if err := checkProducerSettings(settings); err != nil {
 		return nil, fmt.Errorf("kafka: NewProducer: %w", err)
@@ -84,12 +99,20 @@ func NewProducer(s *humus.Setup, settings ProducerSettings) (*Producer, error) {
 	if err := errors.Join(err1, err2); err != nil {
 		return nil, fmt.Errorf("kafka: NewProducer: creating the instruments: %w", err)
 	}
+	p := &Producer{
+		deliveryTimeout: settings.DeliveryTimeout,
+		tracer:          s.Telemetry.TracerProvider.Tracer(scopeName),
+		propagator:      s.Telemetry.Propagator,
+		logger:          s.Telemetry.LoggerProvider.Logger(scopeName),
+		refused:         make(chan struct{}),
+	}
 	opts := []kgo.Opt{
 		kgo.SeedBrokers(settings.Brokers...),
 		kgo.Dialer(tlsDialer(s.Host.Dial, settings.TLS)),
 		kgo.WithLogger(kgoLogger{ctx: context.Background(), logger: s.Telemetry.LoggerProvider.Logger(kgoScope)}),
 		kgo.WithHooks(
 			sendHook{sent: sent, operations: operations},
+			connectHook{onRefusal: p.refuse},
 			// kotel's Meter creates its instruments and starts nothing.
 			kotel.NewMeter(kotel.MeterProvider(s.Telemetry.MeterProvider)),
 		),
@@ -102,12 +125,7 @@ func NewProducer(s *humus.Setup, settings ProducerSettings) (*Producer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("kafka: NewProducer: building the client: %w", err)
 	}
-	p := &Producer{
-		client:          cl,
-		deliveryTimeout: settings.DeliveryTimeout,
-		tracer:          s.Telemetry.TracerProvider.Tracer(scopeName),
-		propagator:      s.Telemetry.Propagator,
-	}
+	p.client = cl
 	s.OnStop(p.stop)
 	return p, nil
 }
@@ -124,6 +142,38 @@ func checkProducerSettings(settings ProducerSettings) error {
 	check("ProducerSettings.Brokers", CheckBrokers(settings.Brokers))
 	check("ProducerSettings.DeliveryTimeout", CheckDeliveryTimeout(settings.DeliveryTimeout))
 	return errors.Join(errs...)
+}
+
+// refuse records err, a broker's refusal of the credentials, if it is the
+// first. It emits one ERROR record naming the broker, and then fails every
+// call waiting on its records, and every later call, with err.
+func (p *Producer) refuse(meta kgo.BrokerMetadata, err error) {
+	if !p.refusal.CompareAndSwap(nil, &err) {
+		return
+	}
+	var r log.Record
+	r.SetTimestamp(time.Now())
+	r.SetSeverity(log.SeverityError)
+	r.SetSeverityText(log.SeverityError.String())
+	r.SetBody(attribute.StringValue("a broker refused the credentials"))
+	r.AddAttributes(
+		semconv.MessagingSystemKafka,
+		semconv.ServerAddress(meta.Host),
+		semconv.ServerPort(int(meta.Port)),
+		semconv.ErrorType(err),
+		semconv.ExceptionMessage(err.Error()),
+	)
+	p.logger.Emit(context.Background(), r)
+	close(p.refused)
+}
+
+// refusalErr returns the broker's refusal of the credentials, or nil when
+// no broker has refused them.
+func (p *Producer) refusalErr() error {
+	if err := p.refusal.Load(); err != nil {
+		return *err
+	}
+	return nil
 }
 
 // stop flushes the client with ctx, which the lifecycle bounds by the grace
@@ -155,6 +205,14 @@ func (p *Producer) stop(ctx context.Context) error {
 // Produce rejects a record with no Topic before it sends anything. With no
 // records, it returns nil.
 //
+// When a broker refuses the credentials, Produce returns an error naming
+// the broker as host:port, which matches the refusal's kerr code, such as
+// kerr.SaslAuthenticationFailed, with errors.Is. A call waiting on its
+// records returns it as soon as the broker refuses, and every call after
+// that returns it at once, with nothing sent: the Producer doesn't try the
+// credentials again. The records of a call that returned the refusal stay
+// in the client until DeliveryTimeout fails them.
+//
 // Each record it hands to the client is sent under a span of its own, a
 // child of the span in ctx. The record's headers whose keys the propagator
 // writes are removed, and the propagator writes the span's context and
@@ -174,6 +232,9 @@ func (p *Producer) Produce(ctx context.Context, records ...Record) error {
 	}
 	if p.closed.Load() {
 		return fmt.Errorf("kafka: producing: %w", kgo.ErrClientClosed)
+	}
+	if err := p.refusalErr(); err != nil {
+		return err
 	}
 
 	// The call's context keeps ctx's values but not its cancellation: once
@@ -199,6 +260,8 @@ func (p *Producer) Produce(ctx context.Context, records ...Record) error {
 		return produceError(krs, rs)
 	case <-ctx.Done():
 		return fmt.Errorf("kafka: producing: %w", ctx.Err())
+	case <-p.refused:
+		return p.refusalErr()
 	}
 }
 
