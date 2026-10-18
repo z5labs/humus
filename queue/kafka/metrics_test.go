@@ -168,8 +168,15 @@ func TestProducer_metrics_follow_the_breaker(t *testing.T) {
 			require.Equal(t, breakerIs(0, 1, 0), ownPoints(t, collect(t, ctx, tel), broker, "humus.circuit.state"))
 
 			time.Sleep(ps.Breaker.OpenFor) // and no call
-			require.Equal(t, breakerIs(0, 0, 1), ownPoints(t, collect(t, ctx, tel), broker, "humus.circuit.state"),
+			rm := collect(t, ctx, tel)
+			require.Equal(t, breakerIs(0, 0, 1), ownPoints(t, rm, broker, "humus.circuit.state"),
 				"half-open as soon as a probe would be admitted")
+			// Reading the state changes nothing: the breaker turns half-open
+			// at the next call, not in the collection.
+			require.Equal(t, map[string]int64{
+				"humus.circuit.previous_state=closed,humus.circuit.state=open": 1,
+			}, ownPoints(t, rm, broker, "humus.circuit.transitions"))
+			require.Equal(t, []string{breakerOpen}, breakerLogs(tel))
 
 			failing.Store(false) // the cluster recovers
 			for i := range 3 {
