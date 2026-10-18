@@ -236,7 +236,7 @@ func (s *Service) clientOpts(g *group) []kgo.Opt {
 		kgo.OnPartitionsAssigned(g.assigned),
 		kgo.OnPartitionsRevoked(g.revoked),
 		kgo.OnPartitionsLost(g.lost),
-		kgo.WithHooks(connectHook{g: g}, s.brokers),
+		kgo.WithHooks(connectHook{onRefusal: func(_ kgo.BrokerMetadata, err error) { g.fail(err) }}, s.brokers),
 		kgo.WithLogger(kgoLogger{ctx: g.logCtx, logger: s.kgoLogger}),
 	}
 	if s.settings.SASL != nil {
@@ -437,12 +437,17 @@ func isFatal(err error) bool {
 	return !ke.Retriable && !notMember(err)
 }
 
-// connectHook fails g when a broker refuses the Service's credentials.
-// franz-go retries every connection that fails, and it would retry a
-// password that will never be accepted for as long as the Service ran,
-// without a poll ever returning the error.
+// connectHook calls onRefusal when a broker refuses the client's
+// credentials, with the broker and an error that names it as host:port and
+// wraps the refusal. franz-go retries every connection that fails, and it would
+// retry a password that will never be accepted for as long as the client
+// ran, without a poll or a produce ever returning the error. The Service
+// stops on the refusal, and the Producer fails every call with it.
+//
+// onRefusal may be called more than once, once for each refused connection,
+// and from franz-go's goroutines.
 type connectHook struct {
-	g *group
+	onRefusal func(meta kgo.BrokerMetadata, err error)
 }
 
 // OnBrokerConnect implements kgo.HookBrokerConnect.
@@ -450,11 +455,11 @@ func (h connectHook) OnBrokerConnect(meta kgo.BrokerMetadata, _ time.Duration, _
 	if err == nil || !refused(err) {
 		return
 	}
-	h.g.fail(fmt.Errorf("kafka: authenticating to %s: %w", net.JoinHostPort(meta.Host, strconv.Itoa(int(meta.Port))), err))
+	h.onRefusal(meta, fmt.Errorf("kafka: authenticating to %s: %w", net.JoinHostPort(meta.Host, strconv.Itoa(int(meta.Port))), err))
 }
 
 // refused reports whether err is a broker refusing to authenticate the
-// Service.
+// client.
 func refused(err error) bool {
 	return errors.Is(err, kerr.SaslAuthenticationFailed) ||
 		errors.Is(err, kerr.UnsupportedSaslMechanism) ||

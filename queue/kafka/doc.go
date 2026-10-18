@@ -233,6 +233,22 @@
 // that failed may have been stored anyway. Produce rejects a record with no
 // Topic before it sends anything, and returns nil when given no records.
 //
+// When a broker refuses the Producer's SASL credentials, with
+// SASL_AUTHENTICATION_FAILED, UNSUPPORTED_SASL_MECHANISM or
+// ILLEGAL_SASL_STATE, the Producer fails every call, since it can't stop
+// the App as the Service does. franz-go would otherwise retry the
+// connection, and each call would wait out its DeliveryTimeout with no sign
+// of why. On the first refusal the Producer emits one ERROR record, under
+// the scope github.com/z5labs/humus/queue/kafka, with messaging.system,
+// server.address and server.port naming the broker, and the calls waiting
+// on their records return the refusal. From then on every Produce returns
+// it at once, with nothing sent. The error names the broker as host:port,
+// as the Service's does, and errors.Is finds its kerr code, such as
+// kerr.SaslAuthenticationFailed. Credentials don't fix themselves while the
+// process runs, so the Producer never tries them again: a Processor that
+// produces fails its record, and under queue.AtLeastOnce the Service stops
+// and the App is restarted with whatever the secret holds then.
+//
 // The Producer is not a Service, so the lifecycle doesn't stop it: the
 // Services that use it stop first. NewProducer registers one function with
 // the Setup's OnStop, which runs once every Service has returned. It
