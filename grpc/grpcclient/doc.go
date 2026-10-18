@@ -156,8 +156,10 @@
 // NewClient's opts are grpc.DialOptions, for what humus doesn't configure:
 // per-RPC credentials with grpc.WithPerRPCCredentials, interceptors,
 // grpc.WithConnectParams, and the like. They come after humus's own
-// options, which dial through the Host, use no proxy, and turn grpc-go's
-// configurable retries off. The transport credentials built from
+// options, which trace and measure every attempt, dial through the Host,
+// use no proxy, and turn grpc-go's configurable retries off. A stats
+// handler in opts, with grpc.WithStatsHandler, is a second one: grpc-go
+// calls it as well, after humus's. The transport credentials built from
 // Settings.TLS come after opts, so a grpc.WithTransportCredentials in opts
 // has no effect: Settings.TLS is the one place TLS is configured, and plain
 // text is a nil TLS. NewClient sets no default service config.
@@ -182,6 +184,54 @@
 // reports it never processed it, such as a stream refused by a server that
 // sent a GOAWAY. They never repeat anything a server saw, so they are safe
 // whatever the method, and the Client keeps them.
+//
+// # Telemetry
+//
+// The Client takes everything from the Setup's telemetry and never reads
+// or sets OpenTelemetry's globals. NewClient's first dial option is a stats
+// handler, OpenTelemetry's gRPC instrumentation, otelgrpc, given the
+// TracerProvider, the MeterProvider and the Propagator of s.Telemetry:
+//
+//	grpc.WithStatsHandler(otelgrpc.NewClientHandler(
+//		otelgrpc.WithTracerProvider(s.Telemetry.TracerProvider),
+//		otelgrpc.WithMeterProvider(s.Telemetry.MeterProvider),
+//		otelgrpc.WithPropagators(s.Telemetry.Propagator),
+//	))
+//
+// grpc-go calls a stats handler for each attempt, so each attempt is one
+// span of kind client, a child of the span in the call's context. A call
+// that grpc-go retries transparently is two attempts, and two spans. A
+// stream is one span, from its opening to its end. The span is named after
+// the full method without its leading slash, such as
+// "cart.v1.CartService/AddItem", and carries the attributes of
+// OpenTelemetry's RPC semantic conventions, among them rpc.system.name,
+// which is grpc, rpc.method, and rpc.response.status_code, the name of the
+// call's code, such as UNAVAILABLE. Its status is Error for every code other than
+// OK: otelgrpc counts every failed call as an error on the client's side,
+// NotFound included, unlike on a server's.
+//
+// Each attempt carries the trace context of its span, and the baggage of
+// the call's context, in its metadata, written by the Setup's propagator:
+// with the default one, traceparent, tracestate when the span context has
+// one, and baggage when the context holds any. So a
+// backend served with grpcserver joins the caller's trace, its server span
+// a child of the attempt's client span, and its handler sees the caller's
+// baggage.
+//
+// Each attempt also records the histogram rpc.client.call.duration on the
+// Setup's MeterProvider, in otelgrpc's instrumentation scope. humus records
+// no instrument of its own: whether it should is the question of Proposal:
+// humus's own metrics, in wave 5.
+//
+// Nothing reaches OpenTelemetry's globals: every provider and the
+// propagator are passed to otelgrpc, so it never falls back to them, and
+// the Client sets none. What is still read from the real environment, not
+// the Process's, is what grpcserver's documentation records: grpc-go's
+// logger, which reads GRPC_GO_LOG_SEVERITY_LEVEL and the other GRPC_GO_LOG_
+// variables and writes to the real standard error, grpc-go's other GRPC_
+// variables, and OTEL_SEMCONV_STABILITY_OPT_IN, which otelgrpc reads, and
+// which asks for the old RPC conventions with rpc/old or rpc/dup. The
+// Client adds nothing to that list.
 //
 // # Closing
 //

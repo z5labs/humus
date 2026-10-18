@@ -12,6 +12,7 @@ import (
 	"net"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -41,6 +42,12 @@ var _ grpc.ClientConnInterface = (*Client)(nil)
 // The Client dials settings.Addr through s.Host, with grpc-go's passthrough
 // resolver, so no name is looked up but by the Host.
 //
+// humus's first dial option is otelgrpc's client stats handler, given the
+// TracerProvider, the MeterProvider and the Propagator of s.Telemetry, so
+// each attempt is a client span and is measured, and nothing falls back to
+// OpenTelemetry's globals. A stats handler in opts is a second one, which
+// grpc-go calls as well.
+//
 // opts come after humus's own dial options, and the transport credentials
 // built from settings.TLS come after opts, so a
 // grpc.WithTransportCredentials in opts has no effect.
@@ -66,8 +73,17 @@ func NewClient(s *humus.Setup, settings Settings, opts ...grpc.DialOption) (*Cli
 		creds = credentials.NewTLS(settings.TLS)
 	}
 
-	dopts := make([]grpc.DialOption, 0, len(opts)+4)
+	// The stats handler comes first, so it is the first one grpc-go calls,
+	// and a stats handler in opts is a second one. Every provider and the
+	// propagator are passed, so otelgrpc never falls back to
+	// OpenTelemetry's globals.
+	dopts := make([]grpc.DialOption, 0, len(opts)+5)
 	dopts = append(dopts,
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler(
+			otelgrpc.WithTracerProvider(s.Telemetry.TracerProvider),
+			otelgrpc.WithMeterProvider(s.Telemetry.MeterProvider),
+			otelgrpc.WithPropagators(s.Telemetry.Propagator),
+		)),
 		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
 			return dial(ctx, "tcp", addr)
 		}),
