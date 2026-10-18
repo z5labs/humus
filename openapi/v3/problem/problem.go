@@ -28,6 +28,7 @@ package problem
 
 import (
 	"encoding/xml"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -77,12 +78,18 @@ func FromRequestError(e *openapi.RequestError) Details {
 // by enc. The detail's type is about:blank and its title is the status's
 // name. It is a handler for openapi.Unmatched.
 //
-// Handler calls enc once, and panics if enc is nil or returns nil. The
-// response's Content-Type is the encoder's media type, unless that is "",
-// and its Content-Length is the WriterTo's Len, when it has one. A header the API set, such as a 405's Allow, is kept. When the encoder's
-// Encode fails, the response is the status alone, and when the WriterTo it
-// returned fails, the response is cut short.
+// Handler calls enc once. It panics if enc is nil or returns nil, and if
+// status isn't the status of a final response: 200 to 599. The response's
+// Content-Type is the encoder's media type, unless that is "", and its
+// Content-Length is the WriterTo's Len, when it has one. A header the API
+// set, such as a 405's Allow, is kept. The response is the status alone
+// when status has no body, as 204 and 304 don't, and when the encoder's
+// Encode fails. When the WriterTo it returned fails, the response is cut
+// short.
 func Handler(status int, enc func() openapi.Encoder[Details]) http.Handler {
+	if status < http.StatusOK || status > 599 {
+		panic(fmt.Sprintf("problem: Handler's status %d isn't the status of a final response: 200 to 599", status))
+	}
 	if enc == nil {
 		panic("problem: Handler's encoder function is nil")
 	}
@@ -105,6 +112,10 @@ type handler struct {
 }
 
 func (h handler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
+	if !bodyAllowed(h.status) {
+		w.WriteHeader(h.status)
+		return
+	}
 	wt, err := h.enc.Encode(h.detail)
 	if err != nil || wt == nil {
 		w.WriteHeader(h.status)
@@ -113,7 +124,7 @@ func (h handler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	if mt := h.enc.MediaType(); mt != "" {
 		w.Header().Set("Content-Type", mt)
 	}
-	if l, ok := wt.(interface{ Len() int }); ok && bodyAllowed(h.status) {
+	if l, ok := wt.(interface{ Len() int }); ok {
 		w.Header().Set("Content-Length", strconv.Itoa(l.Len()))
 	}
 	w.WriteHeader(h.status)
@@ -125,8 +136,7 @@ func (h handler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
-// bodyAllowed reports whether a response with status has a body, and so a
-// Content-Length.
+// bodyAllowed reports whether a final response with status has a body.
 func bodyAllowed(status int) bool {
-	return status >= http.StatusOK && status != http.StatusNoContent && status != http.StatusNotModified
+	return status != http.StatusNoContent && status != http.StatusNotModified
 }

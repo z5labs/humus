@@ -310,6 +310,28 @@ func TestHandler(t *testing.T) {
 		require.Equal(t, 1, calls)
 	})
 
+	t.Run("the status alone, for a status with no body", func(t *testing.T) {
+		for _, status := range []int{http.StatusNoContent, http.StatusNotModified} {
+			rec := httptest.NewRecorder()
+			h := problem.Handler(status, func() openapi.Encoder[problem.Details] { return failingWriterEncoder{} })
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/orders/o-1", nil))
+
+			require.Equal(t, status, rec.Code)
+			require.Empty(t, rec.Header().Get("Content-Type"))
+			require.Empty(t, rec.Header().Get("Content-Length"))
+			require.Empty(t, rec.Body.String())
+		}
+	})
+
+	t.Run("a panic for a status that isn't a final response's", func(t *testing.T) {
+		for _, status := range []int{0, 99, http.StatusContinue, http.StatusEarlyHints, 600} {
+			want := fmt.Sprintf("problem: Handler's status %d isn't the status of a final response: 200 to 599", status)
+			require.PanicsWithValue(t, want, func() {
+				problem.Handler(status, xmlProblem)
+			})
+		}
+	})
+
 	t.Run("a panic for a nil encoder function", func(t *testing.T) {
 		require.PanicsWithValue(t, "problem: Handler's encoder function is nil", func() {
 			problem.Handler(http.StatusNotFound, nil)
