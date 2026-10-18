@@ -58,7 +58,8 @@ type Client struct {
 	port int
 
 	// tracer starts the span of a call the breaker rejected, and logger
-	// emits the breaker's log records, both under the scope scopeName.
+	// emits the breaker's log records, both under scopeName, the Client's
+	// instrumentation scope.
 	tracer trace.Tracer
 	logger log.Logger
 
