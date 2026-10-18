@@ -10,14 +10,17 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/health"
 )
 
 // Client is a grpc.ClientConnInterface, so generated code takes it:
@@ -30,6 +33,10 @@ import (
 type Client struct {
 	cc      *grpc.ClientConn
 	timeout time.Duration
+
+	// connected is Connected's latch, set by the first check that finds
+	// the connection ready. Every monitor Connected returns reads it.
+	connected atomic.Bool
 }
 
 var _ grpc.ClientConnInterface = (*Client)(nil)
@@ -116,4 +123,44 @@ func (c *Client) Invoke(ctx context.Context, method string, args, reply any, opt
 // code.
 func (c *Client) NewStream(ctx context.Context, desc *grpc.StreamDesc, method string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
 	return c.cc.NewStream(ctx, desc, method, opts...)
+}
+
+// Connected returns a monitor that is healthy once the Client has
+// connected to Addr: unhealthy until its connection is first ready, its
+// TLS handshake done, and healthy from then until the connection is
+// closed. A later outage doesn't make it unhealthy. It never returns an
+// error. A service is made ready once its dependency is reachable with
+//
+//	health.Readiness(client.Connected())
+//
+// Until the connection is first ready, each check starts it, if no RPC
+// has, and waits until it is ready or the check's context is done. It
+// makes no RPC. It is for readiness only: restarting the pod doesn't bring
+// a dependency back.
+func (c *Client) Connected() health.Monitor {
+	return health.MonitorFunc(c.checkConnected)
+}
+
+// checkConnected is the check of every monitor Connected returns.
+func (c *Client) checkConnected(ctx context.Context) (bool, error) {
+	if c.connected.Load() {
+		return c.cc.GetState() != connectivity.Shutdown, nil
+	}
+	for {
+		state := c.cc.GetState()
+		switch state {
+		case connectivity.Ready:
+			c.connected.Store(true)
+			return true, nil
+		case connectivity.Shutdown:
+			return false, nil
+		case connectivity.Idle:
+			// Connect only starts the connection, and returns at once. The
+			// state then changes from Idle, which WaitForStateChange sees.
+			c.cc.Connect()
+		}
+		if !c.cc.WaitForStateChange(ctx, state) {
+			return false, nil
+		}
+	}
 }
