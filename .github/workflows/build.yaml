@@ -91,15 +91,17 @@ jobs:
             exit "$failed"
 
         # The tests behind the testcontainers tag run only in the Kafka
-        # (testcontainers), RabbitMQ (testcontainers) and Shoppingcart
-        # (testcontainers) jobs, which are not required, so they are compiled
-        # and vetted here, without starting a container.
+        # (testcontainers), RabbitMQ (testcontainers), Kubernetes
+        # (testcontainers) and Shoppingcart (testcontainers) jobs, which are
+        # not required, so they are compiled and vetted here, without
+        # starting a container.
         - name: Vet the testcontainers tests
           if: ${{ !cancelled() }}
           run: |
             failed=0
             go -C queue/kafka vet -tags testcontainers ./... || failed=1
             go -C queue/rabbitmq vet -tags testcontainers ./... || failed=1
+            go -C kube vet -tags testcontainers ./... || failed=1
             go -C example vet -tags testcontainers ./... || failed=1
             exit "$failed"
 
@@ -168,6 +170,29 @@ jobs:
 
         - name: Test
           run: go -C queue/rabbitmq test -race -tags testcontainers ./...
+
+  # The tests behind the testcontainers build tag run k3s's Kubernetes API
+  # server in a container and open real sockets, so they run here rather than
+  # in Build: they don't slow the unit tests, they don't count toward the
+  # coverage gate, and this job is not a required check. humus keeps no fake
+  # API server, so these are the only tests of kube that reach one.
+  kube-testcontainers:
+    name: Kubernetes (testcontainers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+        - name: Checkout
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+          with:
+            go-version: '1.27.2'
+            cache-dependency-path: '**/go.sum'
+
+        - name: Test
+          run: go -C kube test -race -tags testcontainers ./...
 
   # The tests behind the testcontainers build tag run the shoppingcart's
   # Store, and the whole service on humus.OSHost(), against Postgres in a

@@ -4,7 +4,8 @@
 // https://opensource.org/licenses/MIT
 
 // Package kube reaches a Kubernetes API server with humus's lifecycle, with
-// client-go, Kubernetes' own client, and no controller-runtime.
+// client-go, Kubernetes' own client, and no controller-runtime, and
+// declares custom resources, whose CRDs it reflects from Go types.
 //
 // It is in the nested module github.com/z5labs/humus/kube, so client-go and
 // apimachinery stay out of the module graph of end users who don't talk to
@@ -124,6 +125,103 @@
 // providers grow with every cloud, and a Connection is three fields.
 // [CheckServer] and [CheckTLS] check the two required ones, and NewClient
 // reports every bad field together.
+//
+// # Custom resources
+//
+// A [Resource] declares a custom resource as Go values: its group, version,
+// kind, plural and scope, with its spec and status as plain Go structs. The
+// end user writes no markers and generates no code:
+//
+//	type MemcachedSpec struct {
+//		Size  int32  `json:"size"`
+//		Image string `json:"image"`
+//	}
+//
+//	type MemcachedStatus struct {
+//		ReadyReplicas int32              `json:"readyReplicas,omitempty"`
+//		Conditions    []metav1.Condition `json:"conditions,omitempty"`
+//	}
+//
+//	var Memcached = kube.Resource[MemcachedSpec, MemcachedStatus]{
+//		Group:   "cache.example.com",
+//		Version: "v1alpha1",
+//		Kind:    "Memcached",
+//		Plural:  "memcacheds",
+//		Scope:   kube.Namespaced,
+//	}
+//
+// One of its objects is an [Object], and [Resource.GVR] names the resource
+// to client-go's dynamic client.
+//
+// [Resource.CRD] reflects the resource's CustomResourceDefinition from Spec
+// and Status, as encoding/json encodes them, into a structural schema:
+//
+//	Go                                        schema
+//	bool                                      type: boolean
+//	int8 to int32, uint8, uint16              type: integer, format: int32
+//	int, int64, uint, uint32, uint64          type: integer, format: int64
+//	float32, float64                          type: number
+//	string                                    type: string
+//	[]byte                                    type: string, format: byte
+//	a slice or an array                       type: array, with items
+//	map[string]V                              type: object, with additionalProperties
+//	a struct                                  type: object, with a property for each field
+//	*T                                        T's schema, nullable unless the field is omitempty or omitzero
+//	metav1.Time, metav1.MicroTime             type: string, format: date-time
+//	metav1.Duration                           type: string
+//	resource.Quantity, intstr.IntOrString     x-kubernetes-int-or-string, anyOf integer and string
+//	runtime.RawExtension                      type: object, x-kubernetes-preserve-unknown-fields
+//	metav1.ObjectMeta, in a template          type: object
+//
+// A struct has a property for each field encoding/json writes, named by its
+// json tag, or by the field's name when the tag gives none. An embedded
+// struct with no name in its tag is inlined, as encoding/json does, and a
+// field with the string option is a string. A field is required unless its
+// json tag has omitempty or omitzero: the encoding decides it, since a
+// field the encoder always writes is always there. A field promoted from an
+// embedded pointer isn't required either, since a nil pointer leaves it
+// out.
+//
+// The CRD's root has apiVersion, kind and metadata, a required spec, and
+// status. It has one version, served and stored, with the status
+// subresource.
+//
+// CRD returns one error that names every mistake it finds, each where in
+// the object it is: a missing Group, Version, Kind or Plural, a Scope that
+// is neither Namespaced nor Cluster, a type that encodes itself with a
+// MarshalJSON or MarshalText method, a map whose keys aren't strings, an
+// interface, a channel, a function, and a type that contains itself, which
+// a schema without $ref can't express. It doesn't compile CEL: the API
+// server compiles every rule when the CRD is applied.
+//
+// The end user checks the CRD's YAML into their repository, and a golden
+// test keeps it true to the types. sigs.k8s.io/yaml writes it, and the
+// test rewrites it when it runs with -update:
+//
+//	var update = flag.Bool("update", false, "rewrite the golden files")
+//
+//	func TestMemcachedCRD(t *testing.T) {
+//		crd, err := app.Memcached.CRD()
+//		require.NoError(t, err)
+//		got, err := yaml.Marshal(crd) // sigs.k8s.io/yaml
+//		require.NoError(t, err)
+//
+//		const path = "deploy/crd/memcacheds.yaml"
+//		if *update {
+//			require.NoError(t, os.WriteFile(path, got, 0o644))
+//		}
+//		want, err := os.ReadFile(path)
+//		require.NoError(t, err)
+//		require.Equal(t, string(want), string(got))
+//	}
+//
+// The CRD carries its own apiVersion and kind, so the YAML applies with
+// kubectl or Helm as it stands.
+//
+// The controller never installs its CRD. Installing it would give the
+// controller's ServiceAccount write access to every CRD in the cluster, and
+// a CRD outlives the controller's pods. Whatever deploys the controller,
+// such as its Helm chart or its kubectl apply, applies the YAML.
 //
 // # What client-go still reaches
 //
