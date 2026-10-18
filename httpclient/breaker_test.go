@@ -427,6 +427,53 @@ func TestClient_a_policy_that_never_trips_turns_the_breaker_off(t *testing.T) {
 }
 
 func TestClient_a_panic_in_BreakerPolicy_reaches_the_caller(t *testing.T) {
+	t.Run("from a body's read", testPolicyPanicFromABody)
+
+	t.Run("from an attempt that fails, inside RoundTrip", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			h := humustest.NewHost(t) // nothing listens at payments:8443
+			host, dials := recordDials(h)
+
+			settings := paymentsSettings(t, humustest.NewCA(t))
+			settings.MaxAttempts = 1
+			trip := settings.BreakerPolicy.Trip
+			var panicked atomic.Bool
+			settings.BreakerPolicy.Trip = func(c circuit.Counts) bool {
+				if panicked.CompareAndSwap(false, true) {
+					panic("the end user's bug")
+				}
+				return trip(c)
+			}
+			var recovered any
+			st := runJob(t, host, settings, func(ctx context.Context, c *http.Client) error {
+				func() {
+					defer func() { recovered = recover() }()
+					_, _ = get(ctx, c, "https://payments:8443/charges/1")
+				}()
+				for range 4 {
+					_, err := get(ctx, c, "https://payments:8443/charges/1")
+					require.Error(t, err)
+					require.NotErrorIs(t, err, circuit.ErrRejected)
+				}
+				_, err := get(ctx, c, "https://payments:8443/charges/1")
+				require.ErrorIs(t, err, circuit.ErrRejected)
+				return nil
+			})
+			requireExitZero(t, st)
+			// A panic skips http.Client's stopping of the timer it set for
+			// Timeout, whose goroutine then waits for it to fire.
+			time.Sleep(settings.Timeout)
+
+			require.Equal(t, "the end user's bug", recovered)
+			require.Len(t, dials.all(), 5, "the failure Trip panicked on stays counted")
+		})
+	})
+}
+
+// testPolicyPanicFromABody shows a panic in BreakerPolicy, raised as a
+// body's read settles its ticket, reaching the caller, with the breaker
+// left consistent.
+func testPolicyPanicFromABody(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
 		ca := humustest.NewCA(t)

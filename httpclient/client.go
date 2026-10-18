@@ -39,9 +39,10 @@ const maxRedirects = 10
 // BackoffBase, a TLS that doesn't match BaseURL's scheme (an https BaseURL
 // with a nil TLS, or an http one with a config), a nil Classify and a
 // BreakerPolicy with a nil Trip or Probe. It reports every bad field in one
-// error that names each one. It also rejects a nil s, and an s whose Host
-// has no Dial, rather than let net/http fall back to dialling the real
-// network. It builds the dependency's retry.Budget and retry.Retrier, and
+// error that names each one. It also rejects a nil s, an s whose Host has
+// no Dial, rather than let net/http fall back to dialling the real network,
+// and an s whose Telemetry has no LoggerProvider, which the breaker logs
+// through. It builds the dependency's retry.Budget and retry.Retrier, and
 // its circuit breaker from settings.Breaker and settings.BreakerPolicy,
 // dials nothing, and registers a function with s.OnStop that closes the
 // client's idle connections.
@@ -61,6 +62,9 @@ func NewClient(s *humus.Setup, settings Settings) (*http.Client, error) {
 		return nil, errors.New("httpclient: NewClient: the Setup must not be nil")
 	}
 	err := checkSettings(settings)
+	if s.Telemetry.LoggerProvider == nil {
+		err = errors.Join(errors.New("the Setup's Telemetry.LoggerProvider must not be nil"), err)
+	}
 	if s.Host.Dial == nil {
 		err = errors.Join(errors.New("the Setup's Host.Dial must not be nil"), err)
 	}

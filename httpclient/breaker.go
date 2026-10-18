@@ -62,8 +62,11 @@ func readFailed(call context.Context) circuit.Outcome {
 
 // newObserver returns the breaker's observer for the dependency at o. It
 // emits one log record for each transition, in the context of the call
-// that made it: circuit breaker open at WARN, and circuit breaker
-// half-open and circuit breaker closed at INFO. Its attributes are the
+// that made it, without its cancellation: the call has often ended by then,
+// as a call whose deadline passed has, and an exporter handed a done
+// context would drop the record. The record keeps the call's span. Its
+// bodies are circuit breaker open at WARN, and circuit breaker half-open
+// and circuit breaker closed at INFO. Its attributes are the
 // dependency's server.address and server.port, the state the breaker left
 // and the counts of that state.
 func newObserver(logger log.Logger, o origin) func(context.Context, circuit.Transition) {
@@ -92,7 +95,7 @@ func newObserver(logger log.Logger, o origin) func(context.Context, circuit.Tran
 			attribute.Int("circuit.consecutive_failures", t.Counts.ConsecutiveFailures),
 			attribute.Int("circuit.timed_out", t.Counts.TimedOut),
 		)
-		logger.Emit(ctx, r)
+		logger.Emit(context.WithoutCancel(ctx), r)
 	}
 }
 

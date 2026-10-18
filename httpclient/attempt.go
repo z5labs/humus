@@ -59,11 +59,17 @@ func (t attemptTransport) RoundTrip(r *http.Request) (resp *http.Response, err e
 	// The breaker sees the call's context, not the attempt's, so that it
 	// is the call ending that ends the call, and an attempt that times out
 	// is the dependency's failure.
-	ticket, err := t.breaker.Allow(a.call)
-	if err != nil {
-		if r.Body != nil {
+	// RoundTrip must close the request's body, which only next does once
+	// it is sent: on a rejection, and on a panic in the breaker's Policy,
+	// which Allow may call, this layer closes it.
+	sent := false
+	defer func() {
+		if !sent && r.Body != nil {
 			_ = r.Body.Close()
 		}
+	}()
+	ticket, err := t.breaker.Allow(a.call)
+	if err != nil {
 		a.class, a.classified = Classification{Retry: retry.Stop, Breaker: circuit.Ignored}, true
 		return nil, err
 	}
@@ -77,6 +83,7 @@ func (t attemptTransport) RoundTrip(r *http.Request) (resp *http.Response, err e
 		}
 	}()
 
+	sent = true
 	resp, err = t.next.RoundTrip(r)
 	if err != nil && ended(a.call) {
 		a.class, a.classified = decided(a.call), true

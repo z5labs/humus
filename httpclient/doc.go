@@ -358,8 +358,9 @@
 // Before another attempt follows, the client reads the body of the response
 // it replaces into memory, up to 64 KiB, and closes it, before the wait.
 // Closing it ends the attempt's span, counts its result in the breaker,
-// and frees its connection during the backoff. If the wait is cut short, such as by the caller's context, the
-// buffered response is what the call returns. A body larger than 64 KiB
+// and frees its connection during the backoff. If the wait is cut short,
+// such as by the caller's context, the buffered response is what the call
+// returns. A body larger than 64 KiB
 // isn't retried: the call returns the response with its body intact. Error
 // bodies are small, so 64 KiB keeps every one the client retries, and
 // bounds what each call in flight holds.
