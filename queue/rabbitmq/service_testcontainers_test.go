@@ -29,6 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/bedrocktest"
+	"go.opentelemetry.io/otel/log"
 	"go.uber.org/goleak"
 
 	"github.com/z5labs/humus"
@@ -355,6 +356,68 @@ func TestService_a_grace_period_that_runs_out_counts_each_unacked_delivery_once(
 	}
 }
 
+// closeAllConnections closes every connection to the broker, as a node that
+// shuts down for an upgrade does, with 320 CONNECTION_FORCED.
+func closeAllConnections(t *testing.T) {
+	t.Helper()
+	code, out, err := rabbit(t).container.Exec(t.Context(), []string{"rabbitmqctl", "close_all_connections", "humus test"})
+	require.NoError(t, err)
+	if code != 0 {
+		b, _ := io.ReadAll(out)
+		t.Fatalf("rabbitmqctl close_all_connections exited %d: %s", code, b)
+	}
+}
+
+// TestService_reconnects_after_close_all_connections closes every connection
+// to the broker, so it doesn't run in parallel with the other tests.
+func TestService_reconnects_after_close_all_connections(t *testing.T) {
+	q := declareQueue(t)
+	publish(t, q, "0")
+
+	var got recorder
+	held := newInFlight(t, "0")
+	tel := humustest.NewTelemetry()
+	p, status := startApp(t, consumerSettings(plainText(t), q), func(_ context.Context, m rabbitmq.Message) error {
+		got.add(m)
+		if !m.Redelivered {
+			held.hold(m)
+		}
+		return nil
+	}, humustest.WithApp(humus.WithTelemetry(tel.Builder())))
+	// Released before the App's cleanup waits for Serve, should the test
+	// fail while it is held.
+	t.Cleanup(held.open)
+	held.await(t)
+
+	closeAllConnections(t)
+	eventually(t, func() bool { return len(records(tel.Logs(), "lost the connection")) == 1 }, "the lost connection was never logged")
+	lost := records(tel.Logs(), "lost the connection")[0]
+	require.Equal(t, log.SeverityWarn, lost.Severity())
+	require.Equal(t, "320", attrs(lost)["error.type"])
+	require.Contains(t, attrs(lost)["exception.message"], "CONNECTION_FORCED")
+
+	// 0 finishes, and its ack fails: the broker requeued it with the
+	// connection, and delivers it again once the Service has reconnected.
+	held.open()
+	eventually(t, func() bool { return len(got.ids()) == 2 }, "the message in flight was never delivered again")
+	publish(t, q, "1")
+	eventually(t, func() bool { return len(got.ids()) == 3 }, "what was published next was never processed")
+
+	msgs := got.messages()
+	require.Equal(t, []string{"0", "0", "1"}, idsOf(msgs))
+	require.False(t, msgs[0].Redelivered)
+	require.True(t, msgs[1].Redelivered, "the message in flight is delivered again, with Redelivered set")
+	require.False(t, msgs[2].Redelivered)
+	require.Len(t, records(tel.Logs(), "consuming"), 2, "it consumed again")
+
+	p.Signal(syscall.SIGTERM)
+	st := exit(t, status)
+	require.Zero(t, st.Code(), "cause: %v", st.Cause())
+	ready, consumers := queueState(t, q)
+	require.Zero(t, ready, "every message was acked")
+	require.Zero(t, consumers)
+}
+
 // TestService_at_most_once_never_redelivers_a_batch_it_acked closes every
 // connection to the broker, so it doesn't run in parallel with the other
 // tests.
@@ -367,39 +430,55 @@ func TestService_at_most_once_never_redelivers_a_batch_it_acked(t *testing.T) {
 	s := consumerSettings(plainText(t), q)
 	s.Delivery = queue.AtMostOnce
 	s.Prefetch = 3
-	_, status := startApp(t, s, func(_ context.Context, m rabbitmq.Message) error {
+	p, status := startApp(t, s, func(_ context.Context, m rabbitmq.Message) error {
 		got.add(m)
 		held.hold(m)
 		return nil
 	})
+	t.Cleanup(held.open)
 	held.await(t)
 
-	code, out, err := rabbit(t).container.Exec(t.Context(), []string{"rabbitmqctl", "close_all_connections", "humus test"})
-	require.NoError(t, err)
-	if code != 0 {
-		b, _ := io.ReadAll(out)
-		t.Fatalf("rabbitmqctl close_all_connections exited %d: %s", code, b)
-	}
+	closeAllConnections(t)
 
 	// The batch was acked, and the ack confirmed, before 0 was processed,
-	// so the rest of it is processed too once 0 finishes. In this story a
-	// lost connection then ends Serve; the reconnect comes later.
+	// so the rest of it is processed too once 0 finishes. What was
+	// prefetched behind it and never acked is delivered again once the
+	// Service has reconnected.
 	held.open()
+	eventually(t, func() bool { return len(got.ids()) == 3 }, "the messages were never all processed")
+	eventually(t, func() bool { ready, _ := queueState(t, q); return ready == 0 }, "a message was left on the queue")
+	p.Signal(syscall.SIGTERM)
 	st := exit(t, status)
-	require.Equal(t, humus.ExitFailure, st.Code(), "cause: %v", st.Cause())
-	require.ErrorContains(t, st.Cause(), "lost the connection consuming "+q)
+	require.Zero(t, st.Code(), "cause: %v", st.Cause())
 
-	// None of the batch, the first messages, is ready again: only what was
-	// prefetched behind it and never acked is.
-	ready := []string{}
-	for _, d := range takeReady(t, q) {
-		ready = append(ready, d.MessageId)
+	msgs := got.messages()
+	require.Equal(t, ids(3), idsOf(msgs), "each message was processed once, in order")
+	batch := 0
+	for batch < len(msgs) && !msgs[batch].Redelivered {
+		batch++
 	}
-	batch := 3 - len(ready)
 	t.Logf("the batch was %d messages", batch)
 	require.GreaterOrEqual(t, batch, 1)
-	require.Equal(t, ids(3)[:batch], got.ids(), "the batch was processed, once")
-	require.Equal(t, ids(3)[batch:], ready, "no message of the batch is delivered again")
+	for _, m := range msgs[batch:] {
+		require.True(t, m.Redelivered, "%s, after the batch, is a redelivery", m.MessageID)
+	}
+}
+
+func TestService_stops_when_its_queue_is_deleted(t *testing.T) {
+	t.Parallel()
+
+	q := declareQueue(t)
+	_, status := startApp(t, consumerSettings(plainText(t), q), func(context.Context, rabbitmq.Message) error {
+		return nil
+	})
+	eventually(t, func() bool { _, consumers := queueState(t, q); return consumers == 1 }, "the Service never consumed")
+
+	_, err := adminChannel(t).QueueDelete(q, false, false, false)
+	require.NoError(t, err)
+
+	st := exit(t, status)
+	require.Equal(t, humus.ExitFailure, st.Code(), "cause: %v", st.Cause())
+	require.ErrorContains(t, st.Cause(), "NOT_FOUND")
 }
 
 func TestService_stops_when_the_broker_refuses_the_queue_or_the_login(t *testing.T) {

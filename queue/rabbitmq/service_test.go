@@ -63,6 +63,11 @@ type unit struct {
 	svc *rabbitmq.Service
 	ch  *standIn
 	tel *humustest.Telemetry
+
+	mu sync.Mutex
+	// opened are the stand-ins the Service has opened, in order: ch first,
+	// and a new one on each connection after it.
+	opened []*standIn
 }
 
 // newUnit returns a Service of settings and p on a new stand-in. It must be
@@ -75,9 +80,31 @@ func newUnit(t *testing.T, settings rabbitmq.Settings, p queue.ProcessorFunc[rab
 	h := humustest.NewHost(t)
 	svc, err := rabbitmq.NewService(&humus.Setup{Host: h.Host(), Telemetry: sdk}, settings, p)
 	require.NoError(t, err)
-	ch := newStandIn()
-	rabbitmq.SetOpen(svc, ch.open)
-	return &unit{svc: svc, ch: ch, tel: tel}
+	u := &unit{svc: svc, ch: newStandIn(), tel: tel}
+	rabbitmq.SetOpen(svc, u.open)
+	return u
+}
+
+// open is the Service's open function: it opens ch the first time, and a
+// new stand-in each time after, as connecting again opens a new channel.
+func (u *unit) open(ctx context.Context) (rabbitmq.Channel, io.Closer, error) {
+	u.mu.Lock()
+	ch := u.ch
+	if len(u.opened) > 0 {
+		ch = newStandIn()
+	}
+	u.opened = append(u.opened, ch)
+	u.mu.Unlock()
+	return ch.open(ctx)
+}
+
+// channel returns the i-th stand-in the Service opened, from 0.
+func (u *unit) channel(t *testing.T, i int) *standIn {
+	t.Helper()
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	require.Greater(t, len(u.opened), i, "the Service opened %d channels", len(u.opened))
+	return u.opened[i]
 }
 
 // serve calls Serve with ctx on a goroutine of its own, and returns the
@@ -500,42 +527,117 @@ func TestService_Shutdown_before_Serve_makes_Serve_return_nil_at_once(t *testing
 	})
 }
 
-func TestService_a_lost_connection_ends_Serve_with_an_error_naming_the_queue(t *testing.T) {
+// forced is the error the broker closes every connection with when a node
+// shuts down, as for a rolling upgrade.
+var forced = &amqp.Error{Code: amqp.ConnectionForced, Reason: "CONNECTION_FORCED - broker forced connection closure with reason 'shutdown'", Server: true}
+
+func TestService_reconnects_after_a_connection_the_broker_forced_closed(t *testing.T) {
 	t.Parallel()
 
 	synctest.Test(t, func(t *testing.T) {
 		g := newGate("0")
 		var got seen
+		var mu sync.Mutex
+		redelivered := map[string]bool{}
 		u := newUnit(t, settings(), func(_ context.Context, m rabbitmq.Message) error {
 			got.add(m.MessageID)
-			g.wait(m.MessageID)
+			mu.Lock()
+			redelivered[m.MessageID] = m.Redelivered
+			mu.Unlock()
+			// Only the first delivery of 0 is held.
+			if !m.Redelivered {
+				g.wait(m.MessageID)
+			}
 			return nil
 		})
 		served := u.serve(t.Context())
 		u.ch.deliver("0", "1")
 		synctest.Wait()
 
-		forced := &amqp.Error{Code: amqp.ConnectionForced, Reason: "CONNECTION_FORCED - broker forced connection closure", Server: true}
 		u.ch.lose(forced)
 		synctest.Wait()
 		select {
 		case err := <-served:
-			t.Fatalf("Serve returned before the delivery in flight finished: %v", err)
+			t.Fatalf("Serve returned on a lost connection: %v", err)
 		default:
 		}
+		require.Len(t, records(u.tel.Logs(), "lost the connection"), 1, "the lost connection is logged while 0 is in flight")
 
-		// The delivery in flight finishes, and its ack fails and is
-		// dropped: the broker requeued it with the connection.
+		// The delivery in flight finishes before the Service connects
+		// again, and its ack fails on the closed channel, and is dropped:
+		// the broker requeued it with the connection.
 		g.release("0")
-		err := <-served
-		require.ErrorIs(t, err, forced)
-		require.ErrorContains(t, err, "orders")
-		require.Equal(t, []string{"0"}, got.get())
-		require.Equal(t, []string{qos10, consume, "connection lost", "ack 1", closeConn}, u.ch.Calls())
+		synctest.Wait()
+		require.Equal(t, []string{qos10, consume, "connection lost", "ack 1", closeConn}, u.ch.Calls(),
+			"1, received but not processed, is neither acked nor nacked")
+
+		lost := records(u.tel.Logs(), "lost the connection")
+		require.Len(t, lost, 1)
+		require.Equal(t, log.SeverityWarn, lost[0].Severity())
+		a := attrs(lost[0])
+		require.Equal(t, "320", a["error.type"], "the AMQP reply code")
+		require.Equal(t, forced.Reason, a["exception.message"])
+		require.Equal(t, "orders", a["messaging.destination.name"])
+		require.Equal(t, "rabbit", a["server.address"])
+
+		// The Service consumes on a new channel, where the broker delivers
+		// again what it requeued.
+		next := u.channel(t, 1)
+		next.redeliver("0", "1")
+		next.deliver("2")
+		synctest.Wait()
+		require.Equal(t, []string{"0", "0", "1", "2"}, got.get(), "0 was processed again only once the broker delivered it again")
+		mu.Lock()
+		require.True(t, redelivered["0"])
+		require.True(t, redelivered["1"])
+		require.False(t, redelivered["2"])
+		mu.Unlock()
+		require.Equal(t, []string{qos10, consume, "ack 1", "ack 2", "ack 3"}, next.Calls())
+		require.Len(t, records(u.tel.Logs(), "consuming"), 2, "consuming is logged on each connection")
+
+		require.NoError(t, u.svc.Shutdown(t.Context()))
+		require.NoError(t, <-served, "the failed ack is not Serve's error")
+		require.Equal(t, []string{qos10, consume, "ack 1", "ack 2", "ack 3", cancel, closeChannel, closeConn}, next.Calls())
 	})
 }
 
-func TestService_a_consumer_the_broker_cancels_ends_Serve_with_an_error(t *testing.T) {
+func TestService_drops_the_failed_acks_of_every_delivery_in_flight(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		g := newGate("0", "1", "2")
+		s := settings()
+		s.Concurrency = 3
+		u := newUnit(t, s, func(_ context.Context, m rabbitmq.Message) error {
+			g.wait(m.MessageID)
+			return nil
+		})
+		served := u.serve(t.Context())
+		u.ch.deliver("0", "1", "2")
+		synctest.Wait()
+
+		u.ch.lose(forced)
+		for _, id := range []string{"0", "1", "2"} {
+			g.release(id)
+		}
+		synctest.Wait()
+		calls := u.ch.Calls()
+		require.Equal(t, []string{qos10, consume, "connection lost"}, calls[:3])
+		require.ElementsMatch(t, []string{"ack 1", "ack 2", "ack 3"}, calls[3:6], "every ack failed on the closed channel")
+		require.Equal(t, []string{closeConn}, calls[6:])
+		select {
+		case err := <-served:
+			t.Fatalf("Serve returned the failed acks: %v", err)
+		default:
+		}
+		require.Equal(t, []string{qos10, consume}, u.channel(t, 1).Calls(), "it consumes again")
+
+		require.NoError(t, u.svc.Shutdown(t.Context()))
+		require.NoError(t, <-served)
+	})
+}
+
+func TestService_stops_when_the_broker_closes_the_channel_with_PRECONDITION_FAILED(t *testing.T) {
 	t.Parallel()
 
 	synctest.Test(t, func(t *testing.T) {
@@ -543,15 +645,160 @@ func TestService_a_consumer_the_broker_cancels_ends_Serve_with_an_error(t *testi
 		served := u.serve(t.Context())
 		synctest.Wait()
 
-		// The broker cancels the consumer, as when its queue is deleted:
-		// the deliveries end, and the channel stays open.
-		u.ch.mu.Lock()
-		u.ch.endDeliveries()
-		u.ch.mu.Unlock()
+		timedOut := &amqp.Error{Code: amqp.PreconditionFailed, Reason: "PRECONDITION_FAILED - delivery acknowledgement on channel 1 timed out", Server: true}
+		u.ch.lose(timedOut)
 
 		err := <-served
-		require.ErrorContains(t, err, "lost the connection consuming orders")
-		require.Equal(t, []string{qos10, consume, closeChannel, closeConn}, u.ch.Calls())
+		require.ErrorIs(t, err, timedOut)
+		require.ErrorContains(t, err, "orders")
+		require.Equal(t, []string{qos10, consume, "connection lost", closeConn}, u.ch.Calls())
+		u.mu.Lock()
+		require.Len(t, u.opened, 1, "it did not connect again")
+		u.mu.Unlock()
+		require.Empty(t, records(u.tel.Logs(), "lost the connection"), "an error that ends the Service is returned, not logged")
+	})
+}
+
+func TestService_a_consumer_the_broker_cancels_reconnects_and_stops_on_NOT_FOUND(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		u := newUnit(t, settings(), func(context.Context, rabbitmq.Message) error { return nil })
+		notFound := &amqp.Error{Code: amqp.NotFound, Reason: "NOT_FOUND - no queue 'orders' in vhost '/'", Server: true}
+		var attempts atomic.Int32
+		rabbitmq.SetOpen(u.svc, func(ctx context.Context) (rabbitmq.Channel, io.Closer, error) {
+			if attempts.Add(1) == 1 {
+				return u.ch.open(ctx)
+			}
+			ch, conn, err := newStandIn().open(ctx)
+			return refusingConsume{Channel: ch, err: notFound}, conn, err
+		})
+		served := u.serve(t.Context())
+		synctest.Wait()
+
+		// The broker cancels the consumer, as when its queue is deleted:
+		// the deliveries end, and the channel stays open.
+		u.ch.cancelConsumer()
+
+		err := <-served
+		require.ErrorIs(t, err, notFound)
+		require.ErrorContains(t, err, "consuming orders")
+		require.Equal(t, int32(2), attempts.Load(), "it connected again once")
+		require.Equal(t, []string{qos10, consume, "consumer cancelled", closeChannel, closeConn}, u.ch.Calls())
+
+		lost := records(u.tel.Logs(), "lost the connection")
+		require.Len(t, lost, 1, "the cancelled consumer is handled as a lost connection")
+		require.Equal(t, log.SeverityWarn, lost[0].Severity())
+		require.Equal(t, "the broker cancelled the consumer", attrs(lost[0])["exception.message"])
+	})
+}
+
+func TestService_at_most_once_processes_a_confirmed_batch_whole_when_the_connection_is_lost(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		g := newGate("0")
+		var got seen
+		s := settings()
+		s.Delivery = queue.AtMostOnce
+		s.Prefetch = 3
+		u := newUnit(t, s, func(_ context.Context, m rabbitmq.Message) error {
+			got.add(m.MessageID)
+			g.wait(m.MessageID)
+			return nil
+		})
+		u.ch.deliver("0", "1", "2")
+		served := u.serve(t.Context())
+		synctest.Wait()
+		require.Equal(t, []string{"0"}, got.get())
+		require.Equal(t, []string{"qos 3", "consume orders humus autoAck=false exclusive=false noLocal=false noWait=false args=map[]",
+			"ack 3 multiple", "qos 3"}, u.ch.Calls(), "the batch was acked, and the ack confirmed")
+
+		u.ch.lose(forced)
+		synctest.Wait()
+		g.release("0")
+		synctest.Wait()
+		require.Equal(t, []string{"0", "1", "2"}, got.get(), "the batch was acked, so all of it is processed")
+		require.Equal(t, []string{"qos 3", "consume orders humus autoAck=false exclusive=false noLocal=false noWait=false args=map[]"},
+			u.channel(t, 1).Calls(), "it consumes again")
+
+		require.NoError(t, u.svc.Shutdown(t.Context()))
+		require.NoError(t, <-served)
+	})
+}
+
+func TestService_at_most_once_never_processes_a_batch_whose_ack_failed(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		var got seen
+		s := settings()
+		s.Delivery = queue.AtMostOnce
+		s.Prefetch = 3
+		u := newUnit(t, s, func(_ context.Context, m rabbitmq.Message) error {
+			got.add(m.MessageID)
+			return nil
+		})
+		u.ch.holdQos = true
+		u.ch.deliver("0", "1")
+		served := u.serve(t.Context())
+		synctest.Wait()
+		require.Equal(t, "qos 3", u.ch.Calls()[3], "the Qos after the ack is held")
+
+		// The connection drops before the Qos is answered: the ack may
+		// not have reached the broker, so the batch isn't processed.
+		u.ch.lose(forced)
+		synctest.Wait()
+		require.Empty(t, got.get())
+
+		u.channel(t, 1).redeliver("0", "1")
+		synctest.Wait()
+		require.Equal(t, []string{"0", "1"}, got.get(), "processed once, as the broker delivered it again")
+
+		require.NoError(t, u.svc.Shutdown(t.Context()))
+		require.NoError(t, <-served)
+	})
+}
+
+func TestService_SIGTERM_while_reconnecting_exits_0_at_once(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		ch := newStandIn()
+		tel := humustest.NewTelemetry()
+		var attempts atomic.Int32
+		p, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+			svc, err := rabbitmq.NewService(s, settings(), queue.ProcessorFunc[rabbitmq.Message](func(context.Context, rabbitmq.Message) error {
+				return nil
+			}))
+			if err != nil {
+				return nil, err
+			}
+			rabbitmq.SetOpen(svc, func(ctx context.Context) (rabbitmq.Channel, io.Closer, error) {
+				if attempts.Add(1) == 1 {
+					return ch.open(ctx)
+				}
+				// The broker is down for its upgrade.
+				return nil, nil, syscall.ECONNREFUSED
+			})
+			return []humus.Service{svc}, nil
+		},
+			humustest.WithApp(humus.WithHost(humustest.NewHost(t).Host()), humus.WithTelemetry(tel.Builder())),
+		)
+		synctest.Wait()
+		ch.lose(forced)
+		time.Sleep(time.Minute)
+		require.Greater(t, attempts.Load(), int32(3), "it kept connecting again")
+		require.NotEmpty(t, records(tel.Logs(), "connecting failed"), "each failed attempt is logged")
+		for _, r := range records(tel.Logs(), "connecting failed") {
+			require.Equal(t, log.SeverityWarn, r.Severity())
+		}
+
+		start := time.Now()
+		p.Signal(syscall.SIGTERM)
+		st := <-status
+		require.Zero(t, st.Code(), "cause: %v", st.Cause())
+		require.Zero(t, time.Since(start), "the backoff was cut short")
 	})
 }
 

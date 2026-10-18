@@ -50,6 +50,29 @@ func TestStops(t *testing.T) {
 	}
 }
 
+func TestStopsConsuming(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name  string
+		err   error
+		stops bool
+	}{
+		{name: "a delivery held past consumer_timeout", err: &amqp.Error{Code: amqp.PreconditionFailed, Reason: "PRECONDITION_FAILED - delivery acknowledgement on channel 1 timed out", Server: true}, stops: true},
+		{name: "a refusal of the queue", err: &amqp.Error{Code: amqp.NotFound, Reason: "NOT_FOUND - no queue 'orders' in vhost '/'", Server: true}, stops: true},
+		{name: "a refusal of the login", err: &amqp.Error{Code: amqp.AccessRefused, Server: true}, stops: true},
+		{name: "a connection the broker forced closed", err: &amqp.Error{Code: amqp.ConnectionForced, Reason: "CONNECTION_FORCED - broker forced connection closure with reason 'shutdown'", Server: true}},
+		{name: "a closed channel", err: amqp.ErrClosed},
+		{name: "a consumer the broker cancelled", err: errLost},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			require.Equal(t, tc.stops, stopsConsuming(tc.err))
+		})
+	}
+}
+
 func TestNewMessage(t *testing.T) {
 	t.Parallel()
 

@@ -21,7 +21,9 @@ import (
 // the Service's unit tests. It implements no part of AMQP and keeps no
 // queue: it hands the Service the deliveries the test gives it, records
 // each call the Service makes, and answers a Qos made after consuming has
-// started only when the test says, if the test holds them.
+// started only when the test says, if the test holds them. It closes as a
+// lost connection does, failing every call after, and ends its deliveries
+// as a consumer the broker cancelled does, when the test says.
 type standIn struct {
 	mu    sync.Mutex
 	calls []string
@@ -65,6 +67,16 @@ func (s *standIn) open(context.Context) (rabbitmq.Channel, io.Closer, error) {
 // deliver gives the Service a delivery for each ID, as the broker would,
 // with the next delivery tags, from 1.
 func (s *standIn) deliver(ids ...string) {
+	s.give(false, ids)
+}
+
+// redeliver gives the Service a delivery for each ID, as deliver does, with
+// Redelivered set, as the broker delivers again what it requeued.
+func (s *standIn) redeliver(ids ...string) {
+	s.give(true, ids)
+}
+
+func (s *standIn) give(redelivered bool, ids []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, id := range ids {
@@ -73,6 +85,7 @@ func (s *standIn) deliver(ids ...string) {
 			DeliveryTag: s.nextTag,
 			MessageId:   id,
 			RoutingKey:  queueName,
+			Redelivered: redelivered,
 		}
 	}
 }
@@ -88,6 +101,15 @@ func (s *standIn) lose(err *amqp.Error) {
 	defer s.mu.Unlock()
 	s.record("connection lost")
 	s.close(err)
+}
+
+// cancelConsumer ends the deliveries as the broker cancelling the consumer
+// does, as when its queue is deleted. The channel stays open.
+func (s *standIn) cancelConsumer() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.record("consumer cancelled")
+	s.endDeliveries()
 }
 
 // Calls returns the calls the Service has made, in order.
@@ -109,19 +131,24 @@ func (s *standIn) endDeliveries() {
 	}
 }
 
-// close ends the deliveries, sends err, if any, to every NotifyClose
-// listener and closes them, as amqp091 does. s.mu is held.
+// close sends err, if any, to every NotifyClose listener, ends the
+// deliveries, and closes the listeners, in the order amqp091's
+// Channel.shutdown does, so a listener has the error by the time the
+// deliveries end. s.mu is held.
 func (s *standIn) close(err *amqp.Error) {
-	s.endDeliveries()
 	s.goneOnce.Do(func() {
-		close(s.gone)
-		for _, c := range s.notify {
-			if err != nil {
+		if err != nil {
+			for _, c := range s.notify {
 				c <- err
 			}
+		}
+		close(s.gone)
+		s.endDeliveries()
+		for _, c := range s.notify {
 			close(c)
 		}
 	})
+	s.endDeliveries()
 }
 
 // closed reports whether the channel is closed. s.mu is held.
