@@ -216,9 +216,9 @@ func (s *Scheme) With(edit func(*Scheme)) *Scheme {
 	return &c
 }
 
-// same reports whether s and o are one scheme: copies of one declaration,
+// Same reports whether s and o are one scheme: copies of one declaration,
 // documented alike.
-func (s *Scheme) same(o *Scheme) bool {
+func (s *Scheme) Same(o *Scheme) bool {
 	return s.id == o.id && s.Format == o.Format && s.Formatted == o.Formatted && s.Description == o.Description
 }
 

@@ -37,6 +37,10 @@ type route struct {
 	logger   log.Logger
 	bodyType string // the decoder's media type, parsed and lowercased
 	meta     parts  // its own parts, for its metadata in the document
+
+	// doc is the encoded document. The document's route serves it in
+	// place of a handler; it is nil on every other route.
+	doc documentHandler
 }
 
 // parseMediaType returns mt's type and subtype, lowercased, without
@@ -52,15 +56,25 @@ func parseMediaType(mt string) string {
 	return parsed
 }
 
-// ServeHTTP decodes r's parameters and body, calls the handler, and writes
-// its response, or the answer to its error. r is the copy of the request
-// chi routed, carrying the path's values.
+// ServeHTTP authenticates r, decodes its parameters and body, calls the
+// handler, and writes its response, or the answer to its error. r is the
+// copy of the request chi routed, carrying the path's values.
 //
-// A panic of the decoder's Decode, of the handler, or of the encoder's
-// Encode is recovered, recorded, and answered by the catch-all. A panic of
-// the encoder's WriterTo is recovered and recorded, and cuts the response
-// short.
+// A panic of a verifier, of the decoder's Decode, of the handler, or of
+// the encoder's Encode is recovered, recorded, and answered by the
+// catch-all. A panic of the encoder's WriterTo is recovered and recorded,
+// and cuts the response short.
+//
+// The document's route authenticates r, then serves the document.
 func (rt *route) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r, ok := rt.authenticate(w, r)
+	if !ok {
+		return
+	}
+	if rt.doc != nil {
+		rt.doc.ServeHTTP(w, r)
+		return
+	}
 	st, rerr := rt.params(r)
 	if rerr != nil {
 		rt.reject(w, r, rerr)

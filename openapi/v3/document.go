@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/z5labs/humus/internal/authn"
 )
 
 // openAPIVersion is the version of OpenAPI the document follows: the latest
@@ -27,8 +29,14 @@ const openAPIVersion = "3.2.0"
 // NewAPI builds the document from the API's operations and their codecs,
 // and encodes it once, so every request for it gets the same bytes. A
 // path with a parameter, and a second Document, are NewAPI errors.
-func Document(p Path) Operation {
-	return Operation{op: &operation{method: http.MethodGet, path: p, document: true}}
+//
+// The document is secured like the API: a request for it must meet the
+// Security given to NewAPI. Of opts, Document takes Security alone, which
+// replaces the API's, so Document(p, Security(auth.Disabled())) serves the
+// document to anyone. The document doesn't describe itself, so any other
+// option is a NewAPI error.
+func Document(p Path, opts ...Option) Operation {
+	return Operation{op: &operation{method: http.MethodGet, path: p, opts: opts, document: true}}
 }
 
 // Summary is the operation's summary in the document: a short sentence.
@@ -70,9 +78,11 @@ func (f partFunc) apply(p *parts) { f(p) }
 // so the document's bytes depend only on the API.
 type (
 	document struct {
-		OpenAPI string                              `json:"openapi"`
-		Info    infoDoc                             `json:"info"`
-		Paths   map[string]map[string]*operationDoc `json:"paths"`
+		OpenAPI    string                              `json:"openapi"`
+		Info       infoDoc                             `json:"info"`
+		Paths      map[string]map[string]*operationDoc `json:"paths"`
+		Components *componentsDoc                      `json:"components,omitempty"`
+		Security   []requirementDoc                    `json:"security,omitzero"`
 	}
 
 	infoDoc struct {
@@ -90,6 +100,10 @@ type (
 		RequestBody *requestBodyDoc        `json:"requestBody,omitempty"`
 		Responses   map[string]responseDoc `json:"responses"`
 		Deprecated  bool                   `json:"deprecated,omitempty"`
+
+		// Security is nil, and left out, for an operation without a
+		// Security of its own, and [] for Security(auth.Disabled()).
+		Security []requirementDoc `json:"security,omitzero"`
 	}
 
 	paramDoc struct {
@@ -184,19 +198,35 @@ func (rt *route) document() *operationDoc {
 		add(http.StatusRequestEntityTooLarge, re.mediaType, re.schema)
 		add(http.StatusUnsupportedMediaType, re.mediaType, re.schema)
 	}
+	security := rt.answers.security
+	if canAnswer401(security) {
+		add(http.StatusUnauthorized, re.mediaType, re.schema)
+	}
+	if canAnswer403(security) {
+		add(http.StatusForbidden, re.mediaType, re.schema)
+	}
+	if meta.security != nil {
+		doc.Security = requirementsDoc(security)
+	}
 	ca := rt.answers.catchAll
 	add(ca.status, ca.mediaType, ca.schema)
 	return doc
 }
 
-// encodeDocument returns the document of info and routes, encoded as JSON.
-// NewAPI calls it only when it found no mistake, so every route's answers
-// are bound.
-func encodeDocument(info Info, routes []*route) ([]byte, error) {
+// encodeDocument returns the document of info and routes, encoded as JSON,
+// with security, the API's requirements, as its top-level security, and
+// schemes, every scheme of every requirement, as its components. NewAPI
+// calls it only when it found no mistake, so every route's answers and
+// requirements are bound.
+func encodeDocument(info Info, routes []*route, security *authn.List, schemes []*authn.Scheme) ([]byte, error) {
 	doc := document{
-		OpenAPI: openAPIVersion,
-		Info:    infoDoc(info),
-		Paths:   make(map[string]map[string]*operationDoc),
+		OpenAPI:    openAPIVersion,
+		Info:       infoDoc(info),
+		Paths:      make(map[string]map[string]*operationDoc),
+		Components: components(schemes),
+	}
+	if security != nil {
+		doc.Security = requirementsDoc(security)
 	}
 	for _, r := range routes {
 		path := r.path.String()

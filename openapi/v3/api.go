@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/log"
 
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/internal/authn"
 )
 
 // loggerName is the name of the logger the API logs through.
@@ -84,7 +85,22 @@ type API struct {
 //   - a parameter's float64 value, in its Enum, Default, Example or bounds,
 //     that is NaN or infinite, which the document can't hold;
 //   - Status(http.StatusNoContent) with an encoder whose media type isn't
-//     "".
+//     "";
+//   - Security() with no requirement, and auth.Disabled() with another
+//     requirement or inside an auth.All;
+//   - every mistake auth.NewHandler reports in a requirement: the zero
+//     Scheme or Requirement, a nil verify function, two different schemes
+//     with one name, here in any two lists of the API, a name that isn't
+//     made of letters, digits, '.', '-' and '_', one scheme twice in one
+//     All, Format on a scheme that isn't Bearer, a Basic realm that is
+//     empty or holds a quote, an API key read from an empty name, an
+//     OAuth2 with no flow, a flow without the URLs it needs, or a scope no
+//     flow declares, and an OpenIDConnect whose discovery URL isn't
+//     absolute;
+//   - an Error or the catch-all at 401 on an operation that can answer
+//     401, and at 403 on one that can answer 403, as for RequestErrors'
+//     other statuses;
+//   - a nil option given to Document, and one that isn't Security.
 //
 // With a Document, it builds the API's document, and encodes it once.
 //
@@ -92,10 +108,12 @@ type API struct {
 // "github.com/z5labs/humus/openapi/v3".
 func NewAPI(s *humus.Setup, info Info, unmatched Unmatched, requestErrors RequestErrorAnswer, catchAll Fallback, ops []Operation, opts ...APIOption) (*API, error) {
 	b := builder{
-		seenRoutes:   make(map[string]bool),
-		templates:    make(map[string]string),
-		checkedPaths: make(map[string]bool),
-		operationIDs: make(map[string]string),
+		seenRoutes:      make(map[string]bool),
+		templates:       make(map[string]string),
+		checkedPaths:    make(map[string]bool),
+		operationIDs:    make(map[string]string),
+		schemes:         make(map[string]*authn.Scheme),
+		reportedSchemes: make(map[string]bool),
 	}
 	if info.Title == "" {
 		b.fail("Info.Title is empty")
@@ -137,6 +155,7 @@ func NewAPI(s *humus.Setup, info Info, unmatched Unmatched, requestErrors Reques
 		}
 	}
 	checkAPIConflicts(&b, api)
+	api.security = b.security("", apiParts.security)
 
 	logger := s.Telemetry.LoggerProvider.Logger(loggerName)
 	var routes []*route
@@ -146,7 +165,7 @@ func NewAPI(s *humus.Setup, info Info, unmatched Unmatched, requestErrors Reques
 			continue
 		}
 		if o.op.document {
-			b.document(o.op)
+			b.document(o.op, api)
 			continue
 		}
 		if r := b.operation(o.op, api, logger); r != nil {
@@ -156,7 +175,7 @@ func NewAPI(s *humus.Setup, info Info, unmatched Unmatched, requestErrors Reques
 	var doc []byte
 	if len(b.errs) == 0 && b.docPath != nil {
 		var err error
-		if doc, err = encodeDocument(info, routes); err != nil {
+		if doc, err = encodeDocument(info, routes, api.security, b.schemeOrder); err != nil {
 			b.fail("encoding the document: %w", err)
 		}
 	}
@@ -169,7 +188,16 @@ func NewAPI(s *humus.Setup, info Info, unmatched Unmatched, requestErrors Reques
 		a.mux.Method(r.method, r.path.String(), r)
 	}
 	if b.docPath != nil {
-		a.mux.Method(http.MethodGet, b.docPath.String(), documentHandler(doc))
+		answers := api
+		answers.security = b.docSecurity
+		a.mux.Method(http.MethodGet, b.docPath.String(), &route{
+			name:    http.MethodGet + " " + b.docPath.String(),
+			method:  http.MethodGet,
+			path:    *b.docPath,
+			answers: answers,
+			logger:  logger,
+			doc:     documentHandler(doc),
+		})
 	}
 	a.mux.NotFound(unmatched.NotFound.ServeHTTP)
 	a.mux.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
@@ -228,11 +256,13 @@ func routePath(r *http.Request) string {
 	}
 }
 
-// resolved is a set of bound answers: the API's, or one operation's.
+// resolved is a set of bound answers, and the requirements a request must
+// meet: the API's, or one operation's.
 type resolved struct {
 	requestErrors *answer
 	catchAll      *answer
 	errors        []boundError
+	security      *authn.List // nil when there are none
 }
 
 // boundError is a bound Error, with the type it answers.
@@ -249,6 +279,13 @@ type builder struct {
 	checkedPaths map[string]bool
 	operationIDs map[string]string // an OperationID to its operation
 	docPath      *Path             // the first Document's
+	docSecurity  *authn.List       // the first Document's requirements
+
+	// Every scheme of every list of requirements, by name and in the order
+	// they are named first, and the names reported as two schemes'.
+	schemes         map[string]*authn.Scheme
+	schemeOrder     []*authn.Scheme
+	reportedSchemes map[string]bool
 }
 
 func (b *builder) fail(format string, args ...any) {
@@ -300,18 +337,46 @@ func (b *builder) route(op *operation) {
 }
 
 // document checks the operation Document returned: its path, which has no
-// parameter, and that it is the API's only Document.
-func (b *builder) document(op *operation) {
+// parameter, that it is the API's only Document, and its options, of
+// which it takes Security alone. Its requirements are its own Security's,
+// or the API's.
+func (b *builder) document(op *operation, api resolved) {
 	b.route(op)
 	path := op.path.String()
+	where := "Document at " + path + ": "
 	if op.path.hasParam() {
 		b.fail("Document's path %s has a parameter", path)
+	}
+	var own parts
+	for i, opt := range op.opts {
+		switch opt.(type) {
+		case nil:
+			b.fail("%sits option %d is nil", where, i)
+		case securityOption:
+			opt.apply(&own)
+		default:
+			b.fail("%sits option %d isn't Security, which is the only option Document takes", where, i)
+		}
+	}
+	security := api.security
+	if own.security != nil {
+		security = b.security(where, own.security)
+	}
+	if canAnswer401(security) {
+		// The document isn't listed in itself, but its answers mustn't
+		// clash either.
+		answers := api
+		answers.security = security
+		checkConflicts(func(format string, args ...any) {
+			b.fail("%s"+format, append([]any{where}, args...)...)
+		}, answers, own, false, false)
 	}
 	if b.docPath != nil {
 		b.fail("two Documents, at %s and %s", b.docPath, path)
 		return
 	}
 	b.docPath = &op.path
+	b.docSecurity = security
 }
 
 // operation checks op and binds its codecs and its own parts. It returns
@@ -369,6 +434,9 @@ func (b *builder) operation(op *operation, api resolved, logger log.Logger) *rou
 		answers.catchAll = b.bind(name+": "+own.catchAll.name(), own.catchAll)
 	}
 	answers.errors = mergeErrors(b, name, api.errors, own.errors)
+	if own.security != nil {
+		answers.security = b.security(name+": ", own.security)
+	}
 
 	if own.statusSet && (own.status < 100 || own.status > 599) {
 		fail("Status(%d) isn't an HTTP status", own.status)
@@ -454,7 +522,8 @@ func checkAPIConflicts(b *builder, api resolved) {
 
 // checkConflicts reports two of an operation's answers at one status,
 // unless both are the API's own Errors or catch-all, which
-// checkAPIConflicts reports.
+// checkAPIConflicts reports. RequestErrors claims 401 and 403 by the
+// operation's requirements, in answers.
 func checkConflicts(fail func(string, ...any), answers resolved, own parts, canReject400, canReject4xx bool) {
 	type claim struct {
 		name string
@@ -481,6 +550,12 @@ func checkConflicts(fail func(string, ...any), answers resolved, own parts, canR
 		if canReject4xx {
 			claimStatus(http.StatusRequestEntityTooLarge, claim{name: "RequestErrors", own: true})
 			claimStatus(http.StatusUnsupportedMediaType, claim{name: "RequestErrors", own: true})
+		}
+		if canAnswer401(answers.security) {
+			claimStatus(http.StatusUnauthorized, claim{name: "RequestErrors", own: true})
+		}
+		if canAnswer403(answers.security) {
+			claimStatus(http.StatusForbidden, claim{name: "RequestErrors", own: true})
 		}
 	}
 	if answers.catchAll != nil {
