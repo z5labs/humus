@@ -25,6 +25,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/health"
 	"github.com/z5labs/humus/queue"
 )
 
@@ -86,11 +87,13 @@ type Service struct {
 }
 
 // call is one call of Serve: the function that cancels the context the
-// deliveries are processed with, and served, which is closed when Serve
-// returns.
+// deliveries are processed with, served, which is closed when Serve
+// returns, and consuming, which is set once the broker first answers the
+// Service's basic.consume.
 type call struct {
-	abort  context.CancelFunc
-	served chan struct{}
+	abort     context.CancelFunc
+	served    chan struct{}
+	consuming atomic.Bool
 }
 
 // notServed is the call of a Service that was shut down before it was
@@ -301,6 +304,9 @@ func (svc *Service) Serve(ctx context.Context) error {
 		if err != nil || s == nil {
 			return err
 		}
+		// The broker has answered the basic.consume: the Service has
+		// consumed, and stays so until Serve returns.
+		c.consuming.Store(true)
 		lost, err := s.consume(running, work, logCtx)
 		switch {
 		case err != nil:
@@ -765,6 +771,44 @@ func processingError(queue string, d amqp.Delivery, err error) error {
 		return fmt.Errorf("rabbitmq: processing message %s from %s: %w", d.MessageId, queue, err)
 	}
 	return fmt.Errorf("rabbitmq: processing a message from %s: %w", queue, err)
+}
+
+// Consuming returns a monitor that is healthy once the Service has started
+// consuming its queue: unhealthy until the broker first answers its
+// basic.consume, and healthy from then until Serve returns. A lost
+// connection after that doesn't make it unhealthy. It never returns an
+// error. A consumer is made ready once it consumes with
+//
+//	health.Readiness(consumer.Consuming())
+//
+// It is for readiness only: restarting the pod doesn't bring the broker
+// back, and an error that a restart would fix already ends Serve.
+//
+// Consuming may be called before Serve, in the end user's Init, and returns
+// the same monitor each time. The monitor reports the Service's state when
+// it is checked, and is safe for concurrent use.
+func (svc *Service) Consuming() health.Monitor {
+	return consumingMonitor{svc: svc}
+}
+
+// consumingMonitor is the monitor Consuming returns.
+type consumingMonitor struct {
+	svc *Service
+}
+
+// Healthy reports whether the Serve of the Service has consumed its queue
+// and not yet returned. It never returns an error.
+func (m consumingMonitor) Healthy(context.Context) (bool, error) {
+	c := m.svc.serving.Load()
+	if c == nil || c == notServed {
+		return false, nil
+	}
+	select {
+	case <-c.served:
+		return false, nil
+	default:
+		return c.consuming.Load(), nil
+	}
 }
 
 // Shutdown stops Serve and waits for it to return. Serve cancels its

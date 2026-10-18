@@ -39,6 +39,9 @@
 // NewService opens no connection and registers no OnStop function. Serve
 // connects, as Connecting describes, and consumes.
 //
+// The Service serves no health probes of its own. A consumer's pod serves
+// them on a probes server, as Readiness shows.
+//
 // # Delivery
 //
 // The Service never consumes with auto-ack, even under
@@ -321,6 +324,47 @@
 // never builds, rather than through the Host, and it declares the topology
 // again, which is the end user's. The Service's reconnect is a short loop of
 // the Retrier it connects with at startup, which humus tests.
+//
+// # Readiness
+//
+// Nothing routes traffic to a consumer, so its readiness only gates
+// rollouts. A login, vhost or queue the broker refuses already ends the
+// Service, and the pod's crash loop stops the rollout. A wrong address
+// doesn't: the Service keeps retrying, as it does through a broker's
+// upgrade, and without a monitor its pod would turn ready and replace a pod
+// that consumed.
+//
+// [Service.Consuming] closes that gap. It returns a health.Monitor that is
+// unhealthy until the broker first answers the Service's basic.consume, and
+// healthy from then until Serve returns, through any number of lost
+// connections and reconnects. It goes in the readiness of whatever exposes
+// the probes: in a consumer's pod, which has no server of its own, a probes
+// server of its own, httphealth.NewService:
+//
+//	consumer, err := rabbitmq.NewService(s, settings, queue.ProcessorFunc[rabbitmq.Message](h.Handle))
+//	if err != nil {
+//		return nil, err
+//	}
+//	probes, err := httphealth.NewService(s, probeSettings, health.Readiness(consumer.Consuming()))
+//	if err != nil {
+//		return nil, err
+//	}
+//	return []humus.Service{consumer, probes}, nil
+//
+// A new pod is then held not ready until it has consumed from its queue
+// once, so a rollout whose new pods have a wrong broker address stalls, and
+// is reported failed at its progress deadline, rather than replacing every
+// pod that consumes with pods that don't. A lost connection after that
+// doesn't make a consumer unready: a broker outage hits every pod at once,
+// and taking them all out of service would change nothing but block the
+// rollout that might fix it.
+//
+// Consuming is for readiness only. A liveness monitor would restart every
+// pod in a broker outage, and the kubelet's restart backoff, up to five
+// minutes by default, would then hold them down after the broker comes
+// back. The Service reconnects on its own, and the errors a restart would
+// fix already end Serve, as Connection loss lists, so the pod exits and is
+// restarted without a probe.
 //
 // # Topology
 //
