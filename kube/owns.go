@@ -17,11 +17,13 @@ import (
 // changes: one whose controller owner reference names the object.
 //
 // When a resource of gvr is added, changed or deleted, and its owner
-// reference with controller: true names the Resource's group and kind, the
-// object that reference names is reconciled. The reference's version isn't
-// compared. A reference without controller: true, or one that names another
-// group or kind, reconciles nothing, and neither does a resource with no
-// owner reference. The end user sets
+// reference with controller: true names the Resource's group and kind, or
+// the Kind's GVR.Group and Kind, the object that reference names is
+// reconciled. The reference's version isn't compared. A namespaced resource
+// can name a cluster-scoped owner, such as its Namespace. A reference
+// without controller: true, or one that names another group or kind,
+// reconciles nothing, and neither does a resource with no owner reference.
+// The end user sets
 // the controller owner reference when they apply the resource, with
 // client-go's apply configurations.
 //
@@ -51,7 +53,7 @@ func (c *Controller) ownedResource(gvr schema.GroupVersionResource) metadata.Res
 
 // ownerKey returns the key of the object that obj, a resource of an Owns,
 // is controlled by: the one its owner reference with controller: true
-// names, when that reference names the Resource's group and kind. Its
+// names, when that reference names the Resource's or Kind's group and kind. Its
 // version isn't compared: a reference written with another version of the
 // Resource names the same object. ok is false when obj has no such
 // reference.

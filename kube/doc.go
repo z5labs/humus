@@ -6,7 +6,8 @@
 // Package kube writes Kubernetes controllers as humus Services, with
 // client-go, Kubernetes' own client, and no controller-runtime. It reaches
 // an API server with humus's lifecycle, declares custom resources, whose
-// CRDs it reflects from Go types, and reconciles their objects.
+// CRDs it reflects from Go types, and reconciles their objects, or those of
+// Kubernetes' own kinds.
 //
 // It is in the nested module github.com/z5labs/humus/kube, so client-go and
 // apimachinery stay out of the module graph of end users who don't talk to
@@ -365,8 +366,9 @@
 //
 // # The Controller
 //
-// A [Controller] reconciles the objects of one Resource. [NewController]
-// builds it, and opens no connection; it is a humus.Service:
+// A [Controller] reconciles the objects of one Resource, or of one [Kind]
+// (see Kubernetes' own kinds). [NewController] builds it, and opens no
+// connection; it is a humus.Service:
 //
 //	ctrl, err := kube.NewController(s, client, settings, Memcached, Reconciler{Kube: kc})
 //	if err != nil {
@@ -541,6 +543,53 @@
 // Settings.Name: the controller's applies of the metadata would remove the
 // fields it applied under Settings.Name.
 //
+// # Kubernetes' own kinds
+//
+// A [Kind] is a kind whose Go type is defined elsewhere, such as one of
+// Kubernetes' own, and whose status belongs to whoever defines it.
+// [NewKindController] reconciles its objects, with the same [Controller]:
+//
+//	var Namespaces = kube.Kind[corev1.Namespace]{
+//		GVR:   corev1.SchemeGroupVersion.WithResource("namespaces"),
+//		Kind:  "Namespace",
+//		Scope: kube.Cluster,
+//	}
+//
+//	type DefaultDeny struct{ Kube kubernetes.Interface }
+//
+//	func (r DefaultDeny) Reconcile(ctx context.Context, ns corev1.Namespace) (time.Duration, error) {
+//		_, err := r.Kube.NetworkingV1().NetworkPolicies(ns.Name).Apply(ctx, policy(ns), metav1.ApplyOptions{FieldManager: "default-deny", Force: true})
+//		return 0, err
+//	}
+//
+//	ctrl, err := kube.NewKindController(s, client, settings, Namespaces, DefaultDeny{Kube: kc},
+//		kube.Owns(networkingv1.SchemeGroupVersion.WithResource("networkpolicies")),
+//	)
+//
+// A Kind has no CRD and no Rules: the kind's own definition is the API
+// server's. Its GVR's Group is "" for the core group. Its objects are
+// reconciled as a Resource's are, except:
+//   - a [KindReconciler] is handed client-go's own struct, decoded from the
+//     cache into a new T, the Reconciler's own copy, as an Object is;
+//   - no status is applied, since Kubernetes' own controllers write it. The
+//     KindReconciler returns only when to reconcile the object again: a
+//     positive after does so after that long, unless it changes first, and
+//     zero waits for a change, or for the resync;
+//   - an [Owns] matches the owner references that name the Kind's
+//     GVR.Group and Kind. A namespaced resource can name a cluster-scoped
+//     owner, such as its Namespace.
+//
+// [Finalize], the Lease, shutdown, panics, telemetry and Synced work as
+// they do for a Resource, with the span named "reconcile <Kind>". A
+// Finalize's f takes a T, which NewKindController checks.
+//
+// NewKindController returns one error that names every mistake it finds:
+// each mistake in the Settings and in the parts, as NewController reports
+// them, a GVR without a Version or a Resource, a missing Kind, a Scope that
+// is neither Namespaced nor Cluster, a T whose pointer isn't a
+// metav1.Object, a Settings.Namespace for a cluster-scoped Kind, and a nil
+// KindReconciler.
+//
 // # Serving
 //
 // [Controller.Serve] first lists the resource, and each resource an Owns
@@ -588,6 +637,10 @@
 //     status;
 //   - get, create and update on Leases, in the Lease's namespace;
 //   - list and watch on each resource an [Owns] names.
+//
+// A controller of a [Kind] needs get, list and watch on its kind, and patch
+// on it when a [Finalize] is given, in place of the rules on its resource
+// and its status.
 //
 // # Telemetry
 //

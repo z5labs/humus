@@ -62,7 +62,7 @@ type Result[Status any] struct {
 }
 
 // Part is a part of a controller beyond its Reconciler, given to
-// NewController.
+// NewController or NewKindController.
 type Part interface {
 	// part keeps Part's implementations in the package.
 	part()
@@ -78,11 +78,12 @@ var ErrLostLeadership = errors.New("kube: lost the lease")
 // reconcileFunc reconciles one object from the cache. status is what the
 // object's status is to be applied as, or nil when it is left alone: when
 // the Reconciler returned no status, or one that encodes as the object's
-// own. after is the Reconciler's Result.After.
+// own, and always for a Kind. after is the Reconciler's Result.After, or
+// the after a KindReconciler returned.
 type reconcileFunc func(ctx context.Context, u *unstructured.Unstructured) (status any, after time.Duration, err error)
 
-// Controller reconciles the objects of one Resource. It is a humus.Service,
-// which NewController builds.
+// Controller reconciles the objects of one Resource or one Kind. It is a
+// humus.Service, which NewController or NewKindController builds.
 type Controller struct {
 	settings   Settings
 	gvr        schema.GroupVersionResource
@@ -151,6 +152,50 @@ var notServed = &call{}
 // OpenTelemetry's globals, under the scope github.com/z5labs/humus/kube.
 // The package doc says what it records.
 func NewController[Spec, Status any](s *humus.Setup, c *Client, settings Settings, r Resource[Spec, Status], rec Reconciler[Spec, Status], parts ...Part) (*Controller, error) {
+	var recErr error
+	if rec == nil {
+		recErr = errors.New("the Reconciler must not be nil")
+	} else if f, ok := rec.(ReconcilerFunc[Spec, Status]); ok && f == nil {
+		recErr = errors.New("the Reconciler must not be a nil ReconcilerFunc")
+	}
+	var errs []error
+	if _, crdErrs := r.crd(); len(crdErrs) > 0 {
+		errs = append(errs, fmt.Errorf("the CRD of %s: %w", r.name(), errors.Join(crdErrs...)))
+	}
+	return newController[Object[Spec, Status]](s, c, settings, target{
+		ctor:      "NewController",
+		name:      r.name(),
+		gvr:       r.GVR(),
+		kind:      r.Kind,
+		scope:     r.Scope,
+		mistakes:  errs,
+		recErr:    recErr,
+		reconcile: reconcilerOf(rec),
+	}, parts)
+}
+
+// target is what a Controller reconciles, a Resource or a Kind, as its
+// constructor hands it to newController.
+type target struct {
+	// ctor is the constructor, which prefixes its error.
+	ctor string
+	// name names the Resource or Kind in an error.
+	name  string
+	gvr   schema.GroupVersionResource
+	kind  string
+	scope Scope
+
+	// mistakes are those in the Resource or Kind itself, and recErr is a
+	// nil Reconciler's, or nil.
+	mistakes []error
+	recErr   error
+
+	reconcile reconcileFunc
+}
+
+// newController returns the Controller of t, whose objects decode into T,
+// or one error naming every mistake in s, c, settings, t and parts.
+func newController[T any](s *humus.Setup, c *Client, settings Settings, t target, parts []Part) (*Controller, error) {
 	var errs []error
 	if s == nil {
 		errs = append(errs, errors.New("the Setup must not be nil"))
@@ -159,17 +204,13 @@ func NewController[Spec, Status any](s *humus.Setup, c *Client, settings Setting
 		errs = append(errs, errors.New("the Client must not be nil"))
 	}
 	errs = append(errs, checkSettings(settings)...)
-	if _, crdErrs := r.crd(); len(crdErrs) > 0 {
-		errs = append(errs, fmt.Errorf("the CRD of %s: %w", r.name(), errors.Join(crdErrs...)))
-	}
-	if r.Scope == Cluster && settings.Namespace != "" {
+	errs = append(errs, t.mistakes...)
+	if t.scope == Cluster && settings.Namespace != "" {
 		errs = append(errs, fmt.Errorf("Settings.Namespace is %q, but %s is cluster-scoped, so its objects are in no namespace",
-			settings.Namespace, r.name()))
+			settings.Namespace, t.name))
 	}
-	if rec == nil {
-		errs = append(errs, errors.New("the Reconciler must not be nil"))
-	} else if f, ok := rec.(ReconcilerFunc[Spec, Status]); ok && f == nil {
-		errs = append(errs, errors.New("the Reconciler must not be a nil ReconcilerFunc"))
+	if t.recErr != nil {
+		errs = append(errs, t.recErr)
 	}
 	var (
 		owned     []schema.GroupVersionResource
@@ -200,10 +241,10 @@ func NewController[Spec, Status any](s *humus.Setup, c *Client, settings Setting
 			if p.nilF {
 				errs = append(errs, fmt.Errorf("parts[%d], Finalize(%q), has a nil f", i, p.name))
 			}
-			f, ok := p.f.(func(context.Context, Object[Spec, Status]) error)
+			f, ok := p.f.(func(context.Context, T) error)
 			if !ok {
 				errs = append(errs, fmt.Errorf("parts[%d], Finalize(%q), takes a %s, but the Controller's objects are a %s",
-					i, p.name, p.typ, reflect.TypeFor[Object[Spec, Status]]()))
+					i, p.name, p.typ, reflect.TypeFor[T]()))
 			} else if !p.nilF {
 				finalizer, finalizes = p.name, finalizerOf(f)
 			}
@@ -218,33 +259,33 @@ func NewController[Spec, Status any](s *humus.Setup, c *Client, settings Setting
 		}
 	}
 	if len(errs) > 0 {
-		return nil, fmt.Errorf("kube: NewController: %w", errors.Join(errs...))
+		return nil, fmt.Errorf("kube: %s: %w", t.ctor, errors.Join(errs...))
 	}
 
 	// None opens a connection: each only builds a client on the Client's
 	// transport.
 	dyn, err := dynamic.NewForConfig(c.Config())
 	if err != nil {
-		return nil, fmt.Errorf("kube: NewController: %w", err)
+		return nil, fmt.Errorf("kube: %s: %w", t.ctor, err)
 	}
 	meta, err := metadata.NewForConfig(c.Config())
 	if err != nil {
-		return nil, fmt.Errorf("kube: NewController: %w", err)
+		return nil, fmt.Errorf("kube: %s: %w", t.ctor, err)
 	}
 	leases, err := coordinationv1.NewForConfig(c.Config())
 	if err != nil {
-		return nil, fmt.Errorf("kube: NewController: %w", err)
+		return nil, fmt.Errorf("kube: %s: %w", t.ctor, err)
 	}
 
 	stopped, stop := context.WithCancel(context.Background())
 	return &Controller{
 		settings:   settings,
-		gvr:        r.GVR(),
-		apiVersion: schema.GroupVersion{Group: r.Group, Version: r.Version}.String(),
-		group:      r.Group,
-		kind:       r.Kind,
-		namespaced: r.Scope == Namespaced,
-		reconcile:  reconcilerOf(rec),
+		gvr:        t.gvr,
+		apiVersion: t.gvr.GroupVersion().String(),
+		group:      t.gvr.Group,
+		kind:       t.kind,
+		namespaced: t.scope == Namespaced,
+		reconcile:  t.reconcile,
 		owned:      owned,
 		finalizer:  finalizer,
 		finalize:   finalizes,
@@ -308,7 +349,7 @@ func checkSettings(settings Settings) []error {
 // rec returns is applied only when its encoding differs.
 func reconcilerOf[Spec, Status any](rec Reconciler[Spec, Status]) reconcileFunc {
 	return func(ctx context.Context, u *unstructured.Unstructured) (any, time.Duration, error) {
-		obj, err := decodeObject[Spec, Status](u)
+		obj, err := decode[Object[Spec, Status]](u)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -338,10 +379,10 @@ func reconcilerOf[Spec, Status any](rec Reconciler[Spec, Status]) reconcileFunc 
 	}
 }
 
-// decodeObject returns a new Object decoded from u, as encoding/json decodes
-// its JSON encoding, so it shares nothing with u.
-func decodeObject[Spec, Status any](u *unstructured.Unstructured) (Object[Spec, Status], error) {
-	var obj Object[Spec, Status]
+// decode returns a new T, an Object or a Kind's type, decoded from u, as
+// encoding/json decodes its JSON encoding, so it shares nothing with u.
+func decode[T any](u *unstructured.Unstructured) (T, error) {
+	var obj T
 	b, err := u.MarshalJSON()
 	if err != nil {
 		return obj, fmt.Errorf("kube: encoding the object: %w", err)
