@@ -104,7 +104,7 @@ func Interceptors(s *humus.Setup, rules ...Rule) (unary, stream grpc.ServerOptio
 			defaults++
 			at += ": Default"
 			if defaults > 1 {
-				c.fail("%s is a second Default: give one", at)
+				c.fail("%s is a second Default: give only one", at)
 			}
 		} else {
 			at += fmt.Sprintf(": Method(%q)", r.r.fullMethod)
@@ -214,8 +214,8 @@ func validMethod(name string) bool {
 	return !slices.ContainsFunc(parts, func(p string) bool { return !isIdent(p) })
 }
 
-// isIdent reports whether s is a protobuf identifier: a letter, then
-// letters, digits and underscores.
+// isIdent reports whether s is a protobuf identifier, as protoc reads
+// one: a letter or an underscore, then letters, digits and underscores.
 func isIdent(s string) bool {
 	if s == "" {
 		return false

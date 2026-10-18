@@ -40,7 +40,7 @@ func TestInterceptors_reports_each_mistake(t *testing.T) {
 		{
 			name:  "two Defaults",
 			rules: []grpcauth.Rule{grpcauth.Default(auth.Require(b)), grpcauth.Default(auth.Disabled())},
-			want:  "rules[1]: Default is a second Default",
+			want:  "rules[1]: Default is a second Default: give only one",
 		},
 		{name: "the zero Rule", rules: []grpcauth.Rule{grpcauth.Default(auth.Require(b)), {}}, want: "rules[1] is the zero Rule"},
 		{
