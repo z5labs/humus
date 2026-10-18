@@ -18,6 +18,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/kmsg"
+	"github.com/z5labs/bedrock/circuit"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/humustest"
@@ -450,6 +451,30 @@ func TestNewProducer(t *testing.T) {
 		_, err := kafka.NewProducer(setup(), ps)
 		require.ErrorContains(t, err, "ProducerSettings.Brokers must list at least one")
 		require.ErrorContains(t, err, "ProducerSettings.DeliveryTimeout must be positive")
+	})
+
+	t.Run("reports every bad breaker field, naming each", func(t *testing.T) {
+		t.Parallel()
+
+		ps := producerSettings("127.0.0.1:9092")
+		ps.Breaker = circuit.Config{Window: 0, Probes: circuit.MaxCount + 1, OpenFor: 0, ProbeTimeout: -time.Second}
+		ps.BreakerPolicy = circuit.Policy{}
+		_, err := kafka.NewProducer(setup(), ps)
+		require.ErrorContains(t, err, "ProducerSettings.Breaker.Window must be from 1 to 65536")
+		require.ErrorContains(t, err, "ProducerSettings.Breaker.Probes must be from 1 to 65536")
+		require.ErrorContains(t, err, "ProducerSettings.Breaker.OpenFor must be positive")
+		require.ErrorContains(t, err, "ProducerSettings.Breaker.ProbeTimeout must be positive")
+		require.ErrorContains(t, err, "ProducerSettings.BreakerPolicy.Trip must be set")
+		require.ErrorContains(t, err, "ProducerSettings.BreakerPolicy.Probe must be set")
+	})
+
+	t.Run("rejects a BreakerPolicy with only Trip set", func(t *testing.T) {
+		t.Parallel()
+
+		ps := producerSettings("127.0.0.1:9092")
+		ps.BreakerPolicy.Probe = nil
+		_, err := kafka.NewProducer(setup(), ps)
+		require.EqualError(t, err, "kafka: NewProducer: ProducerSettings.BreakerPolicy.Probe must be set")
 	})
 
 	t.Run("names each bad broker", func(t *testing.T) {

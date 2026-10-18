@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/twmb/franz-go/pkg/sasl"
+	"github.com/z5labs/bedrock/circuit"
 
 	"github.com/z5labs/humus/queue"
 )
@@ -113,6 +114,7 @@ var (
 	errEmpty       = errors.New("must not be empty")
 	errNoneListed  = errors.New("must list at least one")
 	errNotPositive = errors.New("must be positive")
+	errNotSet      = errors.New("must be set")
 )
 
 // CheckBrokers rejects an empty list, and each broker that is not host:port
@@ -232,6 +234,25 @@ type ProducerSettings struct {
 	//
 	// Default: 10s. Valid: positive. Check: CheckDeliveryTimeout.
 	DeliveryTimeout time.Duration
+
+	// Breaker configures the circuit breaker in front of the cluster.
+	//
+	// Default: circuit.Config{Window: 20, Probes: 1, OpenFor: 10 *
+	// time.Second, ProbeTimeout: 10 * time.Second}. Valid: Window and
+	// Probes from 1 to circuit.MaxCount, OpenFor and ProbeTimeout positive.
+	// Checks: CheckBreakerWindow, CheckBreakerProbes, CheckBreakerOpenFor,
+	// CheckBreakerProbeTimeout.
+	Breaker circuit.Config
+
+	// BreakerPolicy decides when the breaker opens and closes. It is set in
+	// code, not sourced. A policy whose Trip always returns false turns the
+	// breaker off.
+	//
+	// Default: open after 5 failures in a row, or once half of the last 20
+	// or more calls failed; while half-open, reopen on a failed probe and
+	// close after 3 successful ones. Valid: Trip and Probe set, which
+	// NewProducer checks. Check: none.
+	BreakerPolicy circuit.Policy
 }
 
 // DefaultProducerSettings returns the Producer's defaults. Brokers has none,
@@ -242,10 +263,74 @@ func DefaultProducerSettings() ProducerSettings {
 		TLS:             nil,
 		SASL:            nil,
 		DeliveryTimeout: 10 * time.Second,
+		Breaker: circuit.Config{
+			Window:       20,
+			Probes:       1,
+			OpenFor:      10 * time.Second,
+			ProbeTimeout: 10 * time.Second,
+		},
+		BreakerPolicy: circuit.Policy{
+			Trip:  defaultTrip,
+			Probe: defaultProbe,
+		},
+	}
+}
+
+// defaultTrip opens the breaker after 5 failures in a row, or once half of
+// the last 20 or more calls failed.
+func defaultTrip(c circuit.Counts) bool {
+	n := c.Successes + c.Failures
+	return c.ConsecutiveFailures >= 5 || (n >= 20 && 2*c.Failures >= n)
+}
+
+// defaultProbe reopens the breaker on a failed probe, closes it after 3
+// successful ones, and keeps probing otherwise, including after a probe
+// times out.
+func defaultProbe(c circuit.Counts) circuit.State {
+	switch {
+	case c.Failures > 0:
+		return circuit.Open
+	case c.ConsecutiveSuccesses >= 3:
+		return circuit.Closed
+	default:
+		return circuit.HalfOpen
 	}
 }
 
 // CheckDeliveryTimeout rejects a timeout that is not positive.
 func CheckDeliveryTimeout(d time.Duration) error {
 	return checkPositive(d)
+}
+
+// errOutOfCount is the cause CheckBreakerWindow and CheckBreakerProbes
+// report.
+var errOutOfCount = fmt.Errorf("must be from 1 to %d", circuit.MaxCount)
+
+// CheckBreakerWindow rejects a window that is not from 1 to
+// circuit.MaxCount.
+func CheckBreakerWindow(n int) error {
+	return checkCount(n)
+}
+
+// CheckBreakerProbes rejects a number of probes that is not from 1 to
+// circuit.MaxCount.
+func CheckBreakerProbes(n int) error {
+	return checkCount(n)
+}
+
+// CheckBreakerOpenFor rejects a period that is not positive.
+func CheckBreakerOpenFor(d time.Duration) error {
+	return checkPositive(d)
+}
+
+// CheckBreakerProbeTimeout rejects a timeout that is not positive.
+func CheckBreakerProbeTimeout(d time.Duration) error {
+	return checkPositive(d)
+}
+
+func checkCount(n int) error {
+	if n < 1 || n > circuit.MaxCount {
+		return errOutOfCount
+	}
+	return nil
 }

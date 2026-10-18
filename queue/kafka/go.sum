@@ -114,6 +114,8 @@ github.com/yusufpapurcu/wmi v1.2.4 h1:zFUKzehAFReQwLys1b/iSMl+JQGSCSjtVqQn9bBrPo
 github.com/yusufpapurcu/wmi v1.2.4/go.mod h1:SBZ9tNy3G9/m5Oi98Zks0QjeHVDvuK0qfxQmPyzfmi0=
 github.com/z5labs/bedrock v0.24.0 h1:SEzgff05brjnlAsqoUy7vDXMXnxvhjtNGpy0eJCqOSI=
 github.com/z5labs/bedrock v0.24.0/go.mod h1:6pbhUnkSk+avSoVi+BM91cBlRiN7UVsxA7txQnC/TTA=
+github.com/z5labs/bedrock/circuit v0.24.0 h1:ATWbrhRSkORXKeFCaCs758uPrHUJ/wuB+cRW/GJAIro=
+github.com/z5labs/bedrock/circuit v0.24.0/go.mod h1:2yujEj/etrHSXJwrc6AQVEwlQ+MX/3GT27WtHzL5Qu4=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
 go.opentelemetry.io/auto/sdk v1.2.1/go.mod h1:KRTj+aOaElaLi+wW1kO/DZRXwkF4C5xPbEe3ZiIhN7Y=
 go.opentelemetry.io/contrib/bridges/otelslog v0.21.0 h1:/CdgE52i1OEPHhsGUqrggYNRaZy4v4YgVenGd52dRBI=

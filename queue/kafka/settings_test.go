@@ -7,10 +7,12 @@ package kafka_test
 
 import (
 	"regexp"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/circuit"
 
 	"github.com/z5labs/humus/queue"
 	"github.com/z5labs/humus/queue/kafka"
@@ -20,7 +22,8 @@ import (
 // a check reports what is wrong, and whoever calls it names the field or
 // the variable.
 var fieldNames = regexp.MustCompile(`(?i)\b(?:settings|brokers?|group ?id|topics?|delivery|tls|sasl|` +
-	`session ?timeout|rebalance ?timeout|fetch ?max ?bytes|max ?poll ?records)\b`)
+	`session ?timeout|rebalance ?timeout|fetch ?max ?bytes|max ?poll ?records|` +
+	`breaker|window|probes|open ?for|probe ?timeout|policy|trip)\b`)
 
 // requireUnnamed fails the test if err names a field of Settings.
 func requireUnnamed(t *testing.T, err error) {
@@ -229,12 +232,112 @@ func TestCheckDeliveryTimeout(t *testing.T) {
 func TestDefaultProducerSettings(t *testing.T) {
 	t.Parallel()
 
+	d := kafka.DefaultProducerSettings()
+	require.NotNil(t, d.BreakerPolicy.Trip)
+	require.NotNil(t, d.BreakerPolicy.Probe)
+	// A Policy is two functions, which require.Equal can't compare, so it
+	// is checked by what it decides, in TestDefaultProducerSettings_BreakerPolicy.
+	d.BreakerPolicy = circuit.Policy{}
 	require.Equal(t, kafka.ProducerSettings{
 		Brokers:         nil,
 		TLS:             nil,
 		SASL:            nil,
 		DeliveryTimeout: 10 * time.Second,
-	}, kafka.DefaultProducerSettings())
+		Breaker: circuit.Config{
+			Window:       20,
+			Probes:       1,
+			OpenFor:      10 * time.Second,
+			ProbeTimeout: 10 * time.Second,
+		},
+	}, d)
+}
+
+func TestDefaultProducerSettings_BreakerPolicy(t *testing.T) {
+	t.Parallel()
+
+	p := kafka.DefaultProducerSettings().BreakerPolicy
+
+	t.Run("Trip", func(t *testing.T) {
+		t.Parallel()
+
+		testCases := []struct {
+			name   string
+			counts circuit.Counts
+			trips  bool
+		}{
+			{name: "no results", counts: circuit.Counts{}, trips: false},
+			{name: "4 failures in a row", counts: circuit.Counts{Failures: 4, ConsecutiveFailures: 4}, trips: false},
+			{name: "5 failures in a row", counts: circuit.Counts{Failures: 5, ConsecutiveFailures: 5}, trips: true},
+			{name: "half of 20 failed", counts: circuit.Counts{Successes: 10, Failures: 10, ConsecutiveFailures: 1}, trips: true},
+			{name: "9 of 20 failed", counts: circuit.Counts{Successes: 11, Failures: 9, ConsecutiveFailures: 1}, trips: false},
+			{name: "half of fewer than 20 failed", counts: circuit.Counts{Successes: 9, Failures: 9, ConsecutiveFailures: 1}, trips: false},
+		}
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				require.Equal(t, tc.trips, p.Trip(tc.counts))
+			})
+		}
+	})
+
+	t.Run("Probe", func(t *testing.T) {
+		t.Parallel()
+
+		testCases := []struct {
+			name   string
+			counts circuit.Counts
+			state  circuit.State
+		}{
+			{name: "a failed probe", counts: circuit.Counts{Successes: 2, Failures: 1, ConsecutiveFailures: 1}, state: circuit.Open},
+			{name: "2 successful probes", counts: circuit.Counts{Successes: 2, ConsecutiveSuccesses: 2}, state: circuit.HalfOpen},
+			{name: "3 successful probes", counts: circuit.Counts{Successes: 3, ConsecutiveSuccesses: 3}, state: circuit.Closed},
+			{name: "a probe timed out", counts: circuit.Counts{TimedOut: 1}, state: circuit.HalfOpen},
+		}
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				require.Equal(t, tc.state, p.Probe(tc.counts))
+			})
+		}
+	})
+}
+
+func countCases() []checkCase[int] {
+	outOfRange := "must be from 1 to " + strconv.Itoa(circuit.MaxCount)
+	return []checkCase[int]{
+		{name: "one", value: 1, valid: true},
+		{name: "twenty", value: 20, valid: true},
+		{name: "circuit.MaxCount", value: circuit.MaxCount, valid: true},
+		{name: "zero", value: 0, cause: outOfRange},
+		{name: "negative", value: -1, cause: outOfRange},
+		{name: "above circuit.MaxCount", value: circuit.MaxCount + 1, cause: outOfRange},
+	}
+}
+
+func TestCheckBreakerWindow(t *testing.T) {
+	t.Parallel()
+
+	runCheck(t, kafka.CheckBreakerWindow, countCases())
+}
+
+func TestCheckBreakerProbes(t *testing.T) {
+	t.Parallel()
+
+	runCheck(t, kafka.CheckBreakerProbes, countCases())
+}
+
+func TestCheckBreakerOpenFor(t *testing.T) {
+	t.Parallel()
+
+	runCheck(t, kafka.CheckBreakerOpenFor, durationCases())
+}
+
+func TestCheckBreakerProbeTimeout(t *testing.T) {
+	t.Parallel()
+
+	runCheck(t, kafka.CheckBreakerProbeTimeout, durationCases())
 }
 
 func TestDefaultProducerSettings_checks(t *testing.T) {
@@ -254,6 +357,15 @@ func TestDefaultProducerSettings_checks(t *testing.T) {
 		t.Parallel()
 
 		require.NoError(t, kafka.CheckDeliveryTimeout(d.DeliveryTimeout))
+	})
+
+	t.Run("Breaker", func(t *testing.T) {
+		t.Parallel()
+
+		require.NoError(t, kafka.CheckBreakerWindow(d.Breaker.Window))
+		require.NoError(t, kafka.CheckBreakerProbes(d.Breaker.Probes))
+		require.NoError(t, kafka.CheckBreakerOpenFor(d.Breaker.OpenFor))
+		require.NoError(t, kafka.CheckBreakerProbeTimeout(d.Breaker.ProbeTimeout))
 	})
 
 	t.Run("with Brokers set, every check passes", func(t *testing.T) {

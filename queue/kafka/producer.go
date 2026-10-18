@@ -16,6 +16,7 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/plugin/kotel"
+	"github.com/z5labs/bedrock/circuit"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/log"
@@ -61,6 +62,10 @@ type Producer struct {
 	propagator      propagation.TextMapPropagator
 	logger          log.Logger
 
+	// breaker guards the cluster. Each call to Produce is one call through
+	// it.
+	breaker *circuit.Breaker
+
 	// closed is set once the OnStop function has flushed the client and is
 	// about to close it.
 	closed atomic.Bool
@@ -72,15 +77,21 @@ type Producer struct {
 }
 
 // NewProducer runs every check on settings, reporting every bad field in
-// one error that names each one, and builds the franz-go client. It opens
-// no connection: the first Produce does. It registers a function with
-// s.OnStop that flushes the client and closes it.
+// one error that names each one, and builds the franz-go client and the
+// circuit breaker. It opens no connection: the first Produce does. It
+// registers a function with s.OnStop that flushes the client and closes it.
+//
+// The breaker, built with settings.Breaker and settings.BreakerPolicy,
+// guards the cluster: one Producer is one client to one cluster, with one
+// breaker. A BreakerPolicy with a nil Trip or Probe is a bad field, reported
+// with the others.
 //
 // The Producer dials every broker through s.Host. It reports through
 // s.Telemetry: its spans, the two messaging instruments and its own logs
 // under the scope github.com/z5labs/humus/queue/kafka, franz-go's logs under
 // github.com/twmb/franz-go/pkg/kgo, and franz-go's broker metrics, from
-// kotel's Meter, under github.com/twmb/franz-go/plugin/kotel.
+// kotel's Meter, under github.com/twmb/franz-go/plugin/kotel. Each change
+// of the breaker's state is one of its own log records.
 //
 // A Producer can't stop the App, so when a broker refuses settings.SASL's
 // credentials, with SASL_AUTHENTICATION_FAILED, UNSUPPORTED_SASL_MECHANISM
@@ -106,6 +117,11 @@ func NewProducer(s *humus.Setup, settings ProducerSettings) (*Producer, error) {
 		logger:          s.Telemetry.LoggerProvider.Logger(scopeName),
 		refused:         make(chan struct{}),
 	}
+	breaker, err := circuit.New(settings.Breaker, settings.BreakerPolicy, classify, p.observe)
+	if err != nil {
+		return nil, fmt.Errorf("kafka: NewProducer: building the circuit breaker: %w", err)
+	}
+	p.breaker = breaker
 	opts := []kgo.Opt{
 		kgo.SeedBrokers(settings.Brokers...),
 		kgo.Dialer(tlsDialer(s.Host.Dial, settings.TLS)),
@@ -141,6 +157,16 @@ func checkProducerSettings(settings ProducerSettings) error {
 	}
 	check("ProducerSettings.Brokers", CheckBrokers(settings.Brokers))
 	check("ProducerSettings.DeliveryTimeout", CheckDeliveryTimeout(settings.DeliveryTimeout))
+	check("ProducerSettings.Breaker.Window", CheckBreakerWindow(settings.Breaker.Window))
+	check("ProducerSettings.Breaker.Probes", CheckBreakerProbes(settings.Breaker.Probes))
+	check("ProducerSettings.Breaker.OpenFor", CheckBreakerOpenFor(settings.Breaker.OpenFor))
+	check("ProducerSettings.Breaker.ProbeTimeout", CheckBreakerProbeTimeout(settings.Breaker.ProbeTimeout))
+	if settings.BreakerPolicy.Trip == nil {
+		check("ProducerSettings.BreakerPolicy.Trip", errNotSet)
+	}
+	if settings.BreakerPolicy.Probe == nil {
+		check("ProducerSettings.BreakerPolicy.Probe", errNotSet)
+	}
 	return errors.Join(errs...)
 }
 
@@ -195,12 +221,15 @@ func (p *Producer) stop(ctx context.Context) error {
 // they are given.
 //
 // It returns an error, naming each record that failed by its topic, when a
-// record failed or ProducerSettings.DeliveryTimeout passed, and an error
-// that wraps ctx's error, at once, when ctx is done first. A call whose ctx
-// is already done sends nothing. Records handed to the client before ctx is
-// done go on to their result, within DeliveryTimeout, and never fail another
-// call's records. A record that failed may still have been stored, so a
-// caller that produces it again may store it twice.
+// record failed or ProducerSettings.DeliveryTimeout passed; an error that
+// wraps a *circuit.RejectedError, which matches circuit.ErrRejected and says
+// how much longer the breaker stays open, at once and with nothing sent,
+// while the breaker is open; and an error that wraps ctx's error, at once,
+// when ctx is done first. A call whose ctx is already done sends nothing.
+// Records handed to the client before ctx is done go on to their result,
+// within DeliveryTimeout, and never fail another call's records. A record
+// that failed may still have been stored, so a caller that produces it
+// again may store it twice.
 //
 // Produce rejects a record with no Topic before it sends anything. With no
 // records, it returns nil.
@@ -213,11 +242,24 @@ func (p *Producer) stop(ctx context.Context) error {
 // credentials again. The records of a call that returned the refusal stay
 // in the client until DeliveryTimeout fails them.
 //
+// Each call is one call through the Producer's circuit breaker, admitted
+// before any of its records reach franz-go and counted once every record
+// has its result, which may be after Produce returns. A call that succeeds
+// counts as a success, and one whose records failed because the cluster
+// didn't store them in time counts as a failure. A call whose records
+// failed only for their own reasons or their topics', such as
+// MESSAGE_TOO_LARGE, isn't counted. Produce doesn't retry a rejected call:
+// whether to wait and try again is the caller's. A call whose ctx is
+// already done, and a call after the cluster refused the credentials, never
+// reach the breaker, so it counts neither.
+//
 // Each record it hands to the client is sent under a span of its own, a
 // child of the span in ctx. The record's headers whose keys the propagator
 // writes are removed, and the propagator writes the span's context and
-// ctx's baggage in their place. The span ends, and the record is measured, when its result
-// arrives, which may be after Produce returns.
+// ctx's baggage in their place. The span ends, and the record is
+// measured, when its result arrives, which may be after Produce returns. A
+// record the breaker rejected was never sent: its span records the
+// rejection as a failure, and neither instrument counts it.
 func (p *Producer) Produce(ctx context.Context, records ...Record) error {
 	if len(records) == 0 {
 		return nil
@@ -249,15 +291,44 @@ func (p *Producer) Produce(ctx context.Context, records ...Record) error {
 		krs[i] = p.send(ctx, call, start, fields, r)
 	}
 
-	results := make(chan kgo.ProduceResults, 1)
-	go func() {
-		defer cancel()
-		results <- p.client.ProduceSync(call, krs...)
+	// Wave 5's failure injection has its seam here: every record's span
+	// has started and its headers carry the trace context, and nothing has
+	// gone through the breaker.
+
+	t, err := p.breaker.Allow(call)
+	if err != nil {
+		cancel()
+		for _, kr := range krs {
+			s := kr.Context.Value(sendingKey{}).(*sending)
+			recordFailure(s.span, err)
+			s.span.End()
+		}
+		return fmt.Errorf("kafka: producing: %w", err)
+	}
+	// The ticket is settled once every record has its result, which may be
+	// after Produce returns, so the guard is a flag set once the ticket is
+	// handed off, not a deferred Release.
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			t.Release()
+		}
 	}()
 
+	results := make(chan error, 1)
+	go func() {
+		defer cancel()
+		err := produceError(krs, p.client.ProduceSync(call, krs...))
+		// Settled before the result is handed back, so a caller's next
+		// call meets the breaker this one left.
+		t.Done(err)
+		results <- err
+	}()
+	handedOff = true
+
 	select {
-	case rs := <-results:
-		return produceError(krs, rs)
+	case err := <-results:
+		return err
 	case <-ctx.Done():
 		return fmt.Errorf("kafka: producing: %w", ctx.Err())
 	case <-p.refused:
@@ -343,17 +414,23 @@ func (h sendHook) OnProduceRecordUnbuffered(r *kgo.Record, err error) {
 			semconv.MessagingKafkaOffset(int(r.Offset)),
 		)
 	} else {
-		errType := semconv.ErrorType(err)
-		s.span.RecordError(err)
-		s.span.SetStatus(codes.Error, err.Error())
-		s.span.SetAttributes(errType)
-		attrs = append(attrs, errType)
+		attrs = append(attrs, recordFailure(s.span, err))
 	}
 	s.span.End()
 
 	h.sent.Add(r.Context, 1, sendOperation, messagingconv.SystemKafka, attrs...)
 	h.operations.Record(r.Context, elapsed, sendOperation, messagingconv.SystemKafka,
 		append(attrs, semconv.MessagingOperationTypeSend)...)
+}
+
+// recordFailure records err on span as an exception event, with error.type
+// and an error status, and returns the error.type attribute.
+func recordFailure(span trace.Span, err error) attribute.KeyValue {
+	errType := semconv.ErrorType(err)
+	span.RecordError(err)
+	span.SetStatus(codes.Error, err.Error())
+	span.SetAttributes(errType)
+	return errType
 }
 
 // produceError joins the error of each record of rs that failed, in the
