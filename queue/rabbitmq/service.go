@@ -236,6 +236,19 @@ func stops(err error) bool {
 	}
 }
 
+// stopsConsuming reports whether lost, the error a channel closed with
+// after consuming started, is one connecting again won't fix: one of the
+// refusals stops reports, or 406 PRECONDITION_FAILED, which the broker
+// closes a channel with when, for one, a delivery was held unacked past its
+// consumer_timeout.
+func stopsConsuming(lost error) bool {
+	if stops(lost) {
+		return true
+	}
+	ae, ok := errors.AsType[*amqp.Error](lost)
+	return ok && ae.Code == amqp.PreconditionFailed
+}
+
 // Serve connects to the broker and consumes Settings.Queue until ctx is
 // done, Shutdown is called, or the Service fails. It then cancels its
 // consumer, lets the deliveries in flight finish, acks them, nacks with
@@ -248,11 +261,19 @@ func stops(err error) bool {
 // login, vhost or queue the broker refuses ends Serve with the broker's
 // error.
 //
+// A connection lost after consuming started, or a consumer the broker
+// cancelled, is logged at WARN, and Serve connects again in the same way,
+// once the deliveries in flight have finished. Their acks fail, and the
+// broker delivers them again. A channel the broker closes with 406
+// PRECONDITION_FAILED, or with a refusal of the login, the vhost or the
+// queue, ends Serve with the broker's error.
+//
 // It returns nil when it stopped because ctx was done or Shutdown was
-// called, including when Shutdown's context ran out first. It returns an
-// error when the broker refused the login, the vhost or the queue, when a
-// Processor's error under queue.AtLeastOnce stopped it, and when the
-// connection was lost.
+// called, including when Shutdown's context ran out first, and while it was
+// connecting again. It returns an error when the broker refused the login,
+// the vhost or the queue, when it closed the channel with 406
+// PRECONDITION_FAILED, and when a Processor's error under queue.AtLeastOnce
+// stopped it.
 //
 // A Service is served once. A Serve called after Shutdown, or after an
 // earlier Serve, returns nil at once.
@@ -275,11 +296,21 @@ func (svc *Service) Serve(ctx context.Context) error {
 	defer unregister()
 
 	logCtx := context.WithoutCancel(ctx)
-	s, err := svc.connect(running, logCtx)
-	if err != nil || s == nil {
-		return err
+	for {
+		s, err := svc.connect(running, logCtx)
+		if err != nil || s == nil {
+			return err
+		}
+		lost, err := s.consume(running, work, logCtx)
+		switch {
+		case err != nil:
+			return err
+		case lost == nil:
+			return nil
+		case stopsConsuming(lost):
+			return fmt.Errorf("rabbitmq: the broker stopped consuming %s: %w", svc.settings.Queue, lost)
+		}
 	}
-	return s.consume(running, work, logCtx)
 }
 
 // connect makes attempts to connect and consume until one succeeds, the
@@ -400,11 +431,13 @@ type session struct {
 // errLost is the cause of a lost connection the broker gave no reason for,
 // such as the consumer cancelled by the broker because its queue was
 // deleted.
-var errLost = errors.New("the broker stopped the consumer")
+var errLost = errors.New("the broker cancelled the consumer")
 
 // consume hands the session's deliveries to Settings.Concurrency workers
 // until running is done, a delivery fails under AtLeastOnce, or the
-// connection is lost, and then stops:
+// connection is lost, and then stops. It returns the Processor's error under
+// AtLeastOnce, or, when the connection was lost while running and work were
+// live, the error the channel closed with, or errLost. It stops:
 //
 //  1. it cancels the consumer;
 //  2. it hands out no more deliveries, except the rest of an AtMostOnce
@@ -414,9 +447,14 @@ var errLost = errors.New("the broker stopped the consumer")
 //     delivery it received but didn't process;
 //  5. it closes the channel and the connection.
 //
+// A lost connection skips steps 1 and 4, and is logged at WARN at once,
+// unless it ends the Service: the broker has requeued every delivery that
+// wasn't acked, so the acks of the deliveries in flight fail, and are
+// dropped.
+//
 // When work is cancelled, by Shutdown's context, the connection is closed
 // at once.
-func (s *session) consume(running, work, logCtx context.Context) error {
+func (s *session) consume(running, work, logCtx context.Context) (cause, err error) {
 	svc := s.svc
 	stopClosing := context.AfterFunc(work, func() { _ = s.conn.Close() })
 	defer stopClosing()
@@ -433,13 +471,21 @@ func (s *session) consume(running, work, logCtx context.Context) error {
 		wg.Go(func() { s.worker(jobs, logCtx) })
 	}
 
-	var lost bool
+	var wasLost bool
 	if svc.settings.Delivery == queue.AtMostOnce {
-		lost = s.dispatchAtMostOnce(jobs)
+		wasLost = s.dispatchAtMostOnce(jobs)
 	} else {
-		lost = s.dispatchAtLeastOnce(jobs)
+		wasLost = s.dispatchAtLeastOnce(jobs)
 	}
-	if !lost {
+	var lost error
+	if wasLost {
+		lost = s.lostCause()
+		// Logged at once, rather than once the deliveries in flight are
+		// done, unless it ends the Service, which returns it instead.
+		if running.Err() == nil && work.Err() == nil && !stopsConsuming(lost) {
+			svc.logLost(logCtx, lost)
+		}
+	} else {
 		s.cancel()
 	}
 	close(jobs)
@@ -454,7 +500,7 @@ func (s *session) consume(running, work, logCtx context.Context) error {
 	// Once Shutdown's context is done, the connection is closed at once,
 	// and the broker requeues every delivery that wasn't acked.
 	if work.Err() == nil {
-		if !lost && s.received > s.settled.Load() {
+		if !wasLost && s.received > s.settled.Load() {
 			// Every delivery handed out has been acked or rejected, so
 			// this requeues the rest, without counting it against any of
 			// them.
@@ -465,24 +511,31 @@ func (s *session) consume(running, work, logCtx context.Context) error {
 	_ = s.conn.Close()
 
 	if err := s.failed(); err != nil {
-		return err
+		return nil, err
 	}
-	if lost && running.Err() == nil && work.Err() == nil {
-		cause := errLost
-		if s.lostErr != nil {
-			cause = s.lostErr
-		} else {
-			select {
-			case e := <-s.closes:
-				if e != nil {
-					cause = e
-				}
-			default:
-			}
+	if !wasLost || running.Err() != nil || work.Err() != nil {
+		return nil, nil
+	}
+	return lost, nil
+}
+
+// lostCause returns the error the channel closed with, when the connection
+// was lost, or errLost when the broker gave none, as when it cancelled the
+// consumer. amqp091 sends the error to the channel's NotifyClose listeners
+// before it ends the consumer's deliveries, so the error is there by the
+// time the deliveries end.
+func (s *session) lostCause() error {
+	if s.lostErr != nil {
+		return s.lostErr
+	}
+	select {
+	case e := <-s.closes:
+		if e != nil {
+			return e
 		}
-		return fmt.Errorf("rabbitmq: lost the connection consuming %s: %w", svc.settings.Queue, cause)
+	default:
 	}
-	return nil
+	return errLost
 }
 
 // cancel cancels the consumer, once. It is called only from the dispatching
@@ -517,6 +570,13 @@ func (s *session) receive() (d amqp.Delivery, ok, lost bool) {
 		}
 		s.received++
 		s.last = d.DeliveryTag
+		// A delivery taken once the channel has closed is not handed out:
+		// the broker requeued it with the channel, and delivers it again.
+		select {
+		case e, open := <-s.closes:
+			return d, false, s.lose(e, open)
+		default:
+		}
 		// A delivery taken as the session stops is not handed out.
 		return d, s.stopping.Err() == nil, false
 	}
@@ -742,6 +802,25 @@ func (svc *Service) Shutdown(ctx context.Context) error {
 	c.abort()
 	<-c.served
 	return fmt.Errorf("rabbitmq: shutting down the Service: %w", ctx.Err())
+}
+
+// logLost emits a WARN record for the connection lost with lost: with the
+// AMQP reply code as error.type, and its reason as exception.message, when
+// the broker gave one.
+func (svc *Service) logLost(ctx context.Context, lost error) {
+	attrs := []attribute.KeyValue{semconv.MessagingDestinationName(svc.settings.Queue)}
+	if ae, ok := errors.AsType[*amqp.Error](lost); ok {
+		attrs = append(attrs,
+			semconv.ErrorTypeKey.String(strconv.Itoa(ae.Code)),
+			semconv.ExceptionMessage(ae.Reason),
+		)
+	} else {
+		attrs = append(attrs,
+			semconv.ErrorType(lost),
+			semconv.ExceptionMessage(lost.Error()),
+		)
+	}
+	svc.emit(ctx, log.SeverityWarn, "lost the connection", attrs...)
 }
 
 // logProcessingError emits an ERROR record for the error processing d

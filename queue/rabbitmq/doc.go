@@ -142,8 +142,10 @@
 //	| the vhost or the queue         | the error; exit 1                    |                                      |
 //	| the connection is lost after   | the deliveries in flight finish,     | the same; a batch whose ack was      |
 //	| consuming started              | their acks fail, and the broker      | confirmed is processed               |
-//	|                                | delivers them again; Serve returns   |                                      |
-//	|                                | an error naming the queue; exit 1    |                                      |
+//	|                                | delivers them again; the Service     |                                      |
+//	|                                | logs it at WARN and reconnects       |                                      |
+//	| the broker closes the channel  | the Service stops, and Serve returns | the same                             |
+//	| with 406 PRECONDITION_FAILED   | the error; exit 1                    |                                      |
 //
 // The login or the vhost is refused with ACCESS_REFUSED, or amqp091's
 // ErrCredentials, ErrSASL or ErrVhost. The queue is refused with 404
@@ -154,8 +156,10 @@
 // The Service logs through the LoggerProvider of the Setup's telemetry,
 // under the scope github.com/z5labs/humus/queue/rabbitmq: at INFO,
 // consuming, on each connection, with the queue and server.address; at WARN,
-// each failed attempt to connect, with the error; and at ERROR, each
-// processing error under AtMostOnce.
+// each failed attempt to connect, with the error, and each lost connection,
+// with the AMQP reply code as error.type and its reason as
+// exception.message when the broker gave one; and at ERROR, each processing
+// error under AtMostOnce.
 //
 // # Settings
 //
@@ -255,7 +259,9 @@
 // backoff from 100ms up to 30s, with no Budget and no limit on attempts, so
 // only Serve's context ends them. Each failed attempt is logged at WARN, so
 // a broker that is down at startup is waited for. A login, vhost or queue
-// the broker refuses is not retried: Serve returns the error.
+// the broker refuses is not retried: Serve returns the error. The same
+// Retrier connects again after a lost connection, as Connection loss
+// describes.
 //
 // The Service consumes with manual acks and a consumer tag of its own, so
 // amqp091 never builds one from os.Args[0]. Consumer tags are scoped to a
@@ -265,6 +271,56 @@
 // humus builds no URL, and never calls amqp091's Dial, DialConfig or
 // DialTLS, which take one, so the password in SASL can't reach a log in
 // one. Nor does it set amqp091's logger, which is a package-level variable.
+//
+// # Connection loss
+//
+// A connection is lost when the network drops it, when it is silent for 1.5
+// heartbeat intervals, or when the broker closes it. A node that shuts down
+// closes every connection with 320 CONNECTION_FORCED, so a rolling upgrade
+// of RabbitMQ loses every consumer's connection once per node. The broker
+// cancelling the consumer, because its queue was deleted, is handled as a
+// lost connection too. When the connection or the channel closes, the
+// Service:
+//
+//  1. lets the deliveries in flight finish. Their acks fail in the client,
+//     and the Service drops those errors: the broker already requeued the
+//     deliveries, and delivers them again;
+//  2. hands out nothing more: what the consumer had buffered was requeued
+//     too, except the rest of an AtMostOnce batch whose ack was confirmed,
+//     which is processed;
+//  3. logs the lost connection at WARN, with the AMQP reply code and reason
+//     when the broker gave one;
+//  4. connects again, as Connecting describes, with the same Retrier and
+//     its backoff, logging each failed attempt at WARN, and consumes again.
+//
+// So the Service rides out a rolling upgrade: it connects to a node that is
+// up, or waits for one, and its pod neither restarts nor lands in
+// Kubernetes' crash-loop backoff. What a lost connection costs is
+// redeliveries. Every delivery that was unacked is delivered again, with
+// Redelivered set, and RabbitMQ counts each one toward a quorum queue's
+// delivery limit, as it does for any connection that closes with deliveries
+// unacked. A delivery is never processed twice by one connection: the
+// Service connects again only once the old one's deliveries are done.
+//
+// Some errors aren't fixed by connecting again, and stop the Service
+// instead, with Serve returning the error, so the App exits 1:
+//
+//   - the refusals of Connecting: a login, a vhost, or a queue the broker
+//     refuses, such as the 404 NOT_FOUND the reconnect after a deleted queue
+//     meets;
+//   - a channel the broker closes with 406 PRECONDITION_FAILED, as it does
+//     for a delivery held unacked past its consumer_timeout, 30 minutes by
+//     default. Connecting again would only hand the same Processor the same
+//     delivery.
+//
+// Shutdown while the Service connects again stops it at once, waiting for
+// no backoff, and Serve returns nil.
+//
+// amqp091's experimental recovery, Config.Recovery since v1.15.0, isn't
+// used. It is experimental, it redials through DialConfig's URL, which humus
+// never builds, rather than through the Host, and it declares the topology
+// again, which is the end user's. The Service's reconnect is a short loop of
+// the Retrier it connects with at startup, which humus tests.
 //
 // # Topology
 //
