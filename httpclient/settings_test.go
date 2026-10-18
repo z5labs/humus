@@ -6,6 +6,7 @@
 package httpclient_test
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"math"
@@ -15,11 +16,13 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/circuit"
 	"github.com/z5labs/bedrock/retry"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/httpclient"
 	"github.com/z5labs/humus/humustest"
+	"github.com/z5labs/humus/telemetry"
 )
 
 // fieldNames are words a check's error must not contain: a check reports
@@ -28,8 +31,10 @@ import (
 var fieldNames = []string{
 	"Settings", "BaseURL", "Timeout", "AttemptTimeout", "MaxAttempts",
 	"BackoffBase", "BackoffMax", "RetryBudget", "MaxTokens", "TokenRatio",
-	"Classify",
+	"Classify", "Breaker", "BreakerPolicy", "Window", "Probes", "OpenFor",
+	"ProbeTimeout", "Trip", "Probe",
 	"base", "timeout", "attempts", "backoff", "budget", "tokens", "ratio",
+	"breaker", "window", "probes", "open",
 }
 
 // tlsField matches "TLS" where it is not the start of a version, such as
@@ -168,6 +173,26 @@ func TestChecks(t *testing.T) {
 			accept: ratios(0.001, 0.1, 1, retry.TokenLimit),
 			reject: ratios(0.0009, 0, -0.1, retry.TokenLimit+0.001, math.NaN(), math.Inf(1)),
 		},
+		{
+			name:   "CheckBreakerWindow",
+			accept: ints(httpclient.CheckBreakerWindow, 1, 20, circuit.MaxCount),
+			reject: ints(httpclient.CheckBreakerWindow, 0, -1, circuit.MaxCount+1, math.MinInt, math.MaxInt),
+		},
+		{
+			name:   "CheckBreakerProbes",
+			accept: ints(httpclient.CheckBreakerProbes, 1, 3, circuit.MaxCount),
+			reject: ints(httpclient.CheckBreakerProbes, 0, -1, circuit.MaxCount+1, math.MinInt, math.MaxInt),
+		},
+		{
+			name:   "CheckBreakerOpenFor",
+			accept: durations(httpclient.CheckBreakerOpenFor, positive...),
+			reject: durations(httpclient.CheckBreakerOpenFor, notPositive...),
+		},
+		{
+			name:   "CheckBreakerProbeTimeout",
+			accept: durations(httpclient.CheckBreakerProbeTimeout, positive...),
+			reject: durations(httpclient.CheckBreakerProbeTimeout, notPositive...),
+		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
@@ -192,8 +217,11 @@ func TestDefaultSettings(t *testing.T) {
 
 	d := httpclient.DefaultSettings()
 	require.NotNil(t, d.Classify)
-	withoutClassify := d
-	withoutClassify.Classify = nil
+	require.NotNil(t, d.BreakerPolicy.Trip)
+	require.NotNil(t, d.BreakerPolicy.Probe)
+	withoutFuncs := d
+	withoutFuncs.Classify = nil
+	withoutFuncs.BreakerPolicy = circuit.Policy{}
 	require.Equal(t, httpclient.Settings{
 		BaseURL:        nil,
 		TLS:            nil,
@@ -203,7 +231,76 @@ func TestDefaultSettings(t *testing.T) {
 		BackoffBase:    100 * time.Millisecond,
 		BackoffMax:     5 * time.Second,
 		RetryBudget:    retry.BudgetConfig{MaxTokens: 10, TokenRatio: 0.1},
-	}, withoutClassify)
+		Breaker: circuit.Config{
+			Window:       20,
+			Probes:       1,
+			OpenFor:      10 * time.Second,
+			ProbeTimeout: 10 * time.Second,
+		},
+	}, withoutFuncs)
+
+	t.Run("its BreakerPolicy opens after 5 failures in a row, or once half of 20 or more failed", func(t *testing.T) {
+		t.Parallel()
+		trip := d.BreakerPolicy.Trip
+		for _, c := range []struct {
+			counts circuit.Counts
+			opens  bool
+		}{
+			{circuit.Counts{Failures: 4, ConsecutiveFailures: 4}, false},
+			{circuit.Counts{Failures: 5, ConsecutiveFailures: 5}, true},
+			{circuit.Counts{Successes: 15, Failures: 5, ConsecutiveFailures: 5}, true},
+			{circuit.Counts{Successes: 10, Failures: 10, ConsecutiveFailures: 4}, true},
+			{circuit.Counts{Successes: 11, Failures: 9, ConsecutiveFailures: 4}, false},
+			{circuit.Counts{Successes: 9, Failures: 9, ConsecutiveFailures: 4}, false},
+			{circuit.Counts{Successes: 20, ConsecutiveSuccesses: 20}, false},
+		} {
+			require.Equal(t, c.opens, trip(c.counts), "%+v", c.counts)
+		}
+	})
+
+	t.Run("its BreakerPolicy reopens on a failed probe and closes after 3 successful ones", func(t *testing.T) {
+		t.Parallel()
+		probe := d.BreakerPolicy.Probe
+		for _, c := range []struct {
+			counts circuit.Counts
+			state  circuit.State
+		}{
+			{circuit.Counts{Failures: 1, ConsecutiveFailures: 1}, circuit.Open},
+			{circuit.Counts{Successes: 2, Failures: 1, ConsecutiveFailures: 1}, circuit.Open},
+			{circuit.Counts{Successes: 2, ConsecutiveSuccesses: 2}, circuit.HalfOpen},
+			{circuit.Counts{Successes: 3, ConsecutiveSuccesses: 3}, circuit.Closed},
+			{circuit.Counts{TimedOut: 1}, circuit.HalfOpen},
+			{circuit.Counts{Successes: 3, ConsecutiveSuccesses: 3, TimedOut: 2}, circuit.Closed},
+		} {
+			require.Equal(t, c.state, probe(c.counts), "%+v", c.counts)
+		}
+	})
+
+	t.Run("the breaker's checks accept what circuit.New accepts", func(t *testing.T) {
+		t.Parallel()
+		classify := func(context.Context, error) circuit.Outcome { return circuit.Success }
+		observe := func(context.Context, circuit.Transition) {}
+		for _, cfg := range []circuit.Config{
+			d.Breaker,
+			{Window: 1, Probes: 1, OpenFor: time.Nanosecond, ProbeTimeout: time.Nanosecond},
+			{Window: circuit.MaxCount, Probes: circuit.MaxCount, OpenFor: time.Hour, ProbeTimeout: time.Hour},
+			{Window: 0, Probes: 1, OpenFor: time.Second, ProbeTimeout: time.Second},
+			{Window: circuit.MaxCount + 1, Probes: 1, OpenFor: time.Second, ProbeTimeout: time.Second},
+			{Window: 20, Probes: 0, OpenFor: time.Second, ProbeTimeout: time.Second},
+			{Window: 20, Probes: circuit.MaxCount + 1, OpenFor: time.Second, ProbeTimeout: time.Second},
+			{Window: 20, Probes: 1, OpenFor: 0, ProbeTimeout: time.Second},
+			{Window: 20, Probes: 1, OpenFor: time.Second, ProbeTimeout: -time.Second},
+		} {
+			_, newErr := circuit.New(cfg, d.BreakerPolicy, classify, observe)
+			checksErr := errors.Join(
+				httpclient.CheckBreakerWindow(cfg.Window),
+				httpclient.CheckBreakerProbes(cfg.Probes),
+				httpclient.CheckBreakerOpenFor(cfg.OpenFor),
+				httpclient.CheckBreakerProbeTimeout(cfg.ProbeTimeout),
+			)
+			require.Equal(t, newErr == nil, checksErr == nil, "%+v: New %v, the checks %v", cfg, newErr, checksErr)
+		}
+	})
 
 	t.Run("passes the checks of the fields that have a default", func(t *testing.T) {
 		t.Parallel()
@@ -215,6 +312,10 @@ func TestDefaultSettings(t *testing.T) {
 		require.NoError(t, httpclient.CheckBackoffMax(d.BackoffMax))
 		require.NoError(t, httpclient.CheckRetryBudgetMaxTokens(d.RetryBudget.MaxTokens))
 		require.NoError(t, httpclient.CheckRetryBudgetTokenRatio(d.RetryBudget.TokenRatio))
+		require.NoError(t, httpclient.CheckBreakerWindow(d.Breaker.Window))
+		require.NoError(t, httpclient.CheckBreakerProbes(d.Breaker.Probes))
+		require.NoError(t, httpclient.CheckBreakerOpenFor(d.Breaker.OpenFor))
+		require.NoError(t, httpclient.CheckBreakerProbeTimeout(d.Breaker.ProbeTimeout))
 	})
 
 	t.Run("the budget's checks accept what retry.NewBudget accepts", func(t *testing.T) {
@@ -244,11 +345,11 @@ func TestDefaultSettings(t *testing.T) {
 	})
 }
 
-// newSetup returns a Setup on a new humustest Host, for a test that builds
-// a client and sends nothing.
+// newSetup returns a Setup on a new humustest Host, with telemetry that
+// discards everything, for a test that builds a client and sends nothing.
 func newSetup(t *testing.T) *humus.Setup {
 	t.Helper()
-	return &humus.Setup{Host: humustest.NewHost(t).Host()}
+	return &humus.Setup{Host: humustest.NewHost(t).Host(), Telemetry: telemetry.Noop()}
 }
 
 func TestNewClient_the_Setup(t *testing.T) {
@@ -266,15 +367,23 @@ func TestNewClient_the_Setup(t *testing.T) {
 
 	t.Run("a Host with no Dial is rejected, rather than dialling the real network", func(t *testing.T) {
 		t.Parallel()
-		c, err := httpclient.NewClient(&humus.Setup{}, settings)
+		c, err := httpclient.NewClient(&humus.Setup{Telemetry: telemetry.Noop()}, settings)
 		require.Nil(t, c)
 		require.EqualError(t, err, "httpclient: NewClient: the Setup's Host.Dial must not be nil")
+	})
+
+	t.Run("a Telemetry with no LoggerProvider is rejected, rather than panic", func(t *testing.T) {
+		t.Parallel()
+		c, err := httpclient.NewClient(&humus.Setup{Host: humustest.NewHost(t).Host()}, settings)
+		require.Nil(t, c)
+		require.EqualError(t, err, "httpclient: NewClient: the Setup's Telemetry.LoggerProvider must not be nil")
 	})
 
 	t.Run("alongside the bad fields", func(t *testing.T) {
 		t.Parallel()
 		_, err := httpclient.NewClient(&humus.Setup{}, httpclient.DefaultSettings())
 		require.ErrorContains(t, err, "the Setup's Host.Dial must not be nil")
+		require.ErrorContains(t, err, "the Setup's Telemetry.LoggerProvider must not be nil")
 		require.ErrorContains(t, err, "Settings.BaseURL must not be nil")
 	})
 }
@@ -307,6 +416,8 @@ func TestNewClient_settings(t *testing.T) {
 		settings.BackoffMax = -time.Second
 		settings.RetryBudget = retry.BudgetConfig{MaxTokens: 2, TokenRatio: 0}
 		settings.Classify = nil
+		settings.Breaker = circuit.Config{Window: 0, Probes: circuit.MaxCount + 1, OpenFor: 0, ProbeTimeout: -time.Second}
+		settings.BreakerPolicy = circuit.Policy{}
 
 		_, err := httpclient.NewClient(newSetup(t), settings)
 		require.ErrorContains(t, err, "httpclient: NewClient: ")
@@ -319,6 +430,12 @@ func TestNewClient_settings(t *testing.T) {
 		require.ErrorContains(t, err, "Settings.RetryBudget.MaxTokens must be from 3")
 		require.ErrorContains(t, err, "Settings.RetryBudget.TokenRatio must be from 0.001")
 		require.ErrorContains(t, err, "Settings.Classify must not be nil")
+		require.ErrorContains(t, err, "Settings.Breaker.Window must be from 1 to 65536, got 0")
+		require.ErrorContains(t, err, "Settings.Breaker.Probes must be from 1 to 65536, got 65537")
+		require.ErrorContains(t, err, "Settings.Breaker.OpenFor must be positive")
+		require.ErrorContains(t, err, "Settings.Breaker.ProbeTimeout must be positive")
+		require.ErrorContains(t, err, "Settings.BreakerPolicy.Trip must not be nil")
+		require.ErrorContains(t, err, "Settings.BreakerPolicy.Probe must not be nil")
 		require.NotContains(t, err.Error(), "Settings.BaseURL")
 	})
 
@@ -357,6 +474,12 @@ func TestNewClient_settings(t *testing.T) {
 			"Settings.RetryBudget.MaxTokens":  func(s *httpclient.Settings) { s.RetryBudget.MaxTokens = 1 },
 			"Settings.RetryBudget.TokenRatio": func(s *httpclient.Settings) { s.RetryBudget.TokenRatio = -1 },
 			"Settings.Classify":               func(s *httpclient.Settings) { s.Classify = nil },
+			"Settings.Breaker.Window":         func(s *httpclient.Settings) { s.Breaker.Window = 0 },
+			"Settings.Breaker.Probes":         func(s *httpclient.Settings) { s.Breaker.Probes = circuit.MaxCount + 1 },
+			"Settings.Breaker.OpenFor":        func(s *httpclient.Settings) { s.Breaker.OpenFor = 0 },
+			"Settings.Breaker.ProbeTimeout":   func(s *httpclient.Settings) { s.Breaker.ProbeTimeout = 0 },
+			"Settings.BreakerPolicy.Trip":     func(s *httpclient.Settings) { s.BreakerPolicy.Trip = nil },
+			"Settings.BreakerPolicy.Probe":    func(s *httpclient.Settings) { s.BreakerPolicy.Probe = nil },
 		} {
 			settings := https(t)
 			change(&settings)

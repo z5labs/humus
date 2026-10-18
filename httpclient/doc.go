@@ -182,10 +182,13 @@
 // dependency's answers mean, which differs from one API to another, and
 // Classify decides it.
 //
-// What the client decides: Classify isn't asked about an error once the
+// What the client decides: Classify isn't asked about an attempt the
+// circuit breaker rejects, which ends the call, nor about an error once the
 // call's context is done, because the caller gave up or the call's deadline
-// passed. Another attempt can't help, so the call ends. And whatever
-// Classify returns:
+// passed. Another attempt can't help, so the call ends: the breaker
+// ignores the caller giving up, and counts the deadline against the
+// dependency. Nor is it asked about a body that fails once service code
+// reads it (see The circuit breaker). And whatever Classify returns:
 //
 //   - a request that isn't safe to send twice, or can't be replayed, makes
 //     one attempt;
@@ -270,6 +273,70 @@
 // Classify passes to the goroutine that made the call, once the attempt's
 // response is closed, so its connection isn't held.
 //
+// # The circuit breaker
+//
+// Each client has one circuit breaker, bedrock's circuit.Breaker, which
+// guards its dependency: while the dependency keeps failing, the client
+// fails calls at once, rather than hold every caller for its timeouts and
+// retries, and a probe now and then finds out when the dependency is back.
+// The breaker sits inside the retries, so each attempt is a call it admits
+// or rejects, and inside otelhttp, so each attempt it rejects still has a
+// span.
+//
+// What counts is each attempt's result, as the Breaker outcome of its
+// Classification: Success, Failure, or Ignored for a result that says
+// nothing about the dependency. The client decides some of it itself:
+//
+//   - an error once the caller cancelled the call's context is Ignored;
+//   - an error once the call's deadline passed, Timeout or one the caller
+//     set, is a Failure: a dependency that hangs ends every call this way,
+//     and a breaker that ignored deadlines would never open;
+//   - a response's result is counted by its body, with its
+//     Classification's Breaker, once service code reads the body to the
+//     end or closes it. A read that fails is a Failure instead, whatever
+//     Classify said of the status, since the dependency sent its headers
+//     and then failed, or Ignored when the caller cancelled the call's
+//     context. A body the client buffers before a retry is counted then.
+//
+// Settings.Breaker configures it, from configuration, and
+// Settings.BreakerPolicy decides when it opens and closes, in code. The
+// default opens after 5 failures in a row, or once half of the last 20 or
+// more results failed. It then rejects every attempt for OpenFor, 10s, and
+// then lets one probe through at a time: a failed probe reopens it, and 3
+// successful ones close it. A policy whose Trip always returns false turns
+// the breaker off:
+//
+//	settings.BreakerPolicy.Trip = func(circuit.Counts) bool { return false }
+//
+// The policy runs with the breaker locked, on the goroutine of the call
+// whose result it decides on. The client recovers nothing: a panic in it
+// passes to that goroutine, the one that made the call or read its body,
+// and circuit leaves the breaker consistent.
+//
+// An attempt the breaker rejects sends nothing, and isn't retried, which
+// would defeat the breaker. Classify isn't asked about it. The call
+// returns at once, with an error that wraps a *circuit.RejectedError, which
+// says how much longer the breaker stays open, through http.Client's
+// *url.Error:
+//
+//	_, err := payments.Get("https://payments:8443/charges/1")
+//	if errors.Is(err, circuit.ErrRejected) {
+//		// Nothing was sent.
+//	}
+//
+// A rejected attempt still has otelhttp's client span, named and
+// attributed as every attempt's span is, which ends at once with status
+// Error and error.type *circuit.RejectedError. It is in
+// http.client.request.duration too, with an error.type that otelhttp
+// writes with the package path,
+// github.com/z5labs/bedrock/circuit.RejectedError.
+//
+// A body that service code never closes leaves its result uncounted. That
+// costs nothing while the breaker is closed. While it is half-open, the
+// attempt was a probe, whose slot the body holds until it is read or
+// closed, or for at most Breaker.ProbeTimeout, after which another probe
+// may go. net/http asks for every body to be closed anyway.
+//
 // # Retry-After
 //
 // The default Classify reads the Retry-After header of the 429s and 503s it
@@ -290,9 +357,10 @@
 //
 // Before another attempt follows, the client reads the body of the response
 // it replaces into memory, up to 64 KiB, and closes it, before the wait.
-// Closing it ends the attempt's span and frees its connection during the
-// backoff. If the wait is cut short, such as by the caller's context, the
-// buffered response is what the call returns. A body larger than 64 KiB
+// Closing it ends the attempt's span, counts its result in the breaker,
+// and frees its connection during the backoff. If the wait is cut short,
+// such as by the caller's context, the buffered response is what the call
+// returns. A body larger than 64 KiB
 // isn't retried: the call returns the response with its body intact. Error
 // bodies are small, so 64 KiB keeps every one the client retries, and
 // bounds what each call in flight holds.
@@ -340,8 +408,20 @@
 //
 // otelhttp records http.client.request.duration and
 // http.client.request.body.size for each attempt, in its own scope, with the
-// status code, or error.type for an attempt that failed with no response.
-// humus records no instrument of its own.
+// status code, or error.type for an attempt that failed with no response,
+// one the breaker rejected included. humus records no instrument of its
+// own, for the breaker or anything else.
+//
+// The client logs through the Setup's LoggerProvider, with the logger
+// github.com/z5labs/humus/httpclient, one record for each change of the
+// breaker's state, in the context of the call that made it: "circuit
+// breaker open" at WARN, and "circuit breaker half-open" and "circuit
+// breaker closed" at INFO. Each has the dependency's server.address and
+// server.port, the state the breaker left as circuit.previous_state, and
+// the counts of that state: circuit.successes, circuit.failures,
+// circuit.consecutive_successes, circuit.consecutive_failures and
+// circuit.timed_out. The client logs nothing else: an error is returned
+// to service code, not logged.
 //
 // The tracer, the meter and the propagator all come from the Setup's
 // telemetry, so nothing reaches OpenTelemetry's globals: a process that

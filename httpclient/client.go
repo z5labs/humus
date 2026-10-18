@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/z5labs/bedrock/circuit"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/z5labs/humus"
@@ -36,23 +37,34 @@ const maxRedirects = 10
 //
 // NewClient runs every check on settings, and rejects a BackoffMax below
 // BackoffBase, a TLS that doesn't match BaseURL's scheme (an https BaseURL
-// with a nil TLS, or an http one with a config) and a nil Classify. It
-// reports every bad field in one error that names each one. It also rejects
-// a nil s, and an s whose Host has no Dial, rather than let net/http fall
-// back to dialling the real network. It builds the dependency's
-// retry.Budget and retry.Retrier, dials nothing, and registers a function
-// with s.OnStop that closes the client's idle connections.
+// with a nil TLS, or an http one with a config), a nil Classify and a
+// BreakerPolicy with a nil Trip or Probe. It reports every bad field in one
+// error that names each one. It also rejects a nil s, an s whose Host has
+// no Dial, rather than let net/http fall back to dialling the real network,
+// and an s whose Telemetry has no LoggerProvider, which the breaker logs
+// through. It builds the dependency's retry.Budget and retry.Retrier, and
+// its circuit breaker from settings.Breaker and settings.BreakerPolicy,
+// dials nothing, and registers a function with s.OnStop that closes the
+// client's idle connections.
 //
 // The client dials through s.Host. A request to any origin other than
 // settings.BaseURL's fails without being sent. A request that is safe to
 // send twice is retried, as settings.Classify decides each attempt's result
-// counts. Every attempt it sends is a client span, and is measured, with
-// s.Telemetry's providers and propagator.
+// counts. Every attempt goes through the dependency's breaker, which counts
+// each attempt's result as Classify decides it, and while the dependency
+// keeps failing, rejects attempts at once, with an error that matches
+// circuit.ErrRejected, sending nothing. Every attempt it sends or rejects
+// is a client span, and is measured, with s.Telemetry's providers and
+// propagator, and each change of the breaker's state is a log record
+// through s.Telemetry's LoggerProvider.
 func NewClient(s *humus.Setup, settings Settings) (*http.Client, error) {
 	if s == nil {
 		return nil, errors.New("httpclient: NewClient: the Setup must not be nil")
 	}
 	err := checkSettings(settings)
+	if s.Telemetry.LoggerProvider == nil {
+		err = errors.Join(errors.New("the Setup's Telemetry.LoggerProvider must not be nil"), err)
+	}
 	if s.Host.Dial == nil {
 		err = errors.Join(errors.New("the Setup's Host.Dial must not be nil"), err)
 	}
@@ -67,6 +79,13 @@ func NewClient(s *humus.Setup, settings Settings) (*http.Client, error) {
 	}
 
 	base := originOf(settings.BaseURL)
+	logger := s.Telemetry.LoggerProvider.Logger(loggerName)
+	breaker, err := circuit.New(settings.Breaker, settings.BreakerPolicy, countVerdict, newObserver(logger, base))
+	if err != nil {
+		// checkSettings accepts only what circuit accepts, so this is
+		// humus's bug too.
+		return nil, fmt.Errorf("httpclient: NewClient: building the circuit breaker: %w", err)
+	}
 
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
@@ -86,14 +105,17 @@ func NewClient(s *humus.Setup, settings Settings) (*http.Client, error) {
 	}
 
 	// The layers, outermost first: the origin check and the retries, then
-	// otelhttp, then the layer that classifies each attempt, then the
+	// otelhttp, then the breaker, which classifies each attempt, then the
 	// attempt timeout, then the http.Transport. otelhttp sits inside the
 	// origin check, so a refused request is not an attempt, and outside
-	// the layers that see each attempt's span, so they find it in the
-	// request's context. Every provider and the propagator are passed, so
-	// otelhttp never falls back to OpenTelemetry's globals.
+	// the breaker, so an attempt the breaker rejects has a span, and the
+	// layers that see each attempt's span find it in the request's
+	// context. The breaker sits inside the retries, so each attempt is a
+	// call it admits or rejects. Every provider and the propagator are
+	// passed, so otelhttp never falls back to OpenTelemetry's globals.
 	attempts := attemptTransport{
 		classify: settings.Classify,
+		breaker:  breaker,
 		next:     newAttemptTimeout(settings.AttemptTimeout, tr),
 	}
 	instrumented := otelhttp.NewTransport(attempts,
@@ -152,6 +174,16 @@ func checkSettings(settings Settings) error {
 	check("Settings.RetryBudget.TokenRatio", CheckRetryBudgetTokenRatio(settings.RetryBudget.TokenRatio))
 	if settings.Classify == nil {
 		check("Settings.Classify", errNil)
+	}
+	check("Settings.Breaker.Window", CheckBreakerWindow(settings.Breaker.Window))
+	check("Settings.Breaker.Probes", CheckBreakerProbes(settings.Breaker.Probes))
+	check("Settings.Breaker.OpenFor", CheckBreakerOpenFor(settings.Breaker.OpenFor))
+	check("Settings.Breaker.ProbeTimeout", CheckBreakerProbeTimeout(settings.Breaker.ProbeTimeout))
+	if settings.BreakerPolicy.Trip == nil {
+		check("Settings.BreakerPolicy.Trip", errNil)
+	}
+	if settings.BreakerPolicy.Probe == nil {
+		check("Settings.BreakerPolicy.Probe", errNil)
 	}
 	if baseErr == nil && tlsErr == nil {
 		switch https := settings.BaseURL.Scheme == "https"; {
