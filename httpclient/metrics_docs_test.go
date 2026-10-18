@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"testing"
 	"testing/synctest"
 
@@ -40,13 +41,19 @@ func ordersTelemetry(reader sdkmetric.Reader) telemetry.Builder {
 	return func(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
 		s := telemetry.DefaultSettings()
 		s.ServiceName = "orders"
+		// The resource telemetry.New builds for traces and logs:
+		// s.ResourceOptions, then service.name.
+		res, err := resource.New(ctx, append(slices.Clone(s.ResourceOptions), resource.WithAttributes(semconv.ServiceName(s.ServiceName)))...)
+		if err != nil {
+			return telemetry.SDK{}, err
+		}
 		sdk, err := telemetry.New(ctx, s, dial, p.Stdout)
 		if err != nil {
 			return telemetry.SDK{}, err
 		}
 
 		mp := sdkmetric.NewMeterProvider(
-			sdkmetric.WithResource(resource.NewSchemaless(semconv.ServiceName(s.ServiceName))),
+			sdkmetric.WithResource(res),
 			sdkmetric.WithReader(reader),
 			sdkmetric.WithView(
 				// Every client's humus.circuit.calls, dropped.
