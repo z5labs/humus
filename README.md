@@ -40,8 +40,8 @@ drain and a grace period for a server behind a Kubernetes Service, while
 `queue/kafka` packages have landed too: `queue` is the contract between a
 `Processor` and any broker, and `queue/kafka`, with franz-go, consumes Kafka
 topics as a Service on `humus.Main`'s defaults, at least or at most once, and
-produces records with a `Producer` whose calls return once the cluster has
-stored them. See
+produces records with a `Producer` whose calls return nil only once the
+cluster has stored their records. See
 [Consuming and producing Kafka](https://z5labs.github.io/humus/kafka/). Earlier
 releases remain available on [pkg.go.dev](https://pkg.go.dev/github.com/z5labs/humus?tab=versions).
 

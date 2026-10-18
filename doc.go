@@ -85,7 +85,8 @@
 // have landed: queue is the contract between a Processor and any broker, and
 // queue/kafka, with franz-go, consumes Kafka topics as a Service on Main's
 // defaults, at least or at most once, and produces records with a Producer
-// whose calls return once the cluster has stored them, documented at
+// whose calls return nil only once the cluster has stored their records,
+// documented at
 // https://z5labs.github.io/humus/kafka/. The other runtime packages come back
 // through their own proposals.
 //

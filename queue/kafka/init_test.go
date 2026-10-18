@@ -56,6 +56,19 @@ func TestInit_processes_and_commits_a_produced_record(t *testing.T) {
 	})
 }
 
+// waitCommitted lets fake time pass until the group has committed offset on
+// partition 0 of topic, failing the test if a minute of it passes first.
+// synctest.Wait isn't enough once a Processor produces: Wait returns as
+// soon as every other goroutine is durably blocked, and a Produce waiting
+// on one of franz-go's timers is, while fake time passes only once the
+// test's goroutine blocks too.
+func waitCommitted(t *testing.T, c *kfake.Cluster, offset int64) {
+	t.Helper()
+	for start := time.Now(); committed(c)[0] < offset; time.Sleep(10 * time.Millisecond) {
+		require.Less(t, time.Since(start), time.Minute, "offset %d is never committed", offset)
+	}
+}
+
 func TestInit_produces_an_order_it_cannot_read_as_a_dead_letter(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
@@ -74,8 +87,7 @@ func TestInit_produces_an_order_it_cannot_read_as_a_dead_letter(t *testing.T) {
 				"KAFKA_TOPICS":   "orders",
 			}),
 		)
-		time.Sleep(time.Second) // in fake time, for the dead letter's Producer to connect
-		synctest.Wait()         // both records are processed and committed
+		waitCommitted(t, c, 2) // both records are processed and committed
 		p.Signal(syscall.SIGTERM)
 
 		st := <-status
@@ -200,8 +212,7 @@ func TestSecureInit_consumes_over_mTLS_with_SASL(t *testing.T) {
 				"KAFKA_SASL_PASSWORD": password,
 			}),
 		)
-		time.Sleep(time.Second) // in fake time, for the dead letter's Producer to connect
-		synctest.Wait()
+		waitCommitted(t, c, 2)
 		p.Signal(syscall.SIGTERM)
 
 		st := <-status
