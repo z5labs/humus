@@ -45,8 +45,9 @@ type Record struct {
 	Value []byte
 
 	// Headers are the record's headers, in order. A key may repeat. Any
-	// header the Setup's propagator writes, such as traceparent or baggage,
-	// is replaced by the record's own trace context.
+	// header whose key is one the Setup's propagator writes, such as
+	// traceparent or baggage, is removed, and the propagator then writes
+	// the record's own span context and the baggage of Produce's ctx.
 	Headers []Header
 }
 
@@ -155,8 +156,9 @@ func (p *Producer) stop(ctx context.Context) error {
 // records, it returns nil.
 //
 // Each record it hands to the client is sent under a span of its own, a
-// child of the span in ctx, whose context replaces the propagator's headers
-// of the record. The span ends, and the record is measured, when its result
+// child of the span in ctx. The record's headers whose keys the propagator
+// writes are removed, and the propagator writes the span's context and
+// ctx's baggage in their place. The span ends, and the record is measured, when its result
 // arrives, which may be after Produce returns.
 func (p *Producer) Produce(ctx context.Context, records ...Record) error {
 	if len(records) == 0 {

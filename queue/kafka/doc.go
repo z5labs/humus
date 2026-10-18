@@ -329,8 +329,9 @@
 //
 // franz-go's broker metrics come from the Meter of franz-go's kotel plugin,
 // which the Service and the Producer each build with the Setup's
-// MeterProvider and nothing else, and hand their client as hooks. Its instruments are kotel's, under kotel's
-// own scope, github.com/twmb/franz-go/plugin/kotel, with names such as
+// MeterProvider and nothing else, and hand their client as hooks. Its
+// instruments are kotel's, under kotel's own scope,
+// github.com/twmb/franz-go/plugin/kotel, with names such as
 // messaging.kafka.connects.count, messaging.kafka.connect_errors.count and
 // messaging.kafka.fetch_records.count. By broker, with a node_id attribute,
 // they count the connections opened, the connection errors and the
