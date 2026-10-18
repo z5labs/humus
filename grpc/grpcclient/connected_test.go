@@ -135,15 +135,25 @@ func check(t *testing.T, m health.Monitor) (bool, time.Duration) {
 	return ok, time.Since(start)
 }
 
-// requireNoRPC requires that a has started no RPC, no span, and no log
-// record beyond the logs it had already emitted.
-func (a *probed) requireNoRPC(t *testing.T, logs int) {
+// recorded is how many spans and log records an App's telemetry holds.
+type recorded struct {
+	spans, logs int
+}
+
+// recorded returns how many spans and log records a's telemetry holds now.
+func (a *probed) recorded() recorded {
+	return recorded{spans: len(a.tel.Spans()), logs: len(a.tel.Logs())}
+}
+
+// requireNoRPC requires that a has started no RPC, and that its telemetry
+// holds no span and no log record beyond before.
+func (a *probed) requireNoRPC(t *testing.T, before recorded) {
 	t.Helper()
 	require.Zero(t, a.counter.rpcs.Load(), "the Client started an RPC")
 	for _, s := range a.tel.Spans() {
 		require.NotEqual(t, otelgrpc.ScopeName, s.InstrumentationScope().Name, "otelgrpc started a span")
 	}
-	require.Len(t, a.tel.Logs(), logs, "the check logged")
+	require.Equal(t, before, a.recorded(), "the check started a span or logged")
 }
 
 func TestClient_Connected(t *testing.T) {
@@ -158,12 +168,12 @@ func TestClient_Connected(t *testing.T) {
 			require.Equal(t, connectivity.Idle, grpcclient.State(a.client), "NewClient dials nothing")
 			require.Empty(t, dials.all())
 
-			logs := len(a.tel.Logs())
+			before := a.recorded()
 			ok, took := check(t, a.client.Connected())
 			require.False(t, ok)
 			require.Equal(t, probeTimeout, took, "the check waits until its context ends")
 			require.Contains(t, dials.all(), "backend:9090", "the check started the connection")
-			a.requireNoRPC(t, logs)
+			a.requireNoRPC(t, before)
 		})
 	})
 
@@ -177,13 +187,13 @@ func TestClient_Connected(t *testing.T) {
 			defer a.stop()
 
 			require.Equal(t, connectivity.Idle, grpcclient.State(a.client))
-			logs := len(a.tel.Logs())
+			before := a.recorded()
 			ok, took := check(t, a.client.Connected())
 			require.True(t, ok)
 			require.Zero(t, took)
 			require.Equal(t, connectivity.Ready, grpcclient.State(a.client))
 			require.EqualValues(t, 1, a.counter.connsBegun.Load())
-			a.requireNoRPC(t, logs)
+			a.requireNoRPC(t, before)
 		})
 	})
 
@@ -194,7 +204,7 @@ func TestClient_Connected(t *testing.T) {
 			stop := startBackend(t, h, serving(t, ca, "backend"))
 			a := startProbed(t, h.Host(), settingsFor(ca, "backend:9090"))
 			defer a.stop()
-			logs := len(a.tel.Logs())
+			before := a.recorded()
 
 			first := a.client.Connected()
 			ok, _ := check(t, first)
@@ -213,7 +223,7 @@ func TestClient_Connected(t *testing.T) {
 			require.True(t, ok, "a second monitor reads the same latch")
 			require.Zero(t, took)
 			require.NotEqual(t, connectivity.Ready, grpcclient.State(a.client))
-			a.requireNoRPC(t, logs)
+			a.requireNoRPC(t, before)
 		})
 	})
 
@@ -225,11 +235,12 @@ func TestClient_Connected(t *testing.T) {
 			a := startProbed(t, h.Host(), settingsFor(humustest.NewCA(t), "backend:9090"))
 			defer a.stop()
 
+			before := a.recorded()
 			ok, took := check(t, a.client.Connected())
 			require.False(t, ok)
 			require.Equal(t, probeTimeout, took)
 			require.Equal(t, connectivity.TransientFailure, grpcclient.State(a.client))
-			require.Zero(t, a.counter.rpcs.Load())
+			a.requireNoRPC(t, before)
 		})
 	})
 
@@ -244,11 +255,12 @@ func TestClient_Connected(t *testing.T) {
 			a := startProbed(t, h.Host(), settings)
 			defer a.stop()
 
+			before := a.recorded()
 			ok, took := check(t, a.client.Connected())
 			require.False(t, ok)
 			require.Equal(t, probeTimeout, took)
 			require.Equal(t, connectivity.TransientFailure, grpcclient.State(a.client))
-			require.Zero(t, a.counter.rpcs.Load())
+			a.requireNoRPC(t, before)
 		})
 	})
 
@@ -299,14 +311,13 @@ func TestClient_Connected(t *testing.T) {
 			checkAll := func(timeout time.Duration, start func()) []bool {
 				const n = 8
 				got := make([]bool, n)
+				errs := make([]error, n)
 				var wg sync.WaitGroup
 				for i := range n {
 					wg.Go(func() {
 						ctx, cancel := context.WithTimeout(t.Context(), timeout)
 						defer cancel()
-						ok, err := a.client.Connected().Healthy(ctx)
-						require.NoError(t, err)
-						got[i] = ok
+						got[i], errs[i] = a.client.Connected().Healthy(ctx)
 					})
 				}
 				if start != nil {
@@ -314,6 +325,9 @@ func TestClient_Connected(t *testing.T) {
 					start()
 				}
 				wg.Wait()
+				for _, err := range errs {
+					require.NoError(t, err, "Connected never returns an error")
+				}
 				return got
 			}
 
