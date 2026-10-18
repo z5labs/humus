@@ -7,9 +7,6 @@ package httpclient
 
 import (
 	"net/http"
-
-	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
-	"go.opentelemetry.io/otel/trace"
 )
 
 // spanName names an attempt's span after its method, such as GET, as the
@@ -25,21 +22,21 @@ func spanName(_ string, r *http.Request) string {
 	return r.Method
 }
 
-// resendCount sets http.request.resend_count on each attempt's span, which
-// otelhttp, outside it, has put in the attempt's context, then passes the
-// attempt to next. The first attempt of a call is not a resend, so its span
-// has no count. A redirect is a resend, as the semantic conventions count
-// one: the first redirect's span has 1.
-type resendCount struct {
-	next http.RoundTripper
-}
-
-// RoundTrip implements http.RoundTripper.
-func (t resendCount) RoundTrip(r *http.Request) (*http.Response, error) {
-	if n := redirects(r); n > 0 {
-		trace.SpanFromContext(r.Context()).SetAttributes(semconv.HTTPRequestResendCount(n))
+// resendsBefore returns how many requests the call r belongs to sent
+// before r's first attempt. A call's first request has none. A redirect is a
+// resend, as the semantic conventions count one, so a redirect follows every
+// request its call sent before it: r.Response is the response that caused
+// it, and its Request the attempt that response answered.
+func resendsBefore(r *http.Request) int {
+	if r.Response == nil {
+		return 0
 	}
-	return t.next.RoundTrip(r)
+	if prev := r.Response.Request; prev != nil {
+		if a := attemptFrom(prev.Context()); a != nil {
+			return a.resend + 1
+		}
+	}
+	return redirects(r)
 }
 
 // redirects returns how many redirects led to r. http.Client sets a

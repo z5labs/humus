@@ -40,7 +40,7 @@ func newSetup(dialled *bool) *humus.Setup {
 // transportOf returns c's http.Transport.
 func transportOf(t *testing.T, c *http.Client) *http.Transport {
 	t.Helper()
-	ot, ok := c.Transport.(*originTransport)
+	ot, ok := c.Transport.(*retryTransport)
 	require.True(t, ok, "the client's Transport is %T", c.Transport)
 	return ot.conns
 }
@@ -138,7 +138,7 @@ func (c *closeRecorder) Close() error {
 	return nil
 }
 
-func TestOriginTransport_refuses_another_origin(t *testing.T) {
+func TestRetryTransport_refuses_another_origin(t *testing.T) {
 	t.Parallel()
 
 	settings := DefaultSettings()

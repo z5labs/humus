@@ -133,7 +133,7 @@ func TestClient_traces_each_attempt(t *testing.T) {
 		})
 	})
 
-	t.Run("a refused connection is an Error", func(t *testing.T) {
+	t.Run("a refused connection is an Error, on each of its attempts", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t) // nothing listens at payments:8443
 
@@ -142,10 +142,15 @@ func TestClient_traces_each_attempt(t *testing.T) {
 			require.Error(t, callErr)
 
 			spans := otelhttpSpans(tel)
-			require.Len(t, spans, 1)
-			require.Equal(t, trace.SpanKindClient, spans[0].SpanKind())
-			require.Equal(t, codes.Error, spans[0].Status().Code)
-			require.NotEmpty(t, attrs(spans[0])["error.type"].AsString())
+			require.Len(t, spans, 3, "a refused GET is retried, up to MaxAttempts")
+			var counts []int64
+			for _, s := range spans {
+				require.Equal(t, trace.SpanKindClient, s.SpanKind())
+				require.Equal(t, codes.Error, s.Status().Code)
+				require.NotEmpty(t, attrs(s)["error.type"].AsString())
+				counts = append(counts, attrs(s)["http.request.resend_count"].AsInt64())
+			}
+			require.ElementsMatch(t, []int64{0, 1, 2}, counts)
 		})
 	})
 
@@ -313,6 +318,7 @@ func TestClient_measures_each_attempt(t *testing.T) {
 			require.NoError(t, err)
 			duration := histogram[float64](t, rm, "http.client.request.duration")
 			require.Len(t, duration.DataPoints, 1)
+			require.EqualValues(t, 3, duration.DataPoints[0].Count, "each attempt is measured")
 			errType, found := duration.DataPoints[0].Attributes.Value("error.type")
 			require.True(t, found, "attributes: %v", duration.DataPoints[0].Attributes.ToSlice())
 			require.NotEmpty(t, errType.AsString())

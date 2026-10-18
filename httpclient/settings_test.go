@@ -7,12 +7,15 @@ package httpclient_test
 
 import (
 	"crypto/tls"
+	"errors"
+	"math"
 	"net/url"
 	"regexp"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/retry"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/httpclient"
@@ -23,8 +26,10 @@ import (
 // what is wrong, and whoever calls it names the field or the variable.
 // Settings.TLS is checked by tlsField, since "TLS 1.2" names a version.
 var fieldNames = []string{
-	"Settings", "BaseURL", "Timeout",
-	"base", "timeout",
+	"Settings", "BaseURL", "Timeout", "AttemptTimeout", "MaxAttempts",
+	"BackoffBase", "BackoffMax", "RetryBudget", "MaxTokens", "TokenRatio",
+	"Classify",
+	"base", "timeout", "attempts", "backoff", "budget", "tokens", "ratio",
 }
 
 // tlsField matches "TLS" where it is not the start of a version, such as
@@ -48,6 +53,29 @@ func TestChecks(t *testing.T) {
 	timeout := func(d time.Duration) func() error {
 		return func() error { return httpclient.CheckTimeout(d) }
 	}
+	durations := func(check func(time.Duration) error, ds ...time.Duration) []func() error {
+		var fs []func() error
+		for _, d := range ds {
+			fs = append(fs, func() error { return check(d) })
+		}
+		return fs
+	}
+	ints := func(check func(int) error, ns ...int) []func() error {
+		var fs []func() error
+		for _, n := range ns {
+			fs = append(fs, func() error { return check(n) })
+		}
+		return fs
+	}
+	ratios := func(rs ...float64) []func() error {
+		var fs []func() error
+		for _, r := range rs {
+			fs = append(fs, func() error { return httpclient.CheckRetryBudgetTokenRatio(r) })
+		}
+		return fs
+	}
+	positive := []time.Duration{time.Nanosecond, 100 * time.Millisecond, 5 * time.Second, time.Hour}
+	notPositive := []time.Duration{0, -time.Nanosecond, -time.Second}
 	roots := humustest.NewCA(t).Pool()
 
 	for _, c := range []struct {
@@ -110,6 +138,36 @@ func TestChecks(t *testing.T) {
 				timeout(-time.Second),
 			},
 		},
+		{
+			name:   "CheckAttemptTimeout",
+			accept: durations(httpclient.CheckAttemptTimeout, positive...),
+			reject: durations(httpclient.CheckAttemptTimeout, notPositive...),
+		},
+		{
+			name:   "CheckBackoffBase",
+			accept: durations(httpclient.CheckBackoffBase, positive...),
+			reject: durations(httpclient.CheckBackoffBase, notPositive...),
+		},
+		{
+			name:   "CheckBackoffMax",
+			accept: durations(httpclient.CheckBackoffMax, positive...),
+			reject: durations(httpclient.CheckBackoffMax, notPositive...),
+		},
+		{
+			name:   "CheckMaxAttempts",
+			accept: ints(httpclient.CheckMaxAttempts, 1, 3, math.MaxInt),
+			reject: ints(httpclient.CheckMaxAttempts, 0, -1, math.MinInt),
+		},
+		{
+			name:   "CheckRetryBudgetMaxTokens",
+			accept: ints(httpclient.CheckRetryBudgetMaxTokens, 3, 10, retry.TokenLimit),
+			reject: ints(httpclient.CheckRetryBudgetMaxTokens, 2, 0, -3, retry.TokenLimit+1),
+		},
+		{
+			name:   "CheckRetryBudgetTokenRatio",
+			accept: ratios(0.001, 0.1, 1, retry.TokenLimit),
+			reject: ratios(0.0009, 0, -0.1, retry.TokenLimit+0.001, math.NaN(), math.Inf(1)),
+		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
@@ -133,16 +191,51 @@ func TestDefaultSettings(t *testing.T) {
 	t.Parallel()
 
 	d := httpclient.DefaultSettings()
+	require.NotNil(t, d.Classify)
+	withoutClassify := d
+	withoutClassify.Classify = nil
 	require.Equal(t, httpclient.Settings{
-		BaseURL: nil,
-		TLS:     nil,
-		Timeout: 10 * time.Second,
-	}, d)
+		BaseURL:        nil,
+		TLS:            nil,
+		Timeout:        10 * time.Second,
+		AttemptTimeout: 5 * time.Second,
+		MaxAttempts:    3,
+		BackoffBase:    100 * time.Millisecond,
+		BackoffMax:     5 * time.Second,
+		RetryBudget:    retry.BudgetConfig{MaxTokens: 10, TokenRatio: 0.1},
+	}, withoutClassify)
 
 	t.Run("passes the checks of the fields that have a default", func(t *testing.T) {
 		t.Parallel()
 		require.NoError(t, httpclient.CheckTLS(d.TLS))
 		require.NoError(t, httpclient.CheckTimeout(d.Timeout))
+		require.NoError(t, httpclient.CheckAttemptTimeout(d.AttemptTimeout))
+		require.NoError(t, httpclient.CheckMaxAttempts(d.MaxAttempts))
+		require.NoError(t, httpclient.CheckBackoffBase(d.BackoffBase))
+		require.NoError(t, httpclient.CheckBackoffMax(d.BackoffMax))
+		require.NoError(t, httpclient.CheckRetryBudgetMaxTokens(d.RetryBudget.MaxTokens))
+		require.NoError(t, httpclient.CheckRetryBudgetTokenRatio(d.RetryBudget.TokenRatio))
+	})
+
+	t.Run("the budget's checks accept what retry.NewBudget accepts", func(t *testing.T) {
+		t.Parallel()
+		for _, cfg := range []retry.BudgetConfig{
+			d.RetryBudget,
+			{MaxTokens: 3, TokenRatio: 0.001},
+			{MaxTokens: retry.TokenLimit, TokenRatio: retry.TokenLimit},
+			{MaxTokens: 2, TokenRatio: 0.1},
+			{MaxTokens: retry.TokenLimit + 1, TokenRatio: 0.1},
+			{MaxTokens: 10, TokenRatio: 0.0009},
+			{MaxTokens: 10, TokenRatio: retry.TokenLimit + 0.5},
+			{MaxTokens: 10, TokenRatio: math.NaN()},
+		} {
+			_, budgetErr := retry.NewBudget(cfg)
+			checksErr := errors.Join(
+				httpclient.CheckRetryBudgetMaxTokens(cfg.MaxTokens),
+				httpclient.CheckRetryBudgetTokenRatio(cfg.TokenRatio),
+			)
+			require.Equal(t, budgetErr == nil, checksErr == nil, "%+v: NewBudget %v, the checks %v", cfg, budgetErr, checksErr)
+		}
 	})
 
 	t.Run("fails the check of BaseURL, which has none", func(t *testing.T) {
@@ -208,20 +301,62 @@ func TestNewClient_settings(t *testing.T) {
 		settings := https(t)
 		settings.TLS.InsecureSkipVerify = true
 		settings.Timeout = 0
+		settings.AttemptTimeout = 0
+		settings.MaxAttempts = 0
+		settings.BackoffBase = 0
+		settings.BackoffMax = -time.Second
+		settings.RetryBudget = retry.BudgetConfig{MaxTokens: 2, TokenRatio: 0}
+		settings.Classify = nil
 
 		_, err := httpclient.NewClient(newSetup(t), settings)
 		require.ErrorContains(t, err, "httpclient: NewClient: ")
 		require.ErrorContains(t, err, "Settings.TLS sets InsecureSkipVerify")
 		require.ErrorContains(t, err, "Settings.Timeout must be positive")
+		require.ErrorContains(t, err, "Settings.AttemptTimeout must be positive")
+		require.ErrorContains(t, err, "Settings.MaxAttempts must be at least 1")
+		require.ErrorContains(t, err, "Settings.BackoffBase must be positive")
+		require.ErrorContains(t, err, "Settings.BackoffMax must be positive")
+		require.ErrorContains(t, err, "Settings.RetryBudget.MaxTokens must be from 3")
+		require.ErrorContains(t, err, "Settings.RetryBudget.TokenRatio must be from 0.001")
+		require.ErrorContains(t, err, "Settings.Classify must not be nil")
 		require.NotContains(t, err.Error(), "Settings.BaseURL")
+	})
+
+	t.Run("a BackoffMax below BackoffBase is rejected, next to the other bad fields", func(t *testing.T) {
+		t.Parallel()
+		settings := https(t)
+		settings.BackoffBase = 2 * time.Second
+		settings.BackoffMax = time.Second
+		settings.Classify = nil
+
+		c, err := httpclient.NewClient(newSetup(t), settings)
+		require.Nil(t, c)
+		require.EqualError(t, err, "httpclient: NewClient: Settings.BackoffMax must be at least Settings.BackoffBase, 2s, got 1s\n"+
+			"Settings.Classify must not be nil")
+	})
+
+	t.Run("a BackoffMax equal to BackoffBase passes", func(t *testing.T) {
+		t.Parallel()
+		settings := https(t)
+		settings.BackoffBase = time.Second
+		settings.BackoffMax = time.Second
+		_, err := httpclient.NewClient(newSetup(t), settings)
+		require.NoError(t, err)
 	})
 
 	t.Run("each field is named", func(t *testing.T) {
 		t.Parallel()
 		for field, change := range map[string]func(*httpclient.Settings){
-			"Settings.BaseURL": func(s *httpclient.Settings) { s.BaseURL = mustParse(t, "https://payments:8443/?q=1") },
-			"Settings.TLS":     func(s *httpclient.Settings) { s.TLS.MaxVersion = tls.VersionTLS11 },
-			"Settings.Timeout": func(s *httpclient.Settings) { s.Timeout = -time.Second },
+			"Settings.BaseURL":                func(s *httpclient.Settings) { s.BaseURL = mustParse(t, "https://payments:8443/?q=1") },
+			"Settings.TLS":                    func(s *httpclient.Settings) { s.TLS.MaxVersion = tls.VersionTLS11 },
+			"Settings.Timeout":                func(s *httpclient.Settings) { s.Timeout = -time.Second },
+			"Settings.AttemptTimeout":         func(s *httpclient.Settings) { s.AttemptTimeout = -time.Second },
+			"Settings.MaxAttempts":            func(s *httpclient.Settings) { s.MaxAttempts = 0 },
+			"Settings.BackoffBase":            func(s *httpclient.Settings) { s.BackoffBase = 0 },
+			"Settings.BackoffMax":             func(s *httpclient.Settings) { s.BackoffMax = 0 },
+			"Settings.RetryBudget.MaxTokens":  func(s *httpclient.Settings) { s.RetryBudget.MaxTokens = 1 },
+			"Settings.RetryBudget.TokenRatio": func(s *httpclient.Settings) { s.RetryBudget.TokenRatio = -1 },
+			"Settings.Classify":               func(s *httpclient.Settings) { s.Classify = nil },
 		} {
 			settings := https(t)
 			change(&settings)

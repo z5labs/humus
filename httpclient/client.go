@@ -34,18 +34,20 @@ const maxRedirects = 10
 
 // NewClient returns an *http.Client for the dependency at settings.BaseURL.
 //
-// NewClient runs every check on settings, and rejects a TLS that doesn't
-// match BaseURL's scheme: an https BaseURL with a nil TLS, or an http one
-// with a config. It reports every bad field in one error that names each
-// one. It also rejects a nil s, and an s whose Host has no Dial, rather than
-// let net/http fall back to dialling the real network. It dials nothing, and
-// registers a function with s.OnStop that closes the client's idle
-// connections.
+// NewClient runs every check on settings, and rejects a BackoffMax below
+// BackoffBase, a TLS that doesn't match BaseURL's scheme (an https BaseURL
+// with a nil TLS, or an http one with a config) and a nil Classify. It
+// reports every bad field in one error that names each one. It also rejects
+// a nil s, and an s whose Host has no Dial, rather than let net/http fall
+// back to dialling the real network. It builds the dependency's
+// retry.Budget and retry.Retrier, dials nothing, and registers a function
+// with s.OnStop that closes the client's idle connections.
 //
 // The client dials through s.Host. A request to any origin other than
-// settings.BaseURL's fails without being sent. Every request it sends is a
-// client span, and is measured, with s.Telemetry's providers and
-// propagator.
+// settings.BaseURL's fails without being sent. A request that is safe to
+// send twice is retried, as settings.Classify decides each attempt's result
+// counts. Every attempt it sends is a client span, and is measured, with
+// s.Telemetry's providers and propagator.
 func NewClient(s *humus.Setup, settings Settings) (*http.Client, error) {
 	if s == nil {
 		return nil, errors.New("httpclient: NewClient: the Setup must not be nil")
@@ -55,6 +57,12 @@ func NewClient(s *humus.Setup, settings Settings) (*http.Client, error) {
 		err = errors.Join(errors.New("the Setup's Host.Dial must not be nil"), err)
 	}
 	if err != nil {
+		return nil, fmt.Errorf("httpclient: NewClient: %w", err)
+	}
+	retrier, err := newRetrier(settings)
+	if err != nil {
+		// checkSettings accepts only what retry accepts, so this is
+		// humus's bug.
 		return nil, fmt.Errorf("httpclient: NewClient: %w", err)
 	}
 
@@ -77,11 +85,18 @@ func NewClient(s *humus.Setup, settings Settings) (*http.Client, error) {
 		protocols.SetHTTP2(true)
 	}
 
-	// otelhttp sits inside the origin check, so a refused request is not an
-	// attempt, and outside the layers that see each attempt's span, so they
-	// find it in the request's context. Every provider and the propagator
-	// are passed, so otelhttp never falls back to OpenTelemetry's globals.
-	instrumented := otelhttp.NewTransport(resendCount{next: tr},
+	// The layers, outermost first: the origin check and the retries, then
+	// otelhttp, then the layer that classifies each attempt, then the
+	// attempt timeout, then the http.Transport. otelhttp sits inside the
+	// origin check, so a refused request is not an attempt, and outside
+	// the layers that see each attempt's span, so they find it in the
+	// request's context. Every provider and the propagator are passed, so
+	// otelhttp never falls back to OpenTelemetry's globals.
+	attempts := attemptTransport{
+		classify: settings.Classify,
+		next:     newAttemptTimeout(settings.AttemptTimeout, tr),
+	}
+	instrumented := otelhttp.NewTransport(attempts,
 		otelhttp.WithTracerProvider(s.Telemetry.TracerProvider),
 		otelhttp.WithMeterProvider(s.Telemetry.MeterProvider),
 		otelhttp.WithPropagators(s.Telemetry.Propagator),
@@ -89,7 +104,7 @@ func NewClient(s *humus.Setup, settings Settings) (*http.Client, error) {
 	)
 
 	c := &http.Client{
-		Transport: &originTransport{origin: base, next: instrumented, conns: tr},
+		Transport: &retryTransport{origin: base, retrier: retrier, next: instrumented, conns: tr},
 		Timeout:   settings.Timeout,
 		Jar:       nil,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -124,6 +139,20 @@ func checkSettings(settings Settings) error {
 	check("Settings.BaseURL", baseErr)
 	check("Settings.TLS", tlsErr)
 	check("Settings.Timeout", CheckTimeout(settings.Timeout))
+	check("Settings.AttemptTimeout", CheckAttemptTimeout(settings.AttemptTimeout))
+	check("Settings.MaxAttempts", CheckMaxAttempts(settings.MaxAttempts))
+	backoffBaseErr := CheckBackoffBase(settings.BackoffBase)
+	backoffMaxErr := CheckBackoffMax(settings.BackoffMax)
+	check("Settings.BackoffBase", backoffBaseErr)
+	check("Settings.BackoffMax", backoffMaxErr)
+	if backoffBaseErr == nil && backoffMaxErr == nil && settings.BackoffMax < settings.BackoffBase {
+		check("Settings.BackoffMax", fmt.Errorf("must be at least Settings.BackoffBase, %s, got %s", settings.BackoffBase, settings.BackoffMax))
+	}
+	check("Settings.RetryBudget.MaxTokens", CheckRetryBudgetMaxTokens(settings.RetryBudget.MaxTokens))
+	check("Settings.RetryBudget.TokenRatio", CheckRetryBudgetTokenRatio(settings.RetryBudget.TokenRatio))
+	if settings.Classify == nil {
+		check("Settings.Classify", errNil)
+	}
 	if baseErr == nil && tlsErr == nil {
 		switch https := settings.BaseURL.Scheme == "https"; {
 		case https && settings.TLS == nil:
@@ -165,33 +194,4 @@ func originOf(u *url.URL) origin {
 // String returns the origin as scheme://host:port.
 func (o origin) String() string {
 	return o.scheme + "://" + net.JoinHostPort(o.host, o.port)
-}
-
-// originTransport refuses every request to an origin other than its own,
-// before anything is sent, and passes the rest to next. The check is the
-// client's first step. conns is the http.Transport at the bottom of next,
-// which holds the client's connections.
-type originTransport struct {
-	origin origin
-	next   http.RoundTripper
-	conns  *http.Transport
-}
-
-// RoundTrip implements http.RoundTripper. A refused request's body is
-// closed, as RoundTrip must close it even on an error.
-func (t *originTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	if o := originOf(r.URL); o != t.origin {
-		if r.Body != nil {
-			_ = r.Body.Close()
-		}
-		return nil, fmt.Errorf("httpclient: request to %s on a client for %s", o, t.origin)
-	}
-	return t.next.RoundTrip(r)
-}
-
-// CloseIdleConnections closes conns's idle connections, so that
-// http.Client.CloseIdleConnections reaches them through the layers between,
-// which otelhttp's Transport doesn't pass it through.
-func (t *originTransport) CloseIdleConnections() {
-	t.conns.CloseIdleConnections()
 }
