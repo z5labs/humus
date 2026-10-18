@@ -22,18 +22,29 @@ import (
 )
 
 // attemptTransport is the layer inside otelhttp, which sees each attempt
-// in its span's context. It sets http.request.resend_count on the span of
-// an attempt that is not its call's first, passes the attempt to next, and
-// classifies its result, once, for the retry layer outside otelhttp.
+// in its span's context: the breaker layer. It sets
+// http.request.resend_count on the span of an attempt that is not its
+// call's first, admits the attempt through breaker, passes it to next,
+// classifies its result, once, for the retry layer outside otelhttp, and
+// settles the attempt's ticket with the result's Breaker outcome.
 type attemptTransport struct {
 	classify func(resp *http.Response, err error) Classification
+	breaker  *circuit.Breaker
 	next     http.RoundTripper
 }
 
-// RoundTrip implements http.RoundTripper. An error once the call's context
-// has ended is what the client decides, and classify isn't asked about it.
-// A panic in classify, or a Classification no classifier may return, passes
-// to the caller once the attempt's response is closed.
+// RoundTrip implements http.RoundTripper.
+//
+// An attempt the breaker rejects returns the *circuit.RejectedError, sends
+// nothing, and isn't retried. An error once the call's context has ended is
+// what the client decides, and classify isn't asked about it. Either way,
+// the ticket of an attempt that fails is settled at once, and a response
+// hands its ticket to its body, which settles it.
+//
+// A panic in classify, or a Classification no classifier may return,
+// passes to the caller once the attempt's response is closed and its
+// ticket released. A panic in the breaker's Policy passes to the caller as
+// it is.
 func (t attemptTransport) RoundTrip(r *http.Request) (resp *http.Response, err error) {
 	a := attemptFrom(r.Context())
 	if a == nil {
@@ -45,9 +56,31 @@ func (t attemptTransport) RoundTrip(r *http.Request) (resp *http.Response, err e
 		trace.SpanFromContext(r.Context()).SetAttributes(semconv.HTTPRequestResendCount(a.resend))
 	}
 
+	// The breaker sees the call's context, not the attempt's, so that it
+	// is the call ending that ends the call, and an attempt that times out
+	// is the dependency's failure.
+	ticket, err := t.breaker.Allow(a.call)
+	if err != nil {
+		if r.Body != nil {
+			_ = r.Body.Close()
+		}
+		a.class, a.classified = Classification{Retry: retry.Stop, Breaker: circuit.Ignored}, true
+		return nil, err
+	}
+	// The ticket is settled after RoundTrip returns when a body takes it,
+	// so the guard is a flag set once the body has it, not a deferred
+	// Release. Release does nothing once Done has settled the ticket.
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			ticket.Release()
+		}
+	}()
+
 	resp, err = t.next.RoundTrip(r)
 	if err != nil && ended(a.call) {
 		a.class, a.classified = decided(a.call), true
+		settle(ticket, a.class.Breaker)
 		return nil, err
 	}
 	if err != nil {
@@ -64,7 +97,14 @@ func (t attemptTransport) RoundTrip(r *http.Request) (resp *http.Response, err e
 	mustBeValid(c)
 	classified = true
 	a.class, a.classified = c, true
-	return resp, err
+
+	if err != nil || resp.Body == nil {
+		settle(ticket, c.Breaker)
+		return resp, err
+	}
+	resp.Body = newTicketBody(resp.Body, a.call, ticket, c.Breaker)
+	handedOff = true
+	return resp, nil
 }
 
 // ended reports whether call has ended: it is done, or its deadline has

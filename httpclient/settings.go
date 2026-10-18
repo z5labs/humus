@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/z5labs/bedrock/circuit"
 	"github.com/z5labs/bedrock/retry"
 )
 
@@ -103,6 +104,32 @@ type Settings struct {
 	// Default: the classification the package doc's "How an attempt's
 	// result counts" describes. Valid: set, which NewClient checks.
 	Classify func(resp *http.Response, err error) Classification
+
+	// Breaker configures the circuit breaker in front of the dependency,
+	// which counts the Breaker outcome of each attempt's Classification.
+	//
+	// Default: circuit.Config{Window: 20, Probes: 1, OpenFor: 10 *
+	// time.Second, ProbeTimeout: 10 * time.Second}. Valid: Window and
+	// Probes from 1 to circuit.MaxCount, OpenFor and ProbeTimeout positive.
+	// Checks: CheckBreakerWindow, CheckBreakerProbes, CheckBreakerOpenFor,
+	// CheckBreakerProbeTimeout.
+	Breaker circuit.Config
+
+	// BreakerPolicy decides when the breaker opens and closes. It is set in
+	// code, not sourced: how the dependency fails is the end user's
+	// knowledge, not an operator's choice. A policy whose Trip always
+	// returns false turns the breaker off.
+	//
+	// It runs with the breaker locked, on the goroutine of the call whose
+	// result it decides on, so it must be fast and safe for concurrent use.
+	// A panic in it passes to that goroutine, and leaves the breaker
+	// consistent.
+	//
+	// Default: open after 5 failures in a row, or once half of the last 20
+	// or more results failed; while half-open, reopen on a failed probe and
+	// close after 3 successful ones. Valid: Trip and Probe set, which
+	// NewClient checks. Check: none.
+	BreakerPolicy circuit.Policy
 }
 
 // DefaultSettings returns the client's defaults. BaseURL has none, so its
@@ -118,6 +145,37 @@ func DefaultSettings() Settings {
 		BackoffMax:     5 * time.Second,
 		RetryBudget:    retry.BudgetConfig{MaxTokens: 10, TokenRatio: 0.1},
 		Classify:       defaultClassify,
+		Breaker: circuit.Config{
+			Window:       20,
+			Probes:       1,
+			OpenFor:      10 * time.Second,
+			ProbeTimeout: 10 * time.Second,
+		},
+		BreakerPolicy: circuit.Policy{
+			Trip:  defaultTrip,
+			Probe: defaultProbe,
+		},
+	}
+}
+
+// defaultTrip opens the breaker after 5 failures in a row, or once half of
+// the last 20 or more results failed.
+func defaultTrip(c circuit.Counts) bool {
+	n := c.Successes + c.Failures
+	return c.ConsecutiveFailures >= 5 || (n >= 20 && 2*c.Failures >= n)
+}
+
+// defaultProbe reopens the breaker on a failed probe, closes it after 3
+// successful ones, and keeps probing otherwise, including after a probe
+// times out.
+func defaultProbe(c circuit.Counts) circuit.State {
+	switch {
+	case c.Failures > 0:
+		return circuit.Open
+	case c.ConsecutiveSuccesses >= 3:
+		return circuit.Closed
+	default:
+		return circuit.HalfOpen
 	}
 }
 
@@ -222,6 +280,38 @@ func CheckRetryBudgetMaxTokens(n int) error {
 func CheckRetryBudgetTokenRatio(r float64) error {
 	if !(r >= 0.001 && r <= retry.TokenLimit) {
 		return fmt.Errorf("must be from 0.001 to %d, got %v", retry.TokenLimit, r)
+	}
+	return nil
+}
+
+// CheckBreakerWindow accepts a window of 1 to circuit.MaxCount results, as
+// circuit.New does.
+func CheckBreakerWindow(n int) error {
+	return count(n)
+}
+
+// CheckBreakerProbes accepts 1 to circuit.MaxCount probes in flight at
+// once, as circuit.New does.
+func CheckBreakerProbes(n int) error {
+	return count(n)
+}
+
+// CheckBreakerOpenFor rejects a duration that is not positive, as
+// circuit.New does: a breaker that is open for no time sheds nothing.
+func CheckBreakerOpenFor(d time.Duration) error {
+	return positive(d)
+}
+
+// CheckBreakerProbeTimeout rejects a duration that is not positive, as
+// circuit.New does.
+func CheckBreakerProbeTimeout(d time.Duration) error {
+	return positive(d)
+}
+
+// count rejects a count that is not from 1 to circuit.MaxCount.
+func count(n int) error {
+	if n < 1 || n > circuit.MaxCount {
+		return fmt.Errorf("must be from 1 to %d, got %d", circuit.MaxCount, n)
 	}
 	return nil
 }

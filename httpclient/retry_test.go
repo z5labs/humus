@@ -399,7 +399,7 @@ func TestClient_retries_within_the_budget(t *testing.T) {
 		defer stop()
 
 		var perCall []int
-		st := runJob(t, h.Host(), paymentsSettings(t, ca), func(ctx context.Context, cl *http.Client) error {
+		st := runJob(t, h.Host(), withoutBreaker(paymentsSettings(t, ca)), func(ctx context.Context, cl *http.Client) error {
 			for range 5 {
 				before := c.count()
 				r, err := get(ctx, cl, "https://payments:8443/charges/1")
@@ -415,7 +415,8 @@ func TestClient_retries_within_the_budget(t *testing.T) {
 		})
 		requireExitZero(t, st)
 
-		// The budget's 10 tokens lose one for each attempt classified Retry,
+		// The breaker is off, or the fifth failure would open it. The
+		// budget's 10 tokens lose one for each attempt classified Retry,
 		// and allow a retry only while more than 5 are left: the first call
 		// makes its 3 attempts and leaves 7, the second makes 2 and leaves
 		// 5, and every call after makes one.
@@ -766,9 +767,10 @@ func TestClient_a_request_sent_once_still_counts_in_the_budget(t *testing.T) {
 		defer stop()
 
 		var getAttempts int
-		st := runJob(t, h.Host(), paymentsSettings(t, ca), func(ctx context.Context, cl *http.Client) error {
+		st := runJob(t, h.Host(), withoutBreaker(paymentsSettings(t, ca)), func(ctx context.Context, cl *http.Client) error {
 			// Each POST answered 503 is classified Retry, and takes a token
-			// although it isn't retried: five leave 5 of the 10.
+			// although it isn't retried: five leave 5 of the 10. The breaker
+			// is off, or the fifth failure would open it.
 			for range 5 {
 				req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://payments:8443/charges", strings.NewReader("{}"))
 				if err != nil {

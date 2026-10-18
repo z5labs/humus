@@ -21,20 +21,25 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/telemetry"
 )
 
 // errDialled is what the Host's Dial returns in these tests, which send
 // nothing.
 var errDialled = errors.New("dialled")
 
-// newSetup returns a Setup whose Host's Dial records that it was called.
+// newSetup returns a Setup whose Host's Dial records that it was called,
+// with telemetry that discards everything.
 func newSetup(dialled *bool) *humus.Setup {
-	return &humus.Setup{Host: humus.Host{
-		Dial: func(context.Context, string, string) (net.Conn, error) {
-			*dialled = true
-			return nil, errDialled
+	return &humus.Setup{
+		Host: humus.Host{
+			Dial: func(context.Context, string, string) (net.Conn, error) {
+				*dialled = true
+				return nil, errDialled
+			},
 		},
-	}}
+		Telemetry: telemetry.Noop(),
+	}
 }
 
 // transportOf returns c's http.Transport.
