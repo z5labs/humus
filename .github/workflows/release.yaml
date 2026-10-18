@@ -375,6 +375,7 @@ jobs:
               echo "::error title=Module did not build::$module@$VERSION did not build in a module requiring nothing else"
               failed=1
             fi
+            rm -rf "$dir"
             echo "::endgroup::"
           done < "$RUNNER_TEMP/modules.txt"
           exit "$failed"
