@@ -55,7 +55,14 @@ a `queue.Processor` keeps, how a service consumes Kafka topics with
 `kafka.NewService` on `humus.Main`'s defaults and what each delivery commits,
 how it produces records, such as dead letters, with a `kafka.Producer`, how
 a consumer turns ready once it has joined its group, with `Joined`, and how
-to test both on kfake. The `health` package has landed too, with
+to test both on kfake. The `queue/rabbitmq` package has landed too:
+[Consuming and publishing with RabbitMQ]({{< relref "rabbitmq" >}}) explains
+how a service consumes a RabbitMQ queue with `rabbitmq.NewService`, what each
+delivery acks and counts toward a quorum queue's delivery limit, how the
+consumer rides out a broker's rolling upgrade and turns ready with
+`Consuming`, how it publishes with confirms through a `rabbitmq.Publisher`,
+and how to test an App that uses RabbitMQ, which humus ships no fake broker
+for. The `health` package has landed too, with
 `httphealth` and the `grpc` module's `grpchealth`, which expose its probes:
 [Health]({{< relref "health" >}}) explains monitors, liveness and readiness,
 the health Service that owns an App's readiness, and how a pod's probes reach

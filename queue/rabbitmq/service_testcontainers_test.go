@@ -18,6 +18,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"io"
+	"net"
 	"slices"
 	"strconv"
 	"sync"
@@ -29,6 +30,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/bedrocktest"
+	"github.com/z5labs/bedrock/config"
 	"go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/goleak"
@@ -272,25 +274,64 @@ func TestService_processes_in_order_and_drains_on_SIGTERM(t *testing.T) {
 	}
 }
 
+// initWith is the end user's Init with p as its Processor: it sources the
+// Settings from the variables example_test.go's Init reads, and returns the
+// Service from NewService.
+func initWith(p queue.ProcessorFunc[rabbitmq.Message]) func(context.Context, *humus.Setup) ([]humus.Service, error) {
+	return func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+		d := rabbitmq.DefaultSettings()
+		env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
+		settings, err := config.Struct(func(r *config.Resolver) rabbitmq.Settings {
+			k := d
+			k.Connection.Addr = r.Get(env("RABBITMQ_ADDR").Validate(rabbitmq.CheckAddr))
+			k.Connection.SASL = &amqp.PlainAuth{
+				Username: r.Get(env("RABBITMQ_USERNAME")),
+				Password: r.Get(env("RABBITMQ_PASSWORD")),
+			}
+			k.Queue = r.Get(env("RABBITMQ_QUEUE").Validate(rabbitmq.CheckQueue))
+			k.Prefetch = r.Get(env("RABBITMQ_PREFETCH").Parse(strconv.Atoi).Default(d.Prefetch).Validate(rabbitmq.CheckPrefetch))
+			return k
+		}).Read(ctx)
+		if err != nil {
+			return nil, err
+		}
+		svc, err := rabbitmq.NewService(s, settings, p)
+		if err != nil {
+			return nil, err
+		}
+		return []humus.Service{svc}, nil
+	}
+}
+
 func TestInit_at_least_once_stops_on_a_failure_and_redelivers(t *testing.T) {
 	t.Parallel()
 
+	// The queue is the end user's infrastructure, so the test declares it.
 	q := quorumQueue(t)
 	publish(t, q, ids(5)...)
 
+	b := rabbit(t) // RabbitMQ in a container, with a login generated for this run
 	bad := errors.New("cannot process")
 	run := func(fail bool) (bedrock.ExitStatus, []rabbitmq.Message) {
 		var got recorder
-		p, status := startApp(t, consumerSettings(plainText(t), q), func(_ context.Context, m rabbitmq.Message) error {
+		p, status := humustest.Start(t, initWith(func(_ context.Context, m rabbitmq.Message) error {
 			got.add(m)
 			if fail && m.MessageID == "3" {
 				return bad
 			}
 			return nil
-		})
+		}),
+			humustest.WithApp(humus.WithHost(humus.OSHost())),
+			humustest.WithEnv(map[string]string{
+				"RABBITMQ_ADDR":     net.JoinHostPort(b.host, b.amqp),
+				"RABBITMQ_USERNAME": b.username,
+				"RABBITMQ_PASSWORD": b.password,
+				"RABBITMQ_QUEUE":    q,
+			}),
+		)
 		if !fail {
 			eventually(t, func() bool { return len(got.ids()) == 2 }, "the redelivered messages were never processed")
-			p.Signal(syscall.SIGTERM)
+			p.Signal(syscall.SIGTERM) // the drain acks what is in flight
 		}
 		return exit(t, status), got.messages()
 	}

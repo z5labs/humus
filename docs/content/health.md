@@ -589,6 +589,13 @@ than replacing them with pods that never consume. A broker outage after the
 first join doesn't make the consumer unready: it hits every pod at once, and
 would only block a rollout that might be the fix.
 
+**A RabbitMQ consumer is ready once it consumes.**
+[`Consuming`]({{< relref "rabbitmq#readiness" >}}) returns a `health.Monitor`
+that is unhealthy until the broker first answers the Service's
+`basic.consume`, and healthy from then until `Serve` returns, through any
+lost connection. It goes in the same place, as
+`health.Readiness(consumer.Consuming())`, for the same reasons.
+
 ### A gRPC dependency's readiness
 
 **A service that calls a gRPC dependency is ready once its Client has

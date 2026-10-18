@@ -19,10 +19,10 @@
 // before Process is called. [CheckDelivery] rejects any other value,
 // including the zero Delivery, which is not a default.
 //
-// queue has no consumer of its own. Each broker package, such as
-// queue/kafka, provides its Service, which takes a Delivery and a Processor
-// and implements the contract below against its own client. queue depends
-// on nothing but the standard library.
+// queue has no consumer of its own. Each broker package, queue/kafka for
+// Kafka and queue/rabbitmq for RabbitMQ, provides its Service, which takes
+// a Delivery and a Processor and implements the contract below against its
+// own client. queue depends on nothing but the standard library.
 //
 // # The contract
 //
