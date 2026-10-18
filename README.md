@@ -81,7 +81,14 @@ requirements that `openapi.Security`, `auth.NewHandler` and
 `grpcauth.Interceptors` enforce, while `auth/jwt` verifies JWT bearer tokens
 against keys from an identity provider's JSON Web Key Set or a `KeySet` of
 the end user's. See
-[Authentication and authorization](https://z5labs.github.io/humus/auth/). Earlier
+[Authentication and authorization](https://z5labs.github.io/humus/auth/). The
+`fault` package and its `fault/jsonscenario` package have landed too: a
+service turns failure injection on with `humus.WithFaults`, so a request
+whose baggage carries a failure scenario fails or slows down at the points
+the scenario names, every humus client being one, while every humus server
+strips scenarios from callers it doesn't trust, and `jsonscenario` carries a
+scenario as JSON in one baggage member. See
+[Failure injection](https://z5labs.github.io/humus/failure-injection/). Earlier
 releases remain available on [pkg.go.dev](https://pkg.go.dev/github.com/z5labs/humus?tab=versions).
 
 The plan is in the charter,

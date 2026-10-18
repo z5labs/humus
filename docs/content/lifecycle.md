@@ -75,6 +75,7 @@ a `func(*humus.App)`. humus has one for each field `Main` defaults:
 | `humus.WithTelemetry(b)` | `App.Telemetry`, the App's `telemetry.Builder` |
 | `humus.WithShutdownGracePeriod(d)` | `App.ShutdownGracePeriod`, the grace period when `HUMUS_SHUTDOWN_GRACE_PERIOD` is not set |
 | `humus.WithDrain(d)` | `App.Drain`, the [drain](#the-drain) when `HUMUS_SHUTDOWN_DRAIN_DELAY` is not set. `humus.WithDrain(nil)` removes a drain that an earlier option set |
+| `humus.WithFaults(f)` | `App.Faults`, the function that returns the App's [failure injection]({{< relref "failure-injection" >}}) settings |
 
 An option changes exported fields, so an end user or a runtime package can
 write one of their own as a function literal, and one option may set several
@@ -113,6 +114,7 @@ bedrock.Main(humus.App{
 | `Telemetry` | `telemetry.New` with `telemetry.DefaultSettings()`, the Host's `Dial` and the Process's stdout | Logs go to stdout as JSON lines, and spans get real IDs without being exported. A service that exports anything passes its own `Builder` with `humus.WithTelemetry`. |
 | `ShutdownGracePeriod` | 20s | It fits inside Kubernetes' default `terminationGracePeriodSeconds` of 30s, with telemetry's 5s shutdown after it and a margin for the process to exit. |
 | `Drain` | none | Only a Service that a load balancer routes to, and that keeps serving until `Shutdown`, needs a drain, and the package that provides it sets one. |
+| `Faults` | none | Failure injection is off until a service turns it on with `humus.WithFaults`: no scenario is evaluated or stripped. |
 
 The worst case from a signal to the exit is 20s of grace period and 5s of
 telemetry shutdown, `telemetry.Settings.ShutdownTimeout`: 25s, inside
@@ -199,7 +201,7 @@ the other package's defaults as well replaces both: the last one wins.
 
 ## App
 
-An App has five fields:
+An App has six fields:
 
 | Field | Required | Meaning |
 |---|---|---|
@@ -207,6 +209,7 @@ An App has five fields:
 | `ShutdownGracePeriod` | yes, unless `HUMUS_SHUTDOWN_GRACE_PERIOD` is set | the grace period when `HUMUS_SHUTDOWN_GRACE_PERIOD` is not set: 20s under `Main`. It must be positive, so the zero value fails startup |
 | `Drain` | no | the [drain](#the-drain) when `HUMUS_SHUTDOWN_DRAIN_DELAY` is not set: a `humus.Drain`, such as `humus.DrainDelay(5 * time.Second)`, that runs between shutdown starting and `Shutdown` being called on the Services, and whose context is done once every `Serve` has returned. A nil `Drain`, `Main`'s default, means no pause |
 | `Telemetry` | yes | the [`telemetry.Builder`](https://pkg.go.dev/github.com/z5labs/humus/telemetry#Builder) that builds the App's telemetry: under `Main`, its [default](#the-defaults) or the end user's own `Builder`, and in tests also `telemetry.NoopBuilder` or the `Builder` of humustest's recorder, `humustest.Telemetry` |
+| `Faults` | no | returns the App's [failure injection]({{< relref "failure-injection" >}}) settings, from which the App builds the `fault.Injector` in `Setup.Faults` before `Init`. A nil `Faults`, `Main`'s default, means no failure injection |
 | `Init` | yes | builds the App's dependencies and returns the Services to run |
 
 `ShutdownGracePeriod` and `Drain` are defaults: an operator overrides
@@ -413,10 +416,13 @@ modification times are real under `synctest`, so code that compares
 ## Setup and OnStop
 
 `Init` is given a [`*humus.Setup`](https://pkg.go.dev/github.com/z5labs/humus#Setup)
-holding the `bedrock.Process` the App is run with, the App's `Host` and its
-telemetry, `Setup.Telemetry`. `Init` reads its configuration from
-`Setup.Process`, builds its dependencies on `Setup.Host`, takes their tracers,
-meters and loggers from `Setup.Telemetry`, and returns the Services to run. Its context is done when the
+holding the `bedrock.Process` the App is run with, the App's `Host`, its
+telemetry, `Setup.Telemetry`, and its failure injection, `Setup.Faults`.
+`Init` reads its configuration from `Setup.Process`, builds its dependencies
+on `Setup.Host`, takes their tracers, meters and loggers from
+`Setup.Telemetry`, and returns the Services to run. Every humus server and
+client takes `Setup.Faults` from the `Setup` it is built with, so `Init`
+hands it on by handing on the `Setup`. Its context is done when the
 App receives an interrupt or SIGTERM, so a slow `Init`, such as one retrying a
 database connection, is cancelled by a signal.
 
@@ -467,30 +473,40 @@ the context each is given is done when the grace period runs out.
    is in the error chain, or 1 otherwise.
 4. Sets OpenTelemetry's process-wide error handler, which writes each export
    error to standard error.
-5. Calls `Init`. If it fails, runs the OnStop functions registered so far,
+5. Builds the [failure injection]({{< relref "failure-injection" >}}), when
+   `App.Faults` is set: calls it with the context a signal cancels and the
+   `Setup` that `Init` is then given, builds the `fault.Injector` from the
+   settings it returns with `fault.New`, and puts it in `Setup.Faults`. If
+   either fails, the failure is logged as `failure injection: ` and the
+   error, the OnStop functions registered so far run, within the grace
+   period, and the App exits 78 when a `*config.Error` is in the error
+   chain, or 1 otherwise, without calling `Init`. It comes after the
+   telemetry, which the function may use, and before `Init`, because every
+   server and client copies `Setup.Faults` when it is built.
+6. Calls `Init`. If it fails, runs the OnStop functions registered so far,
    within the grace period, and exits 78 when a `*config.Error` is in `Init`'s
    error chain, or 1 otherwise.
-6. Calls `Serve` on every Service concurrently, and logs `serving`.
-7. Waits for a signal, or for the first Service to return.
-8. Stops listening for signals, so that a second interrupt or SIGTERM takes
+7. Calls `Serve` on every Service concurrently, and logs `serving`.
+8. Waits for a signal, or for the first Service to return.
+9. Stops listening for signals, so that a second interrupt or SIGTERM takes
    its default action and ends the process at once, cancels the context
    passed to `Serve`, and logs `shutting down`.
-9. When it hasn't yet received every `Serve`'s result, calls the
-   [drain](#the-drain), with the `Setup` that `Init` was given:
-   `humus.DrainDelay` of `HUMUS_SHUTDOWN_DRAIN_DELAY` when that is set, and
-   `App.Drain` otherwise. Its context keeps the values of Run's context but
-   is not cancelled with it, is done once every `Serve` has returned, and
-   gives `humus.ShutdownCause` why the shutdown started. Run collects the
-   `Serve` results that arrive in the meantime and waits for the drain to
-   return. A drain error is logged at ERROR and joined into the cause as
-   `drain: ` and the error.
-10. Calls `Shutdown` on every Service concurrently, waits for every `Serve` to
+10. When it hasn't yet received every `Serve`'s result, calls the
+    [drain](#the-drain), with the `Setup` that `Init` was given:
+    `humus.DrainDelay` of `HUMUS_SHUTDOWN_DRAIN_DELAY` when that is set, and
+    `App.Drain` otherwise. Its context keeps the values of Run's context but
+    is not cancelled with it, is done once every `Serve` has returned, and
+    gives `humus.ShutdownCause` why the shutdown started. Run collects the
+    `Serve` results that arrive in the meantime and waits for the drain to
+    return. A drain error is logged at ERROR and joined into the cause as
+    `drain: ` and the error.
+11. Calls `Shutdown` on every Service concurrently, waits for every `Serve` to
     return, and then runs the OnStop functions in reverse order of
     registration. All of this happens within one grace period,
     `HUMUS_SHUTDOWN_GRACE_PERIOD`, which starts after the drain. Then it
     logs `stopped`.
-11. Shuts the telemetry down.
-12. Returns the [exit status](#exit-codes).
+12. Shuts the telemetry down.
+13. Returns the [exit status](#exit-codes).
 
 An `Init` that returns no Services, and a Service that returns on its own
 when it is the only one, end the App without calling the drain, as there is
@@ -575,10 +591,10 @@ values are bad, both are reported, one line each.
 | 0 | a signal stopped the App and it shut down in time | the signal |
 | 0 | a Service returned `nil` on its own, and the App shut down in time | none |
 | 1 (`humus.ExitFailure`) | the telemetry could not be built, or its SDK has a nil field | the error |
-| 1 (`humus.ExitFailure`) | `Init`, a Service, a Service's `Shutdown`, an OnStop function or the telemetry's shutdown failed | every error, joined |
+| 1 (`humus.ExitFailure`) | the failure injection could not be built, or `Init`, a Service, a Service's `Shutdown`, an OnStop function or the telemetry's shutdown failed | every error, joined |
 | 1 (`humus.ExitFailure`) | the shutdown ran past the grace period | a `*humus.GracePeriodError` |
 | 2 | never set by humus: Go's exit status for an unrecovered panic | |
-| 78 (`humus.ExitConfig`) | a setting is missing or malformed, including a config value read by the telemetry `Builder` or by `Init` | a `*config.Error` in the chain |
+| 78 (`humus.ExitConfig`) | a setting is missing or malformed, including a config value read by the telemetry `Builder`, by the `Faults` function or by `Init` | a `*config.Error` in the chain |
 
 78 is `EX_CONFIG` from `sysexits.h`. It tells an operator "fix the
 configuration" apart from "the service failed". Everything else that fails

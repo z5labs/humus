@@ -859,6 +859,20 @@ circuit breaker. It then turns unhealthy, and with it every pod, in the
 outage `Connected`'s latch exists to ride out. `Connected` makes no RPC, so
 neither turns it unhealthy. humus ships no such monitor.
 
+## Failure injection
+
+Every Client is an injection point per method, `grpc:<service>/<method>`,
+such as `grpc:payments.v1.Payments/Charge`: a call whose baggage carries a
+failure scenario can make its attempts to that one method fail or slow
+down, a unary call's and a stream's open alike. An abort is `Unavailable`,
+and a delay is waited inside `Timeout`. Either is a real failure to the
+Client: `Classify` decides it, so it is retried, and the breaker counts it.
+The Client strips the scenario from what it sends, unless
+`Settings.ForwardScenario` is set. Without `humus.WithFaults`, nothing is
+evaluated or stripped. [Failure injection]({{< relref "failure-injection" >}})
+explains the model, the points, a `Classify` that spares the breaker, and
+how to test a scenario.
+
 ## Testing
 
 A service that calls a dependency is tested whole, inside

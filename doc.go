@@ -123,8 +123,14 @@
 // auth.NewHandler and grpcauth.Interceptors enforce, and auth/jwt verifies
 // JWT bearer tokens against keys from an identity provider's JSON Web Key
 // Set or the end user's own KeySet, documented at
-// https://z5labs.github.io/humus/auth/. The other runtime packages come back
-// through their own proposals.
+// https://z5labs.github.io/humus/auth/. The fault package and its
+// fault/jsonscenario package have landed: fault builds an App's failure
+// injection, from a function passed with WithFaults, before Init, and puts
+// it in Setup.Faults, so a request whose baggage carries a failure scenario
+// fails or slows down at the points it names, every humus client being
+// one, while every humus server strips scenarios from callers it doesn't
+// trust, documented at https://z5labs.github.io/humus/failure-injection/.
+// The other runtime packages come back through their own proposals.
 //
 // The plan is in the charter, Proposal: humus on the bedrock process model:
 // https://github.com/z5labs/humus/discussions/629
