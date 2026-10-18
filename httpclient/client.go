@@ -120,18 +120,28 @@ func NewClient(s *humus.Setup, settings Settings) (*http.Client, error) {
 
 	// The layers, outermost first: the origin check and the retries, then
 	// otelhttp, then the breaker, which classifies each attempt, then the
-	// attempt timeout, then the http.Transport. otelhttp sits inside the
+	// attempt timeout, then the injection layer, then the http.Transport. otelhttp sits inside the
 	// origin check, so a refused request is not an attempt, and outside
 	// the breaker, so an attempt the breaker rejects has a span, and the
 	// layers that see each attempt's span find it in the request's
 	// context. The breaker sits inside the retries, so each attempt is a
-	// call it admits or rejects. Every provider and the propagator are
-	// passed, so otelhttp never falls back to OpenTelemetry's globals.
+	// call it admits or rejects. The injection layer sits inside the
+	// breaker and the attempt timeout, so an attempt a fault ends is
+	// classified, and a Delay is bounded, as the failure it emulates is.
+	// Every provider and the propagator are passed, so otelhttp never falls
+	// back to OpenTelemetry's globals.
+	injected := injectFaults{
+		faults:     s.Faults,
+		point:      pointOf(base),
+		forward:    settings.ForwardScenario,
+		propagator: s.Telemetry.Propagator,
+		next:       tr,
+	}
 	attempts := attemptTransport{
 		classify: settings.Classify,
 		breaker:  breaker,
 		metrics:  m,
-		next:     newAttemptTimeout(settings.AttemptTimeout, tr),
+		next:     newAttemptTimeout(settings.AttemptTimeout, injected),
 	}
 	instrumented := otelhttp.NewTransport(attempts,
 		otelhttp.WithTracerProvider(s.Telemetry.TracerProvider),
