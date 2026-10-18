@@ -1194,7 +1194,7 @@ shows up in three places:
   error.
 - **Its readiness**, through [`Joined`](#readiness): a consumer that has
   never joined its group is not ready, so a rollout whose new pods can't
-  reach the brokers stops.
+  reach the brokers stalls.
 
 ## Readiness
 
@@ -1210,9 +1210,9 @@ probes := health.NewService(health.Readiness(consumer.Joined()))
 ```
 
 `httphealth.NewService` takes the same `health.Readiness(consumer.Joined())`
-option. A rollout whose new pods can't reach the brokers then stops at its
-progress deadline, with the old pods still consuming, rather than replacing
-them with pods that never consume. A member assigned no partition, because
+option. A rollout whose new pods can't reach the brokers then stalls, and is
+reported failed at its progress deadline, rather than replacing every old pod
+with pods that never consume. A member assigned no partition, because
 the group has more members than the topics have partitions, has joined, and
 is ready. `Joined` may be called in `Init`, before `Serve`, and its monitor
 never returns an error.
