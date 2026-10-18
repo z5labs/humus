@@ -21,6 +21,7 @@ import (
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/bedrocktest"
 
+	"github.com/z5labs/humus/fault"
 	"github.com/z5labs/humus/internal/defaults"
 	"github.com/z5labs/humus/telemetry"
 )
@@ -35,6 +36,9 @@ import (
 func funcPointer(f any) uintptr {
 	return reflect.ValueOf(f).Pointer()
 }
+
+// noFaults is a Faults function that returns the default Settings.
+func noFaults(context.Context, *Setup) (fault.Settings, error) { return fault.DefaultSettings(), nil }
 
 // noInit is an Init that returns no Services.
 func noInit(context.Context, *Setup) ([]Service, error) { return nil, nil }
@@ -76,6 +80,7 @@ func TestMainApp_has_Mains_defaults(t *testing.T) {
 	require.Equal(t, osFS{}, app.Host.FS, "Host.FS is OSHost's")
 	require.Equal(t, 20*time.Second, app.ShutdownGracePeriod)
 	require.Nil(t, app.Drain, "Main has no drain")
+	require.Nil(t, app.Faults, "Main has no failure injection")
 	require.Equal(t, funcPointer(defaults.Telemetry), funcPointer(app.Telemetry), "the telemetry default")
 	require.Equal(t, funcPointer(noInit), funcPointer(app.Init))
 }
@@ -107,6 +112,7 @@ func TestMainApp_applies_opts_in_order_after_the_defaults(t *testing.T) {
 		WithHost(h),
 		WithTelemetry(telemetry.NoopBuilder),
 		WithDrain(DrainDelay(time.Second)),
+		WithFaults(noFaults),
 	)
 
 	require.Equal(t, []string{"first@20s", "second@1s", "third@2s"}, order)
@@ -114,6 +120,7 @@ func TestMainApp_applies_opts_in_order_after_the_defaults(t *testing.T) {
 	require.Nil(t, app.Host.Listen, "WithHost replaced OSHost")
 	require.Equal(t, funcPointer(telemetry.NoopBuilder), funcPointer(app.Telemetry))
 	require.NotNil(t, app.Drain)
+	require.Equal(t, funcPointer(noFaults), funcPointer(app.Faults))
 }
 
 // runtimeDefaults is the sketch of a runtime package's defaults from
