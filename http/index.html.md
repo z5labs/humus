@@ -10,8 +10,9 @@ the defaults an HTTP server behind a load balancer needs: a 5s drain and a
 runs the same App in a test, on the same defaults, with an HTTP/2 client.
 
 The package is the server half of what `rest.Run` did before the reset,
-without the REST DSL. It exports no App, runs no health Service and serves
-no probes: [`httphealth`](https://pkg.go.dev/github.com/z5labs/humus/httphealth)
+without the REST DSL, which is [`openapi/v3`](/humus/openapi/)
+now. It exports no App, runs no health Service and serves no probes:
+[`httphealth`](https://pkg.go.dev/github.com/z5labs/humus/httphealth)
 answers them, as [Health probes](#health-probes) describes. The design behind
 everything on this page is in
 [Proposal: HTTP server foundation](https://github.com/z5labs/humus/discussions/680),
@@ -770,8 +771,10 @@ for `Shutdown` after `Serve` has returned on its own reports SKIP, as
 ## Migration from `rest.Run`
 
 `httpserver` replaces the server half of `rest.Run` from before the reset.
-Its REST half moves to **Proposal: REST endpoint DSL and OpenAPI**, in
-wave 4 of [the charter](https://github.com/z5labs/humus/discussions/629).
+Its REST half is `openapi/v3`, whose `*openapi.API` is the handler an `Init`
+hands to `NewService`:
+[Serving an API with OpenAPI](/humus/openapi/#migration-from-restrun)
+has the table for it.
 
 | Before the reset | With `httpserver` |
 |---|---|

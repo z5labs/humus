@@ -26,7 +26,14 @@ that started it. The `httpserver` package has landed:
 [Serving HTTP](/humus/http/) explains how a service serves an
 `http.Handler` over TLS, with HTTP/2 preferred, on `httpserver.Main`'s
 drain and grace period, and how to test it with `httpservertest`. The
-`httpclient` package has landed: [Calling HTTP services](/humus/http-client/)
+`openapi/v3` package has landed:
+[Serving an API with OpenAPI](/humus/openapi/) explains how a
+service serves an API of typed operations on typed paths with
+`openapi.NewAPI`, the codecs every body names, `jsoncodec` and codecs of its
+own, streaming ones included, the answers to errors and rejected requests
+and RFC 9457 problem details with `problem`, the OpenAPI 3.2 document written
+from the same declarations, and how to test the API with `httpservertest`.
+The `httpclient` package has landed: [Calling HTTP services](/humus/http-client/)
 explains how a service calls each of its HTTP dependencies with a client
 built in `Init`, which requests are retried and how the end user's
 `Classify` decides what an answer means, the circuit breaker in front of
