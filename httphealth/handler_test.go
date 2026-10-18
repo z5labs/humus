@@ -321,8 +321,8 @@ func TestNewHandler_checks_with_the_requests_context(t *testing.T) {
 		<-entered
 		synctest.Wait()
 		select {
-		case <-returned:
-			t.Fatal("the monitor returned before the client gave up")
+		case err := <-returned:
+			t.Fatalf("the monitor returned %v before the client gave up", err)
 		default:
 		}
 

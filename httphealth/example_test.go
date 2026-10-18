@@ -60,11 +60,12 @@ func ExampleNewHandler() {
 
 	cancel() // the App starts shutting down
 	fmt.Print(get("/health/readiness"))
-	<-served
+	fmt.Println("Serve returned:", <-served)
 
 	// Output: /health/liveness: 200 OK
 	// /health/readiness: 503 Service Unavailable
 	// /health/readiness: 200 OK
 	// /hello: 200 hello
 	// /health/readiness: 503 Service Unavailable
+	// Serve returned: <nil>
 }
