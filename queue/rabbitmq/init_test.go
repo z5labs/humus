@@ -186,6 +186,8 @@ func TestSecureInit_presents_its_client_certificate_to_the_broker(t *testing.T) 
 		l, err := h.Listen("tcp", "rabbit:5671")
 		require.NoError(t, err)
 		defer func() { _ = l.Close() }()
+		// Issued here, since Issue fails t, which a goroutine of its own mustn't.
+		serverCert := ca.Issue(t, "rabbit").TLS()
 		type hello struct {
 			serverName string
 			client     string
@@ -198,7 +200,7 @@ func TestSecureInit_presents_its_client_certificate_to_the_broker(t *testing.T) 
 			}
 			defer func() { _ = conn.Close() }()
 			tc := tls.Server(conn, &tls.Config{
-				Certificates: []tls.Certificate{ca.Issue(t, "rabbit").TLS()},
+				Certificates: []tls.Certificate{serverCert},
 				ClientAuth:   tls.RequireAndVerifyClientCert,
 				ClientCAs:    ca.Pool(),
 				MinVersion:   tls.VersionTLS12,

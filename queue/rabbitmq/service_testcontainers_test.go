@@ -279,15 +279,17 @@ func TestService_processes_in_order_and_drains_on_SIGTERM(t *testing.T) {
 // Service from NewService.
 func initWith(p queue.ProcessorFunc[rabbitmq.Message]) func(context.Context, *humus.Setup) ([]humus.Service, error) {
 	return func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+		d := rabbitmq.DefaultSettings()
 		env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 		settings, err := config.Struct(func(r *config.Resolver) rabbitmq.Settings {
-			k := rabbitmq.DefaultSettings()
+			k := d
 			k.Connection.Addr = r.Get(env("RABBITMQ_ADDR").Validate(rabbitmq.CheckAddr))
 			k.Connection.SASL = &amqp.PlainAuth{
 				Username: r.Get(env("RABBITMQ_USERNAME")),
 				Password: r.Get(env("RABBITMQ_PASSWORD")),
 			}
 			k.Queue = r.Get(env("RABBITMQ_QUEUE").Validate(rabbitmq.CheckQueue))
+			k.Prefetch = r.Get(env("RABBITMQ_PREFETCH").Parse(strconv.Atoi).Default(d.Prefetch).Validate(rabbitmq.CheckPrefetch))
 			return k
 		}).Read(ctx)
 		if err != nil {
