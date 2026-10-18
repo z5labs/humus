@@ -222,14 +222,16 @@ func unique(prefix string) string {
 	return prefix + "-" + strings.ToLower(rand.Text())
 }
 
-// declareQueue declares a queue of the test's own over an amqp091 connection
-// that isn't humus's, and returns its name. The queue is deleted when the
-// test ends.
-func declareQueue(t *testing.T) string {
+// adminChannel opens a channel on an amqp091 connection of the test's own to
+// the shared RabbitMQ, in plain text, in confirm mode, so the test sets up
+// and inspects its queues apart from humus. The connection is closed when
+// the test ends.
+func adminChannel(t *testing.T) *amqp.Channel {
 	t.Helper()
 	b := rabbit(t)
 	var d net.Dialer
-	nc, err := d.DialContext(t.Context(), "tcp", net.JoinHostPort(b.host, b.amqp))
+	// Not t.Context(), which is done before the test's cleanup runs.
+	nc, err := d.DialContext(context.Background(), "tcp", net.JoinHostPort(b.host, b.amqp))
 	require.NoError(t, err)
 	conn, err := amqp.Open(nc, amqp.Config{
 		SASL:   []amqp.Authentication{&amqp.PlainAuth{Username: b.username, Password: b.password}},
@@ -243,13 +245,32 @@ func declareQueue(t *testing.T) string {
 	t.Cleanup(func() { _ = conn.Close() })
 	ch, err := conn.Channel()
 	require.NoError(t, err)
+	require.NoError(t, ch.Confirm(false))
+	return ch
+}
 
+// declareQueue declares a classic queue of the test's own over an amqp091
+// connection that isn't humus's, and returns its name. The queue is deleted
+// when the test ends.
+func declareQueue(t *testing.T) string {
+	t.Helper()
+	return declare(t, nil)
+}
+
+// declare declares a durable queue with args, under a name of the test's
+// own, and returns the name. The queue is deleted when the test ends.
+func declare(t *testing.T, args amqp.Table) string {
+	t.Helper()
+	ch := adminChannel(t)
 	name := unique("orders")
 	// RabbitMQ 4 refuses transient queues that aren't exclusive.
-	_, err = ch.QueueDeclare(name, true, false, false, false, nil)
+	_, err := ch.QueueDeclare(name, true, false, false, false, args)
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		_, _ = ch.QueueDelete(name, false, false, false)
+		// On a connection of its own: a test may have closed every
+		// connection.
+		del := adminChannel(t)
+		_, _ = del.QueueDelete(name, false, false, false)
 	})
 	return name
 }
