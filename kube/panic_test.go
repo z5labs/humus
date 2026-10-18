@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/log"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/humustest"
@@ -76,6 +77,16 @@ func requirePanicRecorded(t *testing.T, tel *humustest.Telemetry, name string, w
 
 	spans := panickedSpans(tel)
 	require.Len(t, spans, want)
+	// The span contexts of the panicked spans, which the records are
+	// emitted in.
+	type ids struct {
+		trace trace.TraceID
+		span  trace.SpanID
+	}
+	unclaimed := map[ids]bool{}
+	for _, span := range spans {
+		unclaimed[ids{span.SpanContext().TraceID(), span.SpanContext().SpanID()}] = true
+	}
 	for _, span := range spans {
 		attrs := map[string]string{}
 		for _, kv := range span.Attributes() {
@@ -105,7 +116,9 @@ func requirePanicRecorded(t *testing.T, tel *humustest.Telemetry, name string, w
 		case "reconcile panicked":
 			panicked++
 			require.Equal(t, log.SeverityError, r.Severity())
-			require.True(t, r.TraceID().IsValid(), "in the span's context")
+			id := ids{r.TraceID(), r.SpanID()}
+			require.True(t, unclaimed[id], "in the context of a panicked span, one record each: %v", id)
+			delete(unclaimed, id)
 			attrs := recordAttrs(&r)
 			require.Equal(t, "default", attrs["k8s.namespace.name"])
 			require.Equal(t, name, attrs["humus.kube.object.name"])

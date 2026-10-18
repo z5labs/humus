@@ -324,8 +324,9 @@ func (c *Controller) worker(work context.Context, queue workqueue.TypedRateLimit
 // process reconciles the object of key, as the cache holds it, and settles
 // the key: a panic forgets it, an error retries it with backoff, a
 // Result.After queues it again after that long, and otherwise it is
-// forgotten until the object changes or the resync comes. An object being deleted is finalized instead, when the
-// controller's finalizer holds it, and otherwise left alone.
+// forgotten until the object changes or the resync comes. An object being
+// deleted is finalized instead, when the controller's finalizer holds it,
+// and otherwise left alone.
 func (c *Controller) process(work context.Context, queue workqueue.TypedRateLimitingInterface[string], indexer cache.Indexer, key string) {
 	obj, exists, err := indexer.GetByKey(key)
 	u, ok := obj.(*unstructured.Unstructured)
