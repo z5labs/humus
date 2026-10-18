@@ -622,10 +622,10 @@ breaker's state, in the context of the call that made it:
 | `circuit breaker closed` | INFO | enough probes succeeded |
 
 Each has the dependency's `server.address` and `server.port`, from `Addr`,
-the state the breaker left as `circuit.previous_state`, and the counts of
-that state: `circuit.successes`, `circuit.failures`,
-`circuit.consecutive_successes`, `circuit.consecutive_failures` and
-`circuit.timed_out`. The bodies and the attributes are those of
+the state the breaker left as `humus.circuit.previous_state`, and the counts
+of that state: `humus.circuit.successes`, `humus.circuit.failures`,
+`humus.circuit.consecutive_successes`, `humus.circuit.consecutive_failures`
+and `humus.circuit.timed_out`. The bodies and the attributes are those of
 [`httpclient`]({{< relref "http-client#its-log-records" >}})'s, so one query
 finds every breaker. The `Client` logs nothing else: an error is returned to
 the end user's code, not logged.
@@ -700,9 +700,10 @@ span a child of the attempt's client span, and its handler sees the caller's
 baggage.
 
 **Each attempt records `rpc.client.call.duration`** on the Setup's
-`MeterProvider`, in otelgrpc's instrumentation scope. humus records no
-instrument of its own, for the breaker, the retry budget or anything else.
-The breaker's state changes are the `Client`'s only log records, as
+`MeterProvider`, in otelgrpc's instrumentation scope. The `Client` records
+four instruments of humus's own as well, for its breaker and its retries, as
+[humus's own instruments](#humuss-own-instruments) lists. The breaker's
+state changes are the `Client`'s only log records, as
 [Its log records](#its-log-records) lists.
 
 What is still read from the real environment is what
@@ -711,6 +712,66 @@ logger, which reads `GRPC_GO_LOG_SEVERITY_LEVEL` and the other `GRPC_GO_LOG_`
 variables and writes to the real standard error, grpc-go's other `GRPC_`
 variables, and `OTEL_SEMCONV_STABILITY_OPT_IN`, which otelgrpc reads. The
 `Client` adds nothing to that list.
+
+### humus's own instruments
+
+The `Client` records four instruments of humus's own, for its breaker and
+its retries, with the Setup's `MeterProvider`, in the scope
+`github.com/z5labs/humus/grpc/grpcclient`, the scope of its log records:
+
+| Instrument | Kind | Unit | Attributes | Recorded |
+|---|---|---|---|---|
+| `humus.circuit.state` | asynchronous UpDownCounter | `{breaker}` | `humus.circuit.state`: `closed`, `open` or `half-open` | at each collection: 1 for the breaker's state, 0 for the other two |
+| `humus.circuit.transitions` | Counter | `{transition}` | `humus.circuit.state`, the state it went to, and `humus.circuit.previous_state`, the one it left | at each change of the breaker's state, beside its log record |
+| `humus.circuit.calls` | Counter | `{call}` | `humus.circuit.outcome`: `success`, `failure`, `ignored` or `rejected` | as each unary attempt or stream counts in the breaker, or as the breaker rejects it |
+| `humus.retry.decisions` | Counter | `{decision}` | `humus.retry.decision`: `again`, `succeeded`, `stopped`, `exhausted`, `throttled` or `expired` | after each unary attempt and each attempt to open a stream |
+
+Every data point also carries the dependency's `server.address` and
+`server.port`, from `Addr`, the same as the breaker's log records, and
+nothing per call, such as `rpc.method`: otelgrpc's instruments break calls
+down already. Each other attribute's value is the `String()` of bedrock's
+own type, `circuit.State`, `circuit.Outcome` or `retry.Decision`.
+
+- **`humus.circuit.state` is read, not tracked.** At each collection it reads
+  the breaker's state once, so it shows `half-open` as soon as `OpenFor` has
+  passed, with no call made. It is a count of breakers in each state, so two
+  `Client`s of one address add up, as `closed` 1 and `open` 1. The App's
+  last collection, after the `OnStop` functions, still reads it, so the
+  final export has the state the App stopped in.
+- **`humus.circuit.transitions` catches the short opens.** A breaker can
+  open, go half-open and close between two collections, a minute apart by
+  default, and `humus.circuit.state` never shows it open.
+- **`humus.circuit.calls` counts a call when the breaker does.** One call is
+  one unary attempt, or one stream's open. A unary attempt counts once it
+  has returned, and a stream once it has ended, as [Streams](#streams)
+  describes, so a stream that is still open counts nothing yet. A stream
+  whose caller cancelled it counts nothing at all. It is the only place the
+  verdicts of the end user's `Classify` show. A call the breaker rejects is
+  `rejected`: it never reached grpc-go, so it is in no instrument of
+  otelgrpc's.
+- **`humus.retry.decisions` counts what `retry` decided,** so `throttled`
+  counts the retries the budget refused, `exhausted` the calls that used
+  every attempt, and `expired` the calls whose deadline came before the next
+  attempt could start. A rejected attempt is `stopped`, and a stream that
+  opens is `succeeded`, however it later ends.
+
+In Prometheus, they are `humus_circuit_state`,
+`humus_circuit_transitions_total`, `humus_circuit_calls_total` and
+`humus_retry_decisions_total`, and each attribute is a label such as
+`humus_circuit_state`. An alert on an open breaker reads the state, and one
+on breakers that open and close between scrapes reads the transitions:
+
+```promql
+# A breaker is open now.
+humus_circuit_state{humus_circuit_state="open"} > 0
+
+# A breaker opened in the last 5 minutes, however briefly.
+increase(humus_circuit_transitions_total{humus_circuit_state="open"}[5m]) > 0
+```
+
+A View in the end user's telemetry `Builder` drops or renames any of them.
+humus has no setting to turn them off. A test reads them as it reads any
+metric, with `humustest.Telemetry`'s `Metrics`, filtered to the scope.
 
 ## Readiness: `Connected`
 

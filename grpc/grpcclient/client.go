@@ -52,10 +52,13 @@ type Client struct {
 	// it.
 	breaker *circuit.Breaker
 
-	// host and port are Addr's, the server of the breaker's log records
-	// and of a rejected call's span.
+	// host and port are Addr's, the server of the breaker's log records,
+	// of humus's own instruments and of a rejected call's span.
 	host string
 	port int
+
+	// metrics are humus's own instruments, of the breaker and the retries.
+	metrics *instruments
 
 	// tracer starts the span of a call the breaker rejected, and logger
 	// emits the breaker's log records, both under scopeName, the Client's
@@ -91,7 +94,10 @@ var _ grpc.ClientConnInterface = (*Client)(nil)
 // grpc-go calls as well. A call the breaker rejects never reaches grpc-go,
 // so the Client starts its span itself, under the scope
 // github.com/z5labs/humus/grpc/grpcclient, from s.Telemetry's
-// TracerProvider. Each change of the breaker's state is one log record,
+// TracerProvider. The breaker's state, its changes of state, the calls it
+// counted or rejected, and what the retries decided after each attempt are
+// humus's own instruments, under the same scope, from s.Telemetry's
+// MeterProvider. Each change of the breaker's state is one log record,
 // under the same scope, from s.Telemetry's LoggerProvider.
 //
 // opts come after humus's own dial options, and the transport credentials
@@ -122,16 +128,24 @@ func NewClient(s *humus.Setup, settings Settings, opts ...grpc.DialOption) (*Cli
 	host, port, _ := net.SplitHostPort(settings.Addr)
 	// CheckAddr accepts only a port from 1 to 65535, written as a number.
 	portNum, _ := strconv.Atoi(port)
+	meter := s.Telemetry.MeterProvider.Meter(scopeName)
+	metrics, err := newInstruments(meter, host, portNum)
+	if err != nil {
+		// The instruments' names and options are humus's own, so this is
+		// humus's bug.
+		return nil, fmt.Errorf("grpcclient: NewClient: creating its instruments: %w", err)
+	}
 	c := &Client{
 		timeout:  settings.Timeout,
 		retrier:  retrier,
 		classify: settings.Classify,
 		host:     host,
 		port:     portNum,
+		metrics:  metrics,
 		tracer:   s.Telemetry.TracerProvider.Tracer(scopeName),
 		logger:   s.Telemetry.LoggerProvider.Logger(scopeName),
 	}
-	c.breaker, err = circuit.New(settings.Breaker, settings.BreakerPolicy, breakerOutcome, c.observe)
+	c.breaker, err = circuit.New(settings.Breaker, settings.BreakerPolicy, metrics.countCalls(breakerOutcome), c.observe)
 	if err != nil {
 		// checkSettings accepts only what circuit accepts, so this is
 		// humus's bug.
@@ -170,6 +184,12 @@ func NewClient(s *humus.Setup, settings Settings, opts ...grpc.DialOption) (*Cli
 	if err != nil {
 		return nil, fmt.Errorf("grpcclient: NewClient: %w", err)
 	}
+	// humus.circuit.state's callback is registered last, once nothing after
+	// it can fail, so a NewClient that returns an error leaves none behind.
+	if err := metrics.observeState(meter, c.breaker); err != nil {
+		_ = cc.Close()
+		return nil, fmt.Errorf("grpcclient: NewClient: registering humus.circuit.state's callback: %w", err)
+	}
 	s.OnStop(func(context.Context) error {
 		return cc.Close()
 	})
@@ -198,7 +218,7 @@ func (c *Client) Invoke(ctx context.Context, method string, args, reply any, opt
 		r := c.attempt(ctx, method, &trailer, func(ctx context.Context) error {
 			return c.cc.Invoke(ctx, method, args, reply, callOpts...)
 		})
-		a.Done(r)
+		c.metrics.done(ctx, a, r)
 		err = r.err
 	}
 	return err
@@ -218,7 +238,7 @@ func (c *Client) NewStream(ctx context.Context, desc *grpc.StreamDesc, method st
 	for a := range c.retrier.Attempts(ctx) {
 		var r *result
 		stream, r = c.open(ctx, desc, method, opts)
-		a.Done(r)
+		c.metrics.done(ctx, a, r)
 		err = r.err
 	}
 	return stream, err

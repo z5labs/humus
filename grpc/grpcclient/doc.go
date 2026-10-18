@@ -375,11 +375,12 @@
 // scope, in the context of the call that made the change: circuit breaker
 // open at WARN, and circuit breaker half-open and circuit breaker closed at
 // INFO. Each carries server.address and server.port, from Addr,
-// circuit.previous_state, and the counts of the state the breaker left:
-// circuit.successes, circuit.failures, circuit.consecutive_successes,
-// circuit.consecutive_failures and circuit.timed_out. The bodies and the
-// attributes are those of humus's other clients. The Client has no
-// instruments of its own for the breaker.
+// humus.circuit.previous_state, and the counts of the state the breaker
+// left: humus.circuit.successes, humus.circuit.failures,
+// humus.circuit.consecutive_successes, humus.circuit.consecutive_failures
+// and humus.circuit.timed_out. The bodies and the attributes are those of
+// humus's other clients. The breaker is measured too, with humus's own
+// instruments, as Telemetry, below, describes.
 //
 // BreakerPolicy's functions run with the breaker locked, on the goroutine
 // whose result they decide on. The Client recovers nothing: a panic in
@@ -488,15 +489,47 @@
 // baggage.
 //
 // Each attempt also records the histogram rpc.client.call.duration on the
-// Setup's MeterProvider, in otelgrpc's instrumentation scope. humus records
-// no instrument of its own: whether it should is the question of Proposal:
-// humus's own metrics, in wave 5.
+// Setup's MeterProvider, in otelgrpc's instrumentation scope.
 //
-// The Client's own telemetry is what the circuit breaker adds, under the
-// scope github.com/z5labs/humus/grpc/grpcclient: the span of a call the
-// breaker rejected, which never reached grpc-go, and one log record for
-// each change of the breaker's state, as The circuit breaker, above,
-// describes.
+// The Client records four instruments of humus's own, for its breaker and
+// its retries, with the Setup's MeterProvider, in the scope
+// github.com/z5labs/humus/grpc/grpcclient. Every data point carries the
+// dependency's server.address and server.port, from Addr, and nothing per
+// call, such as rpc.method. Every other attribute's value is the String()
+// of bedrock's own type:
+//
+//   - humus.circuit.state, an asynchronous UpDownCounter in {breaker}, with
+//     humus.circuit.state: closed, open or half-open. At each collection it
+//     reads the breaker's state and observes 1 for it and 0 for the other
+//     two. It reads half-open as soon as Breaker.OpenFor has passed, with
+//     no call made. Two Clients of one Addr add up, such as closed 1 and
+//     open 1. It is still read by the App's last collection, after the
+//     OnStop functions, so the final export has the state the App stopped
+//     in.
+//   - humus.circuit.transitions, a Counter in {transition}, with
+//     humus.circuit.state, the state the breaker went to, and
+//     humus.circuit.previous_state, the state it left: one for each change
+//     of state, beside its log record.
+//   - humus.circuit.calls, a Counter in {call}, with humus.circuit.outcome:
+//     success, failure or ignored, as each call counted in the breaker, when
+//     it is counted; or rejected, for a call the breaker didn't admit. A
+//     call is one unary attempt, or one stream's open: a unary attempt
+//     counts once it has returned, and a stream once it has ended, as
+//     Streams, above, describes. A call whose ticket is released uncounted,
+//     such as a stream whose caller cancelled its context, or an attempt
+//     that panicked, counts nothing.
+//   - humus.retry.decisions, a Counter in {decision}, with
+//     humus.retry.decision: again, succeeded, stopped, exhausted, throttled
+//     or expired, what retry decided after each unary attempt and each
+//     attempt to open a stream, a rejected one's stopped included.
+//
+// A View in the end user's telemetry Builder drops or renames them. humus
+// has no setting to turn them off.
+//
+// The rest of the Client's own telemetry is what the circuit breaker adds,
+// under the same scope: the span of a call the breaker rejected, which
+// never reached grpc-go, and one log record for each change of the
+// breaker's state, as The circuit breaker, above, describes.
 //
 // Nothing reaches OpenTelemetry's globals: every provider and the
 // propagator are passed to otelgrpc, so it never falls back to them, and

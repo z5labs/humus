@@ -69,6 +69,7 @@ func newRetrier(settings Settings) (*retry.Retrier, error) {
 func (c *Client) attempt(ctx context.Context, method string, trailer *metadata.MD, call func(context.Context) error) *result {
 	t, err := c.breaker.Allow(ctx)
 	if err != nil {
+		c.metrics.rejected(ctx)
 		return c.reject(ctx, method, err)
 	}
 	defer t.Release()
@@ -89,6 +90,7 @@ func (c *Client) attempt(ctx context.Context, method string, trailer *metadata.M
 func (c *Client) open(ctx context.Context, desc *grpc.StreamDesc, method string, opts []grpc.CallOption) (grpc.ClientStream, *result) {
 	t, err := c.breaker.Allow(ctx)
 	if err != nil {
+		c.metrics.rejected(ctx)
 		return nil, c.reject(ctx, method, err)
 	}
 	handedOff := false

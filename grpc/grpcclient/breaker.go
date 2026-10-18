@@ -27,7 +27,8 @@ import (
 )
 
 // scopeName is the instrumentation scope of the Client's own telemetry: the
-// span of a rejected call, and the breaker's log records.
+// span of a rejected call, humus's own instruments, and the breaker's log
+// records.
 const scopeName = "github.com/z5labs/humus/grpc/grpcclient"
 
 // breakerOutcome is the breaker's classifier. Every result the Client
@@ -97,12 +98,19 @@ func (c *Client) reject(ctx context.Context, method string, err error) *result {
 	return &result{err: rerr, class: rejection}
 }
 
-// observe emits one log record for t, a transition of the breaker, in the
-// context of the call that made it: circuit breaker open at WARN, and
+// observe counts t, a transition of the breaker, in
+// humus.circuit.transitions, and emits one log record for it, in the
+// context of the call that made it, without its cancellation: the call has
+// often ended by then, as a call whose deadline passed has, and an
+// exporter handed a done context would drop the record. The record keeps
+// the call's span. Its bodies are circuit breaker open at WARN, and
 // circuit breaker half-open and circuit breaker closed at INFO. Its
 // attributes are Addr's host and port, the state the breaker left and the
 // counts of that state.
 func (c *Client) observe(ctx context.Context, t circuit.Transition) {
+	ctx = context.WithoutCancel(ctx)
+	c.metrics.transition(ctx, t)
+
 	severity := log.SeverityInfo
 	if t.To == circuit.Open {
 		severity = log.SeverityWarn
@@ -112,15 +120,14 @@ func (c *Client) observe(ctx context.Context, t circuit.Transition) {
 	r.SetSeverity(severity)
 	r.SetSeverityText(severity.String())
 	r.SetBody(attribute.StringValue("circuit breaker " + t.To.String()))
+	r.AddAttributes(c.metrics.server...)
 	r.AddAttributes(
-		semconv.ServerAddress(c.host),
-		semconv.ServerPort(c.port),
-		attribute.String("circuit.previous_state", t.From.String()),
-		attribute.Int("circuit.successes", t.Counts.Successes),
-		attribute.Int("circuit.failures", t.Counts.Failures),
-		attribute.Int("circuit.consecutive_successes", t.Counts.ConsecutiveSuccesses),
-		attribute.Int("circuit.consecutive_failures", t.Counts.ConsecutiveFailures),
-		attribute.Int("circuit.timed_out", t.Counts.TimedOut),
+		previousStateKey.String(t.From.String()),
+		attribute.Int("humus.circuit.successes", t.Counts.Successes),
+		attribute.Int("humus.circuit.failures", t.Counts.Failures),
+		attribute.Int("humus.circuit.consecutive_successes", t.Counts.ConsecutiveSuccesses),
+		attribute.Int("humus.circuit.consecutive_failures", t.Counts.ConsecutiveFailures),
+		attribute.Int("humus.circuit.timed_out", t.Counts.TimedOut),
 	)
 	c.logger.Emit(ctx, r)
 }
@@ -185,7 +192,9 @@ func (s *stream) RecvMsg(m any) error {
 }
 
 // settle settles the stream's ticket, once, with how the stream ended:
-// err, nil for io.EOF. An error once ctx has ended is the Client's to
+// err, nil for io.EOF. A stream that failed once its caller cancelled ctx
+// is released, counting nothing, as watch releases it, whichever of the
+// two runs first. Any other error once ctx has ended is the Client's to
 // classify, as for a unary attempt, and Classify is asked about the rest,
 // with the stream's trailer. A panic in Classify passes to the caller of
 // RecvMsg, and the ticket is released.
@@ -195,6 +204,9 @@ func (s *stream) settle(err error) {
 		defer s.ticket.Release()
 		if errors.Is(err, io.EOF) {
 			err = nil
+		}
+		if err != nil && errors.Is(s.ctx.Err(), context.Canceled) {
+			return
 		}
 		var class Classification
 		if err != nil && ended(s.ctx) {

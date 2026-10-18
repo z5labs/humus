@@ -206,21 +206,21 @@ func TestClient_breaker_opens_rejects_and_closes(t *testing.T) {
 		// The open record
 		{
 			a := recordAttrs(records[0])
-			require.Equal(t, "closed", a["circuit.previous_state"])
+			require.Equal(t, "closed", a["humus.circuit.previous_state"])
 			require.Equal(t, "backend", a["server.address"])
 			require.EqualValues(t, 9090, a["server.port"])
-			require.EqualValues(t, 5, a["circuit.consecutive_failures"])
-			require.EqualValues(t, 5, a["circuit.failures"])
-			require.EqualValues(t, 0, a["circuit.successes"])
-			require.EqualValues(t, 0, a["circuit.consecutive_successes"])
-			require.EqualValues(t, 0, a["circuit.timed_out"])
+			require.EqualValues(t, 5, a["humus.circuit.consecutive_failures"])
+			require.EqualValues(t, 5, a["humus.circuit.failures"])
+			require.EqualValues(t, 0, a["humus.circuit.successes"])
+			require.EqualValues(t, 0, a["humus.circuit.consecutive_successes"])
+			require.EqualValues(t, 0, a["humus.circuit.timed_out"])
 		}
 
 		// The closed record
 		{
 			a := recordAttrs(records[2])
-			require.Equal(t, "half-open", a["circuit.previous_state"])
-			require.EqualValues(t, 3, a["circuit.consecutive_successes"])
+			require.Equal(t, "half-open", a["humus.circuit.previous_state"])
+			require.EqualValues(t, 3, a["humus.circuit.consecutive_successes"])
 		}
 
 		// The trace
@@ -365,7 +365,7 @@ func TestClient_breaker_counts_deadlines(t *testing.T) {
 
 		records := breakerRecords(tel)
 		require.Equal(t, []string{breakerOpen}, bodies(records))
-		require.EqualValues(t, 5, recordAttrs(records[0])["circuit.consecutive_failures"])
+		require.EqualValues(t, 5, recordAttrs(records[0])["humus.circuit.consecutive_failures"])
 	})
 }
 
