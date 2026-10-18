@@ -9,12 +9,32 @@ run:
   relative-path-mode: cfg
 linters:
   enable:
+    - depguard
     - forbidigo
   settings:
+    depguard:
+      rules:
+        # humus writes Kubernetes controllers on client-go alone. The init
+        # functions of controller-runtime set package-level metrics
+        # registries, client-go's metrics providers and a flag on
+        # flag.CommandLine, which no wrapper can avoid, and controller-tools
+        # generates code from comment markers that nothing checks. See the
+        # Kubernetes controllers proposal, #851.
+        no-controller-runtime:
+          list-mode: lax
+          deny:
+            - pkg: sigs.k8s.io/controller-runtime
+              desc: humus writes controllers with package kube, on client-go; controller-runtime sets globals in its init functions
+            - pkg: sigs.k8s.io/controller-tools
+              desc: humus reflects a CRD from Go types with package kube; controller-tools generates code from comment markers
     forbidigo:
       # Examples are documentation that users copy, so they are held to the
       # same rules as everything else.
       exclude-godoc-examples: false
+      # Type information lets a rule name the package it forbids, so
+      # metrics.Register below is only client-go's. Every other rule still
+      # matches the package's name, whatever it is imported as.
+      analyze-types: true
       forbid:
         # bedrock's list. An App reaches its OS process only through the
         # bedrock.Process it is run with, and exits by returning a
@@ -52,3 +72,28 @@ linters:
         # NO_PROXY. See the outbound HTTP clients proposal, #762.
         - pattern: ^http\.(DefaultClient|DefaultTransport|Get|Head|Post|PostForm)$
           msg: http.DefaultClient, http.DefaultTransport and its helpers dial the real network and read the proxy variables; build a client with httpclient.NewClient, which dials through the Host
+        # client-go reaches around the process in ways humus never takes up.
+        # rest.InClusterConfig reads KUBERNETES_SERVICE_HOST and the service
+        # account's token with os.Getenv and os.ReadFile; the end user's Init
+        # fills a kube.Connection instead. klog's logger, output and flags,
+        # client-go's feature gates and its metrics providers are all
+        # package-level state. See the Kubernetes controllers proposal, #851,
+        # and its revision 4.
+        - pattern: ^rest\.InClusterConfig$
+          pkg: ^k8s\.io/client-go/rest$
+          msg: rest.InClusterConfig reads the real environment and disk; fill a kube.Connection in the end user's Init, reading through s.Host.FS
+        - pattern: ^klog\.(SetLogger|SetLoggerWithOptions|SetOutput|InitFlags)$
+          pkg: ^k8s\.io/klog/v2$
+          msg: klog's logger, output and flags are package-level state; put a logger in the context client-go is given instead
+        - pattern: ^features\.ReplaceFeatureGates$
+          pkg: ^k8s\.io/client-go/features$
+          msg: client-go's feature gates are package-level state, which humus never replaces
+        - pattern: ^workqueue\.SetProvider$
+          pkg: ^k8s\.io/client-go/util/workqueue$
+          msg: the work queue's global metrics provider is package-level state; set a MetricsProvider in the queue's config instead
+        - pattern: ^leaderelection\.SetProvider$
+          pkg: ^k8s\.io/client-go/tools/leaderelection$
+          msg: leader election's global metrics provider is package-level state, which humus never sets
+        - pattern: ^metrics\.Register$
+          pkg: ^k8s\.io/client-go/tools/metrics$
+          msg: client-go's metrics are package-level state, which humus never sets; otelhttp measures every request
