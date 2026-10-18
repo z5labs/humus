@@ -22,8 +22,10 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"google.golang.org/grpc/codes"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	testpb "google.golang.org/grpc/interop/grpc_testing"
+	"google.golang.org/grpc/status"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/grpc/grpchealth"
@@ -69,7 +71,7 @@ func TestInit_answers_the_probes_on_the_Service_port(t *testing.T) {
 			require.Equal(t, healthpb.HealthCheckResponse_SERVING, resp.GetStatus(), "service %q", name)
 		}
 		_, err := client.Check(t.Context(), &healthpb.HealthCheckRequest{Service: "grpc.testing.TestService"})
-		require.Error(t, err, "a service registered next to the health server has no status of its own")
+		require.Equal(t, codes.NotFound, status.Code(err), "a service registered next to the health server has no status of its own: %v", err)
 
 		// The end user's own service is served on the same port.
 		resp, err := testpb.NewTestServiceClient(conn).UnaryCall(t.Context(), &testpb.SimpleRequest{})

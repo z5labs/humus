@@ -41,11 +41,13 @@
 // Monitors are checked when asked, and send no changes, so a Watch polls.
 // It sends the current status at once, and then each change of it. The
 // monitor is checked once a second, with a context that is done after a
-// second, and a check that runs out of time is NOT_SERVING. Every Watch of
-// one name on one server shares one poller, which runs while the name has
-// watchers and stops when it has none, so a hundred clients watching ""
-// cost one check a second, not a hundred. A poller logs a failing
-// monitor's error when the status changes, not on every poll.
+// second, and a check that runs out of time is NOT_SERVING, whether or not
+// the monitor honours its context. A monitor that doesn't is not checked
+// again until that check returns. Every Watch of one name on one server
+// shares one poller, which runs while the name has watchers and stops when
+// it has none, so a hundred clients watching "" cost one check a second,
+// not a hundred. A poller logs a failing monitor's error when the status
+// changes, not on every poll.
 //
 // A Watch of any other name gets one SERVICE_UNKNOWN, and nothing else, and
 // its stream stays open until the client or the server ends it. A stream
@@ -77,9 +79,9 @@
 // connect in plain text unless the cluster has the GRPCContainerProbeTLS
 // feature gate on. So the kubelet's probes reach the server there only on a
 // cluster with that gate on, and only when the Service requires no client
-// certificate, since the kubelet never presents one: its settings.TLS
-// leaves ClientAuth below RequireAnyClientCert. grpc-go's clients reach it
-// on every cluster.
+// certificate, since the kubelet never presents one: its settings.TLS sets
+// ClientAuth to neither RequireAnyClientCert nor RequireAndVerifyClientCert.
+// grpc-go's clients reach it on every cluster.
 //
 // A probe through the server is an RPC like any other of the Service, so
 // the Service's instrumentation traces and measures it, and a monitor's

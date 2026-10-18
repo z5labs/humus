@@ -280,8 +280,9 @@ func (p *poller) remove(w *watcher) bool {
 func (p *poller) run(ctx context.Context) {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
+	var pending <-chan result
 	for {
-		p.poll(ctx)
+		pending = p.poll(ctx, pending)
 		select {
 		case <-ctx.Done():
 			return
@@ -290,38 +291,82 @@ func (p *poller) run(ctx context.Context) {
 	}
 }
 
-// poll checks the monitor once, with a context that is done after
-// pollInterval, and sends the status to every watcher if it changed. A
-// check that runs out of time, or panics, is NOT_SERVING. A failing
-// monitor's error is logged only when the status changes.
-func (p *poller) poll(ctx context.Context) {
-	checkCtx, cancel := context.WithTimeout(ctx, pollInterval)
-	healthy, err := check(checkCtx, p.pr.monitor)
-	if err == nil && checkCtx.Err() != nil {
-		healthy, err = false, checkCtx.Err()
-	}
-	cancel()
-	if ctx.Err() != nil {
-		return // the poller was stopped during the check
-	}
-	st := servingStatus(healthy, err)
+// result is the result of one check of a monitor.
+type result struct {
+	healthy bool
+	err     error
+}
 
+// poll waits up to pollInterval for a check of the monitor, and sends the
+// status to every watcher if it changed. The check is pending, the one an
+// earlier poll gave up on, if it is not nil, and a new one otherwise, so a
+// monitor that ignores its context is never checked twice at once. A check
+// that runs out of time, or panics, is NOT_SERVING. A failing monitor's
+// error is logged only when the status changes. poll returns the check it
+// gave up on, or nil.
+func (p *poller) poll(ctx context.Context, pending <-chan result) <-chan result {
+	if pending == nil {
+		pending = start(ctx, p.pr.monitor)
+	}
+	timer := time.NewTimer(pollInterval)
+	defer timer.Stop()
+
+	var r result
+	select {
+	case <-ctx.Done():
+		return nil // the poller was stopped during the check
+	case r = <-pending:
+		pending = nil
+	case <-timer.C:
+		select {
+		case r = <-pending:
+			pending = nil
+		default:
+			r = result{err: fmt.Errorf("grpchealth: the %s check ran out of time: %w", p.pr.name, context.DeadlineExceeded)}
+		}
+	}
+
+	if p.update(servingStatus(r.healthy, r.err)) && r.err != nil {
+		p.srv.logError(ctx, p.pr.name, r.err)
+	}
+	return pending
+}
+
+// update sends st to every watcher, and reports whether it changed the
+// status.
+func (p *poller) update(st healthpb.HealthCheckResponse_ServingStatus) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.known && st == p.status {
-		return
+		return false
 	}
 	p.known, p.status = true, st
-	if err != nil {
-		p.srv.logError(ctx, p.pr.name, err)
-	}
 	for w := range p.watchers {
 		w.set(st)
 	}
+	return true
+}
+
+// start checks m in a goroutine of its own, with a context derived from
+// ctx that is done after pollInterval, and returns the channel its result
+// arrives on. A check that returns once its context is done is NOT_SERVING,
+// whatever it answered.
+func start(ctx context.Context, m health.Monitor) <-chan result {
+	results := make(chan result, 1)
+	go func() {
+		checkCtx, cancel := context.WithTimeout(ctx, pollInterval)
+		defer cancel()
+		healthy, err := check(checkCtx, m)
+		if err == nil && checkCtx.Err() != nil {
+			healthy, err = false, checkCtx.Err()
+		}
+		results <- result{healthy: healthy, err: err}
+	}()
+	return results
 }
 
 // check checks m once with ctx. A panic of m is returned as an error: the
-// poller's goroutine is no RPC's, so no server recovers it, and a monitor
+// poller's goroutines are no RPC's, so no server recovers it, and a monitor
 // that panics there would otherwise end the process.
 func check(ctx context.Context, m health.Monitor) (healthy bool, err error) {
 	defer func() {

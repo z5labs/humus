@@ -643,6 +643,41 @@ func TestNewServer_Watch_a_check_that_runs_out_of_time_is_NOT_SERVING(t *testing
 	}
 }
 
+func TestNewServer_Watch_a_monitor_that_ignores_its_context_is_NOT_SERVING_after_a_second(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		var checks atomic.Int64
+		m := health.MonitorFunc(func(context.Context) (bool, error) {
+			if checks.Add(1) == 1 {
+				<-release // a blocking dial that ignores its context
+			}
+			return true, nil
+		})
+		tel := humustest.NewTelemetry()
+		client := serve(t, sdkOf(t, tel), health.Probes{Liveness: m, Readiness: healthyMonitor})
+
+		stream, _ := watch(t, client, "liveness")
+		statuses, _ := received(stream)
+		begin := time.Now()
+		require.Equal(t, healthpb.HealthCheckResponse_NOT_SERVING, <-statuses)
+		require.Equal(t, time.Second, time.Since(begin), "the watcher waited longer than a second for a stuck check")
+
+		time.Sleep(10 * time.Second)
+		synctest.Wait()
+		require.Equal(t, int64(1), checks.Load(), "the monitor was checked again while its check was stuck")
+		require.Empty(t, drain(statuses))
+		rs := errorRecords(tel)
+		require.Len(t, rs, 1, "the stuck check is logged once")
+		require.Contains(t, rs[0].Body().AsString(), context.DeadlineExceeded.Error())
+
+		// The stuck check's late answer is NOT_SERVING, and the next check
+		// is a fresh one.
+		close(release)
+		require.Equal(t, healthpb.HealthCheckResponse_SERVING, <-statuses)
+		require.Equal(t, int64(2), checks.Load())
+	})
+}
+
 func TestNewServer_Watch_an_unknown_name_gets_one_SERVICE_UNKNOWN(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var m countingMonitor
