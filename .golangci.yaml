@@ -43,3 +43,8 @@ linters:
           msg: build the resource explicitly; resource.Default reads the process environment
         - pattern: ^slog\.SetDefault$
           msg: pass a *slog.Logger explicitly instead of replacing slog.Default
+        # net/http's default client dials the real network and reads the
+        # proxy variables of the real environment, HTTP_PROXY, HTTPS_PROXY and
+        # NO_PROXY. See the outbound HTTP clients proposal, #762.
+        - pattern: ^http\.(DefaultClient|DefaultTransport|Get|Head|Post|PostForm)$
+          msg: http.DefaultClient, http.DefaultTransport and its helpers dial the real network and read the proxy variables; build a client with httpclient.NewClient, which dials through the Host
