@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/twmb/franz-go/pkg/kfake"
@@ -52,6 +53,69 @@ func TestInit_processes_and_commits_a_produced_record(t *testing.T) {
 		require.Equal(t, "stored order key-0: 0\n", p.Stdout())
 		require.Equal(t, int64(1), committed(c)[0], "the record is committed")
 		require.Len(t, spansNamed(tel, "process orders"), 1)
+	})
+}
+
+// waitCommitted lets fake time pass until the group has committed offset on
+// partition 0 of topic, failing the test if a minute of it passes first.
+// synctest.Wait isn't enough once a Processor produces: Wait returns as
+// soon as every other goroutine is durably blocked, and a Produce waiting
+// on one of franz-go's timers is, while fake time passes only once the
+// test's goroutine blocks too.
+func waitCommitted(t *testing.T, c *kfake.Cluster, offset int64) {
+	t.Helper()
+	for start := time.Now(); committed(c)[0] < offset; time.Sleep(10 * time.Millisecond) {
+		require.Less(t, time.Since(start), time.Minute, "offset %d is never committed", offset)
+	}
+}
+
+func TestInit_produces_an_order_it_cannot_read_as_a_dead_letter(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := humustest.NewHost(t)
+		c := cluster(t, h, 1, kfake.SeedTopics(1, dlqTopic))
+		produceRecords(t, h, c, []*kgo.Record{
+			{Topic: topic, Key: []byte("key-0"), Value: []byte("{")},
+			{Topic: topic, Key: []byte("key-1"), Value: []byte("1")},
+		})
+
+		tel := humustest.NewTelemetry()
+		p, status := humustest.Start(t, Init,
+			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+			humustest.WithEnv(map[string]string{
+				"KAFKA_BROKERS":  strings.Join(c.ListenAddrs(), ","),
+				"KAFKA_GROUP_ID": "orders-consumer",
+				"KAFKA_TOPICS":   "orders",
+			}),
+		)
+		waitCommitted(t, c, 2) // both records are processed and committed
+		p.Signal(syscall.SIGTERM)
+
+		st := <-status
+		require.Zero(t, st.Code(), "cause: %v", st.Cause())
+		require.Equal(t, "stored order key-1: 1\n", p.Stdout(), "the dead letter didn't stop the partition")
+		require.Equal(t, int64(2), committed(c)[0], "the dead letter's record is committed too")
+		dead := readAll(t, h, c, dlqTopic)
+		require.Len(t, dead, 1)
+		require.Equal(t, "key-0", string(dead[0].Key))
+		require.Equal(t, "{", string(dead[0].Value))
+		require.Len(t, spansNamed(tel, "send "+dlqTopic), 1)
+	})
+}
+
+func TestInit_with_a_bad_delivery_timeout_exits_78_naming_the_variable(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		_, status := humustest.Start(t, Init, humustest.WithEnv(map[string]string{
+			"KAFKA_BROKERS":          "kafka-0:9092",
+			"KAFKA_GROUP_ID":         "orders-consumer",
+			"KAFKA_TOPICS":           "orders",
+			"KAFKA_DELIVERY_TIMEOUT": "0s",
+		}))
+
+		st := <-status
+		require.Equal(t, humus.ExitConfig, st.Code(), "cause: %v", st.Cause())
+		cerr, ok := errors.AsType[*config.Error](st.Cause())
+		require.True(t, ok, "cause = %v, want a *config.Error", st.Cause())
+		require.Equal(t, "KAFKA_DELIVERY_TIMEOUT", cerr.Name)
 	})
 }
 
@@ -111,6 +175,7 @@ func TestSecureInit_consumes_over_mTLS_with_SASL(t *testing.T) {
 			"etc/kafka/client.pem": certPEM,
 		}))
 		c := cluster(t, h, 1,
+			kfake.SeedTopics(1, dlqTopic),
 			kfake.TLS(&tls.Config{
 				Certificates: []tls.Certificate{server.TLS()},
 				ClientAuth:   tls.RequireAndVerifyClientCert,
@@ -125,10 +190,14 @@ func TestSecureInit_consumes_over_mTLS_with_SASL(t *testing.T) {
 			RootCAs:      ca.Pool(),
 			MinVersion:   tls.VersionTLS12,
 		}
-		produce(t, h, c, 1,
+		secure := []kgo.Opt{
 			kgo.Dialer(tlsDial(h, producerTLS)),
 			kgo.SASL(scram.Auth{User: user, Pass: password}.AsSha512Mechanism()),
-		)
+		}
+		produce(t, h, c, 1, secure...)
+		// An order that isn't JSON, which secureInit's Producer dead-letters
+		// over the same TLS and with the same credentials.
+		produceRecords(t, h, c, []*kgo.Record{{Topic: topic, Key: []byte("key-1"), Value: []byte("{")}}, secure...)
 
 		tel := humustest.NewTelemetry()
 		p, status := humustest.Start(t, secureInit,
@@ -143,13 +212,16 @@ func TestSecureInit_consumes_over_mTLS_with_SASL(t *testing.T) {
 				"KAFKA_SASL_PASSWORD": password,
 			}),
 		)
-		synctest.Wait()
+		waitCommitted(t, c, 2)
 		p.Signal(syscall.SIGTERM)
 
 		st := <-status
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
 		require.Equal(t, "stored order key-0: 0\n", p.Stdout())
-		require.Equal(t, int64(1), committed(c)[0])
+		require.Equal(t, int64(2), committed(c)[0])
+		dead := readAll(t, h, c, dlqTopic, secure...)
+		require.Len(t, dead, 1)
+		require.Equal(t, "key-1", string(dead[0].Key))
 	})
 }
 

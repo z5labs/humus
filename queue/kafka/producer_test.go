@@ -50,7 +50,9 @@ func produces(settings kafka.ProducerSettings, run func(ctx context.Context, p *
 
 // readAll returns every record of topic, in each partition's order,
 // through a client that dials h with opts. It polls until a poll finds
-// nothing new for a second, which inside a bubble takes no real time.
+// nothing new for a second, which inside a bubble takes no real time, and
+// fails the test on any error but the poll's own deadline, so a client that
+// can't read the topic isn't mistaken for an empty one.
 func readAll(t *testing.T, h *humustest.Host, c *kfake.Cluster, topic string, opts ...kgo.Opt) []*kgo.Record {
 	t.Helper()
 	cl, err := kgo.NewClient(append([]kgo.Opt{
@@ -67,6 +69,11 @@ func readAll(t *testing.T, h *humustest.Host, c *kfake.Cluster, topic string, op
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		fetches := cl.PollFetches(ctx)
 		cancel()
+		fetches.EachError(func(_ string, _ int32, err error) {
+			if !errors.Is(err, context.DeadlineExceeded) {
+				require.NoError(t, err, "reading %s", topic)
+			}
+		})
 		n := 0
 		fetches.EachRecord(func(r *kgo.Record) {
 			out = append(out, r)
