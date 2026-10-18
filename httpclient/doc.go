@@ -135,6 +135,45 @@
 // origin isn't: the client returns the 3xx response to service code, which
 // may read its Location header.
 //
+// # Telemetry
+//
+// The client traces and measures every attempt with the Setup's telemetry,
+// through otelhttp's Transport, which sits inside the origin check: a
+// request to another origin is refused before it is an attempt.
+//
+// Each request the transport sends, every redirect included, is one span of
+// kind CLIENT, a child of the span in the request's context, such as a
+// handler's request span or a job's run span. A slow or failing dependency
+// shows up in the caller's trace. The span is named after the method, such
+// as GET: the HTTP semantic conventions name a client span after its method
+// and URL template, and a client has no template, only whatever URL service
+// code built, which would make a span name per resource. A request with an
+// empty method is a GET, as net/http sends it, and its span is named GET.
+// The span carries
+// otelhttp's attributes, among them url.full, with any user info removed,
+// server.address, server.port, http.response.status_code and
+// network.protocol.version, which is the version the attempt was answered
+// with, 2.0 for HTTP/2. Its status is Error for a 4xx or 5xx response, and
+// for an attempt that fails with no response, such as a refused connection.
+//
+// An attempt that is not a call's first carries http.request.resend_count,
+// which otelhttp doesn't set. A redirect counts, as the semantic conventions
+// count one, so the first redirect's span has 1.
+//
+// The Setup's propagator puts the attempt's trace context and the request
+// context's baggage in each attempt's headers, so a dependency served with
+// httpserver joins the caller's trace, with the attempt's span as its
+// server span's parent, and its handler sees the caller's baggage.
+//
+// otelhttp records http.client.request.duration and
+// http.client.request.body.size for each attempt, in its own scope, with the
+// status code, or error.type for an attempt that failed with no response.
+// humus records no instrument of its own.
+//
+// The tracer, the meter and the propagator all come from the Setup's
+// telemetry, so nothing reaches OpenTelemetry's globals: a process that
+// sets them sees none of the client's spans or metrics.
+//
 // # Shutdown
 //
 // The client has nothing to drain. A call in flight ends with its own

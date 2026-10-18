@@ -42,7 +42,7 @@ func transportOf(t *testing.T, c *http.Client) *http.Transport {
 	t.Helper()
 	ot, ok := c.Transport.(*originTransport)
 	require.True(t, ok, "the client's Transport is %T", c.Transport)
-	return ot.next
+	return ot.conns
 }
 
 func mustParse(t *testing.T, raw string) *url.URL {
@@ -156,4 +156,18 @@ func TestOriginTransport_refuses_another_origin(t *testing.T) {
 	require.EqualError(t, err, "httpclient: request to https://payments:443 on a client for https://payments:8443")
 	require.True(t, body.closed, "the refused request's body is closed")
 	require.False(t, dialled)
+}
+
+func TestSpanName(t *testing.T) {
+	t.Parallel()
+
+	for method, want := range map[string]string{
+		"":                 "GET",
+		http.MethodGet:     "GET",
+		http.MethodPost:    "POST",
+		http.MethodPatch:   "PATCH",
+		http.MethodConnect: "CONNECT",
+	} {
+		require.Equal(t, want, spanName("", &http.Request{Method: method}), "method %q", method)
+	}
 }
