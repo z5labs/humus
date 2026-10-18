@@ -581,6 +581,12 @@ func compileField(f field, cs []constraint, byType map[reflect.Type]*typeRules) 
 				msgs = append(msgs, "ListMap has no key")
 				continue
 			}
+			if item, ok := itemType(f.typ); ok {
+				if typ, typed := schemaType(item, false, byType); typed && typ != "object" {
+					msgs = append(msgs, fmt.Sprintf("ListMap is for a list of objects, but the list's items are %s", describe(typ)))
+					continue
+				}
+			}
 			if names, ok := itemFields(f.typ, byType); ok {
 				for _, k := range c.keys {
 					if !slices.Contains(names, k) {
@@ -648,16 +654,25 @@ func schemaType(t reflect.Type, quoted bool, byType map[reflect.Type]*typeRules)
 	return "", false
 }
 
-// itemFields returns the names of the fields of the items of the list t,
-// and false when they aren't a struct whose schema is reflected.
-func itemFields(t reflect.Type, byType map[reflect.Type]*typeRules) ([]string, bool) {
+// itemType returns the type of the items of the list t, and false when t
+// isn't a list.
+func itemType(t reflect.Type) (reflect.Type, bool) {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	if t.Kind() != reflect.Slice && t.Kind() != reflect.Array {
 		return nil, false
 	}
-	item := t.Elem()
+	return t.Elem(), true
+}
+
+// itemFields returns the names of the fields of the items of the list t,
+// and false when they aren't a struct whose schema is reflected.
+func itemFields(t reflect.Type, byType map[reflect.Type]*typeRules) ([]string, bool) {
+	item, ok := itemType(t)
+	if !ok {
+		return nil, false
+	}
 	for item.Kind() == reflect.Pointer {
 		item = item.Elem()
 	}

@@ -215,7 +215,7 @@ func TestFieldOf_each_constraint_gives_its_schema(t *testing.T) {
 			"the later of two constraints of one kind",
 			func(t *testing.T) (apiextensionsv1.JSONSchemaProps, bool) {
 				return constrained(t, func(f kube.FieldOf[[]string]) kube.FieldOf[[]string] {
-					return f.ListMap("k").MinItems(1).MinItems(2).ListSet()
+					return f.MinItems(1).MinItems(2).ListSet()
 				})
 			},
 			apiextensionsv1.JSONSchemaProps{
@@ -486,6 +486,8 @@ func TestResource_CRD_reports_each_mistake_in_its_rules(t *testing.T) {
 			of + "the field size: ListSet is for an array, but the field is an integer"},
 		{"ListMap on a string", []kube.TypeRules{kube.Rules(&v, kube.Field(&v.Image).ListMap("name"))},
 			of + "the field image: ListMap is for an array, but the field is a string"},
+		{"ListMap on a list of strings", []kube.TypeRules{kube.Rules(&v, kube.Field(&v.Tags).ListMap("name"))},
+			of + "the field tags: ListMap is for a list of objects, but the list's items are a string"},
 		{"ListMap with no key", []kube.TypeRules{kube.Rules(&v, kube.Field(&v.Ports).ListMap())},
 			of + "the field ports: ListMap has no key"},
 		{"ListMap with a key that is no field", []kube.TypeRules{kube.Rules(&v, kube.Field(&v.Ports).ListMap("name", "nmae"))},
