@@ -375,15 +375,29 @@ func TestService_protocols(t *testing.T) {
 			)
 			<-h.Listening("localhost:8443")
 
-			r := <-get(client(h, ca, offersHTTP1), "https://localhost:8443/")
-			require.Error(t, r.err, "want the connection closed with no response")
-			// The client sees the close when it reads, as io.EOF, or when it
-			// writes its request, as a write on a closed pipe.
-			require.True(t, errors.Is(r.err, io.EOF) || errors.Is(r.err, io.ErrClosedPipe),
-				"err = %v, want the connection closed", r.err)
-			require.Zero(t, r.code)
+			// The request is written by hand, not with an http.Client. A
+			// Transport's read loop peeks at a new connection before the
+			// request is written, so when the Service's close wins that race,
+			// Get fails with "http: server closed idle connection" rather than
+			// a closed connection. Here nothing reads until the request is
+			// written.
+			conn, err := h.Dial(t.Context(), "tcp", "localhost:8443")
+			require.NoError(t, err)
+			tc := tls.Client(conn, &tls.Config{RootCAs: ca.Pool(), ServerName: "localhost", NextProtos: []string{"http/1.1"}})
+			defer func() { _ = tc.Close() }()
+			require.NoError(t, tc.HandshakeContext(t.Context()))
+			// The client sees the close when it writes its request, as a
+			// write on a closed pipe, or when it reads, as io.EOF, which
+			// io.ReadAll reports as no error.
+			_, err = io.WriteString(tc, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+			if err != nil {
+				require.ErrorIs(t, err, io.ErrClosedPipe, "want the connection closed")
+			}
+			got, err := io.ReadAll(tc)
+			require.NoError(t, err, "want the connection closed")
+			require.Empty(t, string(got), "want no response")
 
-			r = <-get(client(h, ca, offersH2), "https://localhost:8443/")
+			r := <-get(client(h, ca, offersH2), "https://localhost:8443/")
 			require.NoError(t, r.err)
 			require.Equal(t, 2, r.proto)
 			synctest.Wait()
