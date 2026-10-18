@@ -39,9 +39,12 @@ type Encoder[T any] interface {
 
 	// Encode prepares v to be written, before the status is. Its error is
 	// answered by the catch-all. The API then writes the status and calls
-	// the WriterTo. An encoder that buffers returns its encoded bytes, such
-	// as a *bytes.Reader. An encoder that streams returns a WriterTo that
-	// writes as it goes.
+	// the WriterTo, which may do more work once it has written the body,
+	// such as recording that a download completed. An error from the
+	// WriterTo cuts the response short, and is the server's unless the
+	// request's context is done. An encoder that buffers returns its
+	// encoded bytes, such as a *bytes.Reader. An encoder that streams
+	// returns a WriterTo that writes as it goes.
 	Encode(v T) (io.WriterTo, error)
 }
 

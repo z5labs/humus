@@ -13,10 +13,12 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/log"
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"go.opentelemetry.io/otel/trace"
@@ -81,7 +83,7 @@ func (rt *route) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rt.fail(w, r, fmt.Errorf("encoding the response: %w", err))
 		return
 	}
-	write(w, r, rt.status, rt.codecs.encMediaType, wt)
+	rt.write(w, r, rt.status, rt.codecs.encMediaType, wt)
 }
 
 // params decodes each of the path's parameters from r, then each query and
@@ -164,7 +166,7 @@ func (rt *route) reject(w http.ResponseWriter, r *http.Request, rerr *RequestErr
 		rt.fail(w, r, fmt.Errorf("encoding %s's answer to %w: %w", rt.answers.requestErrors.name, rerr, err))
 		return
 	}
-	write(w, r, rerr.Status, rt.answers.requestErrors.mediaType, wt)
+	rt.write(w, r, rerr.Status, rt.answers.requestErrors.mediaType, wt)
 }
 
 // answerError answers the handler's error with the first Error that
@@ -179,7 +181,7 @@ func (rt *route) answerError(w http.ResponseWriter, r *http.Request, herr error)
 			rt.fail(w, r, fmt.Errorf("encoding %s's answer to %w: %w", e.name, herr, err))
 			return
 		}
-		write(w, r, e.status, e.mediaType, wt)
+		rt.write(w, r, e.status, e.mediaType, wt)
 		return
 	}
 	rt.fail(w, r, herr)
@@ -196,7 +198,7 @@ func (rt *route) fail(w http.ResponseWriter, r *http.Request, err error) {
 		w.WriteHeader(ca.status)
 		return
 	}
-	write(w, r, ca.status, ca.mediaType, wt)
+	rt.write(w, r, ca.status, ca.mediaType, wt)
 }
 
 // record records err as an exception event on the request's span, and as
@@ -206,10 +208,17 @@ func (rt *route) fail(w http.ResponseWriter, r *http.Request, err error) {
 func (rt *route) record(r *http.Request, err error) {
 	ctx := r.Context()
 	trace.SpanFromContext(ctx).RecordError(err)
+	rt.log(r, "request failed", err)
+}
+
+// log emits one ERROR record, body, for err, in the request's context,
+// unless the context is done because the client went away.
+func (rt *route) log(r *http.Request, body string, err error) {
+	ctx := r.Context()
 	if ctx.Err() != nil {
 		return
 	}
-	emit(ctx, rt.logger, log.SeverityError, "request failed",
+	emit(ctx, rt.logger, log.SeverityError, body,
 		semconv.HTTPRequestMethodKey.String(r.Method),
 		semconv.HTTPRoute(rt.path.String()),
 		semconv.ErrorType(err),
@@ -217,21 +226,69 @@ func (rt *route) record(r *http.Request, err error) {
 	)
 }
 
+// write writes status, then the WriterTo's body, with rt's rule for a
+// WriterTo that fails once the status is written.
+//
+// That failure can't change the response, so it is cut short: the error is
+// recorded on the request's span, with the span's status set to Error, and
+// as one ERROR record, "response failed", unless the client went away.
+// Then write panics with http.ErrAbortHandler, which net/http and
+// httpserver pass through without logging. On HTTP/2 the stream is reset,
+// and on HTTP/1.1 the connection is closed, so the client sees a failed
+// response rather than a complete one.
+func (rt *route) write(w http.ResponseWriter, r *http.Request, status int, mediaType string, wt io.WriterTo) {
+	err := write(w, status, mediaType, wt)
+	if err == nil {
+		return
+	}
+	span := trace.SpanFromContext(r.Context())
+	span.RecordError(err)
+	span.SetStatus(codes.Error, "response failed")
+	rt.log(r, "response failed", err)
+	panic(http.ErrAbortHandler)
+}
+
 // write writes status, then the WriterTo's body, with the Content-Type
-// mediaType, which isn't set when it is "". Once the status is written, a
-// failed write can't change the response: it is recorded on the request's
-// span.
-func write(w http.ResponseWriter, r *http.Request, status int, mediaType string, wt io.WriterTo) {
+// mediaType, which isn't set when it is "". When the WriterTo has a Len,
+// it is the Content-Length. The WriterTo is handed a writer that flushes
+// each write, so a body that streams reaches the client as it is written.
+// It returns the WriterTo's error.
+func write(w http.ResponseWriter, status int, mediaType string, wt io.WriterTo) error {
 	if mediaType != "" {
 		w.Header().Set("Content-Type", mediaType)
 	}
+	if l, ok := wt.(interface{ Len() int }); ok && bodyAllowed(status) {
+		w.Header().Set("Content-Length", strconv.Itoa(l.Len()))
+	}
 	w.WriteHeader(status)
 	if wt == nil {
-		return
+		return nil
 	}
-	if _, err := wt.WriteTo(w); err != nil {
-		trace.SpanFromContext(r.Context()).RecordError(err)
+	_, err := wt.WriteTo(flushWriter{w: w, rc: http.NewResponseController(w)})
+	return err
+}
+
+// bodyAllowed reports whether a response with status has a body, and so a
+// Content-Length.
+func bodyAllowed(status int) bool {
+	return status >= http.StatusOK && status != http.StatusNoContent && status != http.StatusNotModified
+}
+
+// flushWriter is the writer a WriterTo is handed: it flushes each write.
+type flushWriter struct {
+	w  io.Writer
+	rc *http.ResponseController
+}
+
+func (f flushWriter) Write(p []byte) (int, error) {
+	n, err := f.w.Write(p)
+	if err != nil {
+		return n, err
 	}
+	if err := f.rc.Flush(); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		return n, err
+	}
+	return n, nil
 }
 
 // emit emits one record at sev, with body and attrs, through logger.

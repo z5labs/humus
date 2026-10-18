@@ -109,7 +109,8 @@ func newAPI(s *humus.Setup, ops []openapi.Operation, opts ...openapi.APIOption) 
 type server struct {
 	t      *testing.T
 	tel    *humustest.Telemetry
-	client *http.Client
+	client *http.Client // speaks only HTTP/2
+	http1  *http.Client // speaks only HTTP/1.1
 	p      *bedrocktest.Process
 	status <-chan bedrock.ExitStatus
 }
@@ -143,7 +144,19 @@ func serve(t *testing.T, build func(s *humus.Setup) (http.Handler, error)) *serv
 		t.Fatalf("the App exited before it listened: %v", st.Cause())
 	}
 
-	return &server{t: t, tel: tel, client: httpservertest.NewClient(h, ca.Pool()), p: p, status: status}
+	return &server{t: t, tel: tel, client: httpservertest.NewClient(h, ca.Pool()), http1: http1Client(h, ca), p: p, status: status}
+}
+
+// http1Client returns an http.Client that dials h, trusts only ca, and
+// speaks only HTTP/1.1.
+func http1Client(h *humustest.Host, ca *humustest.CA) *http.Client {
+	c := h.HTTPClient()
+	tr := c.Transport.(*http.Transport)
+	tr.TLSClientConfig = &tls.Config{RootCAs: ca.Pool(), NextProtos: []string{"http/1.1"}}
+	var protocols http.Protocols
+	protocols.SetHTTP1(true)
+	tr.Protocols = &protocols
+	return c
 }
 
 // serveAPI serves the API newAPI builds from ops and opts.

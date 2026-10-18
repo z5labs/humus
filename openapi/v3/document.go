@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 // openAPIVersion is the version of OpenAPI the document follows: the latest
@@ -210,5 +212,9 @@ func encodeDocument(info Info, routes []*route) ([]byte, error) {
 type documentHandler []byte
 
 func (d documentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	write(w, r, http.StatusOK, "application/json", bytes.NewReader(d))
+	if err := write(w, http.StatusOK, "application/json", bytes.NewReader(d)); err != nil {
+		// The document has a Content-Length, so a failure to write it is
+		// the client's, and the client sees it.
+		trace.SpanFromContext(r.Context()).RecordError(err)
+	}
 }
