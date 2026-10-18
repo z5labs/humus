@@ -225,10 +225,11 @@ func (p *Producer) stop(ctx context.Context) error {
 // wraps a *circuit.RejectedError, which matches circuit.ErrRejected and says
 // how much longer the breaker stays open, at once and with nothing sent,
 // while the breaker is open; and an error that wraps ctx's error, at once,
-// when ctx is done first. A call whose ctx is already done sends nothing. Records handed to the client before ctx is
-// done go on to their result, within DeliveryTimeout, and never fail another
-// call's records. A record that failed may still have been stored, so a
-// caller that produces it again may store it twice.
+// when ctx is done first. A call whose ctx is already done sends nothing.
+// Records handed to the client before ctx is done go on to their result,
+// within DeliveryTimeout, and never fail another call's records. A record
+// that failed may still have been stored, so a caller that produces it
+// again may store it twice.
 //
 // Produce rejects a record with no Topic before it sends anything. With no
 // records, it returns nil.
@@ -255,10 +256,10 @@ func (p *Producer) stop(ctx context.Context) error {
 // Each record it hands to the client is sent under a span of its own, a
 // child of the span in ctx. The record's headers whose keys the propagator
 // writes are removed, and the propagator writes the span's context and
-// ctx's baggage in their place. The span ends, and the record is measured, when its result
-// arrives, which may be after Produce returns. A record the breaker rejected
-// was never sent: its span records the rejection as a failure, and neither
-// instrument counts it.
+// ctx's baggage in their place. The span ends, and the record is
+// measured, when its result arrives, which may be after Produce returns. A
+// record the breaker rejected was never sent: its span records the
+// rejection as a failure, and neither instrument counts it.
 func (p *Producer) Produce(ctx context.Context, records ...Record) error {
 	if len(records) == 0 {
 		return nil
