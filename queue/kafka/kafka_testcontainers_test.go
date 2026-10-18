@@ -972,3 +972,107 @@ func TestKafka_after_SIGTERM_the_other_member_takes_the_partitions_at_once(t *te
 	require.Zero(t, st.Code(), st.Cause())
 	require.Equal(t, map[int32]int64{0: 2, 1: 2}, committedTo(t, adm, group, topic))
 }
+
+func TestKafka_an_idempotent_Producer_with_acks_all_produces_what_the_Service_consumes(t *testing.T) {
+	// kfake accepts an idempotent produce request, but the producer ID, the
+	// epoch and the sequence numbers it checks are its own. Here the
+	// Producer, with DefaultProducerSettings and so with franz-go's
+	// idempotence and acks=all, gets its producer ID and epoch from Kafka's
+	// InitProducerId, Kafka checks each batch's sequence numbers, and the
+	// Service consumes the records back, each under a process span that is
+	// the child of the record's send span.
+	t.Parallel()
+
+	const n = 10
+	adm := admin(t)
+	// More partitions than one, so that one key keeping the records on one
+	// partition, in order, is the key's doing.
+	topic, group := newTopic(t, adm, 3), unique("group")
+
+	ps := kafka.DefaultProducerSettings()
+	ps.Brokers = brokers(t)
+	records := make([]kafka.Record, n)
+	for i := range records {
+		records[i] = kafka.Record{Topic: topic, Key: []byte("one key"), Value: []byte(strconv.Itoa(i))}
+	}
+	produced := humustest.NewTelemetry()
+	_, status := humustest.Start(t, produces(ps, func(ctx context.Context, p *kafka.Producer) error {
+		return p.Produce(ctx, records...)
+	}), humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(produced.Builder())))
+	st := exited(t, status)
+	require.Zero(t, st.Code(), "the Producer's App: %v", st.Cause())
+
+	var (
+		mu       sync.Mutex
+		messages []kafka.Message
+	)
+	consumed := humustest.NewTelemetry()
+	p, status := startOnOS(t, realSettings(t, group, topic), func(_ context.Context, m kafka.Message) error {
+		mu.Lock()
+		defer mu.Unlock()
+		messages = append(messages, m)
+		return nil
+	}, humus.WithTelemetry(consumed.Builder()))
+	eventually(t, 30*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(messages) == n
+	}, "the Service consumes the %d records", n)
+	st = terminate(t, p, status)
+	require.Zero(t, st.Code(), st.Cause())
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, messages, n)
+	for i, m := range messages {
+		require.Equal(t, messages[0].Partition, m.Partition, "every record is on one partition")
+		require.Equal(t, int64(i), m.Offset)
+		require.Equal(t, "one key", string(m.Key))
+		require.Equal(t, strconv.Itoa(i), string(m.Value), "the records are consumed in the order they were produced")
+	}
+	require.Equal(t, map[int32]int64{messages[0].Partition: n}, committedTo(t, adm, group, topic))
+
+	// Kafka stored the records as an idempotent producer's: under the
+	// producer ID and epoch it handed out, where a producer without
+	// idempotence writes -1.
+	stored := readTopic(t, topic, n)
+	require.Len(t, stored, n)
+	for _, r := range stored {
+		require.GreaterOrEqual(t, r.ProducerID, int64(0), "offset %d was produced with a producer ID", r.Offset)
+		require.Equal(t, stored[0].ProducerID, r.ProducerID, "one producer ID for every record of the Producer")
+		require.GreaterOrEqual(t, r.ProducerEpoch, int16(0), "offset %d was produced with an epoch", r.Offset)
+	}
+
+	sends := spansNamed(produced, "send "+topic)
+	processes := spansNamed(consumed, "process "+topic)
+	require.Len(t, sends, n)
+	require.Len(t, processes, n)
+	for i := range int64(n) {
+		send, process := spanAt(t, sends, i), spanAt(t, processes, i)
+		require.True(t, process.Parent().IsRemote(), "offset %d's process span has its parent from the record's headers", i)
+		require.Equal(t, send.SpanContext().TraceID(), process.Parent().TraceID(), "offset %d", i)
+		require.Equal(t, send.SpanContext().SpanID(), process.Parent().SpanID(), "offset %d's process span is the child of its send span", i)
+	}
+}
+
+// readTopic returns the first n records of topic, polling Kafka for them
+// for at most 30 seconds.
+func readTopic(t *testing.T, topic string, n int) []*kgo.Record {
+	t.Helper()
+	cl, err := kgo.NewClient(
+		kgo.SeedBrokers(brokers(t)...),
+		kgo.ConsumeTopics(topic),
+		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
+	)
+	require.NoError(t, err)
+	defer cl.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	var out []*kgo.Record
+	for len(out) < n {
+		fs := cl.PollFetches(ctx)
+		require.NoError(t, fs.Err(), "reading %d records of %s back", n, topic)
+		out = append(out, fs.Records()...)
+	}
+	return out
+}
