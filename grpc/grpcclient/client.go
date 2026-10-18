@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"sync/atomic"
 	"time"
 
@@ -18,6 +19,9 @@ import (
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
+
+	"github.com/z5labs/bedrock/retry"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/health"
@@ -27,12 +31,17 @@ import (
 //
 //	cartpb.NewCartServiceClient(client)
 //
-// It is safe for concurrent use. One Client is one dependency, over one
-// connection. It has no Close: NewClient registers the connection's close
-// with the Setup's OnStop.
+// It is safe for concurrent use. One Client is one dependency: one
+// connection and one retry budget. It has no Close: NewClient registers the
+// connection's close with the Setup's OnStop.
 type Client struct {
 	cc      *grpc.ClientConn
 	timeout time.Duration
+
+	// retrier retries every method's calls, from every goroutine, with the
+	// Client's one budget.
+	retrier  *retry.Retrier
+	classify func(method string, err error, trailer metadata.MD) Classification
 
 	// connected is Connected's latch, set by the first check that finds
 	// the connection ready. Every monitor Connected returns reads it.
@@ -41,10 +50,13 @@ type Client struct {
 
 var _ grpc.ClientConnInterface = (*Client)(nil)
 
-// NewClient runs every check on settings, reporting every bad field in one
-// error that names each one, and builds the Client. It opens no connection:
-// the first RPC dials. It also rejects a nil s, and an s whose Host has no
-// Dial, rather than let grpc-go fall back to dialling the real network.
+// NewClient runs every check on settings, and rejects a BackoffMax below
+// BackoffBase and a nil Classify, reporting every bad field in one error
+// that names each one. It also rejects a nil s, and an s whose Host has no
+// Dial, rather than let grpc-go fall back to dialling the real network. It
+// builds the Client, with one retry.Budget and one retry.Retrier, shared by
+// every method and every goroutine. It opens no connection: the first RPC
+// dials.
 //
 // The Client dials settings.Addr through s.Host, with grpc-go's passthrough
 // resolver, so no name is looked up but by the Host.
@@ -57,7 +69,9 @@ var _ grpc.ClientConnInterface = (*Client)(nil)
 //
 // opts come after humus's own dial options, and the transport credentials
 // built from settings.TLS come after opts, so a
-// grpc.WithTransportCredentials in opts has no effect.
+// grpc.WithTransportCredentials in opts has no effect. An option that
+// chains, such as grpc.WithChainUnaryInterceptor, runs inside the Client's
+// retries, once per attempt.
 //
 // NewClient registers the connection's close with s.OnStop.
 func NewClient(s *humus.Setup, settings Settings, opts ...grpc.DialOption) (*Client, error) {
@@ -69,6 +83,12 @@ func NewClient(s *humus.Setup, settings Settings, opts ...grpc.DialOption) (*Cli
 		err = errors.Join(errors.New("the Setup's Host.Dial must not be nil"), err)
 	}
 	if err != nil {
+		return nil, fmt.Errorf("grpcclient: NewClient: %w", err)
+	}
+	retrier, err := newRetrier(settings)
+	if err != nil {
+		// checkSettings accepts only what retry accepts, so this is
+		// humus's bug.
 		return nil, fmt.Errorf("grpcclient: NewClient: %w", err)
 	}
 
@@ -107,22 +127,53 @@ func NewClient(s *humus.Setup, settings Settings, opts ...grpc.DialOption) (*Cli
 	s.OnStop(func(context.Context) error {
 		return cc.Close()
 	})
-	return &Client{cc: cc, timeout: settings.Timeout}, nil
+	return &Client{
+		cc:       cc,
+		timeout:  settings.Timeout,
+		retrier:  retrier,
+		classify: settings.Classify,
+	}, nil
 }
 
-// Invoke makes a unary RPC. Settings.Timeout bounds it, unless ctx has an
+// Invoke makes a unary RPC, retrying it as the package doc describes, and
+// returns the last attempt's error. Settings.Timeout bounds the whole call,
+// its retries and the waits between them included, unless ctx has an
 // earlier deadline, which then wins. It is called by generated code.
 func (c *Client) Invoke(ctx context.Context, method string, args, reply any, opts ...grpc.CallOption) error {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
-	return c.cc.Invoke(ctx, method, args, reply, opts...)
+
+	var err error
+	for a := range c.retrier.Attempts(ctx) {
+		var trailer metadata.MD
+		// Clip, so that the trailer's option is never appended into the
+		// caller's array, which another call may share.
+		callOpts := append(slices.Clip(opts), grpc.Trailer(&trailer))
+		r := c.attempt(ctx, method, &trailer, func(ctx context.Context) error {
+			return c.cc.Invoke(ctx, method, args, reply, callOpts...)
+		})
+		a.Done(r)
+		err = r.err
+	}
+	return err
 }
 
-// NewStream opens a stream. Settings.Timeout doesn't apply to it: a stream
-// lives as long as ctx, which its caller ends. It is called by generated
-// code.
+// NewStream opens a stream, retrying the open as the package doc
+// describes. Settings.Timeout doesn't apply to it: a stream lives as long
+// as ctx, which its caller ends. The stream is never retried once open. It
+// is called by generated code.
 func (c *Client) NewStream(ctx context.Context, desc *grpc.StreamDesc, method string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
-	return c.cc.NewStream(ctx, desc, method, opts...)
+	var (
+		stream grpc.ClientStream
+		err    error
+	)
+	for a := range c.retrier.Attempts(ctx) {
+		var r *result
+		stream, r = c.open(ctx, desc, method, opts)
+		a.Done(r)
+		err = r.err
+	}
+	return stream, err
 }
 
 // Connected returns a monitor that is healthy once the Client has

@@ -13,6 +13,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/z5labs/bedrock/retry"
+	"google.golang.org/grpc/metadata"
 )
 
 // Settings configures a Client. Every field is a plain value, and a field's
@@ -38,20 +41,80 @@ type Settings struct {
 	// of TLS 1.2 or later, or none. Check: CheckTLS.
 	TLS *tls.Config
 
-	// Timeout bounds each unary RPC, unless the caller's context has an
-	// earlier deadline. It doesn't apply to streams.
+	// Timeout bounds each unary RPC, its retries and the waits between
+	// them included, unless the caller's context has an earlier deadline.
+	// It doesn't apply to streams.
 	//
 	// Default: 10s. Valid: positive. Check: CheckTimeout.
 	Timeout time.Duration
+
+	// MaxAttempts bounds the attempts of each unary RPC, and of opening
+	// each stream, the first included. 1 turns retries off.
+	//
+	// Default: 3. Valid: 1 or more. Check: CheckMaxAttempts.
+	MaxAttempts int
+
+	// BackoffBase and BackoffMax are the schedule between attempts:
+	// retry.Exponential(BackoffBase, BackoffMax), exponential backoff with
+	// full jitter, so the wait after attempt n is drawn from
+	// [0, min(BackoffMax, BackoffBase·2ⁿ⁻¹)). A pushback longer than
+	// BackoffMax isn't waited for.
+	//
+	// Default: 100ms and 5s. Valid: positive, and BackoffMax at least
+	// BackoffBase, which NewClient checks. Check: CheckBackoffBase,
+	// CheckBackoffMax.
+	BackoffBase time.Duration
+	BackoffMax  time.Duration
+
+	// RetryBudget limits the retries of every RPC the Client makes, as
+	// gRPC's retry throttling does, and as retry.Budget describes. First
+	// attempts are never limited.
+	//
+	// Default: {MaxTokens: 10, TokenRatio: 0.1}. Valid: MaxTokens from 3 to
+	// retry.TokenLimit; TokenRatio from 0.001 to retry.TokenLimit, as
+	// retry.NewBudget accepts. Check: CheckRetryBudgetMaxTokens,
+	// CheckRetryBudgetTokenRatio.
+	RetryBudget retry.BudgetConfig
+
+	// Classify decides how each attempt's result counts: whether another
+	// attempt follows, and whether the result counts against the
+	// dependency. It is set in code, not sourced, and one function may be
+	// set on every Client whose dependencies agree on what their codes
+	// mean.
+	//
+	// Classify gets the RPC's full method name, such as
+	// "/cart.v1.CartService/AddItem", the error the attempt ended with, nil
+	// for OK, and the attempt's trailer, which holds grpc-retry-pushback-ms.
+	// status.FromError gives the error's code and its details, such as a
+	// google.rpc.RetryInfo. It isn't asked about what the Client decides
+	// itself: an error once the call's context has ended.
+	//
+	// For a stream, it is asked about an open that failed, with no
+	// trailer, since nothing came back. A stream that opens is never
+	// retried, and Classify isn't asked about it.
+	//
+	// It is called on the goroutine that made the call, once for each
+	// attempt, so it must be safe for concurrent use. A Classification
+	// with a zero Outcome, or with retry.Retry and a negative RetryAfter,
+	// panics, as bedrock's classifiers do.
+	//
+	// Default: the classification the package doc's "How an attempt's
+	// result counts" describes. Valid: set, which NewClient checks.
+	Classify func(method string, err error, trailer metadata.MD) Classification
 }
 
 // DefaultSettings returns the Client's defaults. Addr has none, so its Addr
 // is "", which CheckAddr rejects: the end user always sources it.
 func DefaultSettings() Settings {
 	return Settings{
-		Addr:    "",
-		TLS:     nil,
-		Timeout: 10 * time.Second,
+		Addr:        "",
+		TLS:         nil,
+		Timeout:     10 * time.Second,
+		MaxAttempts: 3,
+		BackoffBase: 100 * time.Millisecond,
+		BackoffMax:  5 * time.Second,
+		RetryBudget: retry.BudgetConfig{MaxTokens: 10, TokenRatio: 0.1},
+		Classify:    defaultClassify,
 	}
 }
 
@@ -97,18 +160,71 @@ func CheckTLS(c *tls.Config) error {
 	return nil
 }
 
+// The causes the checks report. None of them names a field: whoever calls a
+// check names the field, or the variable that sourced it.
+var (
+	errNil         = errors.New("must not be nil")
+	errNotPositive = errors.New("must be positive")
+)
+
 // CheckTimeout rejects a duration that is not positive. A zero would mean
 // no deadline, and an RPC with none can hang for as long as the server
 // does.
 func CheckTimeout(d time.Duration) error {
-	if d <= 0 {
-		return errors.New("must be positive")
+	return positive(d)
+}
+
+// CheckMaxAttempts rejects fewer than 1 attempt: every call makes at least
+// its first. 1 turns retries off.
+func CheckMaxAttempts(n int) error {
+	if n < 1 {
+		return fmt.Errorf("must be at least 1, got %d", n)
 	}
 	return nil
 }
 
-// checkSettings runs every check on settings. It reports every failure in
-// one error, each naming its field.
+// CheckBackoffBase rejects a duration that is not positive, as
+// retry.Exponential does.
+func CheckBackoffBase(d time.Duration) error {
+	return positive(d)
+}
+
+// CheckBackoffMax rejects a duration that is not positive. NewClient also
+// rejects a BackoffMax below BackoffBase, which takes both fields to tell.
+func CheckBackoffMax(d time.Duration) error {
+	return positive(d)
+}
+
+// CheckRetryBudgetMaxTokens accepts 3 to retry.TokenLimit tokens, as
+// retry.NewBudget does: a budget allows no retry while it holds half of its
+// tokens or fewer, so one of 1 or 2 tokens would never allow one.
+func CheckRetryBudgetMaxTokens(n int) error {
+	if n < 3 || n > retry.TokenLimit {
+		return fmt.Errorf("must be from 3 to %d, got %d", retry.TokenLimit, n)
+	}
+	return nil
+}
+
+// CheckRetryBudgetTokenRatio accepts 0.001 to retry.TokenLimit tokens, as
+// retry.NewBudget does. NaN is rejected.
+func CheckRetryBudgetTokenRatio(r float64) error {
+	if !(r >= 0.001 && r <= retry.TokenLimit) {
+		return fmt.Errorf("must be from 0.001 to %d, got %v", retry.TokenLimit, r)
+	}
+	return nil
+}
+
+// positive rejects a duration that is not positive.
+func positive(d time.Duration) error {
+	if d <= 0 {
+		return errNotPositive
+	}
+	return nil
+}
+
+// checkSettings runs every check on settings, and rejects a BackoffMax
+// below BackoffBase and a nil Classify. It reports every failure in one
+// error, each naming its field.
 func checkSettings(settings Settings) error {
 	var errs []error
 	check := func(field string, err error) {
@@ -119,5 +235,18 @@ func checkSettings(settings Settings) error {
 	check("Settings.Addr", CheckAddr(settings.Addr))
 	check("Settings.TLS", CheckTLS(settings.TLS))
 	check("Settings.Timeout", CheckTimeout(settings.Timeout))
+	check("Settings.MaxAttempts", CheckMaxAttempts(settings.MaxAttempts))
+	backoffBaseErr := CheckBackoffBase(settings.BackoffBase)
+	backoffMaxErr := CheckBackoffMax(settings.BackoffMax)
+	check("Settings.BackoffBase", backoffBaseErr)
+	check("Settings.BackoffMax", backoffMaxErr)
+	if backoffBaseErr == nil && backoffMaxErr == nil && settings.BackoffMax < settings.BackoffBase {
+		check("Settings.BackoffMax", fmt.Errorf("must be at least Settings.BackoffBase, %s, got %s", settings.BackoffBase, settings.BackoffMax))
+	}
+	check("Settings.RetryBudget.MaxTokens", CheckRetryBudgetMaxTokens(settings.RetryBudget.MaxTokens))
+	check("Settings.RetryBudget.TokenRatio", CheckRetryBudgetTokenRatio(settings.RetryBudget.TokenRatio))
+	if settings.Classify == nil {
+		check("Settings.Classify", errNil)
+	}
 	return errors.Join(errs...)
 }

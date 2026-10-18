@@ -39,13 +39,15 @@
 //
 // # One Client per dependency
 //
-// A Client is one dependency at one Addr, over one connection. The end
-// user's Init builds one Client for each dependency, with its own Settings,
-// and shares it between every Service that calls it: the Client is safe for
-// concurrent use, and its RPCs share its connection. A Client built for each
-// call would dial and handshake for each call, and register one more
-// function with Setup.OnStop each time. NewClient takes the *humus.Setup
-// because it belongs in Init: build the Client there, once, and share it.
+// A Client is one dependency at one Addr, over one connection, with one
+// retry budget. The end user's Init builds one Client for each dependency,
+// with its own Settings, and shares it between every Service that calls
+// it: the Client is safe for concurrent use, and its RPCs share its
+// connection and its budget. A Client built for each call would dial and
+// handshake for each call, start each with a full budget, and register one
+// more function with Setup.OnStop each time. NewClient takes the
+// *humus.Setup because it belongs in Init: build the Client there, once,
+// and share it.
 //
 // A Client is not a humus.Service. It has nothing to serve, and nothing to
 // drain: an RPC in flight ends with its own context.
@@ -141,8 +143,9 @@
 //
 // # Timeout
 //
-// Settings.Timeout bounds each unary RPC. Invoke applies it to the call's
-// context, so a caller's earlier deadline wins, but a later one doesn't
+// Settings.Timeout bounds each unary RPC: every attempt, and the waits
+// between them. Invoke applies it to the call's context before the first
+// attempt, so a caller's earlier deadline wins, but a later one doesn't
 // extend it: an end user whose calls need longer sets the field. A Timeout
 // that has passed fails the RPC with codes.DeadlineExceeded. [CheckTimeout]
 // rejects a Timeout that is not positive: an RPC with no deadline can hang
@@ -151,13 +154,175 @@
 // Timeout doesn't apply to streams. A stream may rightly live as long as its
 // caller wants, so it ends with the context its caller opened it with.
 //
+// # Retries
+//
+// Every unary RPC is retried with bedrock's retry package. NewClient builds
+// one retry.Budget, the schedule retry.Exponential(BackoffBase, BackoffMax)
+// and one retry.Retrier, shared by every method and every goroutine, so a
+// Client is one dependency with one budget. Invoke ranges over the
+// Retrier's attempts. Each attempt is one grpc-go RPC, which reads the
+// attempt's trailer, and Settings.Classify decides how its result counts,
+// once, in an attempt function of its own. The call returns the last
+// attempt's error.
+//
+// Retries are bounded three ways. Settings.MaxAttempts bounds the attempts
+// of each call, 3 by default, and 1 turns retries off. Settings.RetryBudget
+// bounds every call to the dependency together, as gRPC's retry throttling
+// does, and as retry.Budget describes: each attempt classified Retry takes
+// a token, each Success adds a tenth of one back, and retries stop while
+// half the tokens or fewer are left. So while the dependency fails, every
+// call makes one attempt, rather than three, and first attempts are never
+// limited. And Timeout bounds the call: a wait that would end after the
+// call's deadline isn't started, and the call returns the last attempt's
+// error at once. The wait before each retry is drawn from
+// retry.Exponential's schedule, exponential backoff with full jitter.
+//
+// An interceptor or other option in NewClient's opts runs inside the
+// retries, once per attempt: an interceptor chained with
+// grpc.WithChainUnaryInterceptor sees every attempt, as grpc-go's stats
+// handlers do.
+//
+// # How an attempt's result counts
+//
+// Every attempt's result is classified twice: for retry, whether another
+// attempt follows, and for the dependency's circuit breaker, whether the
+// result counts against the dependency. [Settings].Classify returns both,
+// in a [Classification]. Some of that is about the call, and the Client
+// decides it the same way for every dependency. The rest is about what the
+// dependency's codes mean, which differs from one API to another, and
+// Classify decides it.
+//
+// What the Client decides: Classify isn't asked about an error once the
+// call's context is done, because the caller gave up or the call's deadline
+// passed. Another attempt can't help, so the call ends. And whatever
+// Classify returns:
+//
+//   - a RetryAfter longer than BackoffMax ends the call, with the
+//     attempt's error (see The pushback, below);
+//   - a stream that opened is never retried (see Streams, below).
+//
+// What [DefaultSettings]' Classify decides, of every other result, by its
+// code, which status.Code gives, so an error with no gRPC status, such as
+// one an interceptor in opts returns, is Unknown:
+//
+//	| An attempt's code                                    | Retry                         | Breaker |
+//	|------------------------------------------------------|-------------------------------|---------|
+//	| OK                                                   | Success                       | Success |
+//	| Unavailable                                          | Retry, after the pushback     | Failure |
+//	|                                                      | if there is one               |         |
+//	| ResourceExhausted with a pushback of 0 or more       | Retry, after the pushback     | Failure |
+//	| ResourceExhausted without a pushback                 | Stop                          | Failure |
+//	| DeadlineExceeded, Internal, Unknown, DataLoss        | Stop                          | Failure |
+//	| Canceled                                             | Stop                          | Ignored |
+//	| any other code, such as NotFound, InvalidArgument    | Stop                          | Success |
+//	| or Aborted                                           |                               |         |
+//
+// A grpc-retry-pushback-ms that is negative or not a number makes any of
+// these Stop but OK, which has nothing to retry: the server asked not to be
+// tried again.
+//
+//   - Unavailable is gRPC's code for "try again". It is what grpc-go returns
+//     when it can't reach the server, and what grpcserver ends streams with
+//     at shutdown.
+//   - ResourceExhausted is retried only when the server says when. Without
+//     a pushback it is as likely to be a quota as an overload, and a quota
+//     isn't fixed by trying again a few hundred milliseconds later. Either
+//     way it counts against the dependency, which is shedding load.
+//   - DeadlineExceeded while the call's own deadline is live is the
+//     server's: it gave up on something of its own, such as its
+//     dependency. It counts, as the call's own deadline does, and isn't
+//     retried, because the server's deadline is likely to end the next
+//     attempt the same way.
+//   - Canceled while the call's context is live comes from the server
+//     cancelling the RPC, or the connection closing at OnStop. It says
+//     nothing about the dependency.
+//   - Any other code is the dependency working. It answered, and the
+//     request was wrong or conflicted with its state, so the breaker counts
+//     the dependency healthy, and the default doesn't try again.
+//   - The default reads only the code and the trailer. It never reads a
+//     status's details.
+//
+// The default retries every method on Unavailable, whatever the method. A
+// server that returns Unavailable after acting on a request breaks gRPC's
+// meaning of the code, so for most APIs that is safe. But grpc-go also
+// returns Unavailable when the connection breaks after the request was
+// sent, and then the server may have acted on it. So a method that must
+// never be sent twice, such as one that charges a card, opts out in
+// Classify, which gets the method: there is no per-method table in
+// Settings.
+//
+// An end user whose API means something else by a code writes a Classify
+// of their own, which usually handles what differs and hands the rest to
+// the default. The ledger below aborts a write that races another write to
+// the same account, which is over by the next attempt, and its Charge must
+// never be sent twice:
+//
+//	d := grpcclient.DefaultSettings()
+//	classify := d.Classify
+//
+//	settings.Classify = func(method string, err error, trailer metadata.MD) grpcclient.Classification {
+//		c := classify(method, err, trailer)
+//		if status.Code(err) == codes.Aborted {
+//			c = grpcclient.Classification{Retry: retry.Retry, Breaker: circuit.Success}
+//		}
+//		if method == "/ledger.v1.LedgerService/Charge" && c.Retry == retry.Retry {
+//			c.Retry, c.RetryAfter = retry.Stop, 0
+//		}
+//		return c
+//	}
+//
+// An API that sends google.rpc.RetryInfo in its statuses' details, rather
+// than a pushback, has a Classify that reads it with status.FromError and
+// returns it as RetryAfter. The function is the end user's own, so one
+// function can be set on every Client whose dependencies share a
+// convention, such as a company's own services. humus exports no
+// classifier but the default, and no helpers to build one.
+//
+// Classify is called on the goroutine that made the call, once for each
+// attempt, so it must be safe for concurrent use. A Classification with a
+// zero Outcome, or with retry.Retry and a negative RetryAfter, panics, as
+// bedrock's classifiers do. The Client recovers nothing: a panic in
+// Classify passes to the goroutine that made the call.
+//
+// # The pushback
+//
+// grpc-retry-pushback-ms is gRFC A6's trailer, in which a server says how
+// many milliseconds to wait before the next attempt. The default Classify
+// reads it from the attempt's trailer and returns it as the
+// Classification's RetryAfter, so the wait before the next attempt is the
+// larger of it and the schedule's. A pushback that is negative, not a
+// number or given more than once means "don't retry", as A6 says of the
+// first two. An end user's Classify returns whatever its API says.
+//
+// A RetryAfter longer than BackoffMax, from any Classify, isn't waited for:
+// the call ends, and returns the attempt's error, as httpclient does with a
+// long Retry-After. A server that asks for longer than that is not one a
+// call in flight should wait on, and a wait past the call's deadline would
+// end it anyway.
+//
+// # Streams
+//
+// NewStream runs the same loop, with MaxAttempts and the backoff, but not
+// Timeout. Each attempt opens the stream:
+//
+//   - Opening is retried. NewStream fails before anything reaches the
+//     server: no connection, or the channel in transient failure. A failed
+//     open is classified as a unary attempt is, and Classify gets it with
+//     no trailer, since nothing came back.
+//   - An open stream is never retried. A stream that opens is a Success,
+//     without asking Classify. The end user's code sends and receives on it
+//     directly, and a retry would replay what it already saw: the call is
+//     committed once its result is handed to its caller. A stream that
+//     fails after it opened ends with that error.
+//
 // # opts
 //
 // NewClient's opts are grpc.DialOptions, for what humus doesn't configure:
 // per-RPC credentials with grpc.WithPerRPCCredentials, interceptors,
 // grpc.WithConnectParams, and the like. They come after humus's own
 // options, which trace and measure every attempt, dial through the Host,
-// use no proxy, and turn grpc-go's configurable retries off. A stats
+// use no proxy, and turn grpc-go's configurable retries off. They run
+// inside the Client's retries: grpc-go applies them to each attempt. A stats
 // handler in opts, with grpc.WithStatsHandler, is a second one: grpc-go
 // calls it as well, after humus's. The transport credentials built from
 // Settings.TLS come after opts, so a grpc.WithTransportCredentials in opts
@@ -200,7 +365,8 @@
 //
 // grpc-go calls a stats handler for each attempt, so each attempt is one
 // span of kind client, a child of the span in the call's context. A call
-// that grpc-go retries transparently is two attempts, and two spans. A
+// the Client retries is a span for each attempt, siblings under the
+// caller's span, and so is a call that grpc-go retries transparently. A
 // stream is one span, from its opening to its end. The span is named after
 // the full method without its leading slash, such as
 // "cart.v1.CartService/AddItem", and carries the attributes of

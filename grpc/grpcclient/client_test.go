@@ -51,14 +51,16 @@ type rpc struct {
 	clientCN  string // the common name of the client's certificate, under mTLS
 }
 
-// backend is the end user's backend. Its EmptyCall answers with answer, or
-// OK when answer is nil, and its StreamingOutputCall sends a message for
-// each of the request's ResponseParameters, after its IntervalUs. It counts
-// its calls, and records what it saw of each.
+// backend is the end user's backend. Its EmptyCall and UnaryCall answer
+// with answer, or OK when answer is nil, and its StreamingOutputCall sends
+// a message for each of the request's ResponseParameters, after its
+// IntervalUs, and then ends with streamErr. It counts its calls, and
+// records what it saw of each.
 type backend struct {
 	testpb.UnimplementedTestServiceServer
 
-	answer func(ctx context.Context) error
+	answer    func(ctx context.Context) error
+	streamErr error
 
 	calls atomic.Int32
 	mu    sync.Mutex
@@ -102,6 +104,16 @@ func (b *backend) EmptyCall(ctx context.Context, _ *testpb.Empty) (*testpb.Empty
 	return &testpb.Empty{}, nil
 }
 
+func (b *backend) UnaryCall(ctx context.Context, _ *testpb.SimpleRequest) (*testpb.SimpleResponse, error) {
+	b.record(ctx)
+	if b.answer != nil {
+		if err := b.answer(ctx); err != nil {
+			return nil, err
+		}
+	}
+	return &testpb.SimpleResponse{}, nil
+}
+
 func (b *backend) StreamingOutputCall(req *testpb.StreamingOutputCallRequest, stream grpc.ServerStreamingServer[testpb.StreamingOutputCallResponse]) error {
 	b.record(stream.Context())
 	for i, p := range req.GetResponseParameters() {
@@ -110,7 +122,7 @@ func (b *backend) StreamingOutputCall(req *testpb.StreamingOutputCallRequest, st
 			return err
 		}
 	}
-	return nil
+	return b.streamErr
 }
 
 // app is the end user's App, as these tests run it.
@@ -491,7 +503,7 @@ func TestNewClient_opts(t *testing.T) {
 			}.run(t)
 			require.Equal(t, codes.Unavailable, status.Code(err), "err = %v", err)
 
-			require.EqualValues(t, 1, b.calls.Load(), "the backend sees one call")
+			require.EqualValues(t, 3, b.calls.Load(), "the backend sees the Client's three attempts, and none of grpc-go's")
 		})
 	})
 

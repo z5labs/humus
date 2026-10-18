@@ -45,8 +45,8 @@ func sourceFiles(t *testing.T) (*token.FileSet, []*ast.File) {
 
 // TestPackage_exports_only_Settings_its_checks_and_the_Client
 // checks that the package's only exported names, methods included, are
-// Settings, DefaultSettings and the checks, and the Client with NewClient,
-// Invoke, NewStream and Connected: in particular, the Client has no Close,
+// Settings, DefaultSettings and the checks, Classification, and the Client
+// with NewClient, Invoke, NewStream and Connected: in particular, the Client has no Close,
 // and there is no App and no Main.
 func TestPackage_exports_only_Settings_its_checks_and_the_Client(t *testing.T) {
 	t.Parallel()
@@ -57,7 +57,9 @@ func TestPackage_exports_only_Settings_its_checks_and_the_Client(t *testing.T) {
 		for _, decl := range f.Decls {
 			switch d := decl.(type) {
 			case *ast.FuncDecl:
-				if d.Name.IsExported() {
+				// A method of an unexported type, such as an error's
+				// Error, is no part of the package's API.
+				if d.Name.IsExported() && receiverExported(d) {
 					exported = append(exported, d.Name.Name)
 				}
 			case *ast.GenDecl:
@@ -80,9 +82,25 @@ func TestPackage_exports_only_Settings_its_checks_and_the_Client(t *testing.T) {
 	}
 	slices.Sort(exported)
 	require.Equal(t, []string{
-		"CheckAddr", "CheckTLS", "CheckTimeout", "Client", "Connected", "DefaultSettings",
+		"CheckAddr", "CheckBackoffBase", "CheckBackoffMax", "CheckMaxAttempts",
+		"CheckRetryBudgetMaxTokens", "CheckRetryBudgetTokenRatio", "CheckTLS", "CheckTimeout",
+		"Classification", "Client", "Connected", "DefaultSettings",
 		"Invoke", "NewClient", "NewStream", "Settings",
 	}, exported)
+}
+
+// receiverExported reports whether d is a function, or a method of an
+// exported type.
+func receiverExported(d *ast.FuncDecl) bool {
+	if d.Recv == nil || len(d.Recv.List) == 0 {
+		return true
+	}
+	typ := d.Recv.List[0].Type
+	if star, ok := typ.(*ast.StarExpr); ok {
+		typ = star.X
+	}
+	id, ok := typ.(*ast.Ident)
+	return !ok || id.IsExported()
 }
 
 // TestPackage_reads_no_environment_and_no_file checks that the package

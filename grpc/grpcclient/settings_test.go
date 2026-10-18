@@ -9,12 +9,14 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"math"
 	"regexp"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/retry"
 	"google.golang.org/grpc"
 
 	"github.com/z5labs/humus"
@@ -27,8 +29,9 @@ import (
 // what is wrong, and whoever calls it names the field or the variable.
 // Settings.TLS is checked by tlsField, since "TLS 1.2" names a version.
 var fieldNames = []string{
-	"Settings", "Addr", "Timeout",
-	"addr", "timeout",
+	"Settings", "Addr", "Timeout", "MaxAttempts", "BackoffBase", "BackoffMax",
+	"RetryBudget", "MaxTokens", "TokenRatio", "Classify",
+	"addr", "timeout", "attempts", "backoff", "budget", "tokens", "ratio",
 }
 
 // tlsField matches "TLS" where it is not the start of a version, such as
@@ -48,6 +51,29 @@ func TestChecks(t *testing.T) {
 		return func() error { return grpcclient.CheckTimeout(d) }
 	}
 	roots := humustest.NewCA(t).Pool()
+	durations := func(check func(time.Duration) error, ds ...time.Duration) []func() error {
+		var fs []func() error
+		for _, d := range ds {
+			fs = append(fs, func() error { return check(d) })
+		}
+		return fs
+	}
+	ints := func(check func(int) error, ns ...int) []func() error {
+		var fs []func() error
+		for _, n := range ns {
+			fs = append(fs, func() error { return check(n) })
+		}
+		return fs
+	}
+	floats := func(check func(float64) error, rs ...float64) []func() error {
+		var fs []func() error
+		for _, r := range rs {
+			fs = append(fs, func() error { return check(r) })
+		}
+		return fs
+	}
+	positive := []time.Duration{time.Nanosecond, 100 * time.Millisecond, 5 * time.Second, time.Hour}
+	notPositive := []time.Duration{0, -time.Nanosecond, -time.Second}
 
 	for _, c := range []struct {
 		name   string
@@ -112,6 +138,31 @@ func TestChecks(t *testing.T) {
 				timeout(-time.Second),
 			},
 		},
+		{
+			name:   "CheckMaxAttempts",
+			accept: ints(grpcclient.CheckMaxAttempts, 1, 3, math.MaxInt),
+			reject: ints(grpcclient.CheckMaxAttempts, 0, -1, math.MinInt),
+		},
+		{
+			name:   "CheckBackoffBase",
+			accept: durations(grpcclient.CheckBackoffBase, positive...),
+			reject: durations(grpcclient.CheckBackoffBase, notPositive...),
+		},
+		{
+			name:   "CheckBackoffMax",
+			accept: durations(grpcclient.CheckBackoffMax, positive...),
+			reject: durations(grpcclient.CheckBackoffMax, notPositive...),
+		},
+		{
+			name:   "CheckRetryBudgetMaxTokens",
+			accept: ints(grpcclient.CheckRetryBudgetMaxTokens, 3, 10, retry.TokenLimit),
+			reject: ints(grpcclient.CheckRetryBudgetMaxTokens, 2, 0, -1, retry.TokenLimit+1),
+		},
+		{
+			name:   "CheckRetryBudgetTokenRatio",
+			accept: floats(grpcclient.CheckRetryBudgetTokenRatio, 0.001, 0.1, 1, retry.TokenLimit),
+			reject: floats(grpcclient.CheckRetryBudgetTokenRatio, 0.0009, 0, -0.1, retry.TokenLimit+0.001, math.NaN(), math.Inf(1)),
+		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
@@ -134,16 +185,30 @@ func TestDefaultSettings(t *testing.T) {
 	t.Parallel()
 
 	d := grpcclient.DefaultSettings()
+	require.NotNil(t, d.Classify)
+	withoutClassify := d
+	withoutClassify.Classify = nil
 	require.Equal(t, grpcclient.Settings{
-		Addr:    "",
-		TLS:     nil,
-		Timeout: 10 * time.Second,
-	}, d)
+		Addr:        "",
+		TLS:         nil,
+		Timeout:     10 * time.Second,
+		MaxAttempts: 3,
+		BackoffBase: 100 * time.Millisecond,
+		BackoffMax:  5 * time.Second,
+		RetryBudget: retry.BudgetConfig{MaxTokens: 10, TokenRatio: 0.1},
+	}, withoutClassify)
 
 	t.Run("passes the checks of the fields that have a default", func(t *testing.T) {
 		t.Parallel()
 		require.NoError(t, grpcclient.CheckTLS(d.TLS))
 		require.NoError(t, grpcclient.CheckTimeout(d.Timeout))
+		require.NoError(t, grpcclient.CheckMaxAttempts(d.MaxAttempts))
+		require.NoError(t, grpcclient.CheckBackoffBase(d.BackoffBase))
+		require.NoError(t, grpcclient.CheckBackoffMax(d.BackoffMax))
+		require.NoError(t, grpcclient.CheckRetryBudgetMaxTokens(d.RetryBudget.MaxTokens))
+		require.NoError(t, grpcclient.CheckRetryBudgetTokenRatio(d.RetryBudget.TokenRatio))
+		_, err := retry.NewBudget(d.RetryBudget)
+		require.NoError(t, err, "retry.NewBudget accepts the default budget")
 	})
 
 	t.Run("fails the check of Addr, which has none", func(t *testing.T) {
@@ -203,21 +268,73 @@ func TestNewClient_settings(t *testing.T) {
 		settings.Addr = "carts:9090"
 		settings.TLS = &tls.Config{MaxVersion: tls.VersionTLS11}
 		settings.Timeout = 0
+		settings.MaxAttempts = 0
+		settings.BackoffBase = 0
+		settings.BackoffMax = -time.Second
+		settings.RetryBudget = retry.BudgetConfig{MaxTokens: 2, TokenRatio: 0}
+		settings.Classify = nil
 
 		c, err := grpcclient.NewClient(newSetup(t), settings)
 		require.Nil(t, c)
 		require.ErrorContains(t, err, "grpcclient: NewClient: ")
 		require.ErrorContains(t, err, "Settings.TLS has a MaxVersion of TLS 1.1")
 		require.ErrorContains(t, err, "Settings.Timeout must be positive")
+		require.ErrorContains(t, err, "Settings.MaxAttempts must be at least 1, got 0")
+		require.ErrorContains(t, err, "Settings.BackoffBase must be positive")
+		require.ErrorContains(t, err, "Settings.BackoffMax must be positive")
+		require.ErrorContains(t, err, "Settings.RetryBudget.MaxTokens must be from 3 to 65536, got 2")
+		require.ErrorContains(t, err, "Settings.RetryBudget.TokenRatio must be from 0.001 to 65536, got 0")
+		require.ErrorContains(t, err, "Settings.Classify must not be nil")
 		require.NotContains(t, err.Error(), "Settings.Addr")
+	})
+
+	t.Run("a BackoffMax below BackoffBase is rejected, next to the other bad fields", func(t *testing.T) {
+		t.Parallel()
+		settings := grpcclient.DefaultSettings()
+		settings.Addr = "carts:9090"
+		settings.BackoffBase = 2 * time.Second
+		settings.BackoffMax = time.Second
+		settings.Classify = nil
+
+		c, err := grpcclient.NewClient(newSetup(t), settings)
+		require.Nil(t, c)
+		require.EqualError(t, err, "grpcclient: NewClient: Settings.BackoffMax must be at least Settings.BackoffBase, 2s, got 1s\n"+
+			"Settings.Classify must not be nil")
+	})
+
+	t.Run("a BackoffMax equal to BackoffBase passes", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			settings := grpcclient.DefaultSettings()
+			settings.Addr = "carts:9090"
+			settings.BackoffBase = time.Second
+			settings.BackoffMax = time.Second
+
+			// Init fails after NewClient, so the App's OnStop functions
+			// close the connection.
+			errInit := errors.New("init failed")
+			var newErr error
+			_, exit := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+				_, newErr = grpcclient.NewClient(s, settings)
+				return nil, errInit
+			}, humustest.WithApp(humus.WithHost(humustest.NewHost(t).Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+			st := <-exit
+			require.ErrorIs(t, st.Cause(), errInit)
+			require.NoError(t, newErr)
+		})
 	})
 
 	t.Run("each field is named", func(t *testing.T) {
 		t.Parallel()
 		for field, change := range map[string]func(*grpcclient.Settings){
-			"Settings.Addr":    func(s *grpcclient.Settings) { s.Addr = "dns:///carts:9090" },
-			"Settings.TLS":     func(s *grpcclient.Settings) { s.TLS = &tls.Config{MaxVersion: tls.VersionTLS10} },
-			"Settings.Timeout": func(s *grpcclient.Settings) { s.Timeout = -time.Second },
+			"Settings.Addr":                   func(s *grpcclient.Settings) { s.Addr = "dns:///carts:9090" },
+			"Settings.TLS":                    func(s *grpcclient.Settings) { s.TLS = &tls.Config{MaxVersion: tls.VersionTLS10} },
+			"Settings.Timeout":                func(s *grpcclient.Settings) { s.Timeout = -time.Second },
+			"Settings.MaxAttempts":            func(s *grpcclient.Settings) { s.MaxAttempts = 0 },
+			"Settings.BackoffBase":            func(s *grpcclient.Settings) { s.BackoffBase = 0 },
+			"Settings.BackoffMax":             func(s *grpcclient.Settings) { s.BackoffMax = 0 },
+			"Settings.RetryBudget.MaxTokens":  func(s *grpcclient.Settings) { s.RetryBudget.MaxTokens = retry.TokenLimit + 1 },
+			"Settings.RetryBudget.TokenRatio": func(s *grpcclient.Settings) { s.RetryBudget.TokenRatio = math.NaN() },
+			"Settings.Classify":               func(s *grpcclient.Settings) { s.Classify = nil },
 		} {
 			settings := grpcclient.DefaultSettings()
 			settings.Addr = "carts:9090"
