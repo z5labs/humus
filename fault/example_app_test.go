@@ -109,6 +109,7 @@ func newAPI(payments *http.Client, base *url.URL) http.Handler {
 			return
 		}
 		defer func() { _ = resp.Body.Close() }()
+		w.WriteHeader(resp.StatusCode)
 		_, _ = io.Copy(w, resp.Body)
 	})
 	return mux
