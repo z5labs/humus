@@ -60,25 +60,53 @@ func newRetrier(settings Settings) (*retry.Retrier, error) {
 	return retry.New(settings.MaxAttempts, schedule, classify, budget)
 }
 
-// attempt makes one attempt of a unary call to method with call, and
-// classifies its result once, with the trailer call wrote. It is the
-// function of its own, inside the retry loop, that the breaker and failure
-// injection's seam wrap.
+// attempt makes one attempt of a unary call to method with call, through
+// the breaker, in the order the package doc's "The circuit breaker" sets
+// out: Allow, with a deferred Release; the call, which is failure
+// injection's seam; the classification, once, with the trailer call wrote;
+// and Done, with the result carrying it. A rejected attempt makes no call,
+// and is the Client's to classify.
 func (c *Client) attempt(ctx context.Context, method string, trailer *metadata.MD, call func(context.Context) error) *result {
-	err := call(ctx)
-	return &result{err: err, class: c.classifyAttempt(ctx, method, err, *trailer)}
+	t, err := c.breaker.Allow(ctx)
+	if err != nil {
+		return c.reject(ctx, method, err)
+	}
+	defer t.Release()
+
+	err = call(ctx)
+	r := &result{err: err, class: c.classifyAttempt(ctx, method, err, *trailer)}
+	t.Done(r)
+	return r
 }
 
-// open makes one attempt to open a stream to method. A stream that opens
-// is the Client's to classify, without asking Classify. One that fails is
-// classified as a unary attempt is, with no trailer, since nothing came
-// back.
+// open makes one attempt to open a stream to method, through the breaker.
+// One that fails is classified as a unary attempt is, with no trailer,
+// since nothing came back, and settles the attempt's ticket at once. A
+// stream that opens is the Client's to classify for retry, without asking
+// Classify, and takes the ticket, which it settles when it ends, after open
+// has returned: so the guard is a flag set once the ticket is handed off,
+// not a deferred Release.
 func (c *Client) open(ctx context.Context, desc *grpc.StreamDesc, method string, opts []grpc.CallOption) (grpc.ClientStream, *result) {
-	stream, err := c.cc.NewStream(ctx, desc, method, opts...)
+	t, err := c.breaker.Allow(ctx)
 	if err != nil {
-		return nil, &result{err: err, class: c.classifyAttempt(ctx, method, err, nil)}
+		return nil, c.reject(ctx, method, err)
 	}
-	return stream, &result{class: opened}
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			t.Release()
+		}
+	}()
+
+	s, err := c.cc.NewStream(ctx, desc, method, opts...)
+	if err != nil {
+		r := &result{err: err, class: c.classifyAttempt(ctx, method, err, nil)}
+		t.Done(r)
+		return nil, r
+	}
+	ws := c.watch(ctx, desc, method, s, t)
+	handedOff = true
+	return ws, &result{class: opened}
 }
 
 // classifyAttempt is how an attempt's result counts: what the Client
@@ -111,7 +139,8 @@ func pastDeadline(call context.Context) bool {
 
 // decided is the Classification of an error once call has ended, which the
 // Client decides: the call ends, and the breaker counts the call's
-// deadline against the dependency, and ignores the caller giving up.
+// deadline against the dependency, Settings.Timeout or a deadline the
+// caller set or inherited, and ignores the caller giving up.
 func decided(call context.Context) Classification {
 	if errors.Is(call.Err(), context.DeadlineExceeded) || (call.Err() == nil && pastDeadline(call)) {
 		return Classification{Retry: retry.Stop, Breaker: circuit.Failure}
@@ -122,6 +151,6 @@ func decided(call context.Context) Classification {
 // opened is the Classification of a stream that opened, which the Client
 // decides without asking Classify: the call is over for retry, which never
 // retries an open stream. Only its Retry is read. Its Breaker is never
-// counted: the breaker counts a stream once, at its end, with the
-// Classification of how it ended.
+// counted: the stream takes the attempt's ticket, and the breaker counts a
+// stream once, at its end, with the Classification of how it ended.
 var opened = Classification{Retry: retry.Success, Breaker: circuit.Success}

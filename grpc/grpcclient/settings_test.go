@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/circuit"
 	"github.com/z5labs/bedrock/retry"
 	"google.golang.org/grpc"
 
@@ -31,7 +32,9 @@ import (
 var fieldNames = []string{
 	"Settings", "Addr", "Timeout", "MaxAttempts", "BackoffBase", "BackoffMax",
 	"RetryBudget", "MaxTokens", "TokenRatio", "Classify",
+	"Breaker", "Window", "Probes", "OpenFor", "ProbeTimeout", "BreakerPolicy", "Trip", "Probe",
 	"addr", "timeout", "attempts", "backoff", "budget", "tokens", "ratio",
+	"breaker", "window", "probes", "probe", "open for",
 }
 
 // tlsField matches "TLS" where it is not the start of a version, such as
@@ -163,6 +166,26 @@ func TestChecks(t *testing.T) {
 			accept: floats(grpcclient.CheckRetryBudgetTokenRatio, 0.001, 0.1, 1, retry.TokenLimit),
 			reject: floats(grpcclient.CheckRetryBudgetTokenRatio, 0.0009, 0, -0.1, retry.TokenLimit+0.001, math.NaN(), math.Inf(1)),
 		},
+		{
+			name:   "CheckBreakerWindow",
+			accept: ints(grpcclient.CheckBreakerWindow, 1, 20, circuit.MaxCount),
+			reject: ints(grpcclient.CheckBreakerWindow, 0, -1, circuit.MaxCount+1, math.MinInt, math.MaxInt),
+		},
+		{
+			name:   "CheckBreakerProbes",
+			accept: ints(grpcclient.CheckBreakerProbes, 1, 3, circuit.MaxCount),
+			reject: ints(grpcclient.CheckBreakerProbes, 0, -1, circuit.MaxCount+1, math.MinInt, math.MaxInt),
+		},
+		{
+			name:   "CheckBreakerOpenFor",
+			accept: durations(grpcclient.CheckBreakerOpenFor, positive...),
+			reject: durations(grpcclient.CheckBreakerOpenFor, notPositive...),
+		},
+		{
+			name:   "CheckBreakerProbeTimeout",
+			accept: durations(grpcclient.CheckBreakerProbeTimeout, positive...),
+			reject: durations(grpcclient.CheckBreakerProbeTimeout, notPositive...),
+		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
@@ -202,8 +225,11 @@ func TestDefaultSettings(t *testing.T) {
 
 	d := grpcclient.DefaultSettings()
 	require.NotNil(t, d.Classify)
-	withoutClassify := d
-	withoutClassify.Classify = nil
+	require.NotNil(t, d.BreakerPolicy.Trip)
+	require.NotNil(t, d.BreakerPolicy.Probe)
+	withoutFuncs := d
+	withoutFuncs.Classify = nil
+	withoutFuncs.BreakerPolicy = circuit.Policy{}
 	require.Equal(t, grpcclient.Settings{
 		Addr:        "",
 		TLS:         nil,
@@ -212,7 +238,34 @@ func TestDefaultSettings(t *testing.T) {
 		BackoffBase: 100 * time.Millisecond,
 		BackoffMax:  5 * time.Second,
 		RetryBudget: retry.BudgetConfig{MaxTokens: 10, TokenRatio: 0.1},
-	}, withoutClassify)
+		Breaker: circuit.Config{
+			Window:       20,
+			Probes:       1,
+			OpenFor:      10 * time.Second,
+			ProbeTimeout: 10 * time.Second,
+		},
+	}, withoutFuncs)
+
+	t.Run("its BreakerPolicy trips after 5 failures in a row, or once half of 20 or more failed", func(t *testing.T) {
+		t.Parallel()
+		trip := d.BreakerPolicy.Trip
+		require.False(t, trip(circuit.Counts{Failures: 4, ConsecutiveFailures: 4}))
+		require.True(t, trip(circuit.Counts{Failures: 5, ConsecutiveFailures: 5}))
+		require.False(t, trip(circuit.Counts{Successes: 10, Failures: 9, ConsecutiveFailures: 1}), "19 results")
+		require.True(t, trip(circuit.Counts{Successes: 10, Failures: 10, ConsecutiveFailures: 1}))
+		require.False(t, trip(circuit.Counts{Successes: 11, Failures: 9, ConsecutiveFailures: 1}))
+		require.False(t, trip(circuit.Counts{Successes: 2, Failures: 8, ConsecutiveFailures: 4}), "half of fewer than 20")
+	})
+
+	t.Run("its BreakerPolicy reopens on a failed probe, and closes after 3 successful ones", func(t *testing.T) {
+		t.Parallel()
+		probe := d.BreakerPolicy.Probe
+		require.Equal(t, circuit.Open, probe(circuit.Counts{Failures: 1, ConsecutiveFailures: 1}))
+		require.Equal(t, circuit.Open, probe(circuit.Counts{Successes: 2, Failures: 1, ConsecutiveFailures: 1}))
+		require.Equal(t, circuit.HalfOpen, probe(circuit.Counts{Successes: 2, ConsecutiveSuccesses: 2}))
+		require.Equal(t, circuit.Closed, probe(circuit.Counts{Successes: 3, ConsecutiveSuccesses: 3}))
+		require.Equal(t, circuit.HalfOpen, probe(circuit.Counts{TimedOut: 1}), "a probe that timed out")
+	})
 
 	t.Run("passes the checks of the fields that have a default", func(t *testing.T) {
 		t.Parallel()
@@ -225,6 +278,14 @@ func TestDefaultSettings(t *testing.T) {
 		require.NoError(t, grpcclient.CheckRetryBudgetTokenRatio(d.RetryBudget.TokenRatio))
 		_, err := retry.NewBudget(d.RetryBudget)
 		require.NoError(t, err, "retry.NewBudget accepts the default budget")
+		require.NoError(t, grpcclient.CheckBreakerWindow(d.Breaker.Window))
+		require.NoError(t, grpcclient.CheckBreakerProbes(d.Breaker.Probes))
+		require.NoError(t, grpcclient.CheckBreakerOpenFor(d.Breaker.OpenFor))
+		require.NoError(t, grpcclient.CheckBreakerProbeTimeout(d.Breaker.ProbeTimeout))
+		_, err = circuit.New(d.Breaker, d.BreakerPolicy,
+			func(context.Context, error) circuit.Outcome { return circuit.Success },
+			func(context.Context, circuit.Transition) {})
+		require.NoError(t, err, "circuit.New accepts the default breaker")
 	})
 
 	t.Run("fails the check of Addr, which has none", func(t *testing.T) {
@@ -237,7 +298,7 @@ func TestDefaultSettings(t *testing.T) {
 // a Client and makes no RPC.
 func newSetup(t *testing.T) *humus.Setup {
 	t.Helper()
-	return &humus.Setup{Host: humustest.NewHost(t).Host()}
+	return &humus.Setup{Host: humustest.NewHost(t).Host(), Telemetry: telemetry.Noop()}
 }
 
 func TestNewClient_the_Setup(t *testing.T) {
@@ -289,9 +350,17 @@ func TestNewClient_settings(t *testing.T) {
 		settings.BackoffMax = -time.Second
 		settings.RetryBudget = retry.BudgetConfig{MaxTokens: 2, TokenRatio: 0}
 		settings.Classify = nil
+		settings.Breaker = circuit.Config{Window: 0, Probes: circuit.MaxCount + 1, OpenFor: 0, ProbeTimeout: -time.Second}
+		settings.BreakerPolicy = circuit.Policy{}
 
 		c, err := grpcclient.NewClient(newSetup(t), settings)
 		require.Nil(t, c)
+		require.ErrorContains(t, err, "Settings.Breaker.Window must be from 1 to 65536, got 0")
+		require.ErrorContains(t, err, "Settings.Breaker.Probes must be from 1 to 65536, got 65537")
+		require.ErrorContains(t, err, "Settings.Breaker.OpenFor must be positive")
+		require.ErrorContains(t, err, "Settings.Breaker.ProbeTimeout must be positive")
+		require.ErrorContains(t, err, "Settings.BreakerPolicy.Trip must not be nil")
+		require.ErrorContains(t, err, "Settings.BreakerPolicy.Probe must not be nil")
 		require.ErrorContains(t, err, "grpcclient: NewClient: ")
 		require.ErrorContains(t, err, "Settings.TLS has a MaxVersion of TLS 1.1")
 		require.ErrorContains(t, err, "Settings.Timeout must be positive")
@@ -351,6 +420,12 @@ func TestNewClient_settings(t *testing.T) {
 			"Settings.RetryBudget.MaxTokens":  func(s *grpcclient.Settings) { s.RetryBudget.MaxTokens = retry.TokenLimit + 1 },
 			"Settings.RetryBudget.TokenRatio": func(s *grpcclient.Settings) { s.RetryBudget.TokenRatio = math.NaN() },
 			"Settings.Classify":               func(s *grpcclient.Settings) { s.Classify = nil },
+			"Settings.Breaker.Window":         func(s *grpcclient.Settings) { s.Breaker.Window = 0 },
+			"Settings.Breaker.Probes":         func(s *grpcclient.Settings) { s.Breaker.Probes = circuit.MaxCount + 1 },
+			"Settings.Breaker.OpenFor":        func(s *grpcclient.Settings) { s.Breaker.OpenFor = 0 },
+			"Settings.Breaker.ProbeTimeout":   func(s *grpcclient.Settings) { s.Breaker.ProbeTimeout = -time.Second },
+			"Settings.BreakerPolicy.Trip":     func(s *grpcclient.Settings) { s.BreakerPolicy.Trip = nil },
+			"Settings.BreakerPolicy.Probe":    func(s *grpcclient.Settings) { s.BreakerPolicy.Probe = nil },
 		} {
 			settings := grpcclient.DefaultSettings()
 			settings.Addr = "carts:9090"

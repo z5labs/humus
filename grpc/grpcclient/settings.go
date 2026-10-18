@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/z5labs/bedrock/circuit"
 	"github.com/z5labs/bedrock/retry"
 	"google.golang.org/grpc/metadata"
 )
@@ -87,14 +88,19 @@ type Settings struct {
 	// for OK, and the attempt's trailer, which holds grpc-retry-pushback-ms.
 	// status.FromError gives the error's code and its details, such as a
 	// google.rpc.RetryInfo. It isn't asked about what the Client decides
-	// itself: an error once the call's context has ended. It is asked
-	// about OK, a nil error, too, so a Classify that returns retry.Retry
-	// for every result sends a call that succeeded again: it returns
-	// retry.Success for OK, as the default does.
+	// itself: a call the circuit breaker rejected, and an error once the
+	// call's context has ended. It is asked about OK, a nil error, too, so
+	// a Classify that returns retry.Retry for every result sends a call
+	// that succeeded again: it returns retry.Success for OK, as the
+	// default does.
 	//
 	// For a stream, it is asked about an open that failed, with no
 	// trailer, since nothing came back. A stream that opens is never
-	// retried, and Classify isn't asked about it.
+	// retried, and Classify isn't asked about its open. It is asked about
+	// the stream's end, for the breaker alone: when RecvMsg returns an
+	// error, with the stream's trailer and io.EOF given as nil, or, for a
+	// client-streaming RPC, when RecvMsg returns its one response, given
+	// as nil. Only the Breaker of that answer is read.
 	//
 	// It is called on the goroutine that made the call, once for each
 	// attempt, so it must be safe for concurrent use. A Classification
@@ -104,6 +110,37 @@ type Settings struct {
 	// Default: the classification the package doc's "How an attempt's
 	// result counts" describes. Valid: set, which NewClient checks.
 	Classify func(method string, err error, trailer metadata.MD) Classification
+
+	// Breaker configures the Client's circuit breaker, which stands in
+	// front of the dependency, inside the retries: Window is how many of
+	// the latest results its counts cover, Probes how many calls it lets
+	// through at once while half-open, OpenFor how long it rejects every
+	// call once open, and ProbeTimeout how long a probe holds its slot.
+	//
+	// Default: circuit.Config{Window: 20, Probes: 1, OpenFor: 10 *
+	// time.Second, ProbeTimeout: 10 * time.Second}. Valid: Window and
+	// Probes from 1 to circuit.MaxCount, OpenFor and ProbeTimeout positive.
+	// Checks: CheckBreakerWindow, CheckBreakerProbes, CheckBreakerOpenFor,
+	// CheckBreakerProbeTimeout.
+	Breaker circuit.Config
+
+	// BreakerPolicy decides when the breaker opens and closes, from its
+	// counts. It is set in code, not sourced. A policy whose Trip always
+	// returns false turns the breaker off.
+	//
+	// The default's ratio rule needs 20 results, so with a Breaker.Window
+	// below 20 the default trips only on its rule of 5 failures in a row.
+	//
+	// Its functions run with the breaker locked, on the goroutine of the
+	// call whose result they decide on, so they must be fast and safe for
+	// concurrent use. A panic in one passes to the goroutine that made the
+	// call, and leaves the breaker consistent.
+	//
+	// Default: open after 5 failures in a row, or once half of the last 20
+	// or more results failed; while half-open, reopen on a failed probe and
+	// close after 3 successful ones. Valid: Trip and Probe set, which
+	// NewClient checks. Check: none.
+	BreakerPolicy circuit.Policy
 }
 
 // DefaultSettings returns the Client's defaults. Addr has none, so its Addr
@@ -118,6 +155,37 @@ func DefaultSettings() Settings {
 		BackoffMax:  5 * time.Second,
 		RetryBudget: retry.BudgetConfig{MaxTokens: 10, TokenRatio: 0.1},
 		Classify:    defaultClassify,
+		Breaker: circuit.Config{
+			Window:       20,
+			Probes:       1,
+			OpenFor:      10 * time.Second,
+			ProbeTimeout: 10 * time.Second,
+		},
+		BreakerPolicy: circuit.Policy{
+			Trip:  defaultTrip,
+			Probe: defaultProbe,
+		},
+	}
+}
+
+// defaultTrip opens the breaker after 5 failures in a row, or once half of
+// the last 20 or more results failed.
+func defaultTrip(c circuit.Counts) bool {
+	n := c.Successes + c.Failures
+	return c.ConsecutiveFailures >= 5 || (n >= 20 && 2*c.Failures >= n)
+}
+
+// defaultProbe reopens the breaker on a failed probe, closes it after 3
+// successful ones, and keeps probing otherwise, including after a probe
+// times out.
+func defaultProbe(c circuit.Counts) circuit.State {
+	switch {
+	case c.Failures > 0:
+		return circuit.Open
+	case c.ConsecutiveSuccesses >= 3:
+		return circuit.Closed
+	default:
+		return circuit.HalfOpen
 	}
 }
 
@@ -217,6 +285,38 @@ func CheckRetryBudgetTokenRatio(r float64) error {
 	return nil
 }
 
+// CheckBreakerWindow accepts 1 to circuit.MaxCount results, as
+// circuit.New does.
+func CheckBreakerWindow(n int) error {
+	return count(n)
+}
+
+// CheckBreakerProbes accepts 1 to circuit.MaxCount probes, as circuit.New
+// does.
+func CheckBreakerProbes(n int) error {
+	return count(n)
+}
+
+// CheckBreakerOpenFor rejects a duration that is not positive, as
+// circuit.New does.
+func CheckBreakerOpenFor(d time.Duration) error {
+	return positive(d)
+}
+
+// CheckBreakerProbeTimeout rejects a duration that is not positive, as
+// circuit.New does.
+func CheckBreakerProbeTimeout(d time.Duration) error {
+	return positive(d)
+}
+
+// count rejects a count that is not from 1 to circuit.MaxCount.
+func count(n int) error {
+	if n < 1 || n > circuit.MaxCount {
+		return fmt.Errorf("must be from 1 to %d, got %d", circuit.MaxCount, n)
+	}
+	return nil
+}
+
 // positive rejects a duration that is not positive.
 func positive(d time.Duration) error {
 	if d <= 0 {
@@ -226,7 +326,8 @@ func positive(d time.Duration) error {
 }
 
 // checkSettings runs every check on settings, and rejects a BackoffMax
-// below BackoffBase and a nil Classify. It reports every failure in one
+// below BackoffBase, a nil Classify, and a BreakerPolicy with a nil Trip
+// or Probe. It reports every failure in one
 // error, each naming its field.
 func checkSettings(settings Settings) error {
 	var errs []error
@@ -250,6 +351,16 @@ func checkSettings(settings Settings) error {
 	check("Settings.RetryBudget.TokenRatio", CheckRetryBudgetTokenRatio(settings.RetryBudget.TokenRatio))
 	if settings.Classify == nil {
 		check("Settings.Classify", errNil)
+	}
+	check("Settings.Breaker.Window", CheckBreakerWindow(settings.Breaker.Window))
+	check("Settings.Breaker.Probes", CheckBreakerProbes(settings.Breaker.Probes))
+	check("Settings.Breaker.OpenFor", CheckBreakerOpenFor(settings.Breaker.OpenFor))
+	check("Settings.Breaker.ProbeTimeout", CheckBreakerProbeTimeout(settings.Breaker.ProbeTimeout))
+	if settings.BreakerPolicy.Trip == nil {
+		check("Settings.BreakerPolicy.Trip", errNil)
+	}
+	if settings.BreakerPolicy.Probe == nil {
+		check("Settings.BreakerPolicy.Probe", errNil)
 	}
 	return errors.Join(errs...)
 }
