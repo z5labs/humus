@@ -27,7 +27,8 @@ const maxKeySetBytes = 1 << 20
 // keys and decides when Keys is called, and each fetch is traced and
 // measured by the client's own telemetry, such as an httpclient client's.
 type RemoteKeySet struct {
-	url    string
+	url    string // fetched
+	named  string // in errors, with any password redacted
 	client *http.Client
 }
 
@@ -47,19 +48,19 @@ func NewRemoteKeySet(u *url.URL, client *http.Client) (*RemoteKeySet, error) {
 	case u == nil:
 		errs = append(errs, errors.New("the URL must not be nil"))
 	case !u.IsAbs():
-		errs = append(errs, fmt.Errorf("the URL %q isn't absolute", u.String()))
+		errs = append(errs, fmt.Errorf("the URL %q isn't absolute", u.Redacted()))
 	default:
 		if u.Scheme != "https" {
-			errs = append(errs, fmt.Errorf("the URL %q isn't https: a key set fetched in plain text lets anyone on the path add a key", u.String()))
+			errs = append(errs, fmt.Errorf("the URL %q isn't https: a key set fetched in plain text lets anyone on the path add a key", u.Redacted()))
 		}
 		if u.Host == "" {
-			errs = append(errs, fmt.Errorf("the URL %q has no host", u.String()))
+			errs = append(errs, fmt.Errorf("the URL %q has no host", u.Redacted()))
 		}
 	}
 	if err := errors.Join(errs...); err != nil {
 		return nil, fmt.Errorf("jwt: NewRemoteKeySet: %w", err)
 	}
-	return &RemoteKeySet{url: u.String(), client: client}, nil
+	return &RemoteKeySet{url: u.String(), named: u.Redacted(), client: client}, nil
 }
 
 // Keys fetches the set with the client, and returns its signing keys. It
@@ -69,8 +70,16 @@ func NewRemoteKeySet(u *url.URL, client *http.Client) (*RemoteKeySet, error) {
 // than sig, with private parts, or of a type go-jose doesn't read, rather
 // than failing the set.
 //
-// The client bounds the fetch, such as with httpclient's Timeout.
+// A redirect the client follows must keep to https, or Keys fails: a key
+// set is only as trusted as the channel it came over. An httpclient client
+// follows no redirect to another origin, so Keys fails on its 3xx.
+//
+// The client bounds the fetch, such as with httpclient's Timeout. A
+// RemoteKeySet not made by NewRemoteKeySet fails every call.
 func (k *RemoteKeySet) Keys(ctx context.Context) ([]Key, error) {
+	if k == nil || k.client == nil {
+		return nil, errors.New("jwt: RemoteKeySet.Keys: the RemoteKeySet wasn't made by NewRemoteKeySet")
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, k.url, nil)
 	if err != nil {
 		return nil, k.fail(err)
@@ -81,6 +90,9 @@ func (k *RemoteKeySet) Keys(ctx context.Context) ([]Key, error) {
 		return nil, k.fail(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.Request != nil && resp.Request.URL.Scheme != "https" {
+		return nil, k.fail(fmt.Errorf("it was redirected to %q, which isn't https", resp.Request.URL.Redacted()))
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, k.fail(fmt.Errorf("the status is %s, not 200 OK", resp.Status))
 	}
@@ -101,7 +113,7 @@ func (k *RemoteKeySet) Keys(ctx context.Context) ([]Key, error) {
 
 // fail returns err, after the URL of the set whose fetch it failed.
 func (k *RemoteKeySet) fail(err error) error {
-	return fmt.Errorf("jwt: fetching the JSON Web Key Set at %s: %w", k.url, err)
+	return fmt.Errorf("jwt: fetching the JSON Web Key Set at %s: %w", k.named, err)
 }
 
 // parseKeySet returns the signing keys of a JSON Web Key Set. It fails on

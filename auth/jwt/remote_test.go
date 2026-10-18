@@ -666,3 +666,70 @@ func TestNewRemoteKeySet_mistakes(t *testing.T) {
 		var _ jwt.KeySet = keys
 	})
 }
+
+// roundTripper is an http.RoundTripper of a function.
+type roundTripper func(*http.Request) (*http.Response, error)
+
+func (f roundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestRemoteKeySet_fails_on_a_redirect_away_from_https(t *testing.T) {
+	t.Parallel()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	set := keySetBody(t, jwk(t, key.Public(), "k1", "sig"))
+
+	// A client of the end user's, not httpclient's, which follows every
+	// redirect: the https URL redirects to the same path over http, which
+	// serves a key set.
+	client := &http.Client{Transport: roundTripper(func(r *http.Request) (*http.Response, error) {
+		resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(string(set))), Request: r}
+		if r.URL.Scheme == "https" {
+			resp.StatusCode = http.StatusFound
+			resp.Header.Set("Location", "http://idp:8080/.well-known/jwks.json")
+			resp.Body = http.NoBody
+		}
+		return resp, nil
+	})}
+	u, err := url.Parse(jwksURL)
+	require.NoError(t, err)
+	remote, err := jwt.NewRemoteKeySet(u, client)
+	require.NoError(t, err)
+
+	keys, err := remote.Keys(t.Context())
+	require.Nil(t, keys)
+	require.ErrorContains(t, err, jwksURL)
+	require.ErrorContains(t, err, `redirected to "http://idp:8080/.well-known/jwks.json", which isn't https`)
+}
+
+func TestRemoteKeySet_redacts_a_password_in_its_errors(t *testing.T) {
+	t.Parallel()
+
+	password := rand.Text()
+	u, err := url.Parse("https://reader:" + password + "@idp:8443/.well-known/jwks.json")
+	require.NoError(t, err)
+	client := &http.Client{Transport: roundTripper(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusNotFound, Status: "404 Not Found", Header: http.Header{}, Body: http.NoBody, Request: r}, nil
+	})}
+	remote, err := jwt.NewRemoteKeySet(u, client)
+	require.NoError(t, err)
+	_, err = remote.Keys(t.Context())
+	require.ErrorContains(t, err, "https://reader:xxxxx@idp:8443/.well-known/jwks.json")
+	require.NotContains(t, err.Error(), password)
+
+	u.Scheme = "http"
+	_, err = jwt.NewRemoteKeySet(u, client)
+	require.ErrorContains(t, err, "isn't https")
+	require.NotContains(t, err.Error(), password)
+}
+
+func TestRemoteKeySet_not_made_by_NewRemoteKeySet_fails(t *testing.T) {
+	t.Parallel()
+
+	var nilSet *jwt.RemoteKeySet
+	for _, k := range []*jwt.RemoteKeySet{nilSet, {}} {
+		keys, err := k.Keys(t.Context())
+		require.Nil(t, keys)
+		require.ErrorContains(t, err, "wasn't made by NewRemoteKeySet")
+	}
+}

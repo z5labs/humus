@@ -86,7 +86,9 @@
 // a body that isn't a JSON Web Key Set, with an error that names the URL.
 // It returns the set's signing keys, and skips a key without kid, with a
 // use other than sig, with private parts, or of a type go-jose doesn't
-// read, rather than failing the set. It keeps no keys, and records nothing
+// read, rather than failing the set. A redirect the client follows must
+// keep to https, or the fetch fails; an httpclient client follows none to
+// another origin. It keeps no keys, and records nothing
 // of its own: the Verifier decides when it is called, and the fetch is a
 // span of the client's, measured by its metrics, and bounded by its
 // Timeout and retried as its Settings say.
