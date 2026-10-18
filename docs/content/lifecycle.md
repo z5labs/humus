@@ -732,6 +732,15 @@ explicitly from `Setup`:
 - `http.ProxyFromEnvironment`, the `Proxy` of `http.DefaultTransport`, reads
   the proxy variables of the real environment, and `http.DefaultClient`
   dials the real network rather than through `Host.Dial`.
+- **`crypto/x509`'s system roots.** A TLS config with no `RootCAs` verifies
+  the server against the system's roots, which `crypto/x509` reads from the
+  files and directories `SSL_CERT_FILE` and `SSL_CERT_DIR` name in the real
+  environment, and from the OS's certificate files on the real disk, not
+  through the Host. An `httpclient` client whose `Settings.TLS` has no
+  `RootCAs` reads them. A service that calls only its own services sets
+  `RootCAs` to its CA, and a test sets it to the pool of a CA from
+  `humustest.NewCA`, as [Calling HTTP services]({{< relref "http-client#tls-and-plain-text" >}})
+  describes.
 - `slog.Default` writes to the real standard error unless it is replaced, and
   replacing it is process-wide state.
 - OpenTelemetry's process-wide error handler, which `Run` sets. In a process

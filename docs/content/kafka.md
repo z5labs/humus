@@ -10,7 +10,7 @@ description: >
   events, what a call to Produce promises, its delivery timeout, circuit
   breaker and shutdown, what both record, and how to test them on kfake.
 type: docs
-weight: 14
+weight: 15
 ---
 
 The [`queue/kafka`](https://pkg.go.dev/github.com/z5labs/humus/queue/kafka)

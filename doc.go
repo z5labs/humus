@@ -93,8 +93,12 @@
 // probes, httphealth over HTTPS at /health/liveness and /health/readiness,
 // and grpchealth as gRPC health v1, each attached to a server the App
 // already runs or on a probes port of its own, documented at
-// https://z5labs.github.io/humus/health/. The other runtime packages come
-// back through their own proposals.
+// https://z5labs.github.io/humus/health/. The httpclient package has landed:
+// it calls one HTTP dependency per client through the Setup's Host, retries
+// what is safe to send twice as the end user's Classify decides, and fails
+// calls at once with a circuit breaker while the dependency keeps failing,
+// documented at https://z5labs.github.io/humus/http-client/. The other
+// runtime packages come back through their own proposals.
 //
 // The plan is in the charter, Proposal: humus on the bedrock process model:
 // https://github.com/z5labs/humus/discussions/629
