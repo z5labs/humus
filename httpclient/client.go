@@ -42,7 +42,8 @@ const maxRedirects = 10
 // error that names each one. It also rejects a nil s, an s whose Host has
 // no Dial, rather than let net/http fall back to dialling the real network,
 // and an s whose Telemetry has no LoggerProvider, which the breaker logs
-// through. It builds the dependency's retry.Budget and retry.Retrier, and
+// through, or no MeterProvider, which humus's own instruments are recorded
+// with. It builds the dependency's retry.Budget and retry.Retrier, and
 // its circuit breaker from settings.Breaker and settings.BreakerPolicy,
 // dials nothing, and registers a function with s.OnStop that closes the
 // client's idle connections.
@@ -55,13 +56,19 @@ const maxRedirects = 10
 // keeps failing, rejects attempts at once, with an error that matches
 // circuit.ErrRejected, sending nothing. Every attempt it sends or rejects
 // is a client span, and is measured, with s.Telemetry's providers and
-// propagator, and each change of the breaker's state is a log record
-// through s.Telemetry's LoggerProvider.
+// propagator. The breaker's state, its changes of state, the attempts it
+// counted or rejected, and what the retries decided after each attempt are
+// humus's own instruments, with s.Telemetry's MeterProvider, and each
+// change of the breaker's state is a log record through s.Telemetry's
+// LoggerProvider.
 func NewClient(s *humus.Setup, settings Settings) (*http.Client, error) {
 	if s == nil {
 		return nil, errors.New("httpclient: NewClient: the Setup must not be nil")
 	}
 	err := checkSettings(settings)
+	if s.Telemetry.MeterProvider == nil {
+		err = errors.Join(errors.New("the Setup's Telemetry.MeterProvider must not be nil"), err)
+	}
 	if s.Telemetry.LoggerProvider == nil {
 		err = errors.Join(errors.New("the Setup's Telemetry.LoggerProvider must not be nil"), err)
 	}
@@ -79,8 +86,15 @@ func NewClient(s *humus.Setup, settings Settings) (*http.Client, error) {
 	}
 
 	base := originOf(settings.BaseURL)
-	logger := s.Telemetry.LoggerProvider.Logger(loggerName)
-	breaker, err := circuit.New(settings.Breaker, settings.BreakerPolicy, countVerdict, newObserver(logger, base))
+	meter := s.Telemetry.MeterProvider.Meter(scopeName)
+	m, err := newInstruments(meter, base)
+	if err != nil {
+		// The instruments' names and options are humus's own, so this is
+		// humus's bug.
+		return nil, fmt.Errorf("httpclient: NewClient: creating its instruments: %w", err)
+	}
+	logger := s.Telemetry.LoggerProvider.Logger(scopeName)
+	breaker, err := circuit.New(settings.Breaker, settings.BreakerPolicy, m.countCalls(countVerdict), newObserver(logger, m))
 	if err != nil {
 		// checkSettings accepts only what circuit accepts, so this is
 		// humus's bug too.
@@ -116,6 +130,7 @@ func NewClient(s *humus.Setup, settings Settings) (*http.Client, error) {
 	attempts := attemptTransport{
 		classify: settings.Classify,
 		breaker:  breaker,
+		metrics:  m,
 		next:     newAttemptTimeout(settings.AttemptTimeout, tr),
 	}
 	instrumented := otelhttp.NewTransport(attempts,
@@ -126,7 +141,7 @@ func NewClient(s *humus.Setup, settings Settings) (*http.Client, error) {
 	)
 
 	c := &http.Client{
-		Transport: &retryTransport{origin: base, retrier: retrier, next: instrumented, conns: tr},
+		Transport: &retryTransport{origin: base, retrier: retrier, metrics: m, next: instrumented, conns: tr},
 		Timeout:   settings.Timeout,
 		Jar:       nil,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -138,6 +153,11 @@ func NewClient(s *humus.Setup, settings Settings) (*http.Client, error) {
 			}
 			return nil
 		},
+	}
+	// humus.circuit.state's callback is registered last, once nothing after
+	// it can fail, so a NewClient that returns an error leaves none behind.
+	if err := m.observeState(meter, breaker); err != nil {
+		return nil, fmt.Errorf("httpclient: NewClient: registering humus.circuit.state's callback: %w", err)
 	}
 	s.OnStop(func(context.Context) error {
 		c.CloseIdleConnections()

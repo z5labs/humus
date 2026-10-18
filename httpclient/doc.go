@@ -409,19 +409,53 @@
 // otelhttp records http.client.request.duration and
 // http.client.request.body.size for each attempt, in its own scope, with the
 // status code, or error.type for an attempt that failed with no response,
-// one the breaker rejected included. humus records no instrument of its
-// own, for the breaker or anything else.
+// one the breaker rejected included.
+//
+// The client records four instruments of humus's own, for its breaker and
+// its retries, with the Setup's MeterProvider, in the scope
+// github.com/z5labs/humus/httpclient. Every data point carries the
+// dependency's server.address and server.port, of BaseURL's origin, and
+// nothing per call, such as a method or a route. Every other attribute's
+// value is the String() of bedrock's own type:
+//
+//   - humus.circuit.state, an asynchronous UpDownCounter in {breaker}, with
+//     humus.circuit.state: closed, open or half-open. At each collection it
+//     reads the breaker's state and observes 1 for it and 0 for the other
+//     two. It reads half-open as soon as OpenFor has passed, with no call
+//     made. Two clients of one origin add up, such as closed 1 and open 1.
+//     It is still read by the App's last collection, after the OnStop
+//     functions, so the final export has the state the App stopped in.
+//   - humus.circuit.transitions, a Counter in {transition}, with
+//     humus.circuit.state, the state the breaker went to, and
+//     humus.circuit.previous_state, the state it left: one for each change
+//     of state, beside its log record.
+//   - humus.circuit.calls, a Counter in {call}, with humus.circuit.outcome:
+//     success, failure or ignored, as each attempt's result counted in the
+//     breaker, when it is counted, such as once a response's body is read
+//     to the end or closed; or rejected, for an attempt the breaker didn't
+//     admit. An attempt whose ticket is released uncounted, such as one that
+//     panicked, counts nothing.
+//   - humus.retry.decisions, a Counter in {decision}, with
+//     humus.retry.decision: again, succeeded, stopped, exhausted, throttled
+//     or expired, what retry decided after each attempt, a rejected one's
+//     stopped included. again is what retry decided, not what the client
+//     then did: no attempt follows a request that isn't safe to repeat, a
+//     response whose body doesn't fit the 64 KiB buffer, or a call whose
+//     context ends during the wait.
+//
+// A View in the end user's telemetry Builder drops or renames them. humus
+// has no setting to turn them off.
 //
 // The client logs through the Setup's LoggerProvider, with the logger
 // github.com/z5labs/humus/httpclient, one record for each change of the
 // breaker's state, in the context of the call that made it: "circuit
 // breaker open" at WARN, and "circuit breaker half-open" and "circuit
 // breaker closed" at INFO. Each has the dependency's server.address and
-// server.port, the state the breaker left as circuit.previous_state, and
-// the counts of that state: circuit.successes, circuit.failures,
-// circuit.consecutive_successes, circuit.consecutive_failures and
-// circuit.timed_out. The client logs nothing else: an error is returned
-// to service code, not logged.
+// server.port, the state the breaker left as humus.circuit.previous_state,
+// and the counts of that state: humus.circuit.successes,
+// humus.circuit.failures, humus.circuit.consecutive_successes,
+// humus.circuit.consecutive_failures and humus.circuit.timed_out. The client
+// logs nothing else: an error is returned to service code, not logged.
 //
 // The tracer, the meter and the propagator all come from the Setup's
 // telemetry, so nothing reaches OpenTelemetry's globals: a process that

@@ -576,10 +576,11 @@ breaker's state, in the context of the call that made it:
 | `circuit breaker closed` | INFO | enough probes succeeded |
 
 Each has the dependency's `server.address` and `server.port`, the state the
-breaker left as `circuit.previous_state`, and the counts of that state:
-`circuit.successes`, `circuit.failures`, `circuit.consecutive_successes`,
-`circuit.consecutive_failures` and `circuit.timed_out`. The client logs
-nothing else: an error is returned to service code, not logged.
+breaker left as `humus.circuit.previous_state`, and the counts of that
+state: `humus.circuit.successes`, `humus.circuit.failures`,
+`humus.circuit.consecutive_successes`, `humus.circuit.consecutive_failures`
+and `humus.circuit.timed_out`. The client logs nothing else: an error is
+returned to service code, not logged.
 
 ## The response body
 
@@ -666,11 +667,70 @@ response. A rejected attempt is among them, with an `error.type` that
 `otelhttp` writes differently from the span's: the package path,
 `github.com/z5labs/bedrock/circuit.RejectedError`, where the span has
 `*circuit.RejectedError`. A query or an alert on rejections matches the
-form of the signal it reads. humus records no
-instrument of its own, for the breaker, the retry budget or anything else.
+form of the signal it reads.
 
 The breaker's state changes are the client's only log records, as
 [Its log records](#its-log-records) lists.
+
+### humus's own instruments
+
+The client records four instruments of humus's own, for its breaker and its
+retries, with the Setup's `MeterProvider`, in the scope
+`github.com/z5labs/humus/httpclient`, the scope of its log records:
+
+| Instrument | Kind | Unit | Attributes | Recorded |
+|---|---|---|---|---|
+| `humus.circuit.state` | asynchronous UpDownCounter | `{breaker}` | `humus.circuit.state`: `closed`, `open` or `half-open` | at each collection: 1 for the breaker's state, 0 for the other two |
+| `humus.circuit.transitions` | Counter | `{transition}` | `humus.circuit.state`, the state it went to, and `humus.circuit.previous_state`, the one it left | at each change of the breaker's state, beside its log record |
+| `humus.circuit.calls` | Counter | `{call}` | `humus.circuit.outcome`: `success`, `failure`, `ignored` or `rejected` | as each attempt's result counts in the breaker, or as the breaker rejects it |
+| `humus.retry.decisions` | Counter | `{decision}` | `humus.retry.decision`: `again`, `succeeded`, `stopped`, `exhausted`, `throttled` or `expired` | after each attempt |
+
+Every data point also carries the dependency's `server.address` and
+`server.port`, of `BaseURL`'s origin, the same as the breaker's log records,
+and nothing per call, such as a method or a route: `otelhttp`'s instruments
+break calls down already. Each other attribute's value is the `String()` of
+bedrock's own type, `circuit.State`, `circuit.Outcome` or `retry.Decision`.
+
+- **`humus.circuit.state` is read, not tracked.** At each collection it reads
+  the breaker's state once, so it shows `half-open` as soon as `OpenFor` has
+  passed, with no call made. It is a count of breakers in each state, so two
+  clients of one origin add up, as `closed` 1 and `open` 1. The App's last
+  collection, after the `OnStop` functions, still reads it, so the final
+  export has the state the App stopped in.
+- **`humus.circuit.transitions` catches the short opens.** A breaker can
+  open, go half-open and close between two collections, a minute apart by
+  default, and `humus.circuit.state` never shows it open.
+- **`humus.circuit.calls` counts an attempt when the breaker does:** a
+  response's result once service code reads its body to the end or closes
+  it. It is the only place the verdicts of the end user's `Classify` show:
+  a 409 counted as a `failure` is a 4xx in `otelhttp`'s instruments. An
+  attempt the breaker rejects is `rejected`, and is in
+  `http.client.request.duration` too.
+- **`humus.retry.decisions` counts what `retry` decided,** so `throttled`
+  counts the retries the budget refused, `exhausted` the calls that used
+  every attempt, and `expired` the calls whose deadline came before the next
+  attempt could start. A rejected attempt is `stopped`. `again` is not yet
+  what the client did: no attempt follows a request that isn't safe to
+  repeat, a response whose body doesn't fit the 64 KiB buffer, or a call
+  whose context ends during the wait.
+
+In Prometheus, they are `humus_circuit_state`,
+`humus_circuit_transitions_total`, `humus_circuit_calls_total` and
+`humus_retry_decisions_total`, and each attribute is a label such as
+`humus_circuit_state`. An alert on an open breaker reads the state, and one
+on breakers that open and close between scrapes reads the transitions:
+
+```promql
+# A breaker is open now.
+humus_circuit_state{humus_circuit_state="open"} > 0
+
+# A breaker opened in the last 5 minutes, however briefly.
+increase(humus_circuit_transitions_total{humus_circuit_state="open"}[5m]) > 0
+```
+
+A View in the end user's telemetry `Builder` drops or renames any of them.
+humus has no setting to turn them off. A test reads them as it reads any
+metric, with `humustest.Telemetry`'s `Metrics`, filtered to the scope.
 
 ## Testing
 

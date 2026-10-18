@@ -13,6 +13,7 @@ import (
 	"github.com/z5labs/bedrock/circuit"
 	"go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/log/embedded"
+	"go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -39,7 +40,9 @@ func TestObserver_emits_without_the_calls_cancellation(t *testing.T) {
 	cancel() // a call whose deadline passed, or whose caller gave up
 
 	logger := &ctxLogger{}
-	observe := newObserver(logger, origin{scheme: "https", host: "payments", port: "8443"})
+	m, err := newInstruments(noop.NewMeterProvider().Meter(scopeName), origin{scheme: "https", host: "payments", port: "8443"})
+	require.NoError(t, err)
+	observe := newObserver(logger, m)
 	observe(call, circuit.Transition{From: circuit.Closed, To: circuit.Open, Generation: 1})
 
 	require.Len(t, logger.ctxs, 1)

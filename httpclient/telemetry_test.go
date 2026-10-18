@@ -300,10 +300,48 @@ func TestClient_measures_each_attempt(t *testing.T) {
 			size := histogram[int64](t, rm, "http.client.request.body.size")
 			require.Len(t, size.DataPoints, 1)
 			require.EqualValues(t, 1, size.DataPoints[0].Count)
+		})
+	})
 
+	t.Run("the package's scope holds humus's four instruments and nothing else", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			h := humustest.NewHost(t)
+			ca := humustest.NewCA(t)
+			stop := startPayments(t, h, h.Host(), ca, &failing{})
+			defer stop()
+
+			// Five 500s open the breaker, so every instrument has a data
+			// point.
+			tel := humustest.NewTelemetry()
+			st := runJobWith(t, h.Host(), tel.Builder(), paymentsSettings(t, ca), func(ctx context.Context, c *http.Client) error {
+				getN(t, ctx, c, 5, "https://payments:8443/charges/1")
+				return nil
+			})
+			requireExitZero(t, st)
+
+			rm, err := tel.Metrics(t.Context())
+			require.NoError(t, err)
 			for _, sm := range rm.ScopeMetrics {
-				require.NotContains(t, sm.Scope.Name, "humus", "humus records no instrument of its own")
+				require.Contains(t, []string{otelhttp.ScopeName, scope}, sm.Scope.Name, "no other scope records an instrument")
 			}
+			type instrument struct {
+				unit, description string
+				monotonic         bool
+			}
+			got := map[string]instrument{}
+			for _, m := range ownMetrics(rm) {
+				sum, ok := m.Data.(metricdata.Sum[int64])
+				require.True(t, ok, "%s is a %T", m.Name, m.Data)
+				require.Equal(t, metricdata.CumulativeTemporality, sum.Temporality)
+				got[m.Name] = instrument{unit: m.Unit, description: m.Description, monotonic: sum.IsMonotonic}
+				points(t, rm, m.Name) // every data point carries the dependency's attributes
+			}
+			require.Equal(t, map[string]instrument{
+				"humus.circuit.state":       {unit: "{breaker}", description: "Circuit breakers in each state. Only the current state's value is non-zero.", monotonic: false},
+				"humus.circuit.transitions": {unit: "{transition}", description: "Changes of state of a circuit breaker.", monotonic: true},
+				"humus.circuit.calls":       {unit: "{call}", description: "Calls through a circuit breaker, by how each counted.", monotonic: true},
+				"humus.retry.decisions":     {unit: "{decision}", description: "What retry decided after each attempt.", monotonic: true},
+			}, got)
 		})
 	})
 
@@ -376,6 +414,8 @@ func TestClient_uses_no_OpenTelemetry_globals(t *testing.T) {
 		tel := humustest.NewTelemetry()
 		require.NoError(t, callOnce(t, h, tel, ca, "https://payments:8443/charges/1"))
 		require.Len(t, otelhttpSpans(tel), 1, "the Setup's TracerProvider recorded no span")
+		require.Equal(t, map[string]int64{"humus.circuit.outcome=success": 1},
+			points(t, collect(t, context.Background(), tel), "humus.circuit.calls"), "the breaker counted the call in the Setup's MeterProvider")
 	})
 
 	require.Empty(t, spans.Ended(), "the global TracerProvider recorded spans")
