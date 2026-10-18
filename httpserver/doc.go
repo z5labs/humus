@@ -163,14 +163,62 @@
 // panicking with http.ErrAbortHandler itself, which the Service passes
 // through untouched.
 //
+// A panic in Settings.TrustScenario is handled the same way: it is
+// recorded, and fails that request.
+//
+// # Failure injection
+//
+// The Service strips the failure scenario a request carries from callers
+// the end user hasn't chosen to trust, before any of the end user's code
+// runs, so a caller on the internet can't make the service fail on
+// purpose. It strips with the fault.Injector in the Setup's Faults, which
+// the App builds from humus.WithFaults, right after otelhttp has extracted
+// the request's baggage. A request it doesn't trust reaches the handler
+// with the scenario stripped from its context, and every other baggage
+// member kept, and the request's server span gets a humus.fit.strip event,
+// with no attributes.
+//
+// Settings.TrustScenario decides which callers are trusted. It is given the
+// *http.Request as it arrived, scenario and all, before the handler sees
+// it, and reports whether the scenario reaches the handler. It is asked
+// only about a request that carries a scenario, and only when the App has
+// failure injection, so it costs nothing on any other request. When it is
+// nil, the default, no caller is trusted, and every scenario is stripped:
+// a server the end user hasn't decided about is a trust boundary. Without
+// humus.WithFaults, nothing is stripped and TrustScenario is never asked.
+//
+// Trust needs nothing from authentication, which runs later, in the end
+// user's handler. A request already carries what is needed to trust it,
+// such as:
+//
+//   - a verified client certificate, in r.TLS.VerifiedChains, such as one
+//     the service mesh issued;
+//   - a listener only internal callers reach, such as a second Service on
+//     an address the internet can't reach, whose TrustScenario returns
+//     true;
+//   - a header that a gateway sets, and strips from outside callers.
+//
+// For example, a Service behind a mesh trusts a caller whose client
+// certificate the mesh's CA verified:
+//
+//	settings.TLS.ClientAuth = tls.VerifyClientCertIfGiven
+//	settings.TLS.ClientCAs = meshCAs
+//	settings.TrustScenario = func(r *http.Request) bool {
+//		return r.TLS != nil && len(r.TLS.VerifiedChains) > 0
+//	}
+//
+// A handler that httphealth attaches to the Service is behind the strip,
+// like every other request. httphealth's own Service is unchanged.
+//
 // # Settings
 //
 // The server is configured with [Settings]: the address, the TLS config and
 // the net/http limits, as plain Go values. [DefaultSettings] returns the
 // package's defaults, and each field with a valid range has a check, such as
 // [CheckReadTimeout], that reports what is wrong with a value without naming
-// the field. The package reads no environment variable and defines no
-// variable name: the end user's Init sources each field, with whatever
+// the field. TrustScenario is the one field that is set in code rather than
+// sourced. The package reads no environment variable and defines no
+// variable name: the end user's Init sources each other field, with whatever
 // variable names the service uses, and passes the field's check to
 // Validate, so an operator's bad value fails startup with exit 78, naming
 // the variable.

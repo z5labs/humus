@@ -48,7 +48,9 @@ type Service struct {
 //
 // h is served wrapped in the Service's instrumentation, which takes its
 // providers and propagator from s.Telemetry, and which records a panic of h
-// and aborts its response.
+// and aborts its response. Before h runs, the failure scenario a request
+// carries is stripped with s.Faults, unless settings.TrustScenario trusts
+// the caller.
 func NewService(s *humus.Setup, settings Settings, h http.Handler) (*Service, error) {
 	if err := checkSettings(settings, h); err != nil {
 		return nil, fmt.Errorf("httpserver: NewService: %w", err)
@@ -68,7 +70,11 @@ func NewService(s *humus.Setup, settings Settings, h http.Handler) (*Service, er
 	// do. Every provider and the propagator are passed, so otelhttp never
 	// falls back to OpenTelemetry's globals. recordPanics runs inside it, so
 	// a panic is recorded on the request's span before the span ends.
-	instrumented := otelhttp.NewHandler(recordPanics{next: h, logger: logger}, "",
+	// stripScenarios runs inside recordPanics, after otelhttp has extracted
+	// the baggage and before the handler, so a panic of TrustScenario is
+	// recorded as the handler's would be.
+	stripped := stripScenarios{next: h, faults: s.Faults, trust: settings.TrustScenario}
+	instrumented := otelhttp.NewHandler(recordPanics{next: stripped, logger: logger}, "",
 		otelhttp.WithTracerProvider(s.Telemetry.TracerProvider),
 		otelhttp.WithMeterProvider(s.Telemetry.MeterProvider),
 		otelhttp.WithPropagators(s.Telemetry.Propagator),

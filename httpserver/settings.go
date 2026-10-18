@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"slices"
 	"strconv"
 	"time"
@@ -73,6 +74,15 @@ type Settings struct {
 	//
 	// Default: 1 MiB (1 << 20). Valid: positive. Check: CheckMaxHeaderBytes.
 	MaxHeaderBytes int
+
+	// TrustScenario reports whether the failure scenario a request carries
+	// reaches the handler. A request it doesn't trust has the scenario
+	// stripped from its context first. It is asked only about a request
+	// that carries a scenario, and only when the App has failure
+	// injection. It is set in code, not sourced.
+	//
+	// Default: nil, which trusts no caller. Valid: any. Check: none.
+	TrustScenario func(r *http.Request) bool
 }
 
 // DefaultSettings returns the Service's defaults. Addr and TLS have none,
@@ -88,6 +98,7 @@ func DefaultSettings() Settings {
 		WriteTimeout:      10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    1 << 20,
+		TrustScenario:     nil,
 	}
 }
 
