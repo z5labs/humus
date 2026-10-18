@@ -15,3 +15,9 @@ import (
 func KgoLevel(svc *Service) kgo.LogLevel {
 	return kgoLogger{ctx: context.Background(), logger: svc.kgoLogger}.Level()
 }
+
+// CloseProducer closes p's client, for a test that has no App to run p's
+// OnStop function.
+func CloseProducer(p *Producer) {
+	p.client.Close()
+}

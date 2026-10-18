@@ -3,8 +3,8 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-// Package kafka consumes Kafka topics with humus's lifecycle, implementing
-// the contract of package queue with franz-go.
+// Package kafka consumes and produces Kafka records with humus's lifecycle,
+// implementing the contract of package queue with franz-go.
 //
 // It is in the nested module github.com/z5labs/humus/queue/kafka, so
 // franz-go stays out of the module graph of end users who don't consume
@@ -150,6 +150,106 @@
 // and the lifecycle logs it. Retries are the Processor's: a Processor that
 // would rather skip a record that always fails than stop on it returns nil,
 // after storing the record wherever it keeps dead letters.
+//
+// # Producing
+//
+// A [Producer] produces records to one Kafka cluster. The end user's Init
+// builds it with [NewProducer], from [ProducerSettings], and any Service
+// uses it: a Processor that writes to another topic or to a dead-letter
+// topic, an HTTP handler that publishes an event, a job. It is not a
+// Service. One Producer is safe for concurrent use, and serves every
+// Service of the process:
+//
+//	dlq, err := kafka.NewProducer(s, ps) // ps is a kafka.ProducerSettings, sourced like Settings
+//	if err != nil {
+//		return nil, err
+//	}
+//	svc, err := kafka.NewService(s, settings, queue.ProcessorFunc[kafka.Message](func(ctx context.Context, m kafka.Message) error {
+//		order, err := decode(m.Value)
+//		if err != nil {
+//			// A dead letter, stored before the record is committed.
+//			return dlq.Produce(ctx, kafka.Record{Topic: "orders.dlq", Key: m.Key, Value: m.Value, Headers: m.Headers})
+//		}
+//		return store.Save(ctx, order)
+//	}))
+//
+// ProducerSettings repeats Settings' Brokers, TLS and SASL, which mean what
+// they mean there, take the same check and dial through the Setup's Host
+// the same way: a Producer may produce to a cluster other than the one a
+// Service consumes, so each set is sourced on its own. NewProducer builds
+// one franz-go client and opens no connection: the first call does.
+//
+// [Producer.Produce] is synchronous. It returns nil once the cluster has
+// acknowledged every record, with acks from all in-sync replicas, or an
+// error once one has failed. So a Processor that produces before it returns
+// nil has the consumed record committed only after the produced one is
+// stored. A caller that wants more throughput puts more records in one
+// call, or calls from more goroutines: a call takes the same path through
+// franz-go's buffers and batches as any other, and stops the linger on the
+// partitions it produced to.
+//
+// Records outlive a cancelled call. Produce honours its context up to the
+// moment it hands its records to franz-go: a call whose context is already
+// done sends nothing, and returns an error that wraps the context's error.
+// After the hand-off, a context that ends returns the call at once, with
+// the same error, and its records stay in the client, until the cluster
+// acknowledges them or DeliveryTimeout fails them. So a handler whose
+// request is cancelled returns at once, and the grace period reaches a
+// Process blocked in Produce. The records don't follow the caller's
+// context, because franz-go can't cancel one caller's records on their
+// own: it fails a batch by the context of its first record, fails every
+// record buffered behind it on that partition, whoever produced them, and
+// closes the broker's produce connection when it cancels a request in
+// flight. One Producer serves the whole process, so a caller giving up
+// would fail another caller's records. And a record already sent is
+// stored whether the client still waits for it or not.
+//
+// DeliveryTimeout, 10s by default, bounds how long the cluster has to
+// acknowledge the records of one call, franz-go's retries included. A
+// record that isn't acknowledged by then fails, even one already sent, and
+// may still have been stored, so a caller that produces it again may store
+// it twice, which is at-least-once. There are no retry settings: franz-go's
+// idempotent producer retries a batch on the sequence numbers that let the
+// broker drop a batch it already stored, and keeps each partition in order.
+// A retry around Produce would hand the records over again, under new
+// sequence numbers, and store twice a record whose first send landed.
+// Acks from all in-sync replicas and idempotence are franz-go's defaults,
+// and not settings, and so are its partitioner, which hashes keyed records
+// with murmur2 as Kafka's Java producer does, its linger, compression,
+// batch size and buffer size.
+//
+// Records to one partition are stored in the order they are given: within
+// one call, in the order of its records, and between calls on different
+// goroutines, in the order they reach the client. When a record of a
+// partition fails, franz-go fails the records buffered after it on that
+// partition too, so a later record is never stored after an earlier one
+// failed.
+//
+// When every record was acknowledged, Produce returns nil. Otherwise it
+// returns one error joining each failed record's error, with its topic,
+// and its partition when one was chosen, so errors.Is finds
+// kgo.ErrRecordTimeout, context.DeadlineExceeded or a kerr code in it. A
+// failed call doesn't say which of its records were stored: the records
+// that failed may have been stored anyway. Produce rejects a record with no
+// Topic before it sends anything, and returns nil when given no records.
+//
+// The Producer is not a Service, so the lifecycle doesn't stop it: the
+// Services that use it stop first. NewProducer registers one function with
+// the Setup's OnStop, which runs once every Service has returned. It
+// flushes the client with the grace period's context, which waits for the
+// records still in it, such as those of a call that returned when its
+// context was done, and then closes the client. When the grace period runs
+// out first, closing the client fails what is left with
+// kgo.ErrClientClosed, those records are lost, and the function returns an
+// error that wraps the context's error, which the lifecycle reports as a
+// *humus.GracePeriodError. A Produce after that, from a goroutine the end
+// user left running, fails at once with an error that wraps
+// kgo.ErrClientClosed. If the end user's Init fails after NewProducer, the
+// lifecycle runs the function too, so the client is closed and none of
+// franz-go's goroutines outlive the App.
+//
+// The Producer's client logs through the Setup's LoggerProvider, under the
+// scope github.com/twmb/franz-go/pkg/kgo, as the Service's does.
 //
 // # Telemetry
 //

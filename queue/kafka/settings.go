@@ -199,3 +199,53 @@ func checkPositive[T time.Duration | int32 | int](v T) error {
 	}
 	return nil
 }
+
+// ProducerSettings configures a Producer. Every field is a plain value, and a
+// field's zero value means zero, never "use the default": start from
+// DefaultProducerSettings and change the fields you source. Brokers has no
+// default, so it is always among them.
+type ProducerSettings struct {
+	// Brokers are the addresses of the brokers the Producer bootstraps
+	// from, each as host:port. They are required.
+	//
+	// Default: none. Valid: at least one; each host:port, with a host and a
+	// port from 1 to 65535. Check: CheckBrokers.
+	Brokers []string
+
+	// TLS is the config the Producer dials the brokers with. nil means
+	// plaintext. A client certificate in Certificates makes it mTLS.
+	//
+	// Default: nil, which means plaintext. Valid: any. Check: none.
+	TLS *tls.Config
+
+	// SASL is the mechanism the Producer authenticates to the brokers with,
+	// one of franz-go's from github.com/twmb/franz-go/pkg/sasl, carrying
+	// the end user's credentials. nil means no authentication.
+	//
+	// Default: nil, which means no authentication. Valid: any. Check: none.
+	SASL sasl.Mechanism
+
+	// DeliveryTimeout bounds how long the cluster has to acknowledge the
+	// records of one call to Produce, franz-go's retries included. A record
+	// that isn't acknowledged by then fails, even one already sent, and
+	// may still have been stored.
+	//
+	// Default: 10s. Valid: positive. Check: CheckDeliveryTimeout.
+	DeliveryTimeout time.Duration
+}
+
+// DefaultProducerSettings returns the Producer's defaults. Brokers has none,
+// so it is nil, which CheckBrokers rejects: the end user always sources it.
+func DefaultProducerSettings() ProducerSettings {
+	return ProducerSettings{
+		Brokers:         nil,
+		TLS:             nil,
+		SASL:            nil,
+		DeliveryTimeout: 10 * time.Second,
+	}
+}
+
+// CheckDeliveryTimeout rejects a timeout that is not positive.
+func CheckDeliveryTimeout(d time.Duration) error {
+	return checkPositive(d)
+}
