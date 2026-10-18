@@ -23,6 +23,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/log"
 
+	"github.com/z5labs/humus/fault"
 	"github.com/z5labs/humus/telemetry"
 )
 
@@ -113,6 +114,14 @@ type App struct {
 	// slow Init, such as one retrying a database connection, is cancelled
 	// by a signal.
 	Init func(ctx context.Context, s *Setup) ([]Service, error)
+
+	// Faults returns the App's failure injection settings. Run calls it
+	// after building telemetry and before Init, with the Setup that Init is
+	// then given. Run builds the Injector with fault.New, and puts it in
+	// Setup.Faults. An error from either fails startup the way an error
+	// from Init does: ExitConfig for a *config.Error, ExitFailure
+	// otherwise. nil, Main's default, means no failure injection.
+	Faults func(ctx context.Context, s *Setup) (fault.Settings, error)
 }
 
 // Setup is what Init is given.
@@ -128,6 +137,12 @@ type Setup struct {
 	// it down after the OnStop functions, so neither Init nor a Service
 	// calls its Shutdown.
 	Telemetry telemetry.SDK
+
+	// Faults is the App's failure injection, built from App.Faults before
+	// Init. Every humus server and client takes it from the Setup it is
+	// built with. When App.Faults is nil, it is the zero Injector, which
+	// is off.
+	Faults fault.Injector
 
 	mu     sync.Mutex
 	onStop []func(context.Context) error
@@ -199,15 +214,21 @@ func (e *GracePeriodError) Unwrap() error {
 //     other failure or for an SDK with a nil field;
 //  4. sets OpenTelemetry's process-wide error handler to one that writes
 //     each error to p.Stderr, as one line starting with "telemetry: ";
-//  5. calls Init, and if it fails, runs the OnStop functions registered so
+//  5. when App.Faults is set, calls it with the context a signal cancels
+//     and the Setup that Init is then given, builds the Injector from the
+//     Settings it returns with fault.New, and puts it in Setup.Faults. If
+//     either fails, it runs the OnStop functions registered so far and
+//     exits ExitConfig when a *config.Error is in the error chain, or
+//     ExitFailure otherwise, without calling Init;
+//  6. calls Init, and if it fails, runs the OnStop functions registered so
 //     far and exits ExitConfig when a *config.Error is in Init's error
 //     chain, or ExitFailure otherwise;
-//  6. calls Serve on every Service concurrently, and logs "serving";
-//  7. waits for a signal, or for the first Service to return;
-//  8. stops listening for signals, so a second one takes its default
+//  7. calls Serve on every Service concurrently, and logs "serving";
+//  8. waits for a signal, or for the first Service to return;
+//  9. stops listening for signals, so a second one takes its default
 //     action, cancels the context passed to Serve, and logs "shutting
 //     down";
-//  9. when it hasn't yet received every Serve's result, calls the drain
+//  10. when it hasn't yet received every Serve's result, calls the drain
 //     with the Setup that Init was given and a context that keeps ctx's
 //     values, is not cancelled with it, is done once every Serve has
 //     returned, and gives ShutdownCause the shutdown's cause: the signal's
@@ -215,11 +236,11 @@ func (e *GracePeriodError) Unwrap() error {
 //     error wrapping ErrServiceReturned, and the error Serve returned if it
 //     failed, when a Service returned first. It collects the Serve results
 //     that arrive while the drain runs, and waits for the drain to return;
-//  10. calls Shutdown on every Service concurrently, waits for every Serve
+//  11. calls Shutdown on every Service concurrently, waits for every Serve
 //     to return, and then runs the OnStop functions in reverse order of
 //     registration, all within one grace period, which starts after the
 //     drain, and logs "stopped";
-//  11. shuts the telemetry down, with a context that keeps ctx's values but
+//  12. shuts the telemetry down, with a context that keeps ctx's values but
 //     not its cancellation, separately from the grace period.
 //
 // An Init that returns no Services, and a Service that returns on its own
@@ -333,22 +354,36 @@ func (a App) buildTelemetry(ctx, sigCtx context.Context, p bedrock.Process) (tel
 	return telemetry.SDK{}, err
 }
 
-// run is Run from Init on, up to shutting the telemetry down. It returns the
-// exit code and its cause, and logs every failure in the cause through l.
+// run is Run from building the failure injection on, up to shutting the
+// telemetry down. It returns the exit code and its cause, and logs every
+// failure in the cause through l.
 func (a App) run(ctx, sigCtx context.Context, stop context.CancelFunc, p bedrock.Process, settings settings, sdk telemetry.SDK, l *lifecycleLog) (int, error) {
 	setup := &Setup{Process: p, Host: a.Host, Telemetry: sdk}
-	services, err := a.Init(sigCtx, setup)
-	if err != nil {
+	// startupFailed fails the startup with err, which step prefixes: it runs
+	// the OnStop functions registered so far, and logs the cause.
+	startupFailed := func(step string, err error) (int, error) {
 		stop()
 		code := ExitFailure
 		if _, ok := errors.AsType[*config.Error](err); ok {
 			code = ExitConfig
 		}
 		errs, ranOut := shutdown(ctx, settings.gracePeriod, setup, nil)
-		errs = append([]error{fmt.Errorf("init: %w", err)}, errs...)
+		errs = append([]error{fmt.Errorf("%s: %w", step, err)}, errs...)
 		cause := failure(settings.gracePeriod, errs, ranOut)
 		l.failure(cause)
 		return code, cause
+	}
+
+	if a.Faults != nil {
+		faults, err := buildFaults(sigCtx, a.Faults, setup)
+		if err != nil {
+			return startupFailed("failure injection", err)
+		}
+		setup.Faults = faults
+	}
+	services, err := a.Init(sigCtx, setup)
+	if err != nil {
+		return startupFailed("init", err)
 	}
 
 	serveCtx, cancelServe := context.WithCancel(sigCtx)
@@ -410,6 +445,16 @@ func (a App) run(ctx, sigCtx context.Context, stop context.CancelFunc, p bedrock
 		return 0, cause
 	}
 	return 0, nil
+}
+
+// buildFaults calls f with ctx and setup, and builds the Injector of the
+// Settings it returns.
+func buildFaults(ctx context.Context, f func(context.Context, *Setup) (fault.Settings, error), setup *Setup) (fault.Injector, error) {
+	s, err := f(ctx, setup)
+	if err != nil {
+		return fault.Injector{}, err
+	}
+	return fault.New(s)
 }
 
 // lifecycleLog emits the lifecycle's own log records. Its context keeps the

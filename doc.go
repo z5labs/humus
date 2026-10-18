@@ -36,7 +36,9 @@
 // the drain, a [Drain] that ends once every Serve has returned, calls
 // Shutdown on every Service and runs the OnStop functions, all within one
 // grace period, and then shuts the telemetry down. The outcome is the exit
-// status: 0, [ExitFailure] or [ExitConfig].
+// status: 0, [ExitFailure] or [ExitConfig]. An App with failure injection,
+// turned on with [WithFaults], builds its fault.Injector after its
+// telemetry and before Init, and hands it on in [Setup].Faults.
 //
 // The lifecycle logs through the App's telemetry: its own records at INFO,
 // and every failure after the telemetry is built at ERROR. Standard error

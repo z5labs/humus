@@ -11,6 +11,7 @@ import (
 
 	"github.com/z5labs/bedrock"
 
+	"github.com/z5labs/humus/fault"
 	"github.com/z5labs/humus/internal/defaults"
 	"github.com/z5labs/humus/telemetry"
 )
@@ -25,6 +26,7 @@ import (
 //     telemetry.DefaultSettings(), the Host's Dial and the Process's stdout.
 //   - ShutdownGracePeriod: 20s.
 //   - Drain: none.
+//   - Faults: none, so failure injection is off.
 //
 // Init is init, and is set before opts are applied, so an Option sees it
 // and may wrap it, for example to add a Service.
@@ -81,4 +83,9 @@ func WithShutdownGracePeriod(d time.Duration) Option {
 // set. WithDrain(nil) removes a drain that an earlier Option set.
 func WithDrain(d Drain) Option {
 	return func(a *App) { a.Drain = d }
+}
+
+// WithFaults sets App.Faults.
+func WithFaults(f func(ctx context.Context, s *Setup) (fault.Settings, error)) Option {
+	return func(a *App) { a.Faults = f }
 }
