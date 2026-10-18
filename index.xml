@@ -28,7 +28,19 @@ answers them, as &lt;a href="#health-probes"&gt;Health probes&lt;/a&gt; describe
 everything on this page is in
 &lt;a href="https://github.com/z5labs/humus/discussions/680"&gt;Proposal: HTTP server foundation&lt;/a&gt;,
 with its &lt;a href="https://github.com/z5labs/humus/discussions/680#discussioncomment-18988464"&gt;revision 1&lt;/a&gt;
-and &lt;a href="https://github.com/z5labs/humus/discussions/680#discussioncomment-18988543"&gt;revision 2&lt;/a&gt;.&lt;/p&gt;</description></item><item><title>Health</title><link>https://z5labs.github.io/humus/health/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/health/</guid><description>&lt;p&gt;A service reports its health as &lt;a href="#monitors"&gt;monitors&lt;/a&gt; it combines into two
+and &lt;a href="https://github.com/z5labs/humus/discussions/680#discussioncomment-18988543"&gt;revision 2&lt;/a&gt;.&lt;/p&gt;</description></item><item><title>Calling HTTP services</title><link>https://z5labs.github.io/humus/http-client/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/http-client/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/httpclient"&gt;&lt;code&gt;httpclient&lt;/code&gt;&lt;/a&gt;
+package calls another service over HTTP. &lt;code&gt;httpclient.NewClient&lt;/code&gt; builds a
+client for one dependency in the end user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt;, from &lt;code&gt;Settings&lt;/code&gt; the end
+user sources, and returns a plain &lt;code&gt;*http.Client&lt;/code&gt;. Its calls go through the
+Setup&amp;rsquo;s Host, are traced and measured with the Setup&amp;rsquo;s telemetry, are retried
+when that is safe, and fail at once while a circuit breaker says the
+dependency keeps failing.&lt;/p&gt;
+&lt;p&gt;Service code, generated clients and SDKs take the &lt;code&gt;*http.Client&lt;/code&gt; as they
+take any other, and depend on &lt;code&gt;net/http&lt;/code&gt;&amp;rsquo;s type rather than on this package,
+so a unit test of that code passes any client. The client dials only
+through the Setup&amp;rsquo;s Host, so a test runs the end user&amp;rsquo;s whole App, its
+outbound calls included, on humustest&amp;rsquo;s network, as &lt;a href="#testing"&gt;Testing&lt;/a&gt;
+shows.&lt;/p&gt;</description></item><item><title>Health</title><link>https://z5labs.github.io/humus/health/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/health/</guid><description>&lt;p&gt;A service reports its health as &lt;a href="#monitors"&gt;monitors&lt;/a&gt; it combines into two
 &lt;a href="#liveness-and-readiness"&gt;probes&lt;/a&gt;, liveness and readiness, and an App&amp;rsquo;s
 readiness is owned by a &lt;a href="#the-health-service"&gt;health Service&lt;/a&gt; it returns
 from &lt;code&gt;Init&lt;/code&gt; like any other Service. All of it is in the

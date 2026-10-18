@@ -26,6 +26,11 @@ that started it. The `httpserver` package has landed:
 [Serving HTTP](/humus/http/) explains how a service serves an
 `http.Handler` over TLS, with HTTP/2 preferred, on `httpserver.Main`'s
 drain and grace period, and how to test it with `httpservertest`. The
+`httpclient` package has landed: [Calling HTTP services](/humus/http-client/)
+explains how a service calls each of its HTTP dependencies with a client
+built in `Init`, which requests are retried and how the end user's
+`Classify` decides what an answer means, the circuit breaker in front of
+each dependency, and how to test the calls against a fake dependency. The
 `grpc` module has landed: [gRPC services](/humus/grpc/) explains how
 a service serves gRPC over TLS with `grpcserver`, ends its streams and shuts
 down on `grpcserver.Main`'s drain and grace period, and how to test it with
