@@ -91,11 +91,16 @@ jobs:
             exit "$failed"
 
         # The tests behind the testcontainers tag run only in the Kafka
-        # (testcontainers) job, which is not required, so they are compiled
-        # and vetted here, without starting a container.
+        # (testcontainers) and RabbitMQ (testcontainers) jobs, which are not
+        # required, so they are compiled and vetted here, without starting a
+        # container.
         - name: Vet the testcontainers tests
           if: ${{ !cancelled() }}
-          run: go -C queue/kafka vet -tags testcontainers ./...
+          run: |
+            failed=0
+            go -C queue/kafka vet -tags testcontainers ./... || failed=1
+            go -C queue/rabbitmq vet -tags testcontainers ./... || failed=1
+            exit "$failed"
 
         # The loopback half of humustest's conformance test opens real
         # sockets on 127.0.0.1 and 127.0.0.2, and telemetry's sets OTEL_*
@@ -135,3 +140,26 @@ jobs:
 
         - name: Test
           run: go -C queue/kafka test -race -tags testcontainers ./...
+
+  # The tests behind the testcontainers build tag run RabbitMQ in a container
+  # and open real sockets, so they run here rather than in Build: they don't
+  # slow the unit tests, they don't count toward the coverage gate, and this
+  # job is not a required check. humus keeps no fake broker, so these are the
+  # only tests of queue/rabbitmq that reach one.
+  rabbitmq-testcontainers:
+    name: RabbitMQ (testcontainers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+        - name: Checkout
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+          with:
+            go-version: '1.27.2'
+            cache-dependency-path: '**/go.sum'
+
+        - name: Test
+          run: go -C queue/rabbitmq test -race -tags testcontainers ./...

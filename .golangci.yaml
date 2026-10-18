@@ -43,6 +43,10 @@ linters:
           msg: build the resource explicitly; resource.Default reads the process environment
         - pattern: ^slog\.SetDefault$
           msg: pass a *slog.Logger explicitly instead of replacing slog.Default
+        # amqp091-go's logger is a package-level variable, which humus never
+        # sets. See the RabbitMQ proposal, #765.
+        - pattern: ^(amqp|amqp091)\.SetLogger$
+          msg: amqp091's logger is a package-level variable, which humus never sets
         # net/http's default client dials the real network and reads the
         # proxy variables of the real environment, HTTP_PROXY, HTTPS_PROXY and
         # NO_PROXY. See the outbound HTTP clients proposal, #762.
