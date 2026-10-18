@@ -7,8 +7,6 @@ package openapi
 
 import (
 	"fmt"
-	"reflect"
-	"strconv"
 	"strings"
 )
 
@@ -34,8 +32,12 @@ type segment struct {
 
 // pathParam is a PathParameter, erased.
 type pathParam struct {
-	name  string
-	typ   reflect.Type
+	name string
+
+	// check returns the mistakes in the parameter's declaration.
+	check func() []error
+
+	// parse parses and checks one value of the parameter.
 	parse func(string) (any, error)
 }
 
@@ -52,12 +54,12 @@ func (p Path) Lit(s string) Path {
 }
 
 // Param returns p followed by the path parameter pp, such as {cartId}. Its
-// name is an ASCII Go identifier, and appears once in the path: NewAPI
-// reports any other.
+// name is an ASCII Go identifier, and appears once in the path, and its
+// constraints fit its type: NewAPI reports any other.
 func (p Path) Param[T ParamValue](pp PathParameter[T]) Path {
 	return p.with(segment{param: &pathParam{
-		name: pp.name,
-		typ:  reflect.TypeFor[T](),
+		name:  pp.spec.name,
+		check: pp.spec.check,
 		parse: func(s string) (any, error) {
 			return pp.parseValue(s)
 		},
@@ -118,8 +120,12 @@ func (p Path) check() []error {
 		}
 		if seen[name] {
 			errs = append(errs, fmt.Errorf("path parameter %q appears more than once", name))
+			continue
 		}
 		seen[name] = true
+		for _, err := range seg.param.check() {
+			errs = append(errs, fmt.Errorf("path parameter %q: %w", name, err))
+		}
 	}
 	return errs
 }
@@ -162,106 +168,3 @@ func isIdentifier(s string) bool {
 func isLetter(r rune) bool { return 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' }
 
 func isDigit(r rune) bool { return '0' <= r && r <= '9' }
-
-// ParamValue is the type of a parameter's value.
-type ParamValue interface {
-	~string | ~bool | ~int | ~int64 | ~float64
-}
-
-// Param is a parameter, as ParamFrom takes it. Its methods are unexported,
-// so only this package's parameter types are Params.
-type Param[T ParamValue] interface {
-	// paramKey identifies the parameter within an operation.
-	paramKey() string
-
-	// describe names the parameter, for a panic of ParamFrom.
-	describe() string
-
-	// parseValue parses one value of the parameter.
-	parseValue(s string) (T, error)
-}
-
-// PathParameter is a path parameter. A path parameter is always required.
-// A Path declares its path parameters, so an operation reads every
-// parameter of its path.
-type PathParameter[T ParamValue] struct {
-	name string
-}
-
-// PathParam returns the path parameter name. Path.Param adds it to a path.
-func PathParam[T ParamValue](name string) PathParameter[T] {
-	return PathParameter[T]{name: name}
-}
-
-func (p PathParameter[T]) paramKey() string { return pathKey(p.name) }
-
-func (p PathParameter[T]) describe() string { return fmt.Sprintf("path parameter %q", p.name) }
-
-func (p PathParameter[T]) parseValue(s string) (T, error) {
-	v, err := parseValue[T](s)
-	if err != nil {
-		return v, fmt.Errorf("path parameter %q: %w", p.name, err)
-	}
-	return v, nil
-}
-
-// pathKey is the key of the path parameter name in a request's parameters.
-func pathKey(name string) string { return "path " + name }
-
-// parseValue parses s as a T.
-func parseValue[T ParamValue](s string) (T, error) {
-	var v T
-	rv := reflect.ValueOf(&v).Elem()
-	switch rv.Kind() {
-	case reflect.String:
-		rv.SetString(s)
-	case reflect.Bool:
-		b, err := strconv.ParseBool(s)
-		if err != nil {
-			return v, fmt.Errorf("%q isn't a bool", s)
-		}
-		rv.SetBool(b)
-	case reflect.Int, reflect.Int64:
-		n, err := strconv.ParseInt(s, 10, rv.Type().Bits())
-		if err != nil {
-			return v, fmt.Errorf("%q isn't an integer of %d bits", s, rv.Type().Bits())
-		}
-		rv.SetInt(n)
-	default: // reflect.Float64, the last type ParamValue allows
-		f, err := strconv.ParseFloat(s, 64)
-		if err != nil {
-			return v, fmt.Errorf("%q isn't a number", s)
-		}
-		rv.SetFloat(f)
-	}
-	return v, nil
-}
-
-// ParamFrom returns p's value in req. It panics if req's operation doesn't
-// read p, naming p and the operation.
-func ParamFrom[T ParamValue, B any](req Request[B], p Param[T]) T {
-	var op string
-	var v any
-	var ok bool
-	if req.state != nil {
-		op = req.state.op
-		v, ok = req.state.params[p.paramKey()]
-	}
-	if !ok {
-		panic(fmt.Sprintf("openapi: ParamFrom: operation %s doesn't read %s", opName(op), p.describe()))
-	}
-	t, ok := v.(T)
-	if !ok {
-		panic(fmt.Sprintf("openapi: ParamFrom: operation %s reads %s as %T, not as %s", opName(op), p.describe(), v, reflect.TypeFor[T]()))
-	}
-	return t
-}
-
-// opName names an operation in a panic. A Request that no API made has no
-// operation.
-func opName(op string) string {
-	if op == "" {
-		return "(none)"
-	}
-	return op
-}

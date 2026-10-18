@@ -31,10 +31,19 @@ func (p problem) Error() string { return p.Title }
 
 type notFound struct{ problem }
 
+// include and sortOrder are two named string types of parameters.
+type (
+	include   string
+	sortOrder string
+)
+
 var (
 	cartID = openapi.PathParam[string]("cartId")
 	carts  = openapi.Root().Lit("carts").Param(cartID)
 	items  = carts.Lit("items")
+
+	includeParam = openapi.QueryParam[include]("include").Enum("items", "count").Default("items")
+	limit        = openapi.HeaderParam[int64]("X-Limit").Minimum(1).Maximum(100)
 )
 
 func addItem(_ context.Context, req openapi.Request[item]) (item, error) { return req.Body(), nil }

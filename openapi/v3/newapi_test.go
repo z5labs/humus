@@ -8,6 +8,7 @@ package openapi_test
 import (
 	"context"
 	"net/http"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -347,6 +348,125 @@ func TestNewAPI_reports_every_mistake(t *testing.T) {
 			},
 		},
 		{
+			name: "Pattern, MinLength and MaxLength on a type that isn't a string",
+			change: func(a *apiArgs) {
+				a.ops = []openapi.Operation{openapi.Get(carts, noBody, jsonEncoder,
+					openapi.Query(openapi.QueryParam[int]("page").Pattern(regexp.MustCompile(`^[0-9]+$`)).MinLength(1).MaxLength(3)),
+				)}
+			},
+			want: []string{
+				`GET /carts: query parameter "page": Pattern needs a string type, but its type is int`,
+				`GET /carts: query parameter "page": MinLength needs a string type, but its type is int`,
+				`GET /carts: query parameter "page": MaxLength needs a string type, but its type is int`,
+			},
+		},
+		{
+			name: "Minimum and Maximum on a type that isn't a number",
+			change: func(a *apiArgs) {
+				a.ops = []openapi.Operation{openapi.Get(carts, noBody, jsonEncoder,
+					openapi.Header(openapi.HeaderParam[flag]("X-Strict").Minimum(false).Maximum(true)),
+				)}
+			},
+			want: []string{
+				`GET /carts: header parameter "X-Strict": Minimum needs a number type, but its type is openapi_test.flag`,
+				`GET /carts: header parameter "X-Strict": Maximum needs a number type, but its type is openapi_test.flag`,
+			},
+		},
+		{
+			name: "a constraint on a path parameter's type that doesn't fit it",
+			change: func(a *apiArgs) {
+				a.ops = []openapi.Operation{openapi.Get(carts.Param(openapi.PathParam[include]("include").Minimum("a")), noBody, jsonEncoder)}
+			},
+			want: []string{`path /carts/{include}: path parameter "include": Minimum needs a number type, but its type is openapi_test.include`},
+		},
+		{
+			name: "a nil Pattern",
+			change: func(a *apiArgs) {
+				a.ops = []openapi.Operation{openapi.Get(carts, noBody, jsonEncoder,
+					openapi.Query(openapi.QueryParam[string]("sku").Pattern(nil)),
+				)}
+			},
+			want: []string{`GET /carts: query parameter "sku": its Pattern is nil`},
+		},
+		{
+			name: "a Default that breaks Enum",
+			change: func(a *apiArgs) {
+				a.ops = []openapi.Operation{openapi.Get(carts, noBody, jsonEncoder,
+					openapi.Query(includeParam.Default("all")),
+				)}
+			},
+			want: []string{`GET /carts: query parameter "include": its Default: "all" isn't one of "items", "count"`},
+		},
+		{
+			name: "a Default that breaks Pattern",
+			change: func(a *apiArgs) {
+				a.ops = []openapi.Operation{openapi.Get(carts, noBody, jsonEncoder,
+					openapi.Header(openapi.HeaderParam[string]("X-Sku").Pattern(regexp.MustCompile(`^[A-Z]+$`)).Default("abc")),
+				)}
+			},
+			want: []string{`GET /carts: header parameter "X-Sku": its Default: "abc" doesn't match the pattern ^[A-Z]+$`},
+		},
+		{
+			name: "an Example that breaks MaxLength",
+			change: func(a *apiArgs) {
+				a.ops = []openapi.Operation{openapi.Get(carts, noBody, jsonEncoder,
+					openapi.Query(openapi.QueryParam[string]("name").MaxLength(3).Example("abcd")),
+				)}
+			},
+			want: []string{`GET /carts: query parameter "name": its Example: "abcd" is longer than 3 characters`},
+		},
+		{
+			name: "an Example and a Default that break the bounds",
+			change: func(a *apiArgs) {
+				a.ops = []openapi.Operation{openapi.Get(carts, noBody, jsonEncoder,
+					openapi.Query(openapi.QueryParam[int]("limit").Minimum(1).Maximum(100).Example(0).Default(101)),
+				)}
+			},
+			want: []string{
+				`GET /carts: query parameter "limit": its Default: 101 is greater than the maximum, 100`,
+				`GET /carts: query parameter "limit": its Example: 0 is less than the minimum, 1`,
+			},
+		},
+		{
+			name: "an Example of a path parameter that breaks MinLength",
+			change: func(a *apiArgs) {
+				a.ops = []openapi.Operation{openapi.Get(carts.Param(openapi.PathParam[string]("cartId").MinLength(3).Example("c1")), noBody, jsonEncoder)}
+			},
+			want: []string{`path /carts/{cartId}: path parameter "cartId": its Example: "c1" is shorter than 3 characters`},
+		},
+		{
+			name: "a parameter given twice to one operation",
+			change: func(a *apiArgs) {
+				a.ops = []openapi.Operation{openapi.Get(carts, noBody, jsonEncoder,
+					openapi.Query(includeParam),
+					openapi.Query(openapi.QueryParam[int]("include")),
+					openapi.Header(openapi.HeaderParam[string]("X-Mode")),
+					openapi.Header(openapi.HeaderParam[string]("x-mode")),
+				)}
+			},
+			want: []string{
+				`GET /carts: query parameter "include" is given twice`,
+				`GET /carts: header parameter "x-mode" is given twice`,
+			},
+		},
+		{
+			name: "a zero parameter",
+			change: func(a *apiArgs) {
+				a.ops = []openapi.Operation{
+					openapi.Get(carts, noBody, jsonEncoder,
+						openapi.Query(openapi.QueryParameter[string]{}),
+						openapi.Header(openapi.HeaderParameter[int]{}),
+					),
+					openapi.Get(carts.Param(openapi.PathParameter[string]{}), noBody, jsonEncoder),
+				}
+			},
+			want: []string{
+				"GET /carts: a QueryParameter has no name: is it the zero QueryParameter?",
+				"GET /carts: a HeaderParameter has no name: is it the zero HeaderParameter?",
+				`path /carts/{}: path parameter "" isn't an ASCII Go identifier`,
+			},
+		},
+		{
 			name: "two mistakes, reported together",
 			change: func(a *apiArgs) {
 				a.info.Title = ""
@@ -420,6 +540,28 @@ func TestNewAPI_accepts(t *testing.T) {
 					openapi.Delete(cart, nothingBack, openapi.EmptyEncoder),
 					openapi.Get(carts.Lit("recent"), noBody, jsonEncoder),
 				)
+			},
+		},
+		{
+			name: "one name at a path, a query and a header parameter, and a parameter shared by two operations",
+			change: func(a *apiArgs) {
+				a.ops = []openapi.Operation{
+					openapi.Get(cart, getCart, jsonEncoder,
+						openapi.Query(openapi.QueryParam[string]("cartId")),
+						openapi.Header(openapi.HeaderParam[string]("cartId")),
+						openapi.Query(includeParam),
+					),
+					openapi.Get(carts, noBody, jsonEncoder, openapi.Query(includeParam)),
+				}
+			},
+		},
+		{
+			name: "a Default and an Example that pass every constraint",
+			change: func(a *apiArgs) {
+				a.ops = []openapi.Operation{openapi.Get(carts, noBody, jsonEncoder,
+					openapi.Query(openapi.QueryParam[string]("sku").Pattern(regexp.MustCompile(`^[A-Z]+$`)).MinLength(2).MaxLength(4).Default("AB").Example("ABCD")),
+					openapi.Query(openapi.QueryParam[float64]("ratio").Minimum(0).Maximum(1).Default(0.5).Example(1)),
+				)}
 			},
 		},
 		{

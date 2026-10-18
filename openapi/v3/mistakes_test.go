@@ -53,6 +53,16 @@ func TestMistakes_dont_compile(t *testing.T) {
 		{"NewAPI without its catch-all", "omitted_catch_all.go", "not enough arguments in call to openapi.NewAPI"},
 		{"a catch-all where RequestErrors goes", "no_request_errors.go", "openapi.Fallback does not implement openapi.RequestErrorAnswer"},
 		{"RequestErrors where the catch-all goes", "no_catch_all.go", "openapi.RequestErrorAnswer does not implement openapi.Fallback"},
+		{"an Enum value of another type", "enum_other_type.go", "cannot use sortOrder(\"asc\") (constant \"asc\" of string type sortOrder) as include value"},
+		{"a Default value of another type", "default_other_type.go", "cannot use \"1\" (untyped string constant) as int value"},
+		{"an Example value of another type", "example_other_type.go", "cannot use 1.5 (untyped float constant) as int64 value"},
+		{"a Minimum value of another type", "minimum_other_type.go", "cannot use int64(1) (constant 1 of type int64) as int value"},
+		{"a Maximum value of another type", "maximum_other_type.go", "cannot use \"100\" (untyped string constant) as float64 value"},
+		{"Required on a path parameter", "required_on_path.go", "type openapi.PathParameter[string] has no field or method Required"},
+		{"Default on a path parameter", "default_on_path.go", "type openapi.PathParameter[string] has no field or method Default"},
+		{"a path parameter given to Query", "path_to_query.go", "type openapi.PathParameter[string] of cartID does not match inferred type openapi.QueryParameter[string]"},
+		{"a query parameter given to Path.Param", "query_to_path_param.go", "does not match inferred type openapi.PathParameter[string]"},
+		{"a parameter of an unsupported type", "unsupported_type.go", "[]string does not satisfy openapi.ParamValue"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

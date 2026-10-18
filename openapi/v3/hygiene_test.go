@@ -104,14 +104,24 @@ func TestPackage_exports_only_its_API(t *testing.T) {
 	slices.Sort(exported)
 	require.Equal(t, []string{
 		"API", "APIOption", "CatchAll", "Decoder", "Delete", "EmptyBody", "EmptyDecoder", "EmptyEncoder",
-		"Encoder", "Error", "Fallback", "Get", "Info", "NewAPI", "Operation", "Option", "Param", "ParamFrom",
-		"ParamValue", "Patch", "Path", "PathParam", "PathParameter", "Post", "Put", "Request", "RequestError",
-		"RequestErrorAnswer", "RequestErrors", "Root", "Schema", "Status", "Unmatched",
+		"Encoder", "Error", "Fallback", "Get", "Header", "HeaderParam", "HeaderParameter", "Info", "NewAPI",
+		"Operation", "Option", "Param", "ParamFrom", "ParamValue", "Patch", "Path", "PathParam", "PathParameter",
+		"Post", "Put", "Query", "QueryParam", "QueryParameter", "Request", "RequestError", "RequestErrorAnswer",
+		"RequestErrors", "Root", "Schema", "Status", "Unmatched",
 	}, exported)
 	slices.Sort(methods)
-	require.Equal(t, []string{
-		"API.ServeHTTP", "Path.Lit", "Path.Param", "Path.String", "Request.Body", "RequestError.Error", "RequestError.Unwrap",
-	}, methods)
+	constraints := []string{"Description", "Enum", "Example", "MaxLength", "Maximum", "MinLength", "Minimum", "Pattern"}
+	want := []string{"API.ServeHTTP", "Path.Lit", "Path.Param", "Path.String", "Request.Body", "RequestError.Error", "RequestError.Unwrap"}
+	for _, typ := range []string{"HeaderParameter", "PathParameter", "QueryParameter"} {
+		for _, m := range constraints {
+			want = append(want, typ+"."+m)
+		}
+		if typ != "PathParameter" {
+			want = append(want, typ+".Default", typ+".Required")
+		}
+	}
+	slices.Sort(want)
+	require.Equal(t, want, methods)
 }
 
 // TestPackage_reads_no_environment_and_no_file checks that the package
