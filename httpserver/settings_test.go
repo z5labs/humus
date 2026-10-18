@@ -197,6 +197,7 @@ func TestDefaultSettings(t *testing.T) {
 		WriteTimeout:      10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    1 << 20,
+		TrustScenario:     nil,
 	}, d)
 
 	t.Run("passes the checks of the fields that have a default", func(t *testing.T) {
