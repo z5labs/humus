@@ -179,7 +179,8 @@
 // parent is the trace context the propagator extracts from the message's
 // headers, so a publisher's trace continues through the consumer, and the
 // publisher's baggage, and only the publisher's, is on Process's context
-// too. Only a header whose value is a string is read: a traceparent header
+// too, less a failure scenario the Service strips (see Failure injection).
+// Only a header whose value is a string is read: a traceparent header
 // of any other type, such as bytes, is ignored. A message whose headers
 // carry no trace context starts a new trace. The span's attributes are:
 //
@@ -533,8 +534,8 @@
 //     nothing about the broker.
 //
 // Inside the breaker, and before anything of the attempt is written to the
-// broker, is the seam where Proposal: failure injection (wave 5) injects
-// its failures, so an injected failure counts as a real one would.
+// broker, is the Publisher's injection point, so an injected failure counts
+// as a real one would, as Failure injection, below, describes.
 //
 // Each change of the breaker's state is one log record of the Publisher's,
 // under the scope github.com/z5labs/humus/queue/rabbitmq, in the context of
@@ -610,7 +611,8 @@
 // span on the caller's context, named "send <exchange>", or "send
 // amq.default" for the default exchange, of kind PRODUCER. The span is
 // started before the message's headers are written, and the Setup's
-// propagator injects its trace context, and the caller's baggage, into a
+// propagator injects its trace context, and the caller's baggage, less a
+// failure scenario the Publisher strips (see Failure injection), into a
 // copy of the headers, so the consumer's "process <queue>" span continues
 // the publisher's trace without the end user's code touching the headers.
 // A nil Headers map gets a new one. The span's attributes are:
@@ -651,6 +653,98 @@
 // attempt the breaker rejected. As with the
 // Service, a routing key that carries identifiers makes a series per key in
 // both instruments.
+//
+// # Failure injection
+//
+// Both halves of the package take part in failure injection with the
+// fault.Injector in the Setup's Faults, which the App builds from
+// humus.WithFaults. Without humus.WithFaults, nothing is evaluated or
+// stripped: a scenario in a message's baggage goes through like any other
+// member, and TrustScenario is never asked.
+//
+// A Publisher is an injection point per destination,
+// rabbitmq:<messaging.destination.name>, which is <exchange>:<routing
+// key>, leaving out what is empty, such as rabbitmq:orders:accepted for
+// the exchange orders and the routing key accepted, or rabbitmq:orders for
+// the default exchange and the routing key orders. A request or job whose
+// context carries a failure scenario can then make its publishes to one
+// destination fail or slow down, and the end user sees how the whole
+// service copes: its retries, its breaker and its fallbacks. Each attempt
+// of a Publish evaluates the point once, inside the breaker, once it has
+// admitted the attempt and before anything is sent, so an attempt the
+// breaker rejects evaluates nothing. On a Publish that carries a scenario,
+// the evaluation is a humus.fit.evaluation event on the Publish's span. A
+// retried attempt evaluates the point again, and meets the same fault.
+//
+// A fault is a real failure, and the Publisher's fixed tables, unchanged,
+// decide it:
+//
+//   - an abort fails the attempt with nothing sent, with an error such as
+//     rabbitmq: publishing to exchange "orders" with routing key
+//     "accepted": fit: injected failure at rabbitmq:orders:accepted, which
+//     wraps a *fault.InjectedError naming the point and matches
+//     fit.ErrInjected. It is marked as a lost connection's error is, so
+//     another attempt follows, as for a dropped connection, drawing on the
+//     RetryBudget, and the breaker counts it a failure. So a scenario that
+//     aborts rabbitmq:orders:accepted opens the breaker under the default
+//     policy, as a broker that is down does, and the breaker then rejects
+//     every attempt, with a scenario or not, until a probe gets through;
+//   - a delay is waited before the attempt takes a channel, inside Timeout,
+//     and then the attempt goes on as usual. A delay that the Publish's
+//     context cuts short ends the attempt with nothing sent, as one that
+//     ended with the context: no further attempt, as retry decides it, and
+//     a failure in the breaker when the deadline passed, Timeout's or the
+//     caller's, and not counted when the caller cancelled. Its error wraps
+//     a *fault.InjectedError whose Err is the context's cause, which
+//     matches context.DeadlineExceeded or context.Canceled and not
+//     fit.ErrInjected.
+//
+// Either way the Publish's span records the error with the error.type
+// github.com/z5labs/humus/fault.InjectedError, and neither messaging
+// instrument records the attempt, since it published nothing.
+// humus.circuit.calls and humus.retry.decisions count it like any other
+// attempt.
+//
+// The Publisher strips the scenario from the context the message's headers
+// are injected from, unless [PublisherSettings].ForwardScenario is set:
+// the consumers of a destination the end user hasn't decided about are a
+// trust boundary. Every other baggage member goes, and the Publish's own
+// context, which its point is evaluated with, keeps the scenario. A strip
+// adds a humus.fit.strip event, with no attributes, to the Publish's span.
+// Set ForwardScenario for a destination whose consumers take part in
+// failure injection with the same codec, such as another service of the
+// end user's, so that a scenario can reach the points they publish to in
+// turn.
+//
+// A Service strips the scenario a delivery carries from publishers the end
+// user hasn't chosen to trust, after the delivery's process span starts
+// and before Process sees it, so a publisher the end user doesn't control
+// can't make the consumer fail on purpose. A delivery it doesn't trust
+// reaches Process with the scenario stripped from its context, and every
+// other baggage member kept, and its span gets a humus.fit.strip event,
+// with no attributes. [Settings].TrustScenario decides which deliveries
+// are trusted. It is given the Message, scenario and all, and asked only
+// about a delivery that carries a scenario, so it costs nothing on any
+// other delivery. When it is nil, the default, no publisher is trusted,
+// and every scenario is stripped. A panic in it is not recovered, as a
+// panic in a Processor isn't.
+//
+// Who a message came from is best told by its UserID: RabbitMQ validates
+// the user-id property against the user of the publishing connection, and
+// refuses a publish that claims another, so a publisher can't pass for
+// one the end user trusts. For example, a Service that trusts the
+// scenarios of the end user's own services, which connect as the user
+// orders-api:
+//
+//	settings.TrustScenario = func(m rabbitmq.Message) bool {
+//		return m.UserID == "orders-api"
+//	}
+//
+// A message published without a user-id has an empty UserID, which that
+// func doesn't trust.
+//
+// TrustScenario and ForwardScenario are set in code, not sourced: who is
+// trusted is the end user's design decision, not an operator's.
 //
 // # Topology
 //

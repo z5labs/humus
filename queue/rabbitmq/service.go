@@ -31,6 +31,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/fault"
 	"github.com/z5labs/humus/health"
 	"github.com/z5labs/humus/queue"
 )
@@ -92,6 +93,9 @@ type Service struct {
 	// serverAddr and serverPort are Connection.Addr's host and port.
 	serverAddr string
 	serverPort int
+
+	// faults is the App's failure injection, from the Setup.
+	faults fault.Injector
 
 	// stopped is done once Shutdown has been called.
 	stopped context.Context
@@ -188,6 +192,7 @@ func NewService(s *humus.Setup, settings Settings, p queue.Processor[Message]) (
 		processing: processing,
 		serverAddr: host,
 		serverPort: portNum,
+		faults:     s.Faults,
 		stopped:    stopped,
 		stop:       stop,
 	}
@@ -813,8 +818,9 @@ func (s *session) worker(jobs <-chan amqp.Delivery, logCtx context.Context) {
 // recovered.
 //
 // The span's parent is the trace context the propagator extracts from d's
-// headers, whose baggage is on Process's context too. When the headers
-// carry none, the span is the root of a new trace.
+// headers, whose baggage is on Process's context too, less a failure
+// scenario Settings.TrustScenario doesn't trust. When the headers carry
+// none, the span is the root of a new trace.
 //
 // Under queue.AtMostOnce, process logs a failure itself, with logCtx and
 // the delivery's span context, unless Shutdown's context cut processing
@@ -846,9 +852,12 @@ func (s *session) process(d amqp.Delivery, logCtx context.Context) error {
 	)
 	defer span.End()
 
+	m := newMessage(svc.settings.Queue, d)
+	ctx = svc.strip(ctx, m)
+
 	svc.consumed.Add(ctx, 1, processOperation, messagingconv.SystemRabbitMQ, attrs...)
 	start := time.Now()
-	err := svc.proc.Process(ctx, newMessage(svc.settings.Queue, d))
+	err := svc.proc.Process(ctx, m)
 	elapsed := time.Since(start).Seconds()
 
 	if err != nil {

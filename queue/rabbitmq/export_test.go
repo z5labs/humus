@@ -33,3 +33,15 @@ type PublishConn = publishConn
 func SetDial(p *Publisher, dial func(ctx context.Context) (PublishConn, error)) {
 	p.dial = dial
 }
+
+// Classify is the Publisher's classifier for retry.
+var Classify = classify
+
+// ClassifyBreaker is the Publisher's breaker's classifier.
+var ClassifyBreaker = classifyBreaker
+
+// StripDelivery is svc's strip of the failure scenario of a delivery, m,
+// whose context under its process span is ctx.
+func StripDelivery(svc *Service, ctx context.Context, m Message) context.Context {
+	return svc.strip(ctx, m)
+}
