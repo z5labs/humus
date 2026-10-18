@@ -33,7 +33,7 @@ import (
 	"github.com/z5labs/humus/queue"
 )
 
-// scopeName is the instrumentation scope of the Service's own spans,
+// scopeName is the instrumentation scope of the package's own spans,
 // metrics and logs.
 const scopeName = "github.com/z5labs/humus/queue/kafka"
 
