@@ -9,7 +9,7 @@ description: >
   defaults, how Kubernetes' probes reach it, what it records, and how to test
   it with grpcservertest.
 type: docs
-weight: 16
+weight: 17
 ---
 
 The [`grpcserver`](https://pkg.go.dev/github.com/z5labs/humus/grpc/grpcserver)

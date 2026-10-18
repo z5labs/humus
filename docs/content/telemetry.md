@@ -6,7 +6,7 @@ description: >
   Builder sources telemetry.Settings and calls telemetry.New, the App hands
   the SDK to Init, and humus never reads or sets OpenTelemetry's globals.
 type: docs
-weight: 19
+weight: 20
 ---
 
 A humus App builds its OpenTelemetry providers before `Init`, hands them to

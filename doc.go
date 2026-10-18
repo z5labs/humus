@@ -88,7 +88,13 @@
 // whose calls return nil only once the cluster has stored their records,
 // documented at
 // https://z5labs.github.io/humus/kafka/. A Kafka consumer turns ready once it
-// has joined its group, with Joined. The httphealth package and the grpc
+// has joined its group, with Joined. The queue/rabbitmq package has landed:
+// with amqp091-go, it consumes a RabbitMQ queue as a Service on Main's
+// defaults, at least or at most once, riding out a broker's rolling
+// upgrade, and publishes with a Publisher whose calls return nil only once
+// the broker has confirmed the message, and a consumer turns ready once it
+// consumes, with Consuming, documented at
+// https://z5labs.github.io/humus/rabbitmq/. The httphealth package and the grpc
 // module's grpchealth package have landed: they expose an App's health
 // probes, httphealth over HTTPS at /health/liveness and /health/readiness,
 // and grpchealth as gRPC health v1, each attached to a server the App
