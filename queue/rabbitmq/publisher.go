@@ -613,7 +613,8 @@ func (p *Publisher) Publish(ctx context.Context, m Publishing) (err error) {
 // unless a fault ended the attempt, it takes a channel, publishes msg,
 // which is m with its trace context, on it, and gives the channel back.
 // While the breaker is open, it returns an error wrapping the breaker's
-// *circuit.RejectedError at once, having evaluated and sent nothing.
+// *circuit.RejectedError at once, without evaluating m's point or
+// sending anything.
 func (p *Publisher) attempt(ctx context.Context, m Publishing, msg amqp.Publishing) error {
 	t, err := p.breaker.Allow(ctx)
 	if err != nil {
