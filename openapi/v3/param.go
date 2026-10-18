@@ -9,6 +9,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -109,7 +110,10 @@ func (p PathParameter[T]) Enum(values ...T) PathParameter[T] {
 	return p
 }
 
-// Pattern returns p, whose value matches re. T is a string type.
+// Pattern returns p, whose value matches re. T is a string type. The
+// document lists re as it is written, and OpenAPI reads a pattern as an
+// ECMA-262 regular expression, so write re in the syntax RE2 and ECMA-262
+// share: no flags such as (?i), no \A or \z, and no POSIX classes.
 func (p PathParameter[T]) Pattern(re *regexp.Regexp) PathParameter[T] {
 	p.spec = p.spec.withPattern(re)
 	return p
@@ -159,7 +163,10 @@ func (p QueryParameter[T]) Enum(values ...T) QueryParameter[T] {
 	return p
 }
 
-// Pattern returns p, whose value matches re. T is a string type.
+// Pattern returns p, whose value matches re. T is a string type. The
+// document lists re as it is written, and OpenAPI reads a pattern as an
+// ECMA-262 regular expression, so write re in the syntax RE2 and ECMA-262
+// share: no flags such as (?i), no \A or \z, and no POSIX classes.
 func (p QueryParameter[T]) Pattern(re *regexp.Regexp) QueryParameter[T] {
 	p.spec = p.spec.withPattern(re)
 	return p
@@ -222,7 +229,10 @@ func (p HeaderParameter[T]) Enum(values ...T) HeaderParameter[T] {
 	return p
 }
 
-// Pattern returns p, whose value matches re. T is a string type.
+// Pattern returns p, whose value matches re. T is a string type. The
+// document lists re as it is written, and OpenAPI reads a pattern as an
+// ECMA-262 regular expression, so write re in the syntax RE2 and ECMA-262
+// share: no flags such as (?i), no \A or \z, and no POSIX classes.
 func (p HeaderParameter[T]) Pattern(re *regexp.Regexp) HeaderParameter[T] {
 	p.spec = p.spec.withPattern(re)
 	return p
@@ -469,6 +479,11 @@ func (s paramSpec[T]) check() []error {
 	if s.patternSet && s.pattern == nil {
 		errs = append(errs, errors.New("its Pattern is nil"))
 	}
+	for _, v := range s.values() {
+		if f := reflect.ValueOf(v.value); f.Kind() == reflect.Float64 && (math.IsNaN(f.Float()) || math.IsInf(f.Float(), 0)) {
+			errs = append(errs, fmt.Errorf("its %s is %s, which the document can't hold as a JSON number", v.name, formatValue(v.value)))
+		}
+	}
 	if s.def != nil {
 		if err := s.validate(*s.def); err != nil {
 			errs = append(errs, fmt.Errorf("its Default: %w", err))
@@ -535,6 +550,31 @@ func jsonValue[T ParamValue](v T) any {
 	default: // reflect.Float64, the last type ParamValue allows
 		return rv.Float()
 	}
+}
+
+// namedValue is one of a parameter's values, named after the part that
+// gives it.
+type namedValue[T ParamValue] struct {
+	name  string
+	value T
+}
+
+// values returns every value s's parts give: its Enum's, its Default, its
+// Example, and its bounds.
+func (s paramSpec[T]) values() []namedValue[T] {
+	var vs []namedValue[T]
+	for _, v := range s.enum {
+		vs = append(vs, namedValue[T]{"Enum value", v})
+	}
+	for _, p := range []struct {
+		name string
+		v    *T
+	}{{"Default", s.def}, {"Example", s.example}, {"Minimum", s.minimum}, {"Maximum", s.maximum}} {
+		if p.v != nil {
+			vs = append(vs, namedValue[T]{p.name, *p.v})
+		}
+	}
+	return vs
 }
 
 // read returns the value of the parameter what, given the values a request

@@ -9,7 +9,6 @@ import (
 	"context"
 	"math"
 	"net/http"
-	"net/http/httptest"
 	"regexp"
 	"strings"
 	"syscall"
@@ -525,14 +524,21 @@ func TestNewAPI_reports_every_mistake(t *testing.T) {
 			},
 		},
 		{
-			name: "with a Document, a parameter's value that JSON can't encode",
+			name: "a parameter's value that the document can't hold as a JSON number",
 			change: func(a *apiArgs) {
 				a.ops = []openapi.Operation{
-					openapi.Get(carts, noBody, jsonEncoder, openapi.Query(openapi.QueryParam[float64]("ratio").Default(math.Inf(1)))),
+					openapi.Get(carts, noBody, jsonEncoder,
+						openapi.Query(openapi.QueryParam[float64]("ratio").Default(math.Inf(1))),
+						openapi.Header(openapi.HeaderParam[float64]("X-Weight").Enum(1, math.NaN()).Maximum(math.Inf(-1))),
+					),
 					openapi.Document(docPath),
 				}
 			},
-			want: []string{"encoding the document: json: unsupported value: +Inf"},
+			want: []string{
+				`GET /carts: query parameter "ratio": its Default is +Inf, which the document can't hold as a JSON number`,
+				`GET /carts: header parameter "X-Weight": its Enum value is NaN, which the document can't hold as a JSON number`,
+				`GET /carts: header parameter "X-Weight": its Maximum is -Inf, which the document can't hold as a JSON number`,
+			},
 		},
 		{
 			name: "two mistakes, reported together",
@@ -568,8 +574,9 @@ func TestNewAPI_reports_every_mistake(t *testing.T) {
 
 func TestNewAPI_accepts(t *testing.T) {
 	cases := []struct {
-		name   string
-		change func(a *apiArgs)
+		name     string
+		change   func(a *apiArgs)
+		document bool // whether the API serves a document at docPath
 	}{
 		{
 			name: "an Error at 400, 413 and 415 on an operation that reads no parameter and no body",
@@ -643,12 +650,14 @@ func TestNewAPI_accepts(t *testing.T) {
 					openapi.Document(docPath),
 				}
 			},
+			document: true,
 		},
 		{
 			name: "a codec's Schema of true",
 			change: func(a *apiArgs) {
 				a.ops = []openapi.Operation{openapi.Get(cart, getCart, encoderWithSchema[cartBody](`true`)), openapi.Document(docPath)}
 			},
+			document: true,
 		},
 		{
 			name: "no operations",
@@ -666,11 +675,8 @@ func TestNewAPI_accepts(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, api)
 
-			// A document the API serves is valid OpenAPI 3.2.
-			rec := httptest.NewRecorder()
-			api.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, docPath.String(), nil))
-			if rec.Code == http.StatusOK {
-				requireValid(t, rec.Body.Bytes())
+			if tc.document {
+				serveDocument(t, api)
 			}
 		})
 	}

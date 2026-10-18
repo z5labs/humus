@@ -20,7 +20,9 @@ import (
 // what its format needs, such as OpenAPI's xml object.
 //
 // The schema is reflected with swaggest/jsonschema-go:
-//   - a field without tag, or whose tag names it "-", isn't a property;
+//   - an exported field without tag is a property named after the field,
+//     as encoding/json and encoding/xml name it, and a field whose tag
+//     names it "-" isn't a property;
 //   - refs are inlined, so the schema stands alone, as the document lists
 //     it under the body's media type;
 //   - int64 values have the format int64, and float64 values the format
@@ -47,6 +49,7 @@ func SchemaOf[T any](tag string) (Schema, error) {
 	s, err := r.Reflect(v,
 		jsonschema.PropertyNameTag(tag),
 		jsonschema.InlineRefs,
+		jsonschema.ProcessWithoutTags,
 		jsonschema.InterceptSchema(formatNumbers),
 	)
 	if err != nil {
@@ -80,11 +83,8 @@ func formatNumbers(p jsonschema.InterceptSchemaParams) (bool, error) {
 }
 
 // recursiveType returns a struct type that t holds within itself, by way of
-// the fields SchemaOf could reflect, or nil. onPath holds the struct types
-// that hold t.
-//
-// It is stricter than the reflection: a field without tag counts too, so
-// a type that would recurse is never handed to it.
+// the fields SchemaOf reflects, or nil. onPath holds the struct types that
+// hold t.
 func recursiveType(t reflect.Type, tag string, onPath map[reflect.Type]bool) reflect.Type {
 	switch t.Kind() {
 	case reflect.Pointer, reflect.Slice, reflect.Array, reflect.Map:

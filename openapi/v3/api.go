@@ -81,10 +81,10 @@ type API struct {
 //   - two answers at one status on one operation: two Errors, an Error and
 //     the catch-all, or either of them and RequestErrors' 400, 413 or 415
 //     on an operation that can answer with it;
+//   - a parameter's float64 value, in its Enum, Default, Example or bounds,
+//     that is NaN or infinite, which the document can't hold;
 //   - Status(http.StatusNoContent) with an encoder whose media type isn't
-//     "";
-//   - with a Document, a parameter's value that JSON can't encode, such as
-//     a float64 Default of +Inf.
+//     "".
 //
 // With a Document, it builds the API's document, and encodes it once.
 //

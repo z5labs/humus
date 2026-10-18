@@ -75,12 +75,13 @@ func TestSchemaOf(t *testing.T) {
 					"properties": {"sku": {"type": "string"}, "price": {"type": "number", "format": "double"}}
 				}},
 				"ship": {"type": "object", "properties": {"city": {"type": "string"}}},
-				"meta": {"type": ["object", "null"], "additionalProperties": {"type": "string"}}
+				"meta": {"type": ["object", "null"], "additionalProperties": {"type": "string"}},
+				"Untagged": {"type": "string"}
 			}
 		}`, schemaOf[order](t, "json"))
 	})
 
-	t.Run("another tag names other properties", func(t *testing.T) {
+	t.Run("another tag names other properties, and a field without it is named after the field", func(t *testing.T) {
 		require.JSONEq(t, `{
 			"type": "object",
 			"properties": {
@@ -93,7 +94,10 @@ func TestSchemaOf(t *testing.T) {
 					"type": "object",
 					"properties": {"sku": {"type": "string"}, "price": {"type": "number", "format": "double"}}
 				}},
-				"shipTo": {"type": "object", "properties": {"city": {"type": "string"}}}
+				"shipTo": {"type": "object", "properties": {"city": {"type": "string"}}},
+				"Note": {"type": ["null", "integer"], "format": "int64"},
+				"Meta": {"type": ["object", "null"], "additionalProperties": {"type": "string"}},
+				"Untagged": {"type": "string"}
 			}
 		}`, schemaOf[order](t, "xml"))
 	})

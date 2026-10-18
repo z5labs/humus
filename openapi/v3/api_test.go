@@ -681,9 +681,10 @@ func TestAPI_answers_other_errors_with_the_catch_all(t *testing.T) {
 	})
 }
 
-// unencodable is an error JSON can't encode.
+// unencodable is an error JSON can't encode, though its schema reflects:
+// its Ch holds a channel.
 type unencodable struct {
-	Ch chan int
+	Ch any `json:"ch"`
 }
 
 func (unencodable) Error() string { return "unencodable" }

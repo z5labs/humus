@@ -85,7 +85,9 @@
 // NewAPI reports the rest: Pattern, MinLength or MaxLength on a type that
 // isn't a string, Minimum or Maximum on a type that isn't a number, a
 // Default or an Example that breaks the parameter's own Enum, Pattern or
-// bounds, a parameter given twice to one operation, and a zero parameter.
+// bounds, a float64 value that is NaN or infinite, which the document
+// can't hold, a parameter given twice to one operation, and a zero
+// parameter.
 //
 // # Operations and their codecs
 //
