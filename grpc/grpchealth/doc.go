@@ -37,9 +37,9 @@
 // A monitor's error is never in an answer. It is logged instead, as one
 // ERROR record through the Setup's LoggerProvider, under this package's
 // import path, with the RPC's context. The record's body is the error, and
-// its attribute health.probe is liveness or readiness. A monitor that is
-// unhealthy without an error, such as a health Service's own readiness once
-// the App starts shutting down, logs nothing.
+// its attribute humus.health.probe is liveness or readiness. A monitor that
+// is unhealthy without an error, such as a health Service's own readiness
+// once the App starts shutting down, logs nothing.
 //
 // # Watch
 //
