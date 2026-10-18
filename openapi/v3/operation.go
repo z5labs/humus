@@ -25,6 +25,10 @@ type operation struct {
 	path   Path
 	opts   []Option
 
+	// document is set on the operation Document returns, which serves the
+	// API's document and has no handler, codecs or parts.
+	document bool
+
 	// bind checks the handler and calls each codec function, and each
 	// codec's Schema, once.
 	bind func() (*codecs, error)
@@ -35,6 +39,8 @@ type operation struct {
 type codecs struct {
 	decMediaType string
 	encMediaType string
+	decSchema    Schema
+	encSchema    Schema
 	decode       func(r *http.Request) (any, error)
 	handle       func(ctx context.Context, st *requestState, body any) (any, error)
 	encode       func(resp any) (io.WriterTo, error)
@@ -86,11 +92,11 @@ func newOperation[B, Resp any](method string, p Path, h func(context.Context, Re
 			if h == nil {
 				errs = append(errs, errors.New("its handler is nil"))
 			}
-			dec, err := bindDecoder(body)
+			dec, decSchema, err := bindDecoder(body)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("request body: %w", err))
 			}
-			enc, err := bindEncoder(resp)
+			enc, encSchema, err := bindEncoder(resp)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("response: %w", err))
 			}
@@ -100,6 +106,8 @@ func newOperation[B, Resp any](method string, p Path, h func(context.Context, Re
 			return &codecs{
 				decMediaType: dec.MediaType(),
 				encMediaType: enc.MediaType(),
+				decSchema:    decSchema,
+				encSchema:    encSchema,
 				decode: func(r *http.Request) (any, error) {
 					return dec.Decode(r)
 				},

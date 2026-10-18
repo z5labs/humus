@@ -103,11 +103,12 @@ func TestPackage_exports_only_its_API(t *testing.T) {
 	}
 	slices.Sort(exported)
 	require.Equal(t, []string{
-		"API", "APIOption", "CatchAll", "Decoder", "Delete", "EmptyBody", "EmptyDecoder", "EmptyEncoder",
-		"Encoder", "Error", "Fallback", "Get", "Header", "HeaderParam", "HeaderParameter", "Info", "NewAPI",
-		"Operation", "Option", "Param", "ParamFrom", "ParamValue", "Patch", "Path", "PathParam", "PathParameter",
-		"Post", "Put", "Query", "QueryParam", "QueryParameter", "Request", "RequestError", "RequestErrorAnswer",
-		"RequestErrors", "Root", "Schema", "Status", "Unmatched",
+		"API", "APIOption", "CatchAll", "Decoder", "Delete", "Deprecated", "Description", "Document", "EmptyBody",
+		"EmptyDecoder", "EmptyEncoder", "Encoder", "Error", "Fallback", "Get", "Header", "HeaderParam",
+		"HeaderParameter", "Info", "NewAPI", "Operation", "OperationID", "Option", "Param", "ParamFrom",
+		"ParamValue", "Patch", "Path", "PathParam", "PathParameter", "Post", "Put", "Query", "QueryParam",
+		"QueryParameter", "Request", "RequestError", "RequestErrorAnswer", "RequestErrors", "Root", "Schema",
+		"SchemaOf", "Status", "Summary", "Tags", "Unmatched",
 	}, exported)
 	slices.Sort(methods)
 	constraints := []string{"Description", "Enum", "Example", "MaxLength", "Maximum", "MinLength", "Minimum", "Pattern"}

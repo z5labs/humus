@@ -4,7 +4,9 @@ go 1.27.0
 
 require (
 	github.com/go-chi/chi/v5 v5.5.0
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/stretchr/testify v1.12.1
+	github.com/swaggest/jsonschema-go v0.3.79
 	github.com/z5labs/bedrock v0.25.0
 	github.com/z5labs/bedrock/circuit v0.24.0
 	github.com/z5labs/bedrock/retry v0.24.0
@@ -40,6 +42,7 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.32.0 // indirect
+	github.com/swaggest/refl v1.4.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.47.0 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
