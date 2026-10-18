@@ -253,10 +253,10 @@
 //
 // # Telemetry
 //
-// The Service reports through the Setup's telemetry and never through
-// OpenTelemetry's globals: its tracer and meter come from the SDK's
-// TracerProvider and MeterProvider, under the scope
-// github.com/z5labs/humus/queue/kafka, and its propagator is the SDK's
+// The Service and the Producer report through the Setup's telemetry and
+// never through OpenTelemetry's globals: their tracers and meters come from
+// the SDK's TracerProvider and MeterProvider, under the scope
+// github.com/z5labs/humus/queue/kafka, and their propagator is the SDK's
 // Propagator.
 //
 // Each record is processed under a span of its own, named "process
@@ -289,17 +289,57 @@
 // Each also has messaging.system, messaging.consumer.group.name,
 // messaging.destination.name and messaging.destination.partition.id.
 //
+// The Producer sends each record it hands to franz-go under a span of its
+// own, named "send <topic>", of kind PRODUCER, a child of the span in
+// Produce's context. The span's attributes are messaging.system (kafka),
+// messaging.operation.type and messaging.operation.name (both send) and
+// messaging.destination.name, and, once the record is acknowledged,
+// messaging.destination.partition.id and messaging.kafka.offset. The
+// record's key is not recorded. The span ends when the record is
+// acknowledged or fails, as its result arrives, which may be after Produce
+// returns. A failure is recorded on it as an exception event, with
+// error.type and an error status.
+//
+// The span's context goes into the record's headers. Before injecting, the
+// Producer removes every header of the record whose key is one of the
+// propagator's fields, such as a dead letter's copy of the consumed
+// record's traceparent. The propagator then injects the span's context and
+// the baggage of Produce's context; with the default propagator, those are
+// traceparent, tracestate and baggage. So the process span of a Service
+// that consumes the record, on any topic, is a child of its send span, and
+// inside a Process, the send span is a child of the process span: one trace
+// runs from the first producer through every topic a record passes
+// through.
+//
+// The Producer records two more instruments of the messaging conventions:
+//
+//   - messaging.client.sent.messages counts each record once its result is
+//     known, with messaging.operation.name set to send, and error.type when
+//     it failed;
+//   - messaging.client.operation.duration is how long each record took,
+//     from Produce taking it to its result, in seconds, with
+//     messaging.operation.name and messaging.operation.type set to send,
+//     and error.type when it failed.
+//
+// Each also has messaging.system, messaging.destination.name and, once
+// franz-go has chosen it, messaging.destination.partition.id. A record
+// Produce rejected for having no topic, and the records of a call whose
+// context was already done, were never sent: they start no span, and
+// neither instrument counts them.
+//
 // franz-go's broker metrics come from the Meter of franz-go's kotel plugin,
-// which the Service builds with the Setup's MeterProvider and nothing else,
-// and hands the client as hooks. Its instruments are kotel's, under kotel's
-// own scope, github.com/twmb/franz-go/plugin/kotel, with names such as
+// which the Service and the Producer each build with the Setup's
+// MeterProvider and nothing else, and hand their client as hooks. Its
+// instruments are kotel's, under kotel's own scope,
+// github.com/twmb/franz-go/plugin/kotel, with names such as
 // messaging.kafka.connects.count, messaging.kafka.connect_errors.count and
 // messaging.kafka.fetch_records.count. By broker, with a node_id attribute,
 // they count the connections opened, the connection errors and the
 // connections closed, the bytes read and written, and the read and write
 // errors. By broker and topic, with node_id and topic, they count the
-// records and the bytes fetched. kotel's produce counters stay empty,
-// because the Service produces nothing. kotel's tracer is not used.
+// records and the bytes fetched, and, for the Producer, the records and
+// the bytes produced, in messaging.kafka.produce_records.count and
+// messaging.kafka.produce_bytes.count. kotel's tracer is not used.
 //
 // humus renames neither set of instruments. Their names are semconv's and
 // kotel's, at the versions this module pins, so a change to the names of

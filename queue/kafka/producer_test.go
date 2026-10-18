@@ -134,7 +134,9 @@ func TestProduce_stores_the_records_of_a_call(t *testing.T) {
 		require.Len(t, got, 2)
 		require.Equal(t, "key-0", string(got[0].Key))
 		require.Equal(t, "0", string(got[0].Value))
-		require.Equal(t, []kgo.RecordHeader{{Key: "h", Value: []byte("v")}}, got[0].Headers)
+		require.Len(t, got[0].Headers, 2, "the record's header, then the span's context")
+		require.Equal(t, kgo.RecordHeader{Key: "h", Value: []byte("v")}, got[0].Headers[0])
+		require.Equal(t, "traceparent", got[0].Headers[1].Key)
 		require.Nil(t, got[1].Key)
 		require.Equal(t, "1", string(got[1].Value))
 
