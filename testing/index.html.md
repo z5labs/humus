@@ -231,6 +231,27 @@ A runtime package with no defaults of its own needs no test package.
 Kafka cluster a test runs it against listens on the test Host with one option.
 [Consuming and producing Kafka](/humus/kafka/#testing) shows how.
 
+`queue/rabbitmq` ships no test package and no fake broker. Its consumer runs
+on `humus.Main`'s defaults too, so it needs no test package for them, and
+humus is neither RabbitMQ's client nor its server, so it doesn't write or
+keep a broker for a test to run against, and no in-memory RabbitMQ exists for
+Go. So an App that uses RabbitMQ can't run whole inside `synctest` on a test
+Host, as the charter's principle 6 asks of every App, and the charter's
+[revision 10](https://github.com/z5labs/humus/discussions/629#discussioncomment-19009924)
+records the exception. It is tested in two parts:
+
+- **Its `Processor`, as a unit,** inside `synctest`, called with
+  `rabbitmq.Message` values, with its other dependencies on the test Host
+  and its publishing behind an interface of its own over `Publish`, which
+  the test fakes.
+- **The whole App, against RabbitMQ in a container,** with `humustest.Start`
+  and `humus.WithHost(humus.OSHost())`, in real time. The test declares its
+  queues itself, generates the broker's login rather than use `guest`, and
+  sits behind a build tag, in a CI job of its own.
+
+[Consuming and publishing with RabbitMQ](/humus/rabbitmq/#testing)
+shows both.
+
 ### Helpers
 
 `Start` returns bedrocktest's `Process` and the App's status channel
