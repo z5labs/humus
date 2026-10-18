@@ -323,10 +323,14 @@ func TestClient_with_the_end_users_Classify(t *testing.T) {
 			_, err := withBackend(t, b, func(s *grpcclient.Settings) {
 				classify := s.Classify
 				s.Classify = func(method string, err error, trailer metadata.MD) grpcclient.Classification {
-					if method == "/grpc.testing.TestService/EmptyCall" {
-						return grpcclient.Classification{Retry: retry.Stop, Breaker: circuit.Failure}
+					c := classify(method, err, trailer)
+					// EmptyCall must never be sent twice: it makes one
+					// attempt, and its result counts in the breaker as
+					// the default says.
+					if method == "/grpc.testing.TestService/EmptyCall" && c.Retry == retry.Retry {
+						c.Retry, c.RetryAfter = retry.Stop, 0
 					}
-					return classify(method, err, trailer)
+					return c
 				}
 			}, func(ctx context.Context, c testpb.TestServiceClient) error {
 				err := emptyCall(ctx, c)

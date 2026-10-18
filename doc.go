@@ -97,8 +97,13 @@
 // it calls one HTTP dependency per client through the Setup's Host, retries
 // what is safe to send twice as the end user's Classify decides, and fails
 // calls at once with a circuit breaker while the dependency keeps failing,
-// documented at https://z5labs.github.io/humus/http-client/. The other
-// runtime packages come back through their own proposals.
+// documented at https://z5labs.github.io/humus/http-client/. The grpc
+// module's grpcclient package has landed: it calls one gRPC dependency per
+// Client through the Setup's Host, retries as the end user's Classify
+// decides, fails calls at once with a circuit breaker while the dependency
+// keeps failing, and turns readiness on once it has connected, with
+// Connected, documented at https://z5labs.github.io/humus/grpc-client/. The
+// other runtime packages come back through their own proposals.
 //
 // The plan is in the charter, Proposal: humus on the bedrock process model:
 // https://github.com/z5labs/humus/discussions/629

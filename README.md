@@ -54,7 +54,14 @@ See [Health](https://z5labs.github.io/humus/health/). The
 through the Setup's Host, retries what is safe to send twice as the end
 user's `Classify` decides, and fails calls at once with a circuit breaker
 while the dependency keeps failing. See
-[Calling HTTP services](https://z5labs.github.io/humus/http-client/). Earlier
+[Calling HTTP services](https://z5labs.github.io/humus/http-client/). The
+`grpc` module's `grpcclient` package has landed too: `grpcclient.NewClient`
+builds a `Client` for one gRPC dependency in the end user's `Init`, which
+generated code takes, dials through the Setup's Host, retries as the end
+user's `Classify` decides, fails calls at once with a circuit breaker while
+the dependency keeps failing, and turns readiness on once it has connected,
+with `Connected`. See
+[Calling gRPC services](https://z5labs.github.io/humus/grpc-client/). Earlier
 releases remain available on [pkg.go.dev](https://pkg.go.dev/github.com/z5labs/humus?tab=versions).
 
 The plan is in the charter,
