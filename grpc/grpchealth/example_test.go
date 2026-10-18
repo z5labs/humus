@@ -93,3 +93,55 @@ func serverTLS(pem []byte) (*tls.Config, error) {
 func ExampleNewServer() {
 	grpcserver.Main(Init)
 }
+
+// TestProbesInit_answers_the_probes_on_a_plaintext_port runs ProbesInit.
+
+// ProbesInit is the end user's Init for a gRPC service on a cluster whose
+// grpc probes can't use TLS: it serves its own services on a
+// grpcserver.Service, over TLS, and the probes on a plaintext port of their
+// own. It returns the two Services, and no health Service: the probes
+// Service owns readiness.
+func ProbesInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
+
+	type settings struct {
+		grpc   grpcserver.Settings
+		probes grpchealth.Settings
+	}
+	cfg, err := config.Struct(func(r *config.Resolver) settings {
+		return settings{
+			grpc: grpcserver.Settings{
+				Addr: r.Get(env("GRPC_ADDR").Validate(grpcserver.CheckAddr)),
+				TLS:  r.Get(env("GRPC_TLS_PEM_FILE").Parse(readFile(s.Host.FS)).Parse(serverTLS).Validate(grpcserver.CheckTLS)),
+			},
+			probes: grpchealth.Settings{
+				// No .Default: the field is required.
+				Addr: r.Get(env("PROBES_ADDR").Validate(grpchealth.CheckAddr)),
+			},
+		}
+	}).Read(ctx)
+	if err != nil {
+		return nil, err // exit 78, naming every bad variable
+	}
+
+	svc, err := grpcserver.NewService(s, cfg.grpc)
+	if err != nil {
+		return nil, err
+	}
+	testpb.RegisterTestServiceServer(svc, greeter{}) // the end user's own service
+	probes, err := grpchealth.NewService(s, cfg.probes)
+	if err != nil {
+		return nil, err
+	}
+	return []humus.Service{svc, probes}, nil
+}
+
+// A gRPC service on a cluster whose grpc probes can't use TLS, which is
+// most clusters today, builds the probes Service in its Init, next to its
+// grpcserver.Service, as ProbesInit does. Its probes are grpc probes with
+// service: liveness or readiness, on the probes port, in plain text. This
+// example has no Output comment, so it is compiled but never run: running
+// it would exit the test binary.
+func ExampleNewService() {
+	grpcserver.Main(ProbesInit)
+}

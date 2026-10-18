@@ -19,6 +19,10 @@ import (
 	"github.com/z5labs/humus/grpc/internal/server"
 )
 
+// scope is the instrumentation scope of the logger the Service logs a
+// recovered panic through: this package's import path.
+const scope = "github.com/z5labs/humus/grpc/grpcserver"
+
 // Service is a humus.Service that serves gRPC over TLS. It is a
 // grpc.ServiceRegistrar, so generated code registers services on it:
 //
@@ -78,7 +82,7 @@ func NewService(s *humus.Setup, settings Settings, opts ...grpc.ServerOption) (*
 	all = append(all, opts...)
 	all = append(all, grpc.Creds(credentials.NewTLS(settings.TLS)))
 
-	srv, err := server.New(s, settings.Addr, all...)
+	srv, err := server.New(s, scope, settings.Addr, all...)
 	if err != nil {
 		return nil, fmt.Errorf("grpcserver: NewService: %w", err)
 	}
