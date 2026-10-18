@@ -124,6 +124,9 @@ type app struct {
 	backendAddr string
 	serverTLS   *tls.Config
 
+	// tel builds the App's telemetry, telemetry.NoopBuilder if it is nil.
+	tel telemetry.Builder
+
 	// settings and opts build the Client.
 	settings grpcclient.Settings
 	opts     []grpc.DialOption
@@ -169,7 +172,11 @@ func (a app) run(t *testing.T) (*grpcclient.Client, error) {
 		return append(services, j), nil
 	}
 
-	_, status := humustest.Start(t, init, humustest.WithApp(humus.WithHost(a.host), humus.WithTelemetry(telemetry.NoopBuilder)))
+	tel := a.tel
+	if tel == nil {
+		tel = telemetry.NoopBuilder
+	}
+	_, status := humustest.Start(t, init, humustest.WithApp(humus.WithHost(a.host), humus.WithTelemetry(tel)))
 	st := <-status
 	require.Zero(t, st.Code(), "cause: %v", st.Cause())
 	return client, workErr
