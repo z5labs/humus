@@ -151,6 +151,35 @@
 // would rather skip a record that always fails than stop on it returns nil,
 // after storing the record wherever it keeps dead letters.
 //
+// # Readiness
+//
+// A consumer is ready once it has joined its consumer group. [Service.Joined]
+// returns a health.Monitor that is unhealthy until franz-go first hands the
+// member an assignment, empty or not, and healthy from then until Serve
+// returns. It goes in the readiness of whatever exposes the probes: a probes
+// server, such as httphealth.NewService in a pod with no server of its own,
+// or a health Service.
+//
+//	probes, err := httphealth.NewService(s, probeSettings, health.Readiness(consumer.Joined()))
+//
+// A rollout whose new pods can't reach the brokers then stalls, and is
+// reported failed at its progress deadline, rather than replacing every old
+// pod with pods that never consume. A member assigned no
+// partition, because the group has more members than the topics have
+// partitions, has joined, and is ready.
+//
+// A broker outage after the first join doesn't make a consumer unready. The
+// outage hits every pod at once, so taking them all out of service would
+// gain nothing, and franz-go rejoins the group on its own once the brokers
+// are back. Neither does a rebalance, nor a fenced-out member rejoining.
+//
+// Joined is for readiness only. A liveness monitor would restart every pod
+// in a broker outage, and the kubelet's restart backoff, up to five minutes
+// by default, would then hold them down after the brokers return, while
+// franz-go rejoins on its own. The errors a restart would fix, an error code
+// franz-go doesn't retry and credentials a broker refuses, already end
+// Serve, so the pod exits and is restarted without a probe.
+//
 // # Producing
 //
 // A [Producer] produces records to one Kafka cluster. The end user's Init

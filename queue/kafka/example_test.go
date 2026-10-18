@@ -23,6 +23,7 @@ import (
 	"github.com/z5labs/bedrock/config"
 
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/health"
 	"github.com/z5labs/humus/queue"
 	"github.com/z5labs/humus/queue/kafka"
 	"github.com/z5labs/humus/telemetry"
@@ -128,6 +129,35 @@ func buildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Diale
 // running it would exit the test binary.
 func Example_main() {
 	humus.Main(Init, humus.WithTelemetry(buildTelemetry))
+}
+
+// A consumer is made ready once it has joined its group: Joined's monitor
+// goes in the readiness of whatever exposes the probes, here a health
+// Service. In a pod with no server of its own, httphealth.NewService takes
+// the same Option. Nothing is served here, so the consumer hasn't joined,
+// and the health Service isn't ready.
+func ExampleService_Joined() {
+	s := &humus.Setup{Host: humus.OSHost(), Telemetry: telemetry.Noop()}
+	settings := kafka.DefaultSettings()
+	settings.Brokers = []string{"localhost:9092"}
+	settings.GroupID = "orders-consumer"
+	settings.Topics = []string{"orders"}
+	h := &orders{stored: map[string]bool{}, out: io.Discard}
+
+	consumer, err := kafka.NewService(s, settings, queue.ProcessorFunc[kafka.Message](h.Handle))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	probes := health.NewService(health.Readiness(consumer.Joined()))
+
+	joined, _ := consumer.Joined().Healthy(context.Background())
+	fmt.Println("joined before Serve:", joined)
+	ready, _ := probes.Probes().Readiness.Healthy(context.Background())
+	fmt.Println("ready before Serve:", ready)
+
+	// Output: joined before Serve: false
+	// ready before Serve: false
 }
 
 // secureInit is an Init for brokers that require TLS with a client
