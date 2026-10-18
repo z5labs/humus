@@ -17,7 +17,9 @@ package rabbitmq_test
 import (
 	"context"
 	"errors"
+	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -207,4 +209,62 @@ func TestPublisher_carries_its_trace_to_the_Service_that_consumes_the_message(t 
 	mu.Lock()
 	require.Equal(t, process.SpanContext(), inSpan, "Process's context carries the process span")
 	mu.Unlock()
+}
+
+// TestPublisher_a_Publish_right_after_close_all_connections_is_confirmed_on_a_new_connection
+// closes every connection to the broker, so it doesn't run in parallel with
+// the other tests. Whether the Publisher learns of the close before its
+// next Publish or during it, that Publish connects again and is confirmed.
+func TestPublisher_a_Publish_right_after_close_all_connections_is_confirmed_on_a_new_connection(t *testing.T) {
+	q := declareQueue(t)
+
+	host := humus.OSHost()
+	var dials atomic.Int32
+	dial := host.Dial
+	host.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		dials.Add(1)
+		return dial(ctx, network, address)
+	}
+	settings := rabbitmq.DefaultPublisherSettings()
+	settings.Connection = plainText(t)
+
+	var (
+		firstErr, secondErr error
+		published           = make(chan struct{})
+		closed              = make(chan struct{})
+	)
+	_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		pub, err := rabbitmq.NewPublisher(s, settings)
+		if err != nil {
+			return nil, err
+		}
+		return []humus.Service{job.NewService(s, func(ctx context.Context) error {
+			firstErr = pub.Publish(ctx, rabbitmq.Publishing{RoutingKey: q, MessageID: "before", Body: []byte("before")})
+			close(published)
+			select {
+			case <-closed:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			secondErr = pub.Publish(ctx, rabbitmq.Publishing{RoutingKey: q, MessageID: "after", Body: []byte("after")})
+			return nil
+		})}, nil
+	}, humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(telemetry.NoopBuilder)))
+
+	<-published
+	closeAllConnections(t)
+	close(closed)
+	st := exit(t, status)
+	require.Zero(t, st.Code(), "cause: %v", st.Cause())
+	require.NoError(t, firstErr)
+	require.NoError(t, secondErr, "the Publish after close_all_connections was confirmed")
+	require.Equal(t, int32(2), dials.Load(), "the Publisher connected again")
+
+	got := takeReady(t, q)
+	ids := make([]string, 0, len(got))
+	for _, d := range got {
+		ids = append(ids, d.MessageId)
+	}
+	require.Contains(t, ids, "before")
+	require.Contains(t, ids, "after")
 }

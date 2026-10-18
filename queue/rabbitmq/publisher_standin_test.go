@@ -24,8 +24,10 @@ type pubStandIn struct {
 	// published carries each publish the Publisher makes, in order.
 	published chan *published
 
-	// autoAck makes each channel confirm each publish as it is made.
-	autoAck bool
+	// autoAck makes each channel confirm each publish as it is made, and
+	// autoNack makes it nack each one.
+	autoAck  bool
+	autoNack bool
 
 	// hold makes each dial wait until the test sends to it, or its
 	// context ends.
@@ -222,8 +224,11 @@ func (ch *pubChan) PublishWithContext(ctx context.Context, exchange, key string,
 	}
 	ch.tag++
 	ch.mu.Unlock()
-	if ch.conn.s.autoAck {
+	switch {
+	case ch.conn.s.autoAck:
 		ch.confirm(true)
+	case ch.conn.s.autoNack:
+		ch.confirm(false)
 	}
 	ch.conn.s.published <- &published{ch: ch, exchange: exchange, key: key, mandatory: mandatory, immediate: immediate, msg: msg}
 	return nil

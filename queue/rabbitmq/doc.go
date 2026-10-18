@@ -453,29 +453,59 @@
 // the drain can still publish. After it has run, Publish fails at once.
 //
 // Each channel the Publisher opens is in confirm mode and carries one
-// publish at a time. Publish publishes the message with mandatory set, so
-// the broker returns a message no queue is bound to receive rather than
-// dropping it, and waits for the broker's confirm:
+// publish at a time. Each attempt of a Publish takes a channel, connecting
+// first if needed, publishes the message with mandatory set, so the broker
+// returns a message no queue is bound to receive rather than dropping it,
+// and waits for the broker's confirm. Each attempt's result decides, with
+// bedrock's retry, whether another attempt follows:
 //
-//   - confirmed, Publish returns nil;
-//   - returned, Publish returns an error that matches [ErrUnroutable].
+//   - confirmed: Publish returns nil;
+//   - returned: Publish returns an error that matches [ErrUnroutable], with
+//     no retry, since another attempt would be routed the same way.
 //     amqp091 hands a basic.return to the channel's listener before the
 //     confirm that follows it, so a return that is waiting once the confirm
 //     arrives belongs to that publish;
-//   - nacked by the broker, Publish returns an error that says so;
 //   - a channel error, such as 404 NOT_FOUND for an exchange that doesn't
-//     exist, or 403 ACCESS_REFUSED, Publish returns the broker's
-//     *amqp.Error, and the channel is replaced;
-//   - a lost connection, a failed dial or a failed handshake, Publish
-//     returns that error.
+//     exist, or 403 ACCESS_REFUSED: Publish returns the broker's
+//     *amqp.Error, with no retry, since the broker refused the message, and
+//     the channel is replaced;
+//   - nacked by the broker, a dropped connection, a failed dial or a failed
+//     handshake: the broker didn't take the message, or its answer was
+//     lost, and another attempt, on a new channel or connection when the
+//     old one was lost, may well be confirmed. So another attempt follows,
+//     after a wait drawn from retry.Exponential(BackoffBase, BackoffMax),
+//     up to [PublisherSettings].MaxAttempts in all, and Publish returns the
+//     last attempt's error. 1 MaxAttempts turns retries off;
+//   - the context's deadline, or the caller cancelling it: no further
+//     attempt, as retry decides it, and Publish returns an error wrapping
+//     the context's error.
 //
-// [PublisherSettings].Channels bounds the publishes in flight at once: a
-// Publish waits for a channel when every one is busy.
-// [PublisherSettings].Timeout bounds the whole Publish, the wait for a
-// channel and the confirm included, and a deadline the caller's context
-// already has wins when it is earlier. When the context is done first,
-// Publish returns an error wrapping the context's error, and the channel
-// isn't reused, since a confirm may still arrive on it.
+// That table is fixed. An HTTP client's Classify exists because each API
+// decides what its answers mean, but RabbitMQ's protocol fixes what a
+// confirm, a nack, a return and a channel error mean, so the Publisher has
+// no Classify setting, as Kafka's producer has none.
+//
+// Retries add load to a broker when it can least take it, so the retries of
+// every Publish of a Publisher share one budget, [PublisherSettings].
+// RetryBudget, as retry.Budget describes: each failure that would be
+// retried takes a token, each confirm adds back TokenRatio of one, and no
+// attempt follows a failure while half the tokens or fewer are left. While
+// the broker keeps failing, each Publish makes one attempt rather than
+// MaxAttempts. A first attempt is never refused.
+//
+// A retry can publish a message twice: when a connection is lost after the
+// broker took the message but before its confirm arrived, the attempt that
+// follows publishes it again. So publishing is at least once, and a
+// consumer of the message is idempotent anyway, under [queue]'s contract.
+//
+// [PublisherSettings].Channels bounds the publishes in flight at once: an
+// attempt waits for a channel when every one is busy, and gives its
+// channel back before any wait for the next. [PublisherSettings].Timeout
+// bounds the whole Publish, every attempt, the waits between them and each
+// confirm included, and a deadline the caller's context already has wins
+// when it is earlier. No attempt starts after it, and a wait that would
+// end after it isn't begun. When the context is done during an attempt,
+// the channel isn't reused, since a confirm may still arrive on it.
 //
 // A [Publishing]'s zero value is persistent, with delivery mode 2, so a
 // message isn't lost on a broker restart because a field was left out.
@@ -520,9 +550,11 @@
 // messaging.destination.name, server.address and server.port, and
 // error.type when the attempt failed. A return and a channel error have the
 // broker's AMQP reply code as error.type, such as 312 for a return and 404
-// for an exchange that doesn't exist, and a nack has nacked. A Publish that
-// fails before it publishes, waiting for a channel or connecting, is on its
-// span but makes no attempt, so neither instrument records it. As with the
+// for an exchange that doesn't exist, and a nack has nacked. A Publish has
+// one span, whatever its attempts, and a nack followed by a confirm counts
+// two messages sent, one with error.type nacked. An attempt that fails
+// before it publishes, waiting for a channel or connecting, publishes
+// nothing, so neither instrument records it. As with the
 // Service, a routing key that carries identifiers makes a series per key in
 // both instruments.
 //

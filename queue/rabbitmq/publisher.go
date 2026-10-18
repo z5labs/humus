@@ -17,6 +17,7 @@ import (
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/z5labs/bedrock/retry"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
@@ -124,6 +125,61 @@ var errStopped = errors.New("rabbitmq: the Publisher is stopped")
 // errNacked is matched by the error of a publish the broker nacked.
 var errNacked = errors.New("the broker nacked the message")
 
+// lostError is the error of an attempt that never reached the broker, or
+// whose answer was lost: a failed dial or handshake, a lost connection, or
+// a channel that closed without an error of the broker's. Its message, and
+// its error.type, are its cause's, so marking an error lost changes neither.
+type lostError struct{ err error }
+
+func (e *lostError) Error() string { return e.err.Error() }
+
+func (e *lostError) Unwrap() error { return e.err }
+
+// ErrorType is semconv's error.type of the cause, which semconv.ErrorType
+// asks for when it finds a lostError in an error's chain.
+func (e *lostError) ErrorType() string {
+	return semconv.ErrorType(e.err).Value.AsString()
+}
+
+// lost marks err as the error of an attempt that never reached the broker,
+// or whose answer was lost, so classify retries it.
+func lost(err error) error {
+	return &lostError{err: err}
+}
+
+// classify is the Publisher's classifier for retry.New. RabbitMQ's protocol
+// fixes what each result of an attempt means, so it is fixed too:
+//
+//   - confirmed: Success;
+//   - returned unroutable, ErrUnroutable: Stop, since another attempt is
+//     routed the same way;
+//   - a channel error, such as 404 NOT_FOUND or 403 ACCESS_REFUSED: Stop,
+//     since the broker refused the publish;
+//   - nacked by the broker, or lost: a dropped connection, a channel closed
+//     without the broker's error, a failed dial or a failed handshake:
+//     Retry, since another attempt, on a new channel or connection, may be
+//     confirmed;
+//   - an attempt that ended with ctx, its deadline or the caller
+//     cancelling: Retry, which retry turns into Expired, since ctx is done;
+//   - the Publisher stopped, and anything else: Stop.
+func classify(ctx context.Context, err error) (retry.Outcome, time.Duration) {
+	switch {
+	case err == nil:
+		return retry.Success, 0
+	case errors.Is(err, ErrUnroutable), errors.Is(err, errStopped):
+		return retry.Stop, 0
+	case errors.Is(err, errNacked):
+		return retry.Retry, 0
+	}
+	if _, ok := errors.AsType[*lostError](err); ok {
+		return retry.Retry, 0
+	}
+	if ctx.Err() != nil {
+		return retry.Retry, 0
+	}
+	return retry.Stop, 0
+}
+
 // publishChannel is what the Publisher uses of an AMQP channel.
 // *amqp.Channel satisfies it, and a unit test replaces it with a stand-in.
 type publishChannel interface {
@@ -176,6 +232,9 @@ type Publisher struct {
 	sent       messagingconv.ClientSentMessages
 	duration   messagingconv.ClientOperationDuration
 
+	// retrier makes the attempts of every Publish, within one Budget.
+	retrier *retry.Retrier
+
 	// serverAddr and serverPort are Connection.Addr's host and port.
 	serverAddr string
 	serverPort int
@@ -214,7 +273,12 @@ type confirmChannel struct {
 // with s.OnStop.
 //
 // It reports every field of settings that fails its check in one error that
-// names each one. The Publisher reaches the broker only through s.Host.
+// names each one, a BackoffMax below BackoffBase included. The Publisher
+// reaches the broker only through s.Host.
+//
+// It builds the one retry.Budget, from RetryBudget, and the one
+// retry.Retrier, with retry.Exponential(BackoffBase, BackoffMax) and
+// MaxAttempts, that every Publish shares.
 //
 // The function NewPublisher registers with s.OnStop closes the connection,
 // if one is open, within the grace period. It runs once every Service has
@@ -236,6 +300,10 @@ func NewPublisher(s *humus.Setup, settings PublisherSettings) (*Publisher, error
 	if err := errors.Join(err1, err2); err != nil {
 		return nil, fmt.Errorf("rabbitmq: NewPublisher: creating the instruments: %w", err)
 	}
+	retrier, err := newRetrier(settings)
+	if err != nil {
+		return nil, fmt.Errorf("rabbitmq: NewPublisher: %w", err)
+	}
 	// CheckAddr has accepted Addr, so it splits, and its port is a number.
 	host, port, _ := net.SplitHostPort(settings.Connection.Addr)
 	portNum, _ := strconv.Atoi(port)
@@ -247,6 +315,7 @@ func NewPublisher(s *humus.Setup, settings PublisherSettings) (*Publisher, error
 		propagator: s.Telemetry.Propagator,
 		sent:       sent,
 		duration:   duration,
+		retrier:    retrier,
 		serverAddr: host,
 		serverPort: portNum,
 		slots:      make(chan struct{}, settings.Channels),
@@ -275,7 +344,41 @@ func checkPublisherSettings(settings PublisherSettings) error {
 	if err := CheckTimeout(settings.Timeout); err != nil {
 		errs = append(errs, fmt.Errorf("PublisherSettings.Timeout %w", err))
 	}
+	if err := CheckMaxAttempts(settings.MaxAttempts); err != nil {
+		errs = append(errs, fmt.Errorf("PublisherSettings.MaxAttempts %w", err))
+	}
+	errBase := CheckBackoffBase(settings.BackoffBase)
+	if errBase != nil {
+		errs = append(errs, fmt.Errorf("PublisherSettings.BackoffBase %w", errBase))
+	}
+	errMax := CheckBackoffMax(settings.BackoffMax)
+	if errMax != nil {
+		errs = append(errs, fmt.Errorf("PublisherSettings.BackoffMax %w", errMax))
+	}
+	if errBase == nil && errMax == nil && settings.BackoffMax < settings.BackoffBase {
+		errs = append(errs, errors.New("PublisherSettings.BackoffMax must be at least PublisherSettings.BackoffBase"))
+	}
+	if err := CheckRetryBudgetMaxTokens(settings.RetryBudget.MaxTokens); err != nil {
+		errs = append(errs, fmt.Errorf("PublisherSettings.RetryBudget.MaxTokens %w", err))
+	}
+	if err := CheckRetryBudgetTokenRatio(settings.RetryBudget.TokenRatio); err != nil {
+		errs = append(errs, fmt.Errorf("PublisherSettings.RetryBudget.TokenRatio %w", err))
+	}
 	return errors.Join(errs...)
+}
+
+// newRetrier builds the Publisher's retry.Retrier from settings, which
+// checkPublisherSettings has passed.
+func newRetrier(settings PublisherSettings) (*retry.Retrier, error) {
+	budget, err := retry.NewBudget(settings.RetryBudget)
+	if err != nil {
+		return nil, err
+	}
+	schedule, err := retry.Exponential(settings.BackoffBase, settings.BackoffMax)
+	if err != nil {
+		return nil, err
+	}
+	return retry.New(settings.MaxAttempts, schedule, classify, budget)
 }
 
 // close is the Publisher's OnStop function. It stops the Publisher, so every
@@ -302,18 +405,41 @@ func (p *Publisher) close(ctx context.Context) error {
 // Publish publishes m and returns once the broker has confirmed it. It is
 // safe for concurrent use.
 //
-// It publishes m with mandatory set, on a channel in confirm mode, and
-// waits for the broker's confirm. It returns nil once the broker has
-// confirmed m, and an error matching ErrUnroutable when the broker
-// returned m because no queue was bound to receive it. It returns an error
-// when the broker nacked m, and the broker's *amqp.Error when it closed the
-// channel, as with 404 NOT_FOUND for an exchange that doesn't exist or 403
-// ACCESS_REFUSED. A lost connection, or a failed dial or handshake, is
-// returned as it is, and the next Publish connects again.
+// Each attempt publishes m with mandatory set, on a channel in confirm
+// mode, and waits for the broker's confirm. An attempt after a lost channel
+// or connection takes a new channel, connecting first if needed. What each
+// attempt's result means is fixed by RabbitMQ's protocol, so the Publisher
+// has no Classify setting:
 //
-// Settings.Timeout bounds the whole Publish, its confirm included, unless
-// ctx has an earlier deadline, which then wins. When ctx is done first,
-// Publish returns an error wrapping ctx's error.
+//   - confirmed: Publish returns nil;
+//   - returned because no queue was bound to receive m: Publish returns an
+//     error matching ErrUnroutable at once, since another attempt would be
+//     routed the same way;
+//   - a channel error, as with 404 NOT_FOUND for an exchange that doesn't
+//     exist or 403 ACCESS_REFUSED: Publish returns the broker's *amqp.Error
+//     at once, since the broker refused m;
+//   - nacked by the broker, a dropped connection, a failed dial or a failed
+//     handshake: another attempt follows, after a wait drawn from
+//     retry.Exponential(BackoffBase, BackoffMax), up to MaxAttempts
+//     attempts in all, and Publish returns the last attempt's error. 1
+//     MaxAttempts turns retries off.
+//
+// The retries of every Publish of p share one RetryBudget: each failure
+// that would be retried takes a token, each confirm adds back TokenRatio,
+// and no attempt follows a failure while half the tokens or fewer are
+// left, so a broker that keeps failing gets one attempt per Publish rather
+// than MaxAttempts. A first attempt is never refused.
+//
+// Settings.Timeout bounds the whole Publish, every attempt and the waits
+// between them included, unless ctx has an earlier deadline, which then
+// wins. No attempt starts after it, and no wait is begun that would end
+// after it. When ctx is done first, or the caller cancels it, no further
+// attempt is made, and Publish returns an error wrapping ctx's error.
+//
+// A confirm can be lost with its connection after the broker took m, and
+// the attempt that follows then publishes m again. So publishing is at
+// least once, and a consumer of m is idempotent anyway, under queue's
+// contract.
 //
 // Each Publish has a span, a child of ctx's, named "send <exchange>", or
 // "send amq.default" for the default exchange, of kind PRODUCER. Its
@@ -328,14 +454,15 @@ func (p *Publisher) close(ctx context.Context) error {
 // itself is never changed. A failed Publish is recorded on its span, with
 // error.type and an error status. The body is never recorded.
 //
-// Each attempt to publish m records messaging.client.sent.messages, and
+// Each attempt that publishes m records messaging.client.sent.messages, and
 // messaging.client.operation.duration, from the publish to the broker's
 // confirm, in seconds. Each has messaging.system,
 // messaging.operation.name, messaging.destination.name, server.address and
 // server.port, and error.type when the attempt failed: the broker's reply
-// code for a return or a channel error, nacked for a nack. A Publish that
-// fails before it publishes, waiting for a channel or connecting, makes no
-// attempt and records neither.
+// code for a return or a channel error, nacked for a nack. An attempt that
+// fails before it publishes, waiting for a channel or connecting, publishes
+// nothing and records neither. Every attempt is within the Publish's one
+// span.
 func (p *Publisher) Publish(ctx context.Context, m Publishing) (err error) {
 	ctx, span := p.tracer.Start(ctx, spanName(m.Exchange),
 		trace.WithSpanKind(trace.SpanKindProducer),
@@ -359,19 +486,33 @@ func (p *Publisher) Publish(ctx context.Context, m Publishing) (err error) {
 	msg := m.amqpPublishing()
 	p.propagator.Inject(ctx, (*headerCarrier)(&msg.Headers))
 
+	for a := range p.retrier.Attempts(ctx) {
+		err = p.attempt(ctx, m, msg)
+		a.Done(err)
+	}
+	if err != nil && ctx.Err() != nil && !errors.Is(err, ctx.Err()) {
+		// ctx ended during the wait after a failed attempt: the caller sees
+		// why it ended, and why the attempt before failed.
+		err = fmt.Errorf("rabbitmq: publishing to %s: %w; the last attempt failed: %w", destination(m), context.Cause(ctx), err)
+	}
+	return err
+}
+
+// attempt is one attempt of a Publish: it takes a channel, publishes msg,
+// which is m with its trace context, on it, and gives the channel back.
+func (p *Publisher) attempt(ctx context.Context, m Publishing, msg amqp.Publishing) error {
 	cc, err := p.take(ctx, m)
 	if err != nil {
 		return err
 	}
-	reuse, err := p.attempt(ctx, cc, m, msg)
+	reuse, err := p.publish(ctx, cc, m, msg)
 	p.give(cc, reuse)
 	return err
 }
 
-// attempt publishes msg, which is m with its trace context, on cc, and
-// records the attempt on both instruments. It returns what cc.publish
-// returns.
-func (p *Publisher) attempt(ctx context.Context, cc *confirmChannel, m Publishing, msg amqp.Publishing) (reuse bool, err error) {
+// publish publishes msg, which is m with its trace context, on cc, and
+// records it on both instruments. It returns what cc.publish returns.
+func (p *Publisher) publish(ctx context.Context, cc *confirmChannel, m Publishing, msg amqp.Publishing) (reuse bool, err error) {
 	start := time.Now()
 	reuse, err = cc.publish(ctx, m, msg)
 	elapsed := time.Since(start).Seconds()
@@ -544,7 +685,12 @@ func (p *Publisher) open(ctx context.Context) (*confirmChannel, error) {
 	select {
 	case o := <-done:
 		if o.err != nil {
-			return nil, fmt.Errorf("rabbitmq: opening a channel to %s: %w", p.settings.Connection.Addr, o.err)
+			err := fmt.Errorf("rabbitmq: opening a channel to %s: %w", p.settings.Connection.Addr, o.err)
+			if conn.IsClosed() {
+				// The connection was lost: the next attempt connects again.
+				return nil, lost(err)
+			}
+			return nil, err
 		}
 		return o.cc, nil
 	case <-ctx.Done():
@@ -614,7 +760,11 @@ func (p *Publisher) connection(ctx context.Context) (publishConn, error) {
 		return nil, errStopped
 	}
 	if err != nil {
-		return nil, err
+		if ctx.Err() != nil {
+			// The Publish ended, not the dial: classify sees ctx's error.
+			return nil, err
+		}
+		return nil, lost(err)
 	}
 	p.conn = conn
 	return conn, nil
@@ -638,7 +788,8 @@ func (cc *confirmChannel) publish(ctx context.Context, m Publishing, msg amqp.Pu
 		if ctx.Err() != nil {
 			return false, fmt.Errorf("rabbitmq: publishing to %s: %w", dest, ctx.Err())
 		}
-		return false, fmt.Errorf("rabbitmq: publishing to %s: %w", dest, err)
+		// The broker never had m: its channel or connection closed first.
+		return false, lost(fmt.Errorf("rabbitmq: publishing to %s: %w", dest, err))
 	}
 	select {
 	case c, ok := <-cc.confirms:
@@ -655,7 +806,7 @@ func (cc *confirmChannel) publish(ctx context.Context, m Publishing, msg amqp.Pu
 		}
 		return true, nil
 	case e, ok := <-cc.closes:
-		return false, closedError(dest, e, ok)
+		return false, cc.closedError(dest, e, ok)
 	case <-ctx.Done():
 		// A confirm may still arrive on the channel, so it is not reused.
 		return false, fmt.Errorf("rabbitmq: waiting for the broker to confirm the message published to %s: %w", dest, ctx.Err())
@@ -668,18 +819,27 @@ func (cc *confirmChannel) publish(ctx context.Context, m Publishing, msg amqp.Pu
 func (cc *confirmChannel) closed(dest string) error {
 	select {
 	case e, ok := <-cc.closes:
-		return closedError(dest, e, ok)
+		return cc.closedError(dest, e, ok)
 	default:
-		return closedError(dest, nil, false)
+		return cc.closedError(dest, nil, false)
 	}
 }
 
 // closedError is the error of a publish whose channel closed with e: the
 // broker's error, either the channel's or the lost connection's, or
 // amqp.ErrClosed when the channel closed without one.
-func closedError(dest string, e *amqp.Error, ok bool) error {
+//
+// Only an error the broker closed the channel with, on a connection still
+// open, is a channel error. The rest are marked lost: amqp091 marks a
+// connection closed before it closes its channels with the connection's
+// error, so a lost connection is seen as one here.
+func (cc *confirmChannel) closedError(dest string, e *amqp.Error, ok bool) error {
 	if ok && e != nil {
-		return fmt.Errorf("rabbitmq: publishing to %s: %w", dest, e)
+		err := fmt.Errorf("rabbitmq: publishing to %s: %w", dest, e)
+		if cc.conn.IsClosed() {
+			return lost(err)
+		}
+		return err
 	}
-	return fmt.Errorf("rabbitmq: publishing to %s: %w", dest, amqp.ErrClosed)
+	return lost(fmt.Errorf("rabbitmq: publishing to %s: %w", dest, amqp.ErrClosed))
 }

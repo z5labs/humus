@@ -40,10 +40,16 @@ type tracedPublisher struct {
 
 func newTracedPublisher(t *testing.T) *tracedPublisher {
 	t.Helper()
+	return newTracedPublisherOf(t, publisherSettings())
+}
+
+// newTracedPublisherOf is newTracedPublisher with settings.
+func newTracedPublisherOf(t *testing.T, settings rabbitmq.PublisherSettings) *tracedPublisher {
+	t.Helper()
 	tel := humustest.NewTelemetry()
 	sdk, err := tel.Builder()(t.Context(), bedrock.Process{}, nil)
 	require.NoError(t, err)
-	pub, err := rabbitmq.NewPublisher(&humus.Setup{Host: humustest.NewHost(t).Host(), Telemetry: sdk}, publisherSettings())
+	pub, err := rabbitmq.NewPublisher(&humus.Setup{Host: humustest.NewHost(t).Host(), Telemetry: sdk}, settings)
 	require.NoError(t, err)
 	s := newPubStandIn()
 	rabbitmq.SetDial(pub, s.dial)
@@ -205,7 +211,10 @@ func TestPublisher_a_failed_publish_is_on_its_span_and_both_instruments(t *testi
 			t.Parallel()
 
 			synctest.Test(t, func(t *testing.T) {
-				tp := newTracedPublisher(t)
+				// One attempt, so a nack is the Publish's result.
+				settings := publisherSettings()
+				settings.MaxAttempts = 1
+				tp := newTracedPublisherOf(t, settings)
 
 				// A confirmed publish first, so each instrument has a series
 				// without error.type beside the failed one's.
@@ -300,7 +309,9 @@ func TestPublisher_never_records_the_body(t *testing.T) {
 
 	synctest.Test(t, func(t *testing.T) {
 		const body = "card 4111-1111-1111-1111"
-		tp := newTracedPublisher(t)
+		settings := publisherSettings()
+		settings.MaxAttempts = 1
+		tp := newTracedPublisherOf(t, settings)
 		m := accepted
 		m.Body = []byte(body)
 
