@@ -391,11 +391,12 @@ func TestService_at_most_once_never_redelivers_a_batch_it_acked(t *testing.T) {
 
 	// None of the batch, the first messages, is ready again: only what was
 	// prefetched behind it and never acked is.
-	var ready []string
+	ready := []string{}
 	for _, d := range takeReady(t, q) {
 		ready = append(ready, d.MessageId)
 	}
 	batch := 3 - len(ready)
+	t.Logf("the batch was %d messages", batch)
 	require.GreaterOrEqual(t, batch, 1)
 	require.Equal(t, ids(3)[:batch], got.ids(), "the batch was processed, once")
 	require.Equal(t, ids(3)[batch:], ready, "no message of the batch is delivered again")

@@ -12,6 +12,7 @@ import (
 	"io"
 	"math"
 	"net"
+	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -339,7 +340,13 @@ func (svc *Service) consumeOn(ctx context.Context, ch channel, conn io.Closer) (
 	if err := ch.Qos(svc.settings.Prefetch, 0, false); err != nil {
 		return nil, fmt.Errorf("rabbitmq: setting the prefetch count to consume %s: %w", q, err)
 	}
-	deliveries, err := ch.ConsumeWithContext(ctx, q, consumerTag, false, false, false, false, nil)
+	// amqp091 cancels the consumer from a goroutine of its own once the
+	// context it consumes with is done, and that basic.cancel would race the
+	// Service's own synchronous calls on the channel. So it is given a
+	// context that is never done: the Service cancels the consumer itself,
+	// and closing the connection, which start does when ctx ends, stops a
+	// consume the broker doesn't answer.
+	deliveries, err := ch.ConsumeWithContext(context.WithoutCancel(ctx), q, consumerTag, false, false, false, false, nil)
 	if err != nil {
 		return nil, fmt.Errorf("rabbitmq: consuming %s: %w", q, err)
 	}
@@ -558,21 +565,7 @@ func (s *session) dispatchAtMostOnce(jobs chan<- amqp.Delivery) (lost bool) {
 		if !ok {
 			return lost
 		}
-		batch := []amqp.Delivery{d}
-	buffered:
-		for len(batch) < prefetch {
-			select {
-			case d, ok := <-s.deliveries:
-				if !ok {
-					break buffered
-				}
-				s.received++
-				s.last = d.DeliveryTag
-				batch = append(batch, d)
-			default:
-				break buffered
-			}
-		}
+		batch := s.buffered(d, prefetch)
 		if s.stopping.Err() != nil {
 			// Not acked, so not handed out: it is nacked with the rest.
 			return false
@@ -604,6 +597,38 @@ func (s *session) dispatchAtMostOnce(jobs chan<- amqp.Delivery) (lost bool) {
 			}
 		}
 	}
+}
+
+// buffered returns first, followed by every delivery already buffered behind
+// it, up to limit in all.
+//
+// amqp091 hands deliveries over an unbuffered channel, fed by a goroutine
+// of its own that buffers what the broker has sent. Having just handed one
+// over, that goroutine has been readied but may not yet be waiting to hand
+// over the next, so a receive that would block yields once, letting it run,
+// before it takes the buffer to be empty.
+func (s *session) buffered(first amqp.Delivery, limit int) []amqp.Delivery {
+	batch := []amqp.Delivery{first}
+	yielded := false
+	for len(batch) < limit {
+		select {
+		case d, ok := <-s.deliveries:
+			if !ok {
+				return batch
+			}
+			s.received++
+			s.last = d.DeliveryTag
+			batch = append(batch, d)
+			yielded = false
+		default:
+			if yielded {
+				return batch
+			}
+			yielded = true
+			runtime.Gosched()
+		}
+	}
+	return batch
 }
 
 // worker processes the deliveries it is handed, one at a time, and settles
@@ -638,9 +663,13 @@ func (s *session) worker(jobs <-chan amqp.Delivery, logCtx context.Context) {
 			_ = s.ch.Ack(d.DeliveryTag, false)
 			s.settled.Add(1)
 		default:
+			// The session stops before the reject, so the broker can't
+			// hand the requeued delivery back to a worker of this
+			// consumer: it is taken, if at all, as the session stops, and
+			// nacked with the rest.
+			s.fail(processingError(svc.settings.Queue, d, err))
 			_ = s.ch.Reject(d.DeliveryTag, true)
 			s.settled.Add(1)
-			s.fail(processingError(svc.settings.Queue, d, err))
 		}
 	}
 }

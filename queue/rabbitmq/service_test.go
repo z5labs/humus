@@ -199,8 +199,10 @@ func TestService_at_least_once_failure_rejects_it_acks_in_flight_and_nacks_the_r
 		synctest.Wait()
 
 		// b failed while a is in flight: b is rejected and the consumer
-		// cancelled, and a is still processing.
-		require.Equal(t, []string{qos10, consume, "reject 2 requeue=true", cancel}, u.ch.Calls())
+		// cancelled, in either order, and a is still processing.
+		calls := u.ch.Calls()
+		require.Equal(t, []string{qos10, consume}, calls[:2])
+		require.ElementsMatch(t, []string{"reject 2 requeue=true", cancel}, calls[2:])
 		select {
 		case err := <-served:
 			t.Fatalf("Serve returned before the delivery in flight finished: %v", err)
@@ -214,13 +216,10 @@ func TestService_at_least_once_failure_rejects_it_acks_in_flight_and_nacks_the_r
 		require.ErrorContains(t, err, "message b")
 		require.ElementsMatch(t, []string{"a", "b"}, got.get(), "c and d were never processed")
 		require.Equal(t, []string{
-			qos10, consume,
-			"reject 2 requeue=true",
-			cancel,
 			"ack 1",
 			"nack 4 multiple=true requeue=true",
 			closeChannel, closeConn,
-		}, u.ch.Calls())
+		}, u.ch.Calls()[4:], "a is acked, and then the rest nacked in one basic.nack")
 	})
 }
 
@@ -236,7 +235,10 @@ func TestService_at_least_once_failure_without_a_message_ID_names_the_queue(t *t
 		err := <-served
 		require.ErrorIs(t, err, bad)
 		require.EqualError(t, err, "rabbitmq: processing a message from orders: cannot process")
-		require.Equal(t, []string{qos10, consume, "reject 1 requeue=true", cancel, closeChannel, closeConn}, u.ch.Calls())
+		calls := u.ch.Calls()
+		require.Equal(t, []string{qos10, consume}, calls[:2])
+		require.ElementsMatch(t, []string{"reject 1 requeue=true", cancel}, calls[2:4])
+		require.Equal(t, []string{closeChannel, closeConn}, calls[4:])
 	})
 }
 
