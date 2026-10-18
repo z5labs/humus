@@ -36,6 +36,10 @@ type standIn struct {
 	nextTag    uint64
 
 	consuming bool
+	// holdConsume makes ConsumeWithContext wait for answerConsume before it
+	// answers, as a broker that has yet to send basic.consume-ok.
+	holdConsume bool
+	consume     chan struct{}
 	// holdQos makes each Qos made once consuming has started wait for
 	// answerQos.
 	holdQos bool
@@ -54,6 +58,7 @@ func newStandIn() *standIn {
 	return &standIn{
 		deliveries: make(chan amqp.Delivery, 1000),
 		qos:        make(chan struct{}),
+		consume:    make(chan struct{}),
 		gone:       make(chan struct{}),
 	}
 }
@@ -88,6 +93,19 @@ func (s *standIn) give(redelivered bool, ids []string) {
 			Redelivered: redelivered,
 		}
 	}
+}
+
+// holdConsumes makes the stand-in hold each ConsumeWithContext until
+// answerConsume.
+func (s *standIn) holdConsumes() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.holdConsume = true
+}
+
+// answerConsume answers a ConsumeWithContext the stand-in is holding.
+func (s *standIn) answerConsume() {
+	s.consume <- struct{}{}
 }
 
 // answerQos answers a Qos the stand-in is holding.
@@ -187,6 +205,17 @@ func (s *standIn) ConsumeWithContext(_ context.Context, queue, consumer string, 
 	s.record("consume %s %s autoAck=%t exclusive=%t noLocal=%t noWait=%t args=%v", queue, consumer, autoAck, exclusive, noLocal, noWait, args)
 	if s.closed() {
 		return nil, amqp.ErrClosed
+	}
+	if s.holdConsume {
+		s.mu.Unlock()
+		select {
+		case <-s.consume:
+		case <-s.gone:
+		}
+		s.mu.Lock()
+		if s.closed() {
+			return nil, amqp.ErrClosed
+		}
 	}
 	s.consuming = true
 	return s.deliveries, nil

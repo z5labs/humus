@@ -418,6 +418,55 @@ func TestService_reconnects_after_close_all_connections(t *testing.T) {
 	require.Zero(t, consumers)
 }
 
+// TestService_Consuming_stays_healthy_through_close_all_connections closes
+// every connection to the broker, so it doesn't run in parallel with the
+// other tests.
+func TestService_Consuming_stays_healthy_through_close_all_connections(t *testing.T) {
+	q := declareQueue(t)
+
+	var got recorder
+	svcs := make(chan *rabbitmq.Service, 1)
+	tel := humustest.NewTelemetry()
+	p, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		svc, err := rabbitmq.NewService(s, consumerSettings(plainText(t), q), queue.ProcessorFunc[rabbitmq.Message](func(_ context.Context, m rabbitmq.Message) error {
+			got.add(m)
+			return nil
+		}))
+		if err != nil {
+			return nil, err
+		}
+		svcs <- svc
+		return []humus.Service{svc}, nil
+	}, humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(tel.Builder())))
+	svc := <-svcs
+	m := svc.Consuming()
+	healthy := func() bool {
+		ok, err := m.Healthy(t.Context())
+		require.NoError(t, err, "Consuming's monitor never returns an error")
+		return ok
+	}
+
+	eventually(t, healthy, "the monitor never turned healthy")
+	_, consumers := queueState(t, q)
+	require.Equal(t, 1, consumers, "healthy once the Service consumes the queue")
+
+	closeAllConnections(t)
+	eventually(t, func() bool { return len(records(tel.Logs(), "lost the connection")) == 1 }, "the lost connection was never logged")
+	require.True(t, healthy(), "a lost connection doesn't make it unhealthy")
+	eventually(t, func() bool { return len(records(tel.Logs(), "consuming")) == 2 }, "the Service never consumed again")
+	require.True(t, healthy(), "healthy once it consumes again")
+	publish(t, q, "0")
+	eventually(t, func() bool { return len(got.ids()) == 1 }, "what was published after the reconnect was never processed")
+	require.True(t, healthy())
+
+	p.Signal(syscall.SIGTERM)
+	st := exit(t, status)
+	require.Zero(t, st.Code(), "cause: %v", st.Cause())
+	require.False(t, healthy(), "unhealthy once SIGTERM's drain has ended Serve")
+	_, consumers = queueState(t, q)
+	require.Zero(t, consumers)
+}
+
 // TestService_at_most_once_never_redelivers_a_batch_it_acked closes every
 // connection to the broker, so it doesn't run in parallel with the other
 // tests.
