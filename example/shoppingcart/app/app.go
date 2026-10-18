@@ -6,17 +6,58 @@
 // Package app is the shoppingcart's Init and its telemetry: a REST API on
 // Postgres, served over TLS by httpserver.
 //
-// [Init] does three things, in order:
+// [Init] does four things, in order:
 //   - It sources its settings from the Process with config.Struct: the
 //     httpserver.Settings, with the certificate a PKCS#12 bundle read
-//     through the Host's filesystem, and DATABASE_URL. A setting that is
-//     missing or bad exits 78, naming every one.
+//     through the Host's filesystem, DATABASE_URL, and its identity
+//     provider's key set and the jwt.Settings its tokens are checked
+//     against. A setting that is missing or bad exits 78, naming every one.
 //   - It opens its Postgres pool with pgxpool.NewWithConfig, dialing through
 //     the Host, and registers the pool's close with OnStop, so the pool is
 //     closed once the server has drained, or once Init fails after it.
+//   - It builds the Verifier of its bearer tokens: an httpclient client for
+//     the key set's origin, a jwt.RemoteKeySet on it, and a jwt.Verifier on
+//     that. Nothing is fetched until the first token.
 //   - It builds its API with openapi.NewAPI, from typed operations whose
-//     codecs and error answers are all named, and serves it with
+//     codecs, error answers and security are all named, and serves it with
 //     httpserver.NewService.
+//
+// # Authentication
+//
+// Every operation requires a JWT bearer token from the shoppingcart's
+// identity provider, and every operation that changes a cart, creating one
+// included, requires the scope carts:write too. A token's scopes are its
+// scope claim, separated by spaces, which endpoint.Claims reads:
+//
+//	Authorization: Bearer <a JWT whose scope claim holds "carts:write">
+//
+// auth/jwt's Verifier checks each token's signature against the provider's
+// JSON Web Key Set, which it fetches from JWKS_URL with an httpclient client
+// that trusts the CA in JWKS_CA_FILE, or the system's roots without it. It
+// checks the token's iss against JWT_ISSUER and its aud against
+// JWT_AUDIENCE, and its exp, nbf and iat against the clock. The API answers:
+//
+//   - a request with no token, or one the Verifier rejects, with a 401 and a
+//     Bearer challenge in WWW-Authenticate, as a problem detail;
+//   - a token without carts:write, on an operation that changes a cart, with
+//     a 403 and Bearer's insufficient_scope;
+//   - a token the service couldn't get keys for, because the key set is
+//     unreachable and no keys are held, with a 503 that says to try again.
+//     The token may be valid, so it is never a 401.
+//
+// The OpenAPI document, at /openapi.json, is public: it is served without a
+// token, and its security tells a client which token each operation needs.
+//
+// # Tests and tokens
+//
+// The tests are the service's identity provider too. Each one generates a
+// signing key with crypto/rand, serves its public half as a JSON Web Key
+// Set from a handler of the test's own, with httpserver, over TLS with a
+// certificate from the test's humustest CA, and signs the tokens it sends
+// with the key, with the scopes the test needs. The service reaches the key
+// set through its own settings, JWKS_URL and JWKS_CA_FILE, as it does in
+// production: on the humustest Host in the unit tests, and on the OS Host in
+// the container test.
 //
 // # The settings
 //
@@ -27,6 +68,24 @@
 //	                      path on the Host's filesystem; required
 //	TLS_PKCS12_PASSWORD   the bundle's password; required
 //	DATABASE_URL          the Postgres connection URL; required
+//	JWKS_URL              the identity provider's JSON Web Key Set, its
+//	                      jwks_uri: an https URL, with no user info or
+//	                      fragment; required
+//	JWKS_CA_FILE          a PEM file of the CA certificates the key set's
+//	                      server is trusted through, a path on the Host's
+//	                      filesystem; the system's roots without it
+//	JWKS_TIMEOUT, JWKS_ATTEMPT_TIMEOUT, JWKS_MAX_ATTEMPTS
+//	                      the key set's httpclient.Settings Timeout,
+//	                      AttemptTimeout and MaxAttempts; each defaults to
+//	                      httpclient.DefaultSettings' value
+//	JWT_ISSUER            the iss every token must have; required
+//	JWT_AUDIENCE          what every token's aud must hold; required
+//	JWT_ALGORITHMS        the algorithms a token may be signed with,
+//	                      separated by commas, such as RS256,ES256
+//	JWT_LEEWAY, JWT_MIN_REFRESH_INTERVAL, JWT_MAX_KEY_AGE
+//	                      jwt.Settings' other fields; each, and
+//	                      JWT_ALGORITHMS, defaults to jwt.DefaultSettings'
+//	                      value
 //	HTTP2_ONLY, READ_HEADER_TIMEOUT, READ_TIMEOUT, WRITE_TIMEOUT,
 //	IDLE_TIMEOUT, MAX_HEADER_BYTES
 //	                      httpserver.Settings' other fields; each defaults to
@@ -60,9 +119,13 @@ package app
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -71,8 +134,11 @@ import (
 	"software.sslmate.com/src/go-pkcs12"
 
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/auth"
+	"github.com/z5labs/humus/auth/jwt"
 	"github.com/z5labs/humus/example/shoppingcart/database"
 	"github.com/z5labs/humus/example/shoppingcart/endpoint"
+	"github.com/z5labs/humus/httpclient"
 	"github.com/z5labs/humus/httpserver"
 	"github.com/z5labs/humus/openapi/v3"
 	"github.com/z5labs/humus/openapi/v3/jsoncodec"
@@ -103,6 +169,24 @@ func initWith(ctx context.Context, s *humus.Setup, open openStore) ([]humus.Serv
 		return nil, err
 	}
 
+	// The key set's client is for its origin alone, and fetches nothing
+	// until the Verifier's first token.
+	idp, err := httpclient.NewClient(s, settings.KeySet.Client)
+	if err != nil {
+		return nil, err
+	}
+	keys, err := jwt.NewRemoteKeySet(settings.KeySet.URL, idp)
+	if err != nil {
+		return nil, err
+	}
+	tokens, err := jwt.NewVerifier[endpoint.Claims](s, settings.JWT, keys)
+	if err != nil {
+		return nil, err
+	}
+	bearer := auth.Bearer("bearer", tokens.Verify).
+		Format("JWT").
+		Description("A JWT from the shoppingcart's identity provider. Changing a cart needs the scope carts:write.")
+
 	api, err := openapi.NewAPI(s,
 		openapi.Info{
 			Title:       "Shopping Cart API",
@@ -115,12 +199,21 @@ func initWith(ctx context.Context, s *humus.Setup, open openStore) ([]humus.Serv
 		},
 		openapi.RequestErrors(problem.FromRequestError, jsoncodec.Problem),
 		openapi.CatchAll(http.StatusInternalServerError, endpoint.InternalError, jsoncodec.Problem),
-		append(endpoint.Carts{Store: store}.Operations(),
-			openapi.Document(openapi.Root().Lit("openapi.json")),
+		append(endpoint.Carts{Store: store, Bearer: bearer}.Operations(),
+			// The document is public, so a client can read which token
+			// each operation needs before it has one.
+			openapi.Document(openapi.Root().Lit("openapi.json"), openapi.Security(auth.Disabled())),
 		),
 		// Every operation but createCart addresses a cart that may not
 		// exist.
 		openapi.Error[endpoint.NotFound](http.StatusNotFound, jsoncodec.Problem),
+		// Every operation requires a bearer token, and those that change a
+		// cart require carts:write as well. A 401 and a 403 are answered by
+		// RequestErrors.
+		openapi.Security(auth.Require(bearer)),
+		// A token the Verifier had no keys for, because the key set is
+		// unreachable, is the server's outage, which clients retry.
+		openapi.Error[*jwt.KeySetError](http.StatusServiceUnavailable, endpoint.KeysUnavailable),
 	)
 	if err != nil {
 		return nil, err
@@ -137,6 +230,17 @@ func initWith(ctx context.Context, s *humus.Setup, open openStore) ([]humus.Serv
 type settings struct {
 	HTTP     httpserver.Settings
 	Database *pgxpool.Config
+	KeySet   keySetSettings
+	JWT      jwt.Settings
+}
+
+// keySetSettings are where the identity provider's key set is, and the
+// client it is fetched with.
+type keySetSettings struct {
+	URL *url.URL
+
+	// Client's BaseURL is URL's origin.
+	Client httpclient.Settings
 }
 
 // readSettings sources the settings from s.Process's environment, and the
@@ -145,7 +249,28 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 	d := httpserver.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
-	return config.Struct(func(r *config.Resolver) settings {
+	read, err := config.Struct(func(r *config.Resolver) settings {
+		// The key set's client keeps every default but the fields below.
+		// Its BaseURL is set from JWKS_URL once that has been read.
+		client := httpclient.DefaultSettings()
+		// Without JWKS_CA_FILE the pool is nil, which trusts the system's
+		// roots.
+		client.TLS = r.Get(env("JWKS_CA_FILE").Parse(readFile(s.Host.FS)).Parse(certPool).Default(nil).Map(func(roots *x509.CertPool) *tls.Config {
+			return &tls.Config{RootCAs: roots}
+		}))
+		client.Timeout = r.Get(env("JWKS_TIMEOUT").Parse(time.ParseDuration).Default(client.Timeout).Validate(httpclient.CheckTimeout))
+		client.AttemptTimeout = r.Get(env("JWKS_ATTEMPT_TIMEOUT").Parse(time.ParseDuration).Default(client.AttemptTimeout).Validate(httpclient.CheckAttemptTimeout))
+		client.MaxAttempts = r.Get(env("JWKS_MAX_ATTEMPTS").Parse(strconv.Atoi).Default(client.MaxAttempts).Validate(httpclient.CheckMaxAttempts))
+
+		tokens := jwt.DefaultSettings()
+		// No .Default: Issuer and Audience are required.
+		tokens.Issuer = r.Get(env("JWT_ISSUER").Validate(jwt.CheckIssuer))
+		tokens.Audience = r.Get(env("JWT_AUDIENCE").Validate(jwt.CheckAudience))
+		tokens.Algorithms = r.Get(env("JWT_ALGORITHMS").Parse(parseAlgorithms).Default(tokens.Algorithms).Validate(jwt.CheckAlgorithms))
+		tokens.Leeway = r.Get(env("JWT_LEEWAY").Parse(time.ParseDuration).Default(tokens.Leeway).Validate(jwt.CheckLeeway))
+		tokens.MinRefreshInterval = r.Get(env("JWT_MIN_REFRESH_INTERVAL").Parse(time.ParseDuration).Default(tokens.MinRefreshInterval).Validate(jwt.CheckMinRefreshInterval))
+		tokens.MaxKeyAge = r.Get(env("JWT_MAX_KEY_AGE").Parse(time.ParseDuration).Default(tokens.MaxKeyAge).Validate(jwt.CheckMaxKeyAge))
+
 		return settings{
 			HTTP: httpserver.Settings{
 				// No .Default: Addr and TLS are required.
@@ -163,8 +288,58 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 			// pgxpool.ParseConfig reads the real PG* variables and
 			// ~/.pgpass for what the URL leaves out: see the package doc.
 			Database: r.Get(env("DATABASE_URL").Parse(pgxpool.ParseConfig)),
+			KeySet: keySetSettings{
+				URL:    r.Get(env("JWKS_URL").Parse(url.Parse).Validate(checkKeySetURL)),
+				Client: client,
+			},
+			JWT: tokens,
 		}
 	}).Read(ctx)
+	if err != nil {
+		return settings{}, err
+	}
+	// The key set's client is for its origin: the URL's scheme, host and
+	// port.
+	read.KeySet.Client.BaseURL = &url.URL{Scheme: read.KeySet.URL.Scheme, Host: read.KeySet.URL.Host}
+	return read, nil
+}
+
+// checkKeySetURL rejects a key set URL that isn't an absolute https URL
+// with a host, and one with user info or a fragment. A key set fetched in
+// plain text would let anyone on the path add a key, and sign tokens the
+// service accepts. User info is a credential, which a URL would carry into
+// every error and record that names it, and a fragment is never sent. A
+// query is kept: some providers' jwks_uri has one.
+func checkKeySetURL(u *url.URL) error {
+	switch {
+	case u.Scheme != "https" || u.Host == "":
+		return errors.New("must be an absolute https URL")
+	case u.User != nil:
+		return errors.New("must not hold user info")
+	case u.Fragment != "" || u.RawFragment != "":
+		return errors.New("must not have a fragment")
+	}
+	return nil
+}
+
+// parseAlgorithms parses a list of JWS algorithms, separated by commas,
+// such as "RS256,ES256". jwt.CheckAlgorithms checks each one.
+func parseAlgorithms(s string) ([]jwt.Algorithm, error) {
+	var algs []jwt.Algorithm
+	for name := range strings.SplitSeq(s, ",") {
+		algs = append(algs, jwt.Algorithm(strings.TrimSpace(name)))
+	}
+	return algs, nil
+}
+
+// certPool parses pem, one or more PEM CERTIFICATE blocks, into a pool of
+// roots.
+func certPool(pem []byte) (*x509.CertPool, error) {
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(pem) {
+		return nil, errors.New("no PEM certificate in the file")
+	}
+	return roots, nil
 }
 
 // openPostgres opens a pool on cfg that dials through s.Host, registers its
