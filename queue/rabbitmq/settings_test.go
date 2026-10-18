@@ -23,10 +23,10 @@ import (
 // a check reports what is wrong, and whoever calls it names the field or
 // the variable.
 var fieldNames = regexp.MustCompile(`(?i)\b(?:settings|connection|addr|address|vhost|virtual ?host|tls|sasl|` +
-	`authentication|heartbeat|connect ?timeout|queue|delivery|prefetch|concurrency)\b`)
+	`authentication|heartbeat|connect ?timeout|queue|delivery|prefetch|concurrency|channels|timeout)\b`)
 
-// requireUnnamed fails the test if err names a field of Settings or of
-// Connection.
+// requireUnnamed fails the test if err names a field of Settings,
+// PublisherSettings or Connection.
 func requireUnnamed(t *testing.T, err error) {
 	t.Helper()
 	require.NotRegexp(t, fieldNames, err.Error(), "the error names a field")
@@ -207,6 +207,58 @@ func TestCheckConcurrency(t *testing.T) {
 		{name: "zero", value: 0, cause: "must be at least 1"},
 		{name: "negative", value: -1, cause: "must be at least 1"},
 	})
+}
+
+func TestCheckChannels(t *testing.T) {
+	t.Parallel()
+
+	runCheck(t, rabbitmq.CheckChannels, []checkCase[int]{
+		{name: "one", value: 1, valid: true},
+		{name: "the default", value: 8, valid: true},
+		{name: "the highest", value: 65535, valid: true},
+		{name: "zero", value: 0, cause: "must be from 1 to 65535"},
+		{name: "negative", value: -1, cause: "must be from 1 to 65535"},
+		{name: "above the highest", value: 65536, cause: "must be from 1 to 65535"},
+	})
+}
+
+func TestCheckTimeout(t *testing.T) {
+	t.Parallel()
+
+	runCheck(t, rabbitmq.CheckTimeout, []checkCase[time.Duration]{
+		{name: "a nanosecond", value: time.Nanosecond, valid: true},
+		{name: "the default", value: 10 * time.Second, valid: true},
+		{name: "zero", value: 0, cause: "must be positive"},
+		{name: "negative", value: -time.Second, cause: "must be positive"},
+	})
+}
+
+func TestDefaultPublisherSettings(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, rabbitmq.PublisherSettings{
+		Connection: rabbitmq.DefaultSettings().Connection,
+		Channels:   8,
+		Timeout:    10 * time.Second,
+	}, rabbitmq.DefaultPublisherSettings())
+}
+
+func TestDefaultPublisherSettings_with_the_required_fields_set_passes_every_check(t *testing.T) {
+	t.Parallel()
+
+	d := rabbitmq.DefaultPublisherSettings()
+	require.Error(t, rabbitmq.CheckAddr(d.Connection.Addr), "Connection.Addr has no default")
+	require.Error(t, rabbitmq.CheckSASL(d.Connection.SASL), "Connection.SASL has no default")
+	d.Connection.Addr = "localhost:5672"
+	d.Connection.SASL = &amqp.PlainAuth{Username: "orders", Password: rand.Text()}
+
+	require.NoError(t, rabbitmq.CheckAddr(d.Connection.Addr))
+	require.NoError(t, rabbitmq.CheckVhost(d.Connection.Vhost))
+	require.NoError(t, rabbitmq.CheckSASL(d.Connection.SASL))
+	require.NoError(t, rabbitmq.CheckHeartbeat(d.Connection.Heartbeat))
+	require.NoError(t, rabbitmq.CheckConnectTimeout(d.Connection.ConnectTimeout))
+	require.NoError(t, rabbitmq.CheckChannels(d.Channels))
+	require.NoError(t, rabbitmq.CheckTimeout(d.Timeout))
 }
 
 func TestDefaultSettings(t *testing.T) {

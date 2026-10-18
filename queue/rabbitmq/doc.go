@@ -5,7 +5,7 @@
 
 // Package rabbitmq consumes RabbitMQ queues with humus's lifecycle,
 // implementing the contract of package queue with amqp091-go, RabbitMQ's
-// own Go client.
+// own Go client, and publishes to RabbitMQ with publisher confirms.
 //
 // It is in the nested module github.com/z5labs/humus/queue/rabbitmq, so
 // amqp091-go stays out of the module graph of end users who don't use
@@ -422,10 +422,72 @@
 // fix already end Serve, as Connection loss lists, so the pod exits and is
 // restarted without a probe.
 //
+// # Publishing
+//
+// A [Publisher] publishes to the broker, and returns once the broker has
+// confirmed the message. The end user's Init builds it from
+// [PublisherSettings] with [NewPublisher], and hands it to whatever
+// publishes, such as a Processor that publishes an event, or an HTTP
+// handler:
+//
+//	pub, err := rabbitmq.NewPublisher(s, publisherSettings) // rabbitmq.PublisherSettings, sourced with config.Struct
+//	if err != nil {
+//		return nil, err
+//	}
+//	err = pub.Publish(ctx, rabbitmq.Publishing{Exchange: "orders", RoutingKey: "accepted", Body: body})
+//	if errors.Is(err, rabbitmq.ErrUnroutable) {
+//		// No queue was bound to receive it.
+//	}
+//
+// NewPublisher opens no connection. The first Publish connects, as
+// Connecting describes, on a connection of the Publisher's own, separate
+// from every Service's. RabbitMQ applies TCP back-pressure to a connection
+// that publishes faster than the broker can take, and a consumer's acks on
+// that connection would wait behind it, so RabbitMQ advises publishing and
+// consuming on separate connections. Concurrent first calls connect once,
+// and after the connection is lost, the next Publish connects again. The
+// Publisher outlives every Service that uses it: its connection is closed by
+// the function NewPublisher registers with Setup.OnStop, which runs once
+// every Service has stopped, so a Processor finishing its delivery during
+// the drain can still publish. After it has run, Publish fails at once.
+//
+// Each channel the Publisher opens is in confirm mode and carries one
+// publish at a time. Publish publishes the message with mandatory set, so
+// the broker returns a message no queue is bound to receive rather than
+// dropping it, and waits for the broker's confirm:
+//
+//   - confirmed, Publish returns nil;
+//   - returned, Publish returns an error that matches [ErrUnroutable].
+//     amqp091 hands a basic.return to the channel's listener before the
+//     confirm that follows it, so a return that is waiting once the confirm
+//     arrives belongs to that publish;
+//   - nacked by the broker, Publish returns an error that says so;
+//   - a channel error, such as 404 NOT_FOUND for an exchange that doesn't
+//     exist, or 403 ACCESS_REFUSED, Publish returns the broker's
+//     *amqp.Error, and the channel is replaced;
+//   - a lost connection, a failed dial or a failed handshake, Publish
+//     returns that error.
+//
+// [PublisherSettings].Channels bounds the publishes in flight at once: a
+// Publish waits for a channel when every one is busy.
+// [PublisherSettings].Timeout bounds the whole Publish, the wait for a
+// channel and the confirm included, and a deadline the caller's context
+// already has wins when it is earlier. When the context is done first,
+// Publish returns an error wrapping the context's error, and the channel
+// isn't reused, since a confirm may still arrive on it.
+//
+// A [Publishing]'s zero value is persistent, with delivery mode 2, so a
+// message isn't lost on a broker restart because a field was left out.
+// [Publishing].Transient makes it delivery mode 1. Every other field is
+// passed to the broker as it is, and the caller's Headers map is never
+// changed.
+//
 // # Topology
 //
-// The Service declares nothing. The queue, its exchange, bindings, type,
-// dead-lettering and delivery limit are the end user's infrastructure, set
-// up before the Service starts, by RabbitMQ's definitions, an operator, or
-// the team that owns the exchange.
+// The Service and the Publisher declare nothing. The queue, its exchange,
+// bindings, type, dead-lettering and delivery limit are the end user's
+// infrastructure, set up before the Service starts, by RabbitMQ's
+// definitions, an operator, or the team that owns the exchange. The
+// Publisher publishes only to exchanges that exist: a missing exchange
+// fails a Publish with 404 NOT_FOUND.
 package rabbitmq

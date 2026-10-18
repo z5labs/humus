@@ -123,6 +123,40 @@ func DefaultSettings() Settings {
 	}
 }
 
+// PublisherSettings configures a Publisher. Every field is a plain value,
+// and a field's zero value means zero, never "use the default": start from
+// DefaultPublisherSettings and change the fields you source.
+// Connection.Addr and Connection.SASL have no default, so they are always
+// among them.
+type PublisherSettings struct {
+	// Connection is how the Publisher reaches the broker, on a connection
+	// of its own.
+	Connection Connection
+
+	// Channels bounds the publishes in flight at once.
+	//
+	// Default: 8. Valid: 1 to 65535. Check: CheckChannels.
+	Channels int
+
+	// Timeout bounds a whole Publish, including its confirm. A deadline the
+	// caller's context has already, if it is earlier, wins.
+	//
+	// Default: 10s. Valid: positive. Check: CheckTimeout.
+	Timeout time.Duration
+}
+
+// DefaultPublisherSettings returns the Publisher's defaults: the Connection
+// of DefaultSettings, 8 Channels and a Timeout of 10s. Connection.Addr and
+// Connection.SASL have none, so they are "" and nil, which CheckAddr and
+// CheckSASL reject: the end user always sources both.
+func DefaultPublisherSettings() PublisherSettings {
+	return PublisherSettings{
+		Connection: DefaultSettings().Connection,
+		Channels:   8,
+		Timeout:    10 * time.Second,
+	}
+}
+
 // maxQueueName is the longest queue name, in bytes, that AMQP's short
 // strings carry.
 const maxQueueName = 255
@@ -231,6 +265,22 @@ func CheckPrefetch(n int) error {
 func CheckConcurrency(n int) error {
 	if n < 1 {
 		return errBelowOne
+	}
+	return nil
+}
+
+// CheckChannels rejects a count outside 1 to 65535.
+func CheckChannels(n int) error {
+	if n < 1 || n > 65535 {
+		return errNotUint16
+	}
+	return nil
+}
+
+// CheckTimeout rejects a timeout that is not positive.
+func CheckTimeout(d time.Duration) error {
+	if d <= 0 {
+		return errNotPositive
 	}
 	return nil
 }
