@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -31,6 +32,7 @@ import (
 	"github.com/z5labs/humus/httpserver"
 	"github.com/z5labs/humus/httpserver/httpservertest"
 	"github.com/z5labs/humus/humustest"
+	"github.com/z5labs/humus/telemetry"
 )
 
 // attached is a run of an App whose Init mounts the handler at "/health/"
@@ -258,4 +260,37 @@ func TestNewHandler_uses_no_OpenTelemetry_globals(t *testing.T) {
 	require.Empty(t, rm.ScopeMetrics, "the global MeterProvider recorded metrics")
 	require.Zero(t, prop.calls.Load(), "the global propagator was called")
 	require.Zero(t, logs.records.Load(), "the global LoggerProvider recorded records")
+}
+
+func TestAPIInit_answers_the_probes_on_the_APIs_port(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ca := humustest.NewCA(t)
+		h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+			"tls.pem": pemFile(t, ca.Issue(t, "localhost")),
+		}))
+		p, status := httpservertest.Start(t, APIInit,
+			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+			humustest.WithEnv(map[string]string{"ADDR": ":8443", "TLS_PEM_FILE": "tls.pem"}),
+		)
+		<-h.Listening("localhost:8443")
+		synctest.Wait()
+
+		// The kubelet's probes reach the API's own port, over HTTP/1.1.
+		c := kubelet(h, ca)
+		require.Equal(t, http.StatusOK, probe(t, c, "https://localhost:8443/health/liveness"))
+		require.Equal(t, http.StatusOK, probe(t, c, "https://localhost:8443/health/readiness"))
+		code, body := fetch(t, c, "https://localhost:8443/hello")
+		require.Equal(t, http.StatusOK, code)
+		require.Equal(t, "hello\n", body)
+
+		<-p.Notified(syscall.SIGTERM)
+		p.Signal(syscall.SIGTERM)
+		time.Sleep(time.Second) // inside httpserver's 5s drain
+		require.Equal(t, http.StatusServiceUnavailable, probe(t, c, "https://localhost:8443/health/readiness"))
+		require.Equal(t, http.StatusOK, probe(t, c, "https://localhost:8443/health/liveness"))
+
+		st := <-status
+		require.Zero(t, st.Code(), "cause: %v", st.Cause())
+		require.Empty(t, p.Stderr())
+	})
 }

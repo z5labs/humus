@@ -22,7 +22,9 @@ runs the same App in a test, on the same defaults, with an HTTP/2 client.
 
 The package is the server half of what `rest.Run` did before the reset,
 without the REST DSL. It exports no App, runs no health Service and serves
-no probes. The design behind everything on this page is in
+no probes: [`httphealth`](https://pkg.go.dev/github.com/z5labs/humus/httphealth)
+answers them, as [Health probes](#health-probes) describes. The design behind
+everything on this page is in
 [Proposal: HTTP server foundation](https://github.com/z5labs/humus/discussions/680),
 with its [revision 1](https://github.com/z5labs/humus/discussions/680#discussioncomment-18988464)
 and [revision 2](https://github.com/z5labs/humus/discussions/680#discussioncomment-18988543).
@@ -452,6 +454,45 @@ explains:
   `humus.Main`,** with no drain. Nothing routes to that server, and a drain
   would make a finished [job]({{< relref "jobs" >}}) wait for the whole
   delay.
+
+## Health probes
+
+**An API answers its probes on its own port.** The end user's `Init` mounts
+[`httphealth.NewHandler`](https://pkg.go.dev/github.com/z5labs/humus/httphealth#NewHandler)
+at `"/health/"` of the mux the Service serves, without `http.StripPrefix`,
+and returns the [health Service]({{< relref "health#the-health-service" >}})
+whose `Probes` it answers from next to the HTTP Service:
+
+```go
+mux := http.NewServeMux()
+mux.Handle("/", api)
+mux.Handle("/health/", httphealth.NewHandler(s, hs.Probes()))
+svc, err := httpserver.NewService(s, settings, mux)
+if err != nil {
+	return nil, err
+}
+return []humus.Service{svc, hs}, nil
+```
+
+The handler answers `GET /health/liveness` and `GET /health/readiness` with
+200 or 503, and the kubelet probes them on the API's port with
+`scheme: HTTPS`. It doesn't verify the Service's certificate:
+
+```yaml
+readinessProbe:
+  httpGet:
+    path: /health/readiness
+    port: 8443 # the API's port
+    scheme: HTTPS
+```
+
+**An API that requires client certificates** can't be probed on its own
+port, since the kubelet presents none. It serves its probes with
+[`httphealth.NewService`](https://pkg.go.dev/github.com/z5labs/humus/httphealth#NewService)
+on a port of its own, over HTTPS, which owns the App's readiness, so `Init`
+returns it next to the HTTP Service and no health Service.
+[Health]({{< relref "health#exposing-the-probes" >}}) shows both wirings, the
+answers, the manifests and how to test them.
 
 ## Telemetry
 

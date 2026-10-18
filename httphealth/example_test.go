@@ -20,6 +20,7 @@ import (
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/health"
 	"github.com/z5labs/humus/httphealth"
+	"github.com/z5labs/humus/httpserver"
 	"github.com/z5labs/humus/telemetry"
 )
 
@@ -72,6 +73,59 @@ func ExampleNewHandler() {
 	// /hello: 200 hello
 	// /health/readiness: 503 Service Unavailable
 	// Serve returned: <nil>
+}
+
+// TestAPIInit_answers_the_probes_on_the_APIs_port runs APIInit.
+
+// APIInit is the end user's Init for an HTTPS API: it attaches the probes
+// to the mux the API is served on, and returns the health Service whose
+// Probes they answer from next to the API's Service. The pod needs no
+// second port: the kubelet probes the API's own, with scheme: HTTPS.
+func APIInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
+
+	settings, err := config.Struct(func(r *config.Resolver) httpserver.Settings {
+		settings := httpserver.DefaultSettings()
+		settings.Addr = r.Get(env("ADDR").Validate(httpserver.CheckAddr))
+		settings.TLS = r.Get(env("TLS_PEM_FILE").Parse(readFile(s.Host.FS)).Parse(serverTLS).Validate(httpserver.CheckTLS))
+		return settings
+	}).Read(ctx)
+	if err != nil {
+		return nil, err // exit 78, naming every bad variable
+	}
+
+	db := openStore() // the end user's database
+	hs := health.NewService(health.Readiness(health.MonitorFunc(func(ctx context.Context) (bool, error) {
+		if err := db.Ping(ctx); err != nil {
+			return false, err // logged, never in the probe's answer
+		}
+		return true, nil
+	})))
+
+	api := http.NewServeMux()
+	api.HandleFunc("GET /hello", hello)
+
+	mux := http.NewServeMux()
+	mux.Handle("/", api)
+	mux.Handle("/health/", httphealth.NewHandler(s, hs.Probes()))
+	svc, err := httpserver.NewService(s, settings, mux)
+	if err != nil {
+		return nil, err
+	}
+	return []humus.Service{svc, hs}, nil
+}
+
+// store stands in for the end user's database client.
+type store struct{}
+
+func openStore() store { return store{} }
+
+// Ping reports whether the database answers, honouring ctx.
+func (store) Ping(ctx context.Context) error { return ctx.Err() }
+
+// hello is the end user's API.
+func hello(w http.ResponseWriter, _ *http.Request) {
+	_, _ = io.WriteString(w, "hello\n")
 }
 
 // TestInit_serves_the_probes_next_to_a_worker runs Init.

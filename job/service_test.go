@@ -7,8 +7,11 @@ package job_test
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -28,6 +31,7 @@ import (
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/health"
+	"github.com/z5labs/humus/httphealth"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/job"
 	"github.com/z5labs/humus/telemetry"
@@ -577,5 +581,59 @@ func TestService_a_job_next_to_the_health_Service_ends_the_App(t *testing.T) {
 		st := <-status
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
 		require.NoError(t, st.Cause())
+	})
+}
+
+// TestService_a_job_next_to_a_probes_server_ends_the_App runs a
+// long-running job next to httphealth's probes server, on humus.Main's
+// defaults: the probes are answered while the job runs, and the job
+// finishing ends the App, and the probes server with it.
+func TestService_a_job_next_to_a_probes_server_ends_the_App(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ca := humustest.NewCA(t)
+		h := humustest.NewHost(t)
+		probeSettings := httphealth.Settings{
+			Addr: ":8081",
+			TLS:  &tls.Config{Certificates: []tls.Certificate{ca.Issue(t, "localhost").TLS()}},
+		}
+		finish := make(chan struct{})
+		var progressing health.Binary
+		progress := &progressing // healthy while the job makes progress
+		run := func(ctx context.Context) error {
+			progressing.MarkHealthy()
+			select {
+			case <-finish:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
+		_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+			probes, err := httphealth.NewService(s, probeSettings, health.Liveness(progress))
+			if err != nil {
+				return nil, err
+			}
+			return []humus.Service{
+				probes,
+				job.NewService(s, run),
+			}, nil
+		}, humustest.WithApp(humus.WithHost(h.Host())))
+		<-h.Listening("localhost:8081")
+		synctest.Wait()
+
+		c := h.HTTPClient()
+		c.Transport.(*http.Transport).TLSClientConfig = &tls.Config{RootCAs: ca.Pool()}
+		resp, err := c.Get("https://localhost:8081/health/liveness")
+		require.NoError(t, err)
+		_, _ = io.Copy(io.Discard, resp.Body)
+		require.NoError(t, resp.Body.Close())
+		require.Equal(t, http.StatusOK, resp.StatusCode, "the probes are answered while the job runs")
+
+		close(finish)
+		st := <-status
+		require.Zero(t, st.Code(), "cause: %v", st.Cause())
+		_, err = h.Dial(t.Context(), "tcp", "localhost:8081")
+		require.Error(t, err, "the probes server outlived the job")
 	})
 }

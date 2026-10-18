@@ -25,8 +25,11 @@ the test Host over TLS.
 
 Both packages are in the nested module `github.com/z5labs/humus/grpc`, so a
 service that doesn't serve gRPC doesn't get grpc-go or otelgrpc in its module
-graph. The module exports no App, runs no health Service and serves no
-probes. The design behind everything on this page is in
+graph. The module exports no App, and `grpcserver` runs no health Service
+and serves no probes: the module's
+[`grpchealth`](https://pkg.go.dev/github.com/z5labs/humus/grpc/grpchealth)
+does, as [Health probes](#health-probes) describes. The design behind
+everything on this page is in
 [Proposal: gRPC services](https://github.com/z5labs/humus/discussions/681),
 with its [revision](https://github.com/z5labs/humus/discussions/681#discussioncomment-18988629).
 
@@ -507,25 +510,29 @@ passing the other package's defaults as well replaces both: the last one wins.
 
 **Kubernetes' gRPC probes can't reach the Service on most clusters.** A probe
 with `grpc:` connects in plain text and presents no client certificate, and
-the Service serves nothing in plain text. So a Service that requires TLS can't
-answer them. `grpcserver` serves no probes, and registers no health service.
+the Service serves nothing in plain text. `grpcserver` serves no probes, and
+registers no health service. The module's
+[`grpchealth`](https://pkg.go.dev/github.com/z5labs/humus/grpc/grpchealth)
+package answers gRPC health v1 from an App's `health.Probes`, in two ways:
 
-- **Proposal: exposing health probes,** in wave 4 of
-  [the charter](https://github.com/z5labs/humus/discussions/629), serves gRPC
-  health v1 on a second gRPC server, on a plaintext port of its own, with only
-  `grpc.health.v1.Health` registered. That port answers health checks and
-  nothing else, so the end user's services are never reachable in plain text.
-  The two ports are two Services in one App, and the health server serves
+- **`grpchealth.NewService`, on a plaintext port of its own,** for a cluster
+  whose `grpc` probes can't use TLS, which is most clusters today. It
+  registers only `grpc.health.v1.Health`, so the end user's services are
+  never reachable in plain text. It owns the App's readiness, so `Init`
+  returns it next to the gRPC Service and no health Service. It serves
   through the drain and shuts down as this Service does.
-- **On a cluster with the `GRPCContainerProbeTLS` feature gate on,** a probe
-  with `mode: TLS` connects over TLS, and reaches the Service on its own port,
-  with no second one, unless the Service requires client certificates with
-  `ClientAuth`: the kubelet presents none. The gate is alpha and off by
-  default; see Kubernetes'
+- **`grpchealth.NewServer`, registered on this Service,** next to a health
+  Service, on a cluster with the `GRPCContainerProbeTLS` feature gate on. A
+  probe with `mode: TLS` then connects over TLS, and reaches the Service on
+  its own port, with no second one, unless the Service requires client
+  certificates with `ClientAuth`: the kubelet presents none. The gate is
+  alpha and off by default; see Kubernetes'
   [Use TLS with gRPC probes](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/#grpc-probe-tls).
+  grpc-go's clients reach it on every cluster, for client-side health
+  checking.
 
-Until then, the [health Service]({{< relref "health" >}}) owns an App's
-readiness, but nothing serves it to a probe.
+[Health]({{< relref "health#exposing-the-probes" >}}) shows both wirings,
+the names they answer, the manifests and how to test them.
 
 ## Telemetry
 
@@ -769,8 +776,8 @@ func TestInit_without_an_address_or_a_certificate_exits_78(t *testing.T) {
 ### A plaintext server
 
 Transport credentials in `NewClient`'s options replace its own, since they are
-applied after them. A test of a server that serves plain text, such as wave
-4's health server, passes `insecure.NewCredentials()`, and `nil` roots:
+applied after them. A test of a server that serves plain text, such as
+`grpchealth`'s probes port, passes `insecure.NewCredentials()`, and `nil` roots:
 
 ```go
 conn := grpcservertest.NewClient(t, h, "localhost:8081", nil,
@@ -842,7 +849,7 @@ reports its goroutine as a leak.
 | running an `Api`: not possible since #485 | `grpcserver.Main`, with the Service among the Services the end user's `Init` returns |
 | `internal/grpcserver`'s unbounded `GracefulStop` | `Shutdown`: every stream ends with `Unavailable`, then `GracefulStop`, bounded by the grace period, then `Stop` |
 | `stats/opentelemetry` fed from `otel.Get*` | otelgrpc fed from `s.Telemetry` |
-| an implementation that is a `health.Monitor` is health-checked implicitly | nothing implicit. Proposal: exposing health probes (wave 4) serves gRPC health v1, on a plaintext port of its own. |
-| `internal/grpchealth` | Proposal: exposing health probes (wave 4) |
+| an implementation that is a `health.Monitor` is health-checked implicitly | nothing implicit: the monitor goes in the readiness of `grpchealth.NewService`, or of the health Service whose `Probes` `grpchealth.NewServer` answers from |
+| `internal/grpchealth` | `grpchealth.NewServer`, registered on the Service, or `grpchealth.NewService` on a plaintext port of its own; see [Health]({{< relref "health#exposing-the-probes" >}}) |
 | `grpc/internal/echopb` in tests | grpc-go's `interop/grpc_testing` |
 | a handler's panic ends the process | the RPC fails with `Internal`, and the panic is logged |

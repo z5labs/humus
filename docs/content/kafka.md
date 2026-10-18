@@ -1223,7 +1223,11 @@ probes := health.NewService(health.Readiness(consumer.Joined()))
 ```
 
 `httphealth.NewService` takes the same `health.Readiness(consumer.Joined())`
-option. A rollout whose new pods can't reach the brokers then stalls, and is
+option, and is how a consumer's pod, which has no server of its own, serves
+its probes: Health shows
+[the `Init`]({{< relref "health#a-consumers-readiness" >}}) and
+[the manifest]({{< relref "health#manifests" >}}). A rollout whose new pods
+can't reach the brokers then stalls, and is
 reported failed at its progress deadline, rather than replacing every old pod
 with pods that never consume. A member assigned no partition, because
 the group has more members than the topics have partitions, has joined, and
