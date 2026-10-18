@@ -409,6 +409,84 @@
 // decision to count. A View in the end user's telemetry Builder drops or
 // renames any of the three. humus has no setting to turn them off.
 //
+// # Failure injection
+//
+// Both halves of the package take part in failure injection with the
+// fault.Injector in the Setup's Faults, which the App builds from
+// humus.WithFaults. Without humus.WithFaults, nothing is evaluated or
+// stripped: a scenario in a record's baggage goes through like any other
+// member, and TrustScenario is never asked.
+//
+// A Producer is an injection point per topic, kafka:<topic>, such as
+// kafka:orders. A request or job whose context carries a failure scenario
+// can then make its produce calls to one topic fail or slow down, and the
+// end user sees how the whole service copes, its breaker included. Each
+// record of a call the breaker admits evaluates its topic's point once,
+// with its own context, just after the breaker admits the call, so its
+// humus.fit.evaluation event goes on the record's send span. A call the
+// breaker rejects evaluates nothing.
+//
+// A call is one unit, as the breaker counts it:
+//
+//   - an abort: when any record's fault aborts, every record of the call
+//     fails unsent, with that point's *fault.InjectedError, which matches
+//     fit.ErrInjected. The first aborting record, in the call's order,
+//     names the point. Produce returns an error joining each record's, with
+//     its topic. Each record's span records the error, with error.type
+//     github.com/z5labs/humus/fault.InjectedError, and neither messaging
+//     instrument counts the call, as for a call the breaker rejected;
+//   - a delay: the call waits the longest Delay of its records, and then
+//     goes on as usual, with what is left of DeliveryTimeout. The wait is
+//     inside DeliveryTimeout, so a Delay it cuts short fails the call
+//     unsent, with a *fault.InjectedError whose Err is the timeout's
+//     cause, which matches context.DeadlineExceeded and not
+//     fit.ErrInjected. A caller whose context ends during the wait
+//     returns at once, as it does while the cluster is slow, and the call's
+//     records go on after the wait, as records handed to franz-go do.
+//
+// A fault is a real failure: the breaker's classifier, unchanged, decides a
+// call an abort or a cut-short delay ended a Failure, since no record
+// failed for its own reason. So a scenario that aborts kafka:orders opens
+// the breaker under the default policy, as a cluster that is down does,
+// and the breaker then rejects every call, with a scenario or not, until a
+// probe gets through. humus.circuit.calls counts these calls like any
+// other.
+//
+// The Producer strips the scenario from the context each record's headers
+// are injected from, unless ProducerSettings.ForwardScenario is set: the
+// consumers of a topic the end user hasn't decided about are a trust
+// boundary. Every other baggage member goes, and the record's own context,
+// which its point is evaluated with, keeps the scenario. Each strip adds a
+// humus.fit.strip event, with no attributes, to the record's span. Set
+// ForwardScenario for a topic whose consumers take part in failure
+// injection with the same codec, such as another service of the end
+// user's, so that a scenario can reach the points they produce to in turn.
+//
+// A Service strips the scenario a record carries from producers the end
+// user hasn't chosen to trust, after the record's process span starts and
+// before Process sees it, so a producer the end user doesn't control can't
+// make the consumer fail on purpose. A record it doesn't trust reaches
+// Process with the scenario stripped from its context, and every other
+// baggage member kept, and its span gets a humus.fit.strip event, with no
+// attributes. Settings.TrustScenario decides which records are trusted. It
+// is given the Message, scenario and all, and asked only about a record
+// that carries a scenario, so it costs nothing on any other record. When
+// it is nil, the default, no producer is trusted, and every scenario is
+// stripped. A panic in it is not recovered, as a panic in a Processor
+// isn't.
+//
+// Who can produce to a topic is the cluster's to decide, with its ACLs, so
+// trusting a record by its topic trusts every producer the ACLs let in.
+// For example, a Service that consumes a topic only the end user's own
+// services can write to trusts its records:
+//
+//	settings.TrustScenario = func(m kafka.Message) bool {
+//		return m.Topic == "orders"
+//	}
+//
+// TrustScenario and ForwardScenario are set in code, not sourced: who is
+// trusted is the end user's design decision, not an operator's.
+//
 // # Telemetry
 //
 // The Service and the Producer report through the Setup's telemetry and
@@ -421,7 +499,8 @@
 // <topic>", of kind CONSUMER, whose context Process is given. The span's
 // parent is the trace context the propagator extracts from the record's
 // headers, so a producer's trace continues through the consumer, and the
-// producer's baggage, and only the producer's, is on Process's context too.
+// producer's baggage, and only the producer's, is on Process's context too,
+// less a failure scenario the Service strips (see Failure injection).
 // A record whose headers carry no trace context starts a new trace. Under
 // queue.AtMostOnce, the ERROR record of a failed record carries its span's
 // context. The span's attributes are
@@ -462,7 +541,8 @@
 // Producer removes every header of the record whose key is one of the
 // propagator's fields, such as a dead letter's copy of the consumed
 // record's traceparent. The propagator then injects the span's context and
-// the baggage of Produce's context; with the default propagator, those are
+// the baggage of Produce's context, less a failure scenario the Producer
+// strips (see Failure injection); with the default propagator, those are
 // traceparent, tracestate and baggage. So the process span of a Service
 // that consumes the record, on any topic, is a child of its send span, and
 // inside a Process, the send span is a child of the process span: one trace

@@ -87,6 +87,15 @@ type Settings struct {
 	//
 	// Default: 500. Valid: positive. Check: CheckMaxPollRecords.
 	MaxPollRecords int
+
+	// TrustScenario reports whether the failure scenario a record carries
+	// reaches the Processor. A record it doesn't trust has the scenario
+	// stripped from its context first. It is asked only about a record
+	// that carries a scenario, and only when the App has failure
+	// injection. It is set in code, not sourced.
+	//
+	// Default: nil, which trusts no producer. Valid: any. Check: none.
+	TrustScenario func(m Message) bool
 }
 
 // DefaultSettings returns the Service's defaults. Brokers, GroupID and
@@ -105,6 +114,7 @@ func DefaultSettings() Settings {
 		RebalanceTimeout: 60 * time.Second,
 		FetchMaxBytes:    50 << 20,
 		MaxPollRecords:   500,
+		TrustScenario:    nil,
 	}
 }
 
@@ -253,6 +263,15 @@ type ProducerSettings struct {
 	// close after 3 successful ones. Valid: Trip and Probe set, which
 	// NewProducer checks. Check: none.
 	BreakerPolicy circuit.Policy
+
+	// ForwardScenario sends the failure scenario a call carries on in the
+	// headers of the records it produces, for consumers that take part in
+	// failure injection with the same codec. When it is false, the
+	// scenario is stripped from each record's baggage header, and the rest
+	// of the call's baggage still goes. It is set in code, not sourced.
+	//
+	// Default: false. Valid: either. Check: none.
+	ForwardScenario bool
 }
 
 // DefaultProducerSettings returns the Producer's defaults. Brokers has none,
@@ -273,6 +292,7 @@ func DefaultProducerSettings() ProducerSettings {
 			Trip:  defaultTrip,
 			Probe: defaultProbe,
 		},
+		ForwardScenario: false,
 	}
 }
 

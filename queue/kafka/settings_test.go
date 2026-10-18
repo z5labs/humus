@@ -181,6 +181,7 @@ func TestDefaultSettings(t *testing.T) {
 		RebalanceTimeout: 60 * time.Second,
 		FetchMaxBytes:    50 << 20,
 		MaxPollRecords:   500,
+		TrustScenario:    nil,
 	}, kafka.DefaultSettings())
 }
 
@@ -249,6 +250,7 @@ func TestDefaultProducerSettings(t *testing.T) {
 			OpenFor:      10 * time.Second,
 			ProbeTimeout: 10 * time.Second,
 		},
+		ForwardScenario: false,
 	}, d)
 }
 

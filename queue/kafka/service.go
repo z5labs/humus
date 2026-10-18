@@ -30,6 +30,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/fault"
 	"github.com/z5labs/humus/health"
 	"github.com/z5labs/humus/queue"
 )
@@ -79,6 +80,9 @@ type Service struct {
 	operations messagingconv.ClientOperationDuration
 	// brokers is kotel's Meter: franz-go's broker metrics, as client hooks.
 	brokers *kotel.Meter
+
+	// faults is the App's failure injection, from the Setup.
+	faults fault.Injector
 
 	// stopped is done once Shutdown has been called.
 	stopped context.Context
@@ -141,6 +145,7 @@ func NewService(s *humus.Setup, settings Settings, p queue.Processor[Message]) (
 		operations: operations,
 		// kotel's Meter creates its instruments and starts nothing.
 		brokers: kotel.NewMeter(kotel.MeterProvider(s.Telemetry.MeterProvider)),
+		faults:  s.Faults,
 		stopped: stopped,
 		stop:    stop,
 	}, nil
@@ -794,8 +799,9 @@ func (g *group) commitRecord(cl *kgo.Client, p *partition, r *kgo.Record) error 
 // took. No panic is recovered.
 //
 // The span's parent is the trace context the propagator extracts from r's
-// headers, whose baggage is on Process's context too. When the headers
-// carry none, the span is the root of a new trace.
+// headers, whose baggage is on Process's context too, less a failure
+// scenario Settings.TrustScenario doesn't trust. When the headers carry
+// none, the span is the root of a new trace.
 //
 // Under queue.AtMostOnce, process logs a failure itself, with the record's
 // span context, unless Shutdown's context cut processing short.
@@ -816,9 +822,12 @@ func (g *group) process(p *partition, r *kgo.Record) error {
 	)
 	defer span.End()
 
+	m := newMessage(r)
+	ctx = svc.strip(ctx, m)
+
 	svc.consumed.Add(ctx, 1, processOperation, messagingconv.SystemKafka, p.attrs...)
 	start := time.Now()
-	err := svc.proc.Process(ctx, newMessage(r))
+	err := svc.proc.Process(ctx, m)
 	elapsed := time.Since(start).Seconds()
 
 	attrs := p.attrs
