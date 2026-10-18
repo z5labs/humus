@@ -91,3 +91,63 @@ func TestPackage_reads_no_environment_and_no_file(t *testing.T) {
 	// The package doc and the settings are both checked.
 	require.Subset(t, checked, []string{"doc.go", "settings.go"})
 }
+
+// TestPackage_dials_only_through_the_Host checks the package's own source,
+// test files excluded: it never calls amqp091's Dial, DialConfig, DialTLS,
+// DialTLS_ExternalAuth or DefaultDial, which take or build a URL and dial
+// the real network, nor ParseURI, and it imports neither net/url nor
+// amqp091's logger setter. The broker is reached only through the Host.
+func TestPackage_dials_only_through_the_Host(t *testing.T) {
+	t.Parallel()
+
+	const amqp = "github.com/rabbitmq/amqp091-go"
+	banned := map[string]bool{
+		"Dial":                 true,
+		"DialConfig":           true,
+		"DialTLS":              true,
+		"DialTLS_ExternalAuth": true,
+		"DefaultDial":          true,
+		"ParseURI":             true,
+		"SetLogger":            true,
+	}
+
+	names, err := filepath.Glob("*.go")
+	require.NoError(t, err)
+	fset := token.NewFileSet()
+	var checked []string
+	for _, name := range names {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, parser.SkipObjectResolution)
+		require.NoError(t, err)
+		checked = append(checked, name)
+
+		// The names amqp091 is imported under in this file.
+		aliases := map[string]bool{}
+		for _, imp := range f.Imports {
+			path, err := strconv.Unquote(imp.Path.Value)
+			require.NoError(t, err)
+			switch {
+			case path == "net/url":
+				t.Errorf("%s: imports net/url, but the package builds no URL", fset.Position(imp.Pos()))
+			case path == amqp && imp.Name != nil:
+				aliases[imp.Name.Name] = true
+			case path == amqp:
+				aliases["amqp091"] = true
+			}
+		}
+
+		ast.Inspect(f, func(n ast.Node) bool {
+			sel, ok := n.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			if x, ok := sel.X.(*ast.Ident); ok && aliases[x.Name] && banned[sel.Sel.Name] {
+				t.Errorf("%s: uses %s.%s, but the broker is reached only through the Host", fset.Position(sel.Pos()), x.Name, sel.Sel.Name)
+			}
+			return true
+		})
+	}
+	require.Contains(t, checked, "connect.go")
+}

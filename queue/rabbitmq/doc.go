@@ -83,6 +83,29 @@
 // DefaultSettings gives the safe one, [queue.AtLeastOnce]. It is checked
 // with [queue.CheckDelivery].
 //
+// # Connecting
+//
+// The Service and the Publisher connect to the broker the same way, in
+// three steps, and ConnectTimeout bounds all three together:
+//
+//  1. they dial Connection.Addr with the Setup's Host, so the broker is
+//     reached only through the Host, and a test can run them on a Host of
+//     its own;
+//  2. with TLS set, they run the TLS handshake over that connection, with a
+//     clone of the config whose ServerName is Addr's host when the config
+//     leaves it empty, so the end user's config is never changed;
+//  3. they run the AMQP handshake with amqp.Open, logging in with SASL,
+//     opening Vhost and proposing Heartbeat.
+//
+// A step that fails closes the network connection, and one that fails
+// because ConnectTimeout ran out reports context.DeadlineExceeded. A wrong
+// login fails with amqp091's ErrCredentials, and a vhost the login can't
+// open with its ErrVhost.
+//
+// humus builds no URL, and never calls amqp091's Dial, DialConfig or
+// DialTLS, which take one, so the password in SASL can't reach a log in
+// one. Nor does it set amqp091's logger, which is a package-level variable.
+//
 // # Topology
 //
 // The Service declares nothing. The queue, its exchange, bindings, type,
