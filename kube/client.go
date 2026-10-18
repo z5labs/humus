@@ -62,7 +62,8 @@ type Connection struct {
 	// pod's service account token, read through the Host's FS. nil sends
 	// none, for a client that authenticates with a certificate. The Client
 	// calls it at most once a minute, and keeps its last token while a call
-	// fails, so a token the kubelet rotates is picked up within a minute.
+	// fails, so a token the kubelet rotates is picked up within a minute. A
+	// call that returns an empty token has failed.
 	Token func(ctx context.Context) (string, error)
 }
 

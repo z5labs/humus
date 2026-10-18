@@ -7,6 +7,7 @@ package kube
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -50,11 +51,16 @@ func (t *tokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return t.next.RoundTrip(r)
 }
 
+// errEmptyToken is the failure of a Token call that returned "" with no
+// error, which would otherwise be sent as a malformed "Bearer " header.
+var errEmptyToken = errors.New("Connection.Token returned an empty token")
+
 // get returns the token to send. Once a call has returned a token, token is
 // called again only when a minute has passed since the last call, whether
 // that call succeeded or not, and a call that fails leaves the last token in
 // place. Until a call has returned a token, there is none to keep, so each
-// request calls it and fails with its error.
+// request calls it and fails with its error. A call that returns an empty
+// token has failed.
 func (t *tokenTransport) get(ctx context.Context) (string, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -63,6 +69,9 @@ func (t *tokenTransport) get(ctx context.Context) (string, error) {
 		return t.last, nil
 	}
 	token, err := t.token(ctx)
+	if err == nil && token == "" {
+		err = errEmptyToken
+	}
 	if err != nil && !t.held {
 		return "", err
 	}

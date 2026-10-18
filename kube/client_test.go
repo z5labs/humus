@@ -477,6 +477,44 @@ func TestClient_sends_the_bearer_token(t *testing.T) {
 		})
 	})
 
+	t.Run("treating an empty token as a failed call", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			h := humustest.NewHost(t)
+			ca := humustest.NewCA(t)
+			api := &apiServer{}
+			defer startAPIServer(t, h, ca, server, api, "apiserver")()
+
+			last := newToken()
+			tk := &tokens{queue: []string{"", last, ""}}
+			c, err := kube.NewClient(newSetup(t, h.Host(), humustest.NewTelemetry()), kube.Connection{
+				Server: server,
+				TLS:    &tls.Config{RootCAs: ca.Pool()},
+				Token:  tk.token,
+			})
+			require.NoError(t, err)
+			kc := newClientset(t, c)
+
+			// With no token held, an empty one fails the request.
+			err = getConfigMap(t.Context(), kc, "settings")
+			require.ErrorContains(t, err, "empty token")
+			require.Empty(t, api.received(), "no request carries a bare Bearer")
+
+			require.NoError(t, getConfigMap(t.Context(), kc, "settings"))
+
+			// With one held, an empty one leaves it in place.
+			time.Sleep(time.Minute)
+			require.NoError(t, getConfigMap(t.Context(), kc, "settings"))
+			require.EqualValues(t, 3, tk.calls.Load())
+
+			reqs := api.received()
+			require.Len(t, reqs, 2)
+			for _, r := range reqs {
+				require.Equal(t, "Bearer "+last, r.auth)
+			}
+		})
+	})
+
 	t.Run("not at all when Token is nil", func(t *testing.T) {
 		t.Parallel()
 		synctest.Test(t, func(t *testing.T) {

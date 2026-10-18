@@ -38,7 +38,8 @@
 //   - over HTTP/2, sends a ping after 30s without a frame, and gives up on
 //     the connection when 15s pass without the answer, so a watch on a dead
 //     connection doesn't wait for TCP to give up;
-//   - adds Connection.Token's bearer token to every request;
+//   - when Connection.Token isn't nil, adds its bearer token to every
+//     request;
 //   - traces and measures every request with otelhttp, on s.Telemetry's
 //     providers and propagator, except a watch, which lasts as long as an
 //     informer runs and has no span;
@@ -86,7 +87,8 @@
 // call fails, the Client keeps the last token, which a rotated service
 // account token outlives, and the request goes on. Until a call has
 // returned a token there is none to keep, so each request calls Token, and
-// fails with its error. A nil Token sends no Authorization header, for a
+// fails with its error. A call that returns an empty token has failed, so
+// no request carries a bare "Bearer". A nil Token sends no Authorization header, for a
 // client that authenticates with a certificate in Connection.TLS.
 //
 // For local development, the end user fills the Connection from a
