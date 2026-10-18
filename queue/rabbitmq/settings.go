@@ -16,6 +16,7 @@ import (
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/z5labs/bedrock/circuit"
 	"github.com/z5labs/bedrock/retry"
 
 	"github.com/z5labs/humus/queue"
@@ -168,14 +169,36 @@ type PublisherSettings struct {
 	// retry.TokenLimit; TokenRatio from 0.001 to retry.TokenLimit. Check:
 	// CheckRetryBudgetMaxTokens, CheckRetryBudgetTokenRatio.
 	RetryBudget retry.BudgetConfig
+
+	// Breaker configures the circuit breaker in front of the broker, one
+	// for the Publisher, which every attempt of every Publish goes
+	// through.
+	//
+	// Default: circuit.Config{Window: 20, Probes: 1, OpenFor: 10 *
+	// time.Second, ProbeTimeout: 10 * time.Second}. Valid: Window and
+	// Probes from 1 to circuit.MaxCount, OpenFor and ProbeTimeout positive.
+	// Checks: CheckBreakerWindow, CheckBreakerProbes, CheckBreakerOpenFor,
+	// CheckBreakerProbeTimeout.
+	Breaker circuit.Config
+
+	// BreakerPolicy decides when the breaker opens and closes. It is set in
+	// code, not sourced. A policy whose Trip always returns false turns the
+	// breaker off.
+	//
+	// Default: open after 5 failures in a row, or once half of the last 20
+	// or more results failed; while half-open, reopen on a failed probe and
+	// close after 3 successful ones. Valid: Trip and Probe set, which
+	// NewPublisher checks. Check: none.
+	BreakerPolicy circuit.Policy
 }
 
 // DefaultPublisherSettings returns the Publisher's defaults: the Connection
 // of DefaultSettings, 8 Channels, a Timeout of 10s, 3 MaxAttempts, a
 // BackoffBase of 100ms and a BackoffMax of 5s, and a RetryBudget of 10
-// tokens, each confirmed attempt adding back 0.1. Connection.Addr and
-// Connection.SASL have none, so they are "" and nil, which CheckAddr and
-// CheckSASL reject: the end user always sources both.
+// tokens, each confirmed attempt adding back 0.1, and a Breaker and
+// BreakerPolicy as their docs describe. Connection.Addr and Connection.SASL
+// have none, so they are "" and nil, which CheckAddr and CheckSASL reject:
+// the end user always sources both.
 func DefaultPublisherSettings() PublisherSettings {
 	return PublisherSettings{
 		Connection:  DefaultSettings().Connection,
@@ -185,6 +208,37 @@ func DefaultPublisherSettings() PublisherSettings {
 		BackoffBase: 100 * time.Millisecond,
 		BackoffMax:  5 * time.Second,
 		RetryBudget: retry.BudgetConfig{MaxTokens: 10, TokenRatio: 0.1},
+		Breaker: circuit.Config{
+			Window:       20,
+			Probes:       1,
+			OpenFor:      10 * time.Second,
+			ProbeTimeout: 10 * time.Second,
+		},
+		BreakerPolicy: circuit.Policy{
+			Trip:  defaultTrip,
+			Probe: defaultProbe,
+		},
+	}
+}
+
+// defaultTrip opens the breaker after 5 failures in a row, or once half of
+// the last 20 or more results failed.
+func defaultTrip(c circuit.Counts) bool {
+	n := c.Successes + c.Failures
+	return c.ConsecutiveFailures >= 5 || (n >= 20 && 2*c.Failures >= n)
+}
+
+// defaultProbe reopens the breaker on a failed probe, closes it after 3
+// successful ones, and keeps probing otherwise, including after a probe
+// times out.
+func defaultProbe(c circuit.Counts) circuit.State {
+	switch {
+	case c.Failures > 0:
+		return circuit.Open
+	case c.ConsecutiveSuccesses >= 3:
+		return circuit.Closed
+	default:
+		return circuit.HalfOpen
 	}
 }
 
@@ -212,6 +266,7 @@ var (
 	errBelowOne      = errors.New("must be at least 1")
 	errTokens        = fmt.Errorf("must be from 3 to %d", retry.TokenLimit)
 	errTokenRatio    = fmt.Errorf("must be from 0.001 to %d", retry.TokenLimit)
+	errOutOfCount    = fmt.Errorf("must be from 1 to %d", circuit.MaxCount)
 )
 
 // CheckAddr rejects anything but host:port with a host and a port from 1 to
@@ -361,6 +416,42 @@ func CheckRetryBudgetMaxTokens(n int) error {
 func CheckRetryBudgetTokenRatio(r float64) error {
 	if !(r >= 0.001 && r <= retry.TokenLimit) {
 		return errTokenRatio
+	}
+	return nil
+}
+
+// CheckBreakerWindow rejects a window that is not from 1 to
+// circuit.MaxCount.
+func CheckBreakerWindow(n int) error {
+	return checkCount(n)
+}
+
+// CheckBreakerProbes rejects a number of probes that is not from 1 to
+// circuit.MaxCount.
+func CheckBreakerProbes(n int) error {
+	return checkCount(n)
+}
+
+// CheckBreakerOpenFor rejects a period that is not positive.
+func CheckBreakerOpenFor(d time.Duration) error {
+	return checkPositive(d)
+}
+
+// CheckBreakerProbeTimeout rejects a timeout that is not positive.
+func CheckBreakerProbeTimeout(d time.Duration) error {
+	return checkPositive(d)
+}
+
+func checkCount(n int) error {
+	if n < 1 || n > circuit.MaxCount {
+		return errOutOfCount
+	}
+	return nil
+}
+
+func checkPositive(d time.Duration) error {
+	if d <= 0 {
+		return errNotPositive
 	}
 	return nil
 }

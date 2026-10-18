@@ -493,6 +493,61 @@
 // the broker keeps failing, each Publish makes one attempt rather than
 // MaxAttempts. A first attempt is never refused.
 //
+// A circuit breaker, bedrock's circuit.Breaker, guards the broker, so that
+// while the broker keeps failing Publish fails at once rather than hold
+// every caller for Timeout: an HTTP handler that publishes an event answers
+// 503 quickly during an outage, rather than after 10s. The first few
+// attempts wait, and the rest fail at once until a probe gets through. One
+// Publisher is one connection to one broker, with one breaker, which
+// NewPublisher builds from [PublisherSettings]' Breaker and BreakerPolicy.
+// By default it opens after 5 failed attempts in a row, or once half of
+// the last 20 or more failed, stays open for 10s, and then lets one probe
+// through at a time, closing after 3 are confirmed and reopening on one
+// that fails. A BreakerPolicy whose Trip always returns false turns it off.
+//
+// The breaker sits inside the retries: each attempt of a Publish is one
+// call through it. While it is open, an attempt sends nothing and fails at
+// once with an error wrapping a *circuit.RejectedError, which matches
+// circuit.ErrRejected and says how much longer the breaker stays open, and
+// no attempt follows it, since the breaker would reject that one too:
+//
+//	err := pub.Publish(ctx, rabbitmq.Publishing{Exchange: "orders", RoutingKey: "accepted", Body: body})
+//	if errors.Is(err, circuit.ErrRejected) {
+//		// Nothing was sent; the *circuit.RejectedError says how long the breaker stays open.
+//	}
+//
+// Whether to wait and try again is the caller's. The breaker counts the
+// broker, not the messages or the callers, so what an attempt's result
+// counts as is fixed too:
+//
+//   - confirmed: a success;
+//   - returned, [ErrUnroutable], or a channel error, such as 404 NOT_FOUND
+//     or 403 ACCESS_REFUSED: a success, since the broker answered. A
+//     mistake in one exchange's bindings doesn't open the breaker for the
+//     others;
+//   - nacked by the broker, a dropped connection, a failed dial or a failed
+//     handshake: a failure;
+//   - the context's deadline, Timeout's or the caller's: a failure, since a
+//     broker that has stopped answering ends every attempt this way;
+//   - the caller cancelling the context: not counted, since it says
+//     nothing about the broker.
+//
+// Inside the breaker, and before anything of the attempt is written to the
+// broker, is the seam where Proposal: failure injection (wave 5) injects
+// its failures, so an injected failure counts as a real one would.
+//
+// Each change of the breaker's state is one log record of the Publisher's,
+// under the scope github.com/z5labs/humus/queue/rabbitmq, in the context of
+// the Publish that made it: circuit breaker open at WARN, and circuit
+// breaker half-open and circuit breaker closed at INFO. Its attributes are
+// server.address and server.port, from Connection.Addr,
+// circuit.previous_state, and the counts of the state the breaker left:
+// circuit.successes, circuit.failures, circuit.consecutive_successes,
+// circuit.consecutive_failures and circuit.timed_out. There are no
+// instruments of humus's own for the breaker: its transitions are in the
+// logs, and a rejected Publish is an error on its span. Whether humus
+// records instruments of its own is Proposal: humus's own metrics (wave 5).
+//
 // A retry can publish a message twice: when a connection is lost after the
 // broker took the message but before its confirm arrived, the attempt that
 // follows publishes it again. So publishing is at least once, and a
@@ -537,7 +592,8 @@
 //   - server.address and server.port, from Connection.Addr.
 //
 // The message's body is never recorded. A failed Publish is recorded on
-// its span as an exception event, with error.type and an error status.
+// its span as an exception event, with error.type and an error status, a
+// Publish the breaker rejected included.
 //
 // Each attempt to publish records two instruments of OpenTelemetry's
 // messaging conventions:
@@ -554,7 +610,8 @@
 // one span, whatever its attempts, and a nack followed by a confirm counts
 // two messages sent, one with error.type nacked. An attempt that fails
 // before it publishes, waiting for a channel or connecting, publishes
-// nothing, so neither instrument records it. As with the
+// nothing, so neither instrument records it, and neither does an attempt
+// the breaker rejected. As with the
 // Service, a routing key that carries identifiers makes a series per key in
 // both instruments.
 //

@@ -288,8 +288,11 @@ func TestPublisher_retries_stop_once_the_budget_is_down_to_half(t *testing.T) {
 
 	synctest.Test(t, func(t *testing.T) {
 		// The default budget: 10 tokens, each nack taking one, and no retry
-		// while 5 or fewer are left.
-		pub, s := newPublisher(t, publisherSettings())
+		// while 5 or fewer are left. The breaker, which would open after the
+		// fifth nack in a row, is turned off, so the budget alone decides.
+		settings := publisherSettings()
+		settings.BreakerPolicy = neverTrips
+		pub, s := newPublisher(t, settings)
 		s.autoNack = true
 
 		var attempts []int

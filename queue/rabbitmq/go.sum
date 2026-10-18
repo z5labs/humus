@@ -104,6 +104,8 @@ github.com/yusufpapurcu/wmi v1.2.4 h1:zFUKzehAFReQwLys1b/iSMl+JQGSCSjtVqQn9bBrPo
 github.com/yusufpapurcu/wmi v1.2.4/go.mod h1:SBZ9tNy3G9/m5Oi98Zks0QjeHVDvuK0qfxQmPyzfmi0=
 github.com/z5labs/bedrock v0.25.0 h1:9wu6xQubi5hpADw37Gk7kcAkardBhSUhbejE0aKGBpw=
 github.com/z5labs/bedrock v0.25.0/go.mod h1:6pbhUnkSk+avSoVi+BM91cBlRiN7UVsxA7txQnC/TTA=
+github.com/z5labs/bedrock/circuit v0.24.0 h1:ATWbrhRSkORXKeFCaCs758uPrHUJ/wuB+cRW/GJAIro=
+github.com/z5labs/bedrock/circuit v0.24.0/go.mod h1:2yujEj/etrHSXJwrc6AQVEwlQ+MX/3GT27WtHzL5Qu4=
 github.com/z5labs/bedrock/retry v0.24.0 h1:dMGjmWWa9hVy/2MI4F9XIgRPhUIWuObGMztxRi7MgDM=
 github.com/z5labs/bedrock/retry v0.24.0/go.mod h1:KlmokXk6A+kBkw2DlNf3eBDHpnQD09HiHv6sMdX+V6Y=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
