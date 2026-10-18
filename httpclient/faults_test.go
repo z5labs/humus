@@ -382,16 +382,28 @@ func TestClient_a_delayed_attempt(t *testing.T) {
 			require.Empty(t, res.payments)
 			call := res.calls[0]
 			require.Equal(t, http.StatusBadGateway, call.code)
-			// net/http replaces the error of a call its Timeout ends, so
-			// the handler sees net/http's timeout error, not the
-			// *fault.InjectedError the attempt failed with.
+			// The test accepts either error the handler can see, because
+			// which one it sees is a race in net/http. Timeout ends the call
+			// at 10s, as the second attempt's AttemptTimeout also ends.
+			// For a RoundTripper that isn't one of its own, net/http puts
+			// Timeout on the request's context as a deadline, and also
+			// starts a timer whose goroutine records that the call timed
+			// out. Both fire at 10s. net/http replaces the transport's
+			// error with its own timeout error only if that goroutine has
+			// recorded the timeout by the time the attempt returns.
+			// Otherwise the handler sees the *fault.InjectedError of the
+			// delay the call's deadline cut short.
 			require.ErrorIs(t, call.err, context.DeadlineExceeded)
 			require.NotErrorIs(t, call.err, fit.ErrInjected)
 			var ue *url.Error
 			require.ErrorAs(t, call.err, &ue)
-			require.True(t, ue.Timeout(), "error: %v", call.err)
 			var ie *fault.InjectedError
-			require.False(t, errors.As(call.err, &ie), "net/http kept the transport's error: %v", call.err)
+			if errors.As(call.err, &ie) {
+				require.Equal(t, paymentsPoint, ie.Point)
+				require.ErrorIs(t, ie.Err, context.DeadlineExceeded)
+			} else {
+				require.True(t, ue.Timeout(), "error: %v", call.err)
+			}
 
 			spans := clientSpans(res.tel)
 			require.Len(t, spans, 2, "the attempt AttemptTimeout cut, and the one Timeout cut")
