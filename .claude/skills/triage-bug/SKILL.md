@@ -74,7 +74,7 @@ query($number: Int!) {
         nodes {
           id url createdAt body author { login }
           replies(first: 100) {
-            pageInfo { hasNextPage }
+            pageInfo { hasNextPage endCursor }
             nodes { id url createdAt body author { login } }
           }
         }
@@ -300,7 +300,7 @@ sections of `.github/ISSUE_TEMPLATE/story.yaml`. The title is
 `story(<package>): <what the end user gets once it's fixed>`, such as `story(kafka): …` for
 `queue/kafka`. The body has no title line.
 
-```markdown
+~~~markdown
 ### Description
 
 As an end user of `<package>`, I want <the behaviour the docs promise>. Then <why it matters to
@@ -338,7 +338,7 @@ short list per scenario.>
 - Fixes the bug reported in #<N>
 - <the proposal that designed the package, linked, and what part of it>
 - <the stories and pull requests involved: #<story>, the <what> (#<pr>)>
-```
+~~~
 
 - The Description is from the end user's perspective, and summarises the reproduction. It
   carries the triage's test file, from `<WORK>/triage_<N>_test.go`, so the story's implementer
