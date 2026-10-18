@@ -9,7 +9,9 @@ package app
 
 // The test in this file runs the whole service once, Init as main runs it,
 // on humus.OSHost(), in real time, against Postgres in a container started
-// with testcontainers-go, with the schema applied from schema.sql. It opens
+// with testcontainers-go, with the schema applied from schema.sql. Beside
+// it, the test's identity provider serves its key set on the OS Host too,
+// which the service reaches through JWKS_URL and JWKS_CA_FILE. It opens
 // real sockets, so it sits behind the testcontainers build tag and runs in
 // a CI job of its own, outside the coverage gate:
 //
@@ -67,6 +69,19 @@ func startPostgres(t *testing.T) string {
 	return url
 }
 
+// waitListening waits for something to listen on addr.
+func waitListening(t *testing.T, addr string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		c, err := net.DialTimeout("tcp", addr, time.Second)
+		if err != nil {
+			return false
+		}
+		_ = c.Close()
+		return true
+	}, waitLimit, 50*time.Millisecond)
+}
+
 // freeAddr returns a loopback address with a port nothing listens on.
 func freeAddr(t *testing.T) string {
 	t.Helper()
@@ -82,9 +97,20 @@ func TestInit_serves_carts_from_Postgres_on_the_OS_Host(t *testing.T) {
 
 	ca := humustest.NewCA(t)
 	bundle, password := ca.Issue(t, "localhost", "127.0.0.1").PKCS12(t)
-	certFile := filepath.Join(t.TempDir(), "tls.p12")
+	dir := t.TempDir()
+	certFile := filepath.Join(dir, "tls.p12")
 	require.NoError(t, os.WriteFile(certFile, bundle, 0o600))
 	addr := freeAddr(t)
+
+	// The identity provider, on the OS Host, with a certificate from the
+	// same CA, which the service trusts through JWKS_CA_FILE.
+	provider := newIdP(t)
+	idpCert := ca.Issue(t, "127.0.0.1")
+	idpCAFile := filepath.Join(dir, "idp-ca.pem")
+	require.NoError(t, os.WriteFile(idpCAFile, caPEM(idpCert), 0o600))
+	idpAddr := freeAddr(t)
+	stopIdP := provider.serve(t, humus.OSHost(), idpAddr, idpCert)
+	waitListening(t, idpAddr)
 
 	p, status := httpservertest.Start(t, Init,
 		humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(telemetry.NoopBuilder)),
@@ -93,6 +119,10 @@ func TestInit_serves_carts_from_Postgres_on_the_OS_Host(t *testing.T) {
 			"TLS_PKCS12_FILE":     certFile,
 			"TLS_PKCS12_PASSWORD": password,
 			"DATABASE_URL":        url,
+			"JWKS_URL":            "https://" + idpAddr + jwksPath,
+			"JWKS_CA_FILE":        idpCAFile,
+			"JWT_ISSUER":          issuer,
+			"JWT_AUDIENCE":        audience,
 		}),
 	)
 
@@ -104,6 +134,7 @@ func TestInit_serves_carts_from_Postgres_on_the_OS_Host(t *testing.T) {
 		},
 	}
 	base := "https://" + addr
+	token := provider.token(t, endpoint.ScopeWrite)
 
 	do := func(method, path, body string) (int, []byte) {
 		t.Helper()
@@ -116,6 +147,9 @@ func TestInit_serves_carts_from_Postgres_on_the_OS_Host(t *testing.T) {
 		if body != "" {
 			req.Header.Set("Content-Type", "application/json")
 		}
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
 		resp, err := client.Do(req)
 		require.NoError(t, err)
 		defer func() { require.NoError(t, resp.Body.Close()) }()
@@ -125,15 +159,7 @@ func TestInit_serves_carts_from_Postgres_on_the_OS_Host(t *testing.T) {
 		return resp.StatusCode, b
 	}
 
-	// Wait for the service to listen.
-	require.Eventually(t, func() bool {
-		c, err := net.DialTimeout("tcp", addr, time.Second)
-		if err != nil {
-			return false
-		}
-		_ = c.Close()
-		return true
-	}, waitLimit, 50*time.Millisecond)
+	waitListening(t, addr)
 
 	code, body := do(http.MethodPost, "/carts", "")
 	require.Equal(t, http.StatusCreated, code, "%s", body)
@@ -155,6 +181,11 @@ func TestInit_serves_carts_from_Postgres_on_the_OS_Host(t *testing.T) {
 	code, body = do(http.MethodGet, "/carts/"+cart.CartID.String(), "")
 	require.Equal(t, http.StatusNotFound, code, "%s", body)
 
+	// Without a token, the service answers 401.
+	token = ""
+	code, body = do(http.MethodPost, "/carts", "")
+	require.Equal(t, http.StatusUnauthorized, code, "%s", body)
+
 	// The drain is httpserver.Main's 5s, so the exit takes that long.
 	<-p.Notified(syscall.SIGTERM)
 	p.Signal(syscall.SIGTERM)
@@ -164,6 +195,7 @@ func TestInit_serves_carts_from_Postgres_on_the_OS_Host(t *testing.T) {
 	case <-time.After(waitLimit):
 		t.Fatal("the service didn't exit")
 	}
+	stopIdP()
 }
 
 // protocolsHTTP2 returns the protocols of a client that speaks HTTP/2 alone.

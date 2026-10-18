@@ -43,6 +43,8 @@ github.com/felixge/httpsnoop v1.1.0 h1:3YtUj32ZZkqZtt3sZZsClsymw/QDuVfpNhoA31zeO
 github.com/felixge/httpsnoop v1.1.0/go.mod h1:Zqxgdd+1Rkcz8euOqdr7lqgCRJztwr5hp9vDSi5UZCE=
 github.com/go-chi/chi/v5 v5.5.0 h1:xdKQ1dJmVJsmgahrXSKhUx8NyVPzpwdlyrrQFpMPJgg=
 github.com/go-chi/chi/v5 v5.5.0/go.mod h1:d1IG7GtKPSjPyBP365PH8sAGVHk3qfB/IhjFNRH1wWM=
+github.com/go-jose/go-jose/v4 v4.1.6 h1:sNRkftxFJxwsILiQukqp5z83QBSmntVwmgRY7AqBDO4=
+github.com/go-jose/go-jose/v4 v4.1.6/go.mod h1:x4oUasVrzR7071A4TnHLGSPpNOm2a21K9Kf04k1rs08=
 github.com/go-logr/logr v1.2.2/go.mod h1:jdQByPbusPIv2/zmleS9BjJVeZ6kBagPoEUsqbVz/1A=
 github.com/go-logr/logr v1.4.4 h1:tG4xh9yMsRCAiodLVTxyrkzSZ9+o0L1Kg/+cPVcbP/8=
 github.com/go-logr/logr v1.4.4/go.mod h1:9T104GzyrTigFIr8wt5mBrctHMim0Nb2HLGrmQ40KvY=
@@ -141,8 +143,12 @@ github.com/yusufpapurcu/wmi v1.2.4 h1:zFUKzehAFReQwLys1b/iSMl+JQGSCSjtVqQn9bBrPo
 github.com/yusufpapurcu/wmi v1.2.4/go.mod h1:SBZ9tNy3G9/m5Oi98Zks0QjeHVDvuK0qfxQmPyzfmi0=
 github.com/z5labs/bedrock v0.25.0 h1:9wu6xQubi5hpADw37Gk7kcAkardBhSUhbejE0aKGBpw=
 github.com/z5labs/bedrock v0.25.0/go.mod h1:6pbhUnkSk+avSoVi+BM91cBlRiN7UVsxA7txQnC/TTA=
+github.com/z5labs/bedrock/circuit v0.24.0 h1:ATWbrhRSkORXKeFCaCs758uPrHUJ/wuB+cRW/GJAIro=
+github.com/z5labs/bedrock/circuit v0.24.0/go.mod h1:2yujEj/etrHSXJwrc6AQVEwlQ+MX/3GT27WtHzL5Qu4=
 github.com/z5labs/bedrock/fit v0.25.0 h1:h8t15snj4OXBfmztmOWeAGrqeEsu0GMgfcjMBZJAsaM=
 github.com/z5labs/bedrock/fit v0.25.0/go.mod h1:HpbItTmS7lsVgjCEra4U19uFNqMmlcY2Ir2noT+dnZk=
+github.com/z5labs/bedrock/retry v0.24.0 h1:dMGjmWWa9hVy/2MI4F9XIgRPhUIWuObGMztxRi7MgDM=
+github.com/z5labs/bedrock/retry v0.24.0/go.mod h1:KlmokXk6A+kBkw2DlNf3eBDHpnQD09HiHv6sMdX+V6Y=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
 go.opentelemetry.io/auto/sdk v1.2.1/go.mod h1:KRTj+aOaElaLi+wW1kO/DZRXwkF4C5xPbEe3ZiIhN7Y=
 go.opentelemetry.io/contrib/bridges/otelslog v0.21.0 h1:/CdgE52i1OEPHhsGUqrggYNRaZy4v4YgVenGd52dRBI=

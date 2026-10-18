@@ -10,18 +10,28 @@
 // service chose: a cart or an item that doesn't exist is a [NotFound], a
 // body the service won't accept is an [Invalid], and anything else is
 // answered by the catch-all with [InternalError].
+//
+// Every operation requires a bearer token, which [Carts.Bearer]
+// authenticates into the token's [Claims]. Reading a cart needs nothing
+// more; every operation that changes one, creating it included, also needs
+// the scope [ScopeWrite].
 package endpoint
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/z5labs/humus/auth"
+	"github.com/z5labs/humus/auth/jwt"
 	"github.com/z5labs/humus/openapi/v3"
 	"github.com/z5labs/humus/openapi/v3/jsoncodec"
 	"github.com/z5labs/humus/openapi/v3/problem"
@@ -111,6 +121,51 @@ func InternalError(err error) problem.Details {
 	}
 }
 
+// ScopeWrite is the scope a token needs to change a cart: to create one,
+// delete one, or add, update or remove its items. A token without it can
+// read a cart, and nothing more.
+const ScopeWrite = "carts:write"
+
+// Claims are what the shoppingcart reads from a bearer token: its scopes,
+// in the scope claim, separated by spaces, as RFC 8693 has it. The
+// registered claims, iss, aud, exp and the rest, are checked by auth/jwt's
+// Verifier, so Claims needn't hold them.
+type Claims struct {
+	Scope string `json:"scope"`
+}
+
+// HasScope reports whether the token was granted scope. It makes Claims an
+// auth.Scoped, so a requirement can name a scope of it.
+func (c Claims) HasScope(scope string) bool {
+	return slices.Contains(strings.Fields(c.Scope), scope)
+}
+
+// KeysUnavailable is the encoder of the answer to a *jwt.KeySetError: a
+// 503, as an RFC 9457 problem detail, which says to try again. A token the
+// service couldn't get keys for may be valid, so it is never a 401, which
+// would tell the client to drop it. The KeySet's error isn't in the body,
+// which would hand the client the identity provider's address and how it
+// failed.
+func KeysUnavailable() openapi.Encoder[*jwt.KeySetError] {
+	return keysUnavailable{jsoncodec.Problem[problem.Details]()}
+}
+
+// keysUnavailable answers every *jwt.KeySetError with one problem detail,
+// written by a problem.Details encoder, whose media type and schema it
+// keeps.
+type keysUnavailable struct {
+	openapi.Encoder[problem.Details]
+}
+
+func (e keysUnavailable) Encode(*jwt.KeySetError) (io.WriterTo, error) {
+	return e.Encoder.Encode(problem.Details{
+		Type:   "about:blank",
+		Title:  http.StatusText(http.StatusServiceUnavailable),
+		Status: http.StatusServiceUnavailable,
+		Detail: "The server can't verify tokens right now. Try again later.",
+	})
+}
+
 // uuidPattern is a UUID in its canonical form, written in the syntax RE2 and
 // ECMA-262 share, so the document's pattern means what the API checks.
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -139,17 +194,29 @@ var (
 	invalidBody = openapi.Error[Invalid](http.StatusUnprocessableEntity, jsoncodec.Problem)
 )
 
-// Carts serves the API's operations on Store.
+// Carts serves the API's operations on Store, to the requests Bearer
+// authenticates.
 type Carts struct {
 	Store Store
+
+	// Bearer is the scheme every operation's requirement names. The API's
+	// Security requires it of every operation; Operations adds ScopeWrite
+	// to the ones that change a cart.
+	Bearer auth.Scheme[Claims]
 }
 
 // Operations returns the API's six operations. A 404 isn't among any
-// operation's parts: NewAPI gives Error[NotFound] to every operation.
+// operation's parts: NewAPI gives Error[NotFound] to every operation. Nor is
+// the bearer token getCart needs: NewAPI's Security requires it of every
+// operation, and an operation that changes a cart replaces it with one that
+// names ScopeWrite too.
 func (c Carts) Operations() []openapi.Operation {
+	// write is the requirement of every operation that changes a cart.
+	write := openapi.Security(auth.RequireScopes(c.Bearer, ScopeWrite))
 	return []openapi.Operation{
 		openapi.Post(carts, c.createCart, openapi.EmptyDecoder, jsoncodec.Encoder,
 			openapi.OperationID("createCart"),
+			write,
 			openapi.Summary("Create a new shopping cart"),
 			openapi.Status(http.StatusCreated),
 			tags,
@@ -161,11 +228,13 @@ func (c Carts) Operations() []openapi.Operation {
 		),
 		openapi.Delete(cart, c.deleteCart, openapi.EmptyEncoder,
 			openapi.OperationID("deleteCart"),
+			write,
 			openapi.Summary("Delete a shopping cart and all its items"),
 			tags,
 		),
 		openapi.Post(items, c.addCartItem, jsoncodec.Decoder, jsoncodec.Encoder,
 			openapi.OperationID("addCartItem"),
+			write,
 			openapi.Summary("Add an item to a shopping cart"),
 			openapi.Status(http.StatusCreated),
 			invalidBody,
@@ -173,12 +242,14 @@ func (c Carts) Operations() []openapi.Operation {
 		),
 		openapi.Patch(item, c.updateCartItem, jsoncodec.Decoder, jsoncodec.Encoder,
 			openapi.OperationID("updateCartItem"),
+			write,
 			openapi.Summary("Update the quantity of an item in a shopping cart"),
 			invalidBody,
 			tags,
 		),
 		openapi.Delete(item, c.removeCartItem, openapi.EmptyEncoder,
 			openapi.OperationID("removeCartItem"),
+			write,
 			openapi.Summary("Remove an item from a shopping cart"),
 			tags,
 		),

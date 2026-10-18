@@ -8,7 +8,9 @@ package app
 // The tests in this file run the whole service, with httpservertest.Start,
 // inside synctest bubbles, on humustest Hosts, with certificates from a CA
 // generated for each test. All but one serve an in-memory Store, which
-// initWith swaps in for Postgres.
+// initWith swaps in for Postgres. Each one runs the test's identity
+// provider beside the service, on the same Host, and sends the tokens it
+// signs.
 
 import (
 	"bytes"
@@ -25,6 +27,7 @@ import (
 	"syscall"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -46,22 +49,40 @@ const base = "https://localhost:8443"
 // dbHost is the database's address in the tests' DATABASE_URL.
 const dbHost = "db.internal:5432"
 
-// service is the whole service, running on a humustest Host.
+// idpHost is where the identity provider listens on the Host.
+const idpHost = "idp.internal:9443"
+
+// service is the whole service, running on a humustest Host beside its
+// identity provider.
 type service struct {
-	h      *humustest.Host
-	client *http.Client
-	p      *bedrocktest.Process
-	status <-chan bedrock.ExitStatus
+	h       *humustest.Host
+	client  *http.Client
+	p       *bedrocktest.Process
+	status  <-chan bedrock.ExitStatus
+	idp     *idp
+	stopIdP func()
+
+	// token is what do sends as its bearer token, or nothing when it is
+	// "". start sets one with carts:write; as replaces it.
+	token string
 }
 
 // start runs initWith on open, with every setting it needs, on a new
-// humustest Host, and waits for it to listen. Call it inside the bubble that
-// uses it.
+// humustest Host, beside the test's identity provider, and waits for both
+// to listen. Call it inside the bubble that uses it.
 func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error), hostOpts ...humustest.HostOption) *service {
 	t.Helper()
 	ca := humustest.NewCA(t)
 	bundle, password := ca.Issue(t, "localhost").PKCS12(t)
-	h := humustest.NewHost(t, append(hostOpts, humustest.WithFiles(map[string][]byte{"tls.p12": bundle}))...)
+	idpCert := ca.Issue(t, "idp.internal")
+	h := humustest.NewHost(t, append(hostOpts, humustest.WithFiles(map[string][]byte{
+		"tls.p12":    bundle,
+		"idp-ca.pem": caPEM(idpCert),
+	}))...)
+
+	provider := newIdP(t)
+	stopIdP := provider.serve(t, h.Host(), idpHost, idpCert)
+	<-h.Listening(idpHost)
 
 	p, status := httpservertest.Start(t, init,
 		humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
@@ -73,19 +94,42 @@ func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Servi
 			// the real environment or ~/.pgpass. The password is new for
 			// each test.
 			"DATABASE_URL": "postgres://carts:" + rand.Text() + "@" + dbHost + "/carts?sslmode=disable",
+			// The key set is the test's, trusted through the test's CA.
+			"JWKS_URL":     "https://" + idpHost + jwksPath,
+			"JWKS_CA_FILE": "idp-ca.pem",
+			"JWT_ISSUER":   issuer,
+			"JWT_AUDIENCE": audience,
 		}),
 	)
 	<-h.Listening("localhost:8443")
-	return &service{h: h, client: httpservertest.NewClient(h, ca.Pool()), p: p, status: status}
+	return &service{
+		h:       h,
+		client:  httpservertest.NewClient(h, ca.Pool()),
+		p:       p,
+		status:  status,
+		idp:     provider,
+		stopIdP: stopIdP,
+		token:   provider.token(t, endpoint.ScopeWrite),
+	}
 }
 
-// stop sends the service SIGTERM and checks that it exits 0.
+// as returns s, sending token as its bearer token, or no token when it is
+// "".
+func (s *service) as(token string) *service {
+	c := *s
+	c.token = token
+	return &c
+}
+
+// stop sends the service SIGTERM and checks that it exits 0, then stops its
+// identity provider.
 func (s *service) stop(t *testing.T) {
 	t.Helper()
 	<-s.p.Notified(syscall.SIGTERM)
 	s.p.Signal(syscall.SIGTERM)
 	st := <-s.status
 	require.Zero(t, st.Code(), "cause: %v", st.Cause())
+	s.stopIdP()
 }
 
 // response is what the client got back.
@@ -96,7 +140,7 @@ type response struct {
 }
 
 // do sends method path, with body as contentType when body isn't "", and
-// returns the response.
+// s's token, and returns the response.
 func (s *service) do(t *testing.T, method, path, contentType, body string) response {
 	t.Helper()
 	var r io.Reader
@@ -107,6 +151,9 @@ func (s *service) do(t *testing.T, method, path, contentType, body string) respo
 	require.NoError(t, err)
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
+	}
+	if s.token != "" {
+		req.Header.Set("Authorization", "Bearer "+s.token)
 	}
 	resp, err := s.client.Do(req)
 	require.NoError(t, err)
@@ -265,6 +312,115 @@ func TestInit_answers_unmatched_requests_with_a_problem(t *testing.T) {
 	})
 }
 
+func TestInit_answers_a_request_without_a_valid_token_with_401(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
+			return initWith(ctx, setup, inMemory)
+		})
+		cart := "/carts/" + decode[endpoint.Cart](t, s.do(t, http.MethodPost, "/carts", "", ""), http.StatusCreated, "application/json").CartID.String()
+		item := cart + "/items/" + uuid.NewString()
+
+		// Every operation needs a token, reading a cart included. Without
+		// one, the challenge names the scheme.
+		anonymous := s.as("")
+		for _, op := range []struct{ method, path, body string }{
+			{http.MethodPost, "/carts", ""},
+			{http.MethodGet, cart, ""},
+			{http.MethodDelete, cart, ""},
+			{http.MethodPost, cart + "/items", `{"productId":"sku-1","quantity":1,"unitPrice":1}`},
+			{http.MethodPatch, item, `{"quantity":1}`},
+			{http.MethodDelete, item, ""},
+		} {
+			r := anonymous.do(t, op.method, op.path, "application/json", op.body)
+			isProblem(t, r, http.StatusUnauthorized)
+			require.Equal(t, "Bearer", r.header.Get("WWW-Authenticate"), "%s %s", op.method, op.path)
+		}
+
+		// A token the Verifier rejects, here one signed by a key the
+		// provider doesn't serve, is invalid_token.
+		r := s.as(newIdP(t).token(t, endpoint.ScopeWrite)).do(t, http.MethodGet, cart, "", "")
+		isProblem(t, r, http.StatusUnauthorized)
+		require.Equal(t, `Bearer error="invalid_token"`, r.header.Get("WWW-Authenticate"))
+
+		s.stop(t)
+	})
+}
+
+func TestInit_needs_carts_write_to_change_a_cart(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
+			return initWith(ctx, setup, inMemory)
+		})
+		// s's own token has carts:write.
+		created := decode[endpoint.Cart](t, s.do(t, http.MethodPost, "/carts", "", ""), http.StatusCreated, "application/json")
+		cart := "/carts/" + created.CartID.String()
+		added := decode[endpoint.CartItem](t,
+			s.do(t, http.MethodPost, cart+"/items", "application/json", `{"productId":"sku-1","quantity":1,"unitPrice":1}`),
+			http.StatusCreated, "application/json")
+		item := cart + "/items/" + added.ItemID.String()
+
+		// A token without carts:write reads the cart.
+		reader := s.as(s.idp.token(t, "carts:read"))
+		got := decode[endpoint.Cart](t, reader.do(t, http.MethodGet, cart, "", ""), http.StatusOK, "application/json")
+		require.Equal(t, created.CartID, got.CartID)
+		require.Len(t, got.Items, 1)
+
+		// Every operation that changes a cart is a 403 to it, which names
+		// the scope it lacks.
+		for _, op := range []struct{ method, path, body string }{
+			{http.MethodPost, "/carts", ""},
+			{http.MethodDelete, cart, ""},
+			{http.MethodPost, cart + "/items", `{"productId":"sku-2","quantity":1,"unitPrice":1}`},
+			{http.MethodPatch, item, `{"quantity":2}`},
+			{http.MethodDelete, item, ""},
+		} {
+			r := reader.do(t, op.method, op.path, "application/json", op.body)
+			isProblem(t, r, http.StatusForbidden)
+			require.Equal(t, `Bearer error="insufficient_scope", scope="carts:write"`, r.header.Get("WWW-Authenticate"), "%s %s", op.method, op.path)
+		}
+
+		// Nothing changed, and a token with carts:write changes it.
+		got = decode[endpoint.Cart](t, reader.do(t, http.MethodGet, cart, "", ""), http.StatusOK, "application/json")
+		require.Len(t, got.Items, 1)
+		require.Equal(t, 1, got.Items[0].Quantity)
+
+		writer := s.as(s.idp.token(t, "carts:read", endpoint.ScopeWrite))
+		updated := decode[endpoint.CartItem](t,
+			writer.do(t, http.MethodPatch, item, "application/json", `{"quantity":2}`),
+			http.StatusOK, "application/json")
+		require.Equal(t, 2, updated.Quantity)
+		r := writer.do(t, http.MethodDelete, cart, "", "")
+		require.Equal(t, http.StatusNoContent, r.code)
+
+		s.stop(t)
+	})
+}
+
+func TestInit_answers_a_token_it_has_no_keys_for_with_503(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
+			return initWith(ctx, setup, inMemory)
+		})
+
+		// The key set is down before the service has fetched a key, so it
+		// can't tell whether the token is valid: an outage, not a 401.
+		s.idp.setDown(true)
+		r := s.do(t, http.MethodPost, "/carts", "", "")
+		d := isProblem(t, r, http.StatusServiceUnavailable)
+		require.Equal(t, "The server can't verify tokens right now. Try again later.", d.Detail)
+		require.Empty(t, r.header.Get("WWW-Authenticate"))
+		require.NotContains(t, string(r.body), idpHost)
+
+		// Once the key set is back, the next token past the Verifier's
+		// MinRefreshInterval fetches it, and is served.
+		s.idp.setDown(false)
+		time.Sleep(time.Minute)
+		decode[endpoint.Cart](t, s.do(t, http.MethodPost, "/carts", "", ""), http.StatusCreated, "application/json")
+
+		s.stop(t)
+	})
+}
+
 // failingStore is an endpoint.Store whose every method fails with err.
 type failingStore struct{ err error }
 
@@ -343,7 +499,7 @@ func TestInit_without_its_settings_exits_78(t *testing.T) {
 
 		st := <-status
 		require.Equal(t, humus.ExitConfig, st.Code())
-		for _, name := range []string{"ADDR", "TLS_PKCS12_FILE", "DATABASE_URL"} {
+		for _, name := range []string{"ADDR", "TLS_PKCS12_FILE", "DATABASE_URL", "JWKS_URL", "JWT_ISSUER", "JWT_AUDIENCE"} {
 			require.ErrorContains(t, st.Cause(), "config "+name+": not found")
 		}
 	})
@@ -355,7 +511,8 @@ func TestInit_serves_its_document(t *testing.T) {
 		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
 			return initWith(ctx, setup, inMemory)
 		})
-		r := s.do(t, http.MethodGet, "/openapi.json", "", "")
+		// The document is public: it is served without a token.
+		r := s.as("").do(t, http.MethodGet, "/openapi.json", "", "")
 		require.Equal(t, http.StatusOK, r.code)
 		require.Equal(t, "application/json", r.header.Get("Content-Type"))
 		doc = r.body
