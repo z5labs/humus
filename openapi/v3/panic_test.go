@@ -123,7 +123,9 @@ func recordAttr(r sdklog.Record, key string) string {
 
 // requirePanicRecorded checks that the one server span ending in a panic of
 // the end user's code, and the one "operation panicked" record, both hold
-// the panic with its stack, and that httpserver recorded no panic.
+// the panic with its stack, and that httpserver recorded no panic. It is
+// called after s.stop, which has already checked that nothing reached the
+// process's stderr, where net/http would log a panic it recovered.
 func requirePanicRecorded(t *testing.T, s *server, method, route string) {
 	t.Helper()
 	var panicked []sdktrace.ReadOnlySpan
@@ -261,6 +263,36 @@ func TestAPI_sends_the_catch_alls_status_alone_when_its_encoder_fails_on_a_panic
 			bodies = append(bodies, rec.Body().AsString())
 		}
 		require.Equal(t, []string{"operation panicked", "request failed"}, bodies)
+	})
+}
+
+// panickyLen is a WriterTo whose Len panics with secret.
+type panickyLen struct{}
+
+func (panickyLen) WriteTo(w io.Writer) (int64, error) {
+	n, err := io.WriteString(w, "never written")
+	return int64(n), err
+}
+
+func (panickyLen) Len() int { panic(secret) }
+
+func TestAPI_answers_a_panic_in_the_WriterTos_Len_with_the_catch_all(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := serveAPI(t, []openapi.Operation{
+			openapi.Get(cart, func(context.Context, openapi.Request[openapi.EmptyBody]) (panickyLen, error) {
+				return panickyLen{}, nil
+			}, func() openapi.Encoder[panickyLen] {
+				return encoderFunc[panickyLen](func(v panickyLen) (io.WriterTo, error) { return v, nil })
+			}),
+		})
+
+		r := s.get("/carts/c-1")
+		require.Equal(t, http.StatusInternalServerError, r.status)
+		require.Equal(t, "application/problem+json", r.contentType)
+		require.JSONEq(t, `{"status":500,"title":"Internal Server Error"}`, r.body)
+
+		s.stop()
+		requirePanicRecorded(t, s, http.MethodGet, "/carts/{cartId}")
 	})
 }
 

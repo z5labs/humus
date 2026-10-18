@@ -257,11 +257,18 @@ func (rt *route) write(w http.ResponseWriter, r *http.Request, status int, media
 
 // respond writes the operation's response: its status, then the body of
 // the WriterTo its encoder returned, with rt's rule for a WriterTo that
-// fails once the status is written. A panic of the WriterTo is recorded as
-// answerPanic records one, and cuts the response short, as a failure does.
+// fails once the status is written. A panic of the WriterTo's Len comes
+// before the status, so it is answered by answerPanic. A panic of its
+// WriteTo is recorded as answerPanic records one, and cuts the response
+// short, as a failure does.
 func (rt *route) respond(w http.ResponseWriter, r *http.Request, wt io.WriterTo) {
+	n := -1
+	if p := guard(func() { n = length(wt) }); p != nil {
+		rt.answerPanic(w, r, p)
+		return
+	}
 	var err error
-	if p := guard(func() { err = write(w, rt.status, rt.codecs.encMediaType, wt) }); p != nil {
+	if p := guard(func() { err = writeSized(w, rt.status, rt.codecs.encMediaType, n, wt) }); p != nil {
 		rt.recordPanic(r, p)
 		panic(http.ErrAbortHandler)
 	}
@@ -364,11 +371,24 @@ func (rt *route) recordPanic(r *http.Request, p *panicked) {
 // streams reaches the client as it is written. It returns the WriterTo's
 // error.
 func write(w http.ResponseWriter, status int, mediaType string, wt io.WriterTo) error {
+	return writeSized(w, status, mediaType, length(wt), wt)
+}
+
+// length returns the WriterTo's Len, or -1 when it has none.
+func length(wt io.WriterTo) int {
+	if l, ok := wt.(interface{ Len() int }); ok {
+		return l.Len()
+	}
+	return -1
+}
+
+// writeSized is write, given the WriterTo's length, or -1 for none.
+func writeSized(w http.ResponseWriter, status int, mediaType string, n int, wt io.WriterTo) error {
 	if mediaType != "" {
 		w.Header().Set("Content-Type", mediaType)
 	}
-	if l, ok := wt.(interface{ Len() int }); ok && bodyAllowed(status) {
-		w.Header().Set("Content-Length", strconv.Itoa(l.Len()))
+	if n >= 0 && bodyAllowed(status) {
+		w.Header().Set("Content-Length", strconv.Itoa(n))
 	}
 	w.WriteHeader(status)
 	if wt == nil {

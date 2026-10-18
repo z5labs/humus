@@ -186,25 +186,27 @@
 //
 // # Panics
 //
-// A panic of the end user's code, while an operation serves a request, is
-// answered as the document says, so the API keeps its contract even when
+// A panic of the end user's code, on the goroutine serving an operation's
+// request, is answered as the document says, so the API keeps its contract even when
 // that code has a bug. The API recovers a panic of the decoder's Decode,
-// of the handler, and of the encoder's Encode, which all run before the
-// status is written. The operation's catch-all answers it, with its status
+// of the handler, of the encoder's Encode, and of the Len of the WriterTo
+// it returns, which all run before the status is written. The operation's catch-all answers it, with its status
 // and wrap of an error that doesn't carry the panic's value, so the value
 // never reaches the client, and the response is the one the document lists
 // for the catch-all. The API keeps serving every other request.
 //
-// A panic of the encoder's WriterTo comes after the status, so it can't be
-// answered: it cuts the response short, as a WriterTo's error does.
+// A panic of the WriterTo's WriteTo comes after the status, so it can't be
+// answered: it cuts the response short, as a WriterTo's error does. A
+// panic on a goroutine the end user's code starts can't be recovered by
+// the API at all, and crashes the process, as it would anywhere in Go.
 //
 // Recovering has a cost: whatever the panicking code left half-changed,
 // such as a map it was halfway through writing, or a lock it took without
 // a deferred unlock, stays that way for the requests that follow. Nothing
 // is rolled back.
 //
-// These pass through, unrecovered, to httpserver, which records them and
-// aborts the response:
+// These pass through, unrecovered, to httpserver, which aborts the
+// response, and records every one but http.ErrAbortHandler:
 //
 //   - a panic with http.ErrAbortHandler, which the end user's code uses to
 //     abort a response on purpose, and which httpserver passes through
