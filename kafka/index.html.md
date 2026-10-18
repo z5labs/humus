@@ -1,4 +1,4 @@
-# Consuming Kafka
+# Consuming and producing Kafka
 
 The [`queue/kafka`](https://pkg.go.dev/github.com/z5labs/humus/queue/kafka)
 package consumes Kafka topics as a `humus.Service`, with
@@ -9,15 +9,24 @@ offset order. The end user's `Init` sources its `Settings`, builds the Service
 with `kafka.NewService`, and returns it to `humus.Main`, whose defaults are a
 consumer's.
 
+The package produces records too. A `kafka.Producer`, which the end user's
+`Init` builds with `kafka.NewProducer`, produces to one cluster for any
+Service of the process: a `Processor` that produces a dead letter or writes
+to another topic, an HTTP handler that publishes an event, a job.
+[Producing](#producing) describes it.
+
 [`queue`](https://pkg.go.dev/github.com/z5labs/humus/queue), in the core
 module, is the contract between the end user's code and any broker: the
 `Processor` they write, and when a message is acknowledged. `queue/kafka` is
 in the nested module `github.com/z5labs/humus/queue/kafka`, so a service that
-doesn't consume Kafka doesn't get franz-go in its module graph. The package
-has no App, no `Main`, no defaults of its own and no test package. The design
-behind everything on this page is in
+doesn't use Kafka doesn't get franz-go in its module graph. The package has
+no App, no `Main`, no defaults of its own and no test package. The design
+behind the consumer is in
 [Proposal: queue processing and the Kafka runtime](https://github.com/z5labs/humus/discussions/683),
-with its [revision](https://github.com/z5labs/humus/discussions/683#discussioncomment-18988751).
+with its [revision](https://github.com/z5labs/humus/discussions/683#discussioncomment-18988751),
+and the design behind the producer in
+[Proposal: producing to Kafka](https://github.com/z5labs/humus/discussions/764),
+with its [revision 1](https://github.com/z5labs/humus/discussions/764#discussioncomment-19008694).
 
 ## The contract
 
@@ -65,16 +74,24 @@ once, by the record's key, and skips an order it has already stored:
 
 ```go
 // orders is the end user's Processor: it stores each order once, by the
-// record's key, so an order delivered again is skipped.
+// record's key, so an order delivered again is skipped, and produces an
+// order it can't read to a dead-letter topic.
 type orders struct {
 	mu     sync.Mutex
 	stored map[string]bool
 	out    io.Writer
+	dlq    *kafka.Producer
 }
+```
 
-// Handle stores the order m carries, unless it is stored already. It is
+Its `Handle` method, the `Processor`'s function, hands each order it can
+read to `store`, and produces the others to a dead-letter topic with `dlq`,
+as [Dead letters](#dead-letters) shows. `store` is the idempotent part:
+
+```go
+// store stores the order m carries, unless it is stored already. It is
 // idempotent, as a Processor under queue.AtLeastOnce must be.
-func (o *orders) Handle(ctx context.Context, m kafka.Message) error {
+func (o *orders) store(m kafka.Message) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	id := string(m.Key)
@@ -98,11 +115,14 @@ The end user's `Init` sources `kafka.Settings` with
 [`config.Struct`](https://pkg.go.dev/github.com/z5labs/bedrock/config#Struct),
 as [Configuring a humus service](/humus/configuration/) describes,
 builds the `Processor`, and returns the Service that `kafka.NewService`
-builds:
+builds. This one also sources `kafka.ProducerSettings` and builds the
+`Producer` its `Processor` produces dead letters with, as
+[Building a Producer](#building-a-producer) describes:
 
 ```go
-// Init is the end user's Init: it sources the Settings with config.Struct,
-// builds the Processor, and returns the Service from NewService.
+// Init is the end user's Init: it sources the Settings and the
+// ProducerSettings with config.Struct, builds the Producer and the
+// Processor, and returns the Service from NewService.
 func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	d := kafka.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
@@ -121,7 +141,24 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		return nil, err // exit 78, naming every bad variable
 	}
 
-	h := &orders{stored: map[string]bool{}, out: s.Process.Stdout}
+	dp := kafka.DefaultProducerSettings()
+	producer, err := config.Struct(func(r *config.Resolver) kafka.ProducerSettings {
+		p := dp
+		// The dead letters go to the orders' own cluster, so Brokers reads the consumer's variable.
+		p.Brokers = r.Get(env("KAFKA_BROKERS").Map(list).Validate(kafka.CheckBrokers))
+		p.DeliveryTimeout = r.Get(env("KAFKA_DELIVERY_TIMEOUT").Parse(time.ParseDuration).Default(dp.DeliveryTimeout).Validate(kafka.CheckDeliveryTimeout))
+		p.Breaker.OpenFor = r.Get(env("KAFKA_BREAKER_OPEN_FOR").Parse(time.ParseDuration).Default(dp.Breaker.OpenFor).Validate(kafka.CheckBreakerOpenFor))
+		return p
+	}).Read(ctx)
+	if err != nil {
+		return nil, err // exit 78, naming every bad variable
+	}
+	dlq, err := kafka.NewProducer(s, producer) // opens no connection: the first Produce does
+	if err != nil {
+		return nil, err
+	}
+
+	h := &orders{stored: map[string]bool{}, out: s.Process.Stdout, dlq: dlq}
 	svc, err := kafka.NewService(s, settings, queue.ProcessorFunc[kafka.Message](h.Handle))
 	if err != nil {
 		return nil, err
@@ -422,6 +459,46 @@ The record is then committed like any other, and the partition moves on.
 records are worth stopping for, and where the others go, is the end user's
 decision.
 
+A dead-letter topic is produced to with a [`Producer`](#producing). The
+`orders` `Processor`'s `Handle` produces an order that isn't JSON, which
+would fail on every delivery, to `orders.dlq`, with the consumed record's
+key, value and headers:
+
+```go
+// Handle stores the order m carries. An order that isn't JSON would fail
+// on every delivery, so rather than stop the Service on it, Handle produces
+// it to the dead-letter topic, and returns nil once it is stored there.
+func (o *orders) Handle(ctx context.Context, m kafka.Message) error {
+	if !json.Valid(m.Value) {
+		// A dead letter, stored before the record is committed.
+		return o.dlq.Produce(ctx, kafka.Record{Topic: "orders.dlq", Key: m.Key, Value: m.Value, Headers: m.Headers})
+	}
+	return o.store(m)
+}
+```
+
+**The dead letter is stored before the record is committed.** `Produce`
+returns `nil` only once the cluster has acknowledged every record, and
+`Handle` returns what `Produce` returns, so under `AtLeastOnce` the consumed
+record is committed only after its dead letter is stored. A dead letter that
+fails, because `DeliveryTimeout` passed, the
+[circuit breaker](#the-circuit-breaker) is open or a broker refused the
+credentials, is `Handle`'s error: the Service stops as on any processing
+error, and the record is delivered again when the App restarts, rather than
+lost. Under `AtMostOnce` the record was committed before `Handle` ran, so a
+dead letter that fails is logged at ERROR, and the record is lost.
+
+**A dead letter may be stored twice.** A record delivered again, after a
+crash between the dead letter's acknowledgement and the commit, is produced
+again, and so is one whose `Produce` failed after its dead letter was
+stored anyway. Whatever reads the dead-letter topic tells duplicates apart
+by the key, as any consumer under `AtLeastOnce` must.
+
+Copying `m.Headers` is safe: the `Producer` replaces the consumed record's
+trace context with the dead letter's own, as [The send span](#the-send-span)
+describes. A `Processor` that wants a dead letter to say where it came from
+adds headers of its own, such as the record's topic, partition and offset.
+
 ## Shutdown and rebalances
 
 A Service gets the lifecycle's [two signals](/humus/lifecycle/#service),
@@ -576,15 +653,348 @@ explains for mixed processes:
   shutdown starts, and its records in flight then have the drain and that
   package's grace period to finish, rather than `humus.Main`'s 20s.
 
+## Producing
+
+A [`kafka.Producer`](https://pkg.go.dev/github.com/z5labs/humus/queue/kafka#Producer)
+produces records to one Kafka cluster. The end user's `Init` builds it with
+`kafka.NewProducer`, from `kafka.ProducerSettings`, and any Service uses it:
+a `Processor` that produces a dead letter or writes to another topic, an HTTP
+handler that publishes an event, a job. **It is not a Service.** Producing
+has no loop of its own to serve: it is called from the Services that do, so
+it lives as long as they do and closes after them, as
+[Shutdown and the grace period](#shutdown-and-the-grace-period) describes.
+One `Producer` is safe for concurrent use and serves every Service of the
+process.
+
+### Building a Producer
+
+The end user's `Init` sources `ProducerSettings` with `config.Struct`, as it
+does the consumer's `Settings`, and builds the `Producer` before the Services
+that use it. In [the consumer's `Init`](#a-consumer), the dead letters go to
+the cluster the orders come from, so the chain reads the consumer's
+`KAFKA_BROKERS` again:
+
+```go
+dp := kafka.DefaultProducerSettings()
+producer, err := config.Struct(func(r *config.Resolver) kafka.ProducerSettings {
+	p := dp
+	// The dead letters go to the orders' own cluster, so Brokers reads the consumer's variable.
+	p.Brokers = r.Get(env("KAFKA_BROKERS").Map(list).Validate(kafka.CheckBrokers))
+	p.DeliveryTimeout = r.Get(env("KAFKA_DELIVERY_TIMEOUT").Parse(time.ParseDuration).Default(dp.DeliveryTimeout).Validate(kafka.CheckDeliveryTimeout))
+	p.Breaker.OpenFor = r.Get(env("KAFKA_BREAKER_OPEN_FOR").Parse(time.ParseDuration).Default(dp.Breaker.OpenFor).Validate(kafka.CheckBreakerOpenFor))
+	return p
+}).Read(ctx)
+if err != nil {
+	return nil, err // exit 78, naming every bad variable
+}
+dlq, err := kafka.NewProducer(s, producer) // opens no connection: the first Produce does
+if err != nil {
+	return nil, err
+}
+```
+
+Each `config.Struct` names every bad variable of its own, and the
+consumer's is read first, so with nothing set, `Init` fails naming
+`KAFKA_BROKERS`, `KAFKA_GROUP_ID` and `KAFKA_TOPICS` once each, as
+[Required fields](#required-fields) shows. A bad value of the producer's,
+such as `KAFKA_DELIVERY_TIMEOUT=0s`, fails the same way, with exit 78.
+
+**`Brokers`, `TLS` and `SASL` are the consumer's fields, repeated.** They
+mean what they mean in `Settings`, take the same check, and dial through the
+Setup's Host the same way, with the same TLS handshake. They are repeated
+rather than shared because a `Producer` may produce to a cluster other than
+the one a Service consumes, so each set is sourced on its own:
+
+- **The same cluster, from the same variables:** the chain reads the
+  consumer's variables again, as above.
+- **The same cluster, copied:** an `Init` that has already built the
+  consumer's `Settings` copies the three. The
+  [secure `Init`](#tls-and-mtls) produces its dead letters over the same TLS,
+  with the same SCRAM credentials:
+
+  ```go
+  producer := kafka.DefaultProducerSettings()
+  // The same cluster, over the same TLS and with the same credentials.
+  producer.Brokers, producer.TLS, producer.SASL = settings.Brokers, settings.TLS, settings.SASL
+  ```
+
+- **Another cluster:** the chain reads variables of its own, such as
+  `KAFKA_DLQ_BROKERS`, with its own TLS and SASL chains.
+
+A process that produces to two clusters builds two `Producer`s.
+
+`ProducerSettings` follows the
+[settings convention](/humus/configuration/#what-a-package-with-settings-exports),
+like `Settings`: `kafka.DefaultProducerSettings()` gives the defaults, every
+field's zero value means zero, and the package reads no variable of its own.
+
+| Field | Default | Valid | Check |
+|---|---|---|---|
+| `Brokers` | none: required | at least one; each `host:port`, with a host and a port from 1 to 65535 | `CheckBrokers` |
+| `TLS` | `nil`, which means plaintext | any | none |
+| `SASL` | `nil`, which means no authentication | any | none |
+| `DeliveryTimeout` | 10s | positive | `CheckDeliveryTimeout` |
+| `Breaker.Window` | 20 | 1 to `circuit.MaxCount` | `CheckBreakerWindow` |
+| `Breaker.Probes` | 1 | 1 to `circuit.MaxCount` | `CheckBreakerProbes` |
+| `Breaker.OpenFor` | 10s | positive | `CheckBreakerOpenFor` |
+| `Breaker.ProbeTimeout` | 10s | positive | `CheckBreakerProbeTimeout` |
+| `BreakerPolicy` | see [The circuit breaker](#the-circuit-breaker) | `Trip` and `Probe` set | none: `NewProducer` checks it |
+
+**`NewProducer` opens no connection.** It runs every check again, and fails
+naming each field at fault, such as
+`kafka: NewProducer: ProducerSettings.DeliveryTimeout must be positive`,
+which exits 1, as a bad `Settings` given to `NewService` does. It builds the
+breaker, the instruments and one franz-go client, and registers the
+`Producer`'s flush and close with `s.OnStop`. The first `Produce` dials the
+brokers.
+
+**Not settings:** acks from all in-sync replicas and idempotent writes, which
+are franz-go's and Kafka's defaults, and which turning off would trade
+durability for latency in a way that stays invisible until a broker fails;
+and franz-go's partitioner, which hashes keyed records with murmur2 as
+Kafka's Java producer does, its linger, compression, batch size and buffer
+size. Like the consumer's, a franz-go option becomes a field, with a default
+and a check, when end users ask for it.
+
+### A call
+
+`Producer.Produce(ctx, records...)` is synchronous. **It returns `nil` once
+the cluster has acknowledged every record,** with acks from all in-sync
+replicas, or an error once one has failed. So a record is either stored or
+failed when `Produce` returns, which is what `AtLeastOnce` needs: a
+`Processor` that produces before it returns `nil` has the consumed record
+committed only after the produced one is stored, as
+[Dead letters](#dead-letters) shows.
+
+**More throughput is more records per call, or more goroutines.** There is no
+asynchronous `Produce`. At franz-go's level a synchronous call costs no
+throughput: it takes the same path through franz-go's buffers, batches and
+requests in flight as an asynchronous one, and it stops franz-go's linger on
+the partitions it produced to, so they are sent at once. Under load, records
+pile up while requests are in flight, and the next request takes them all,
+so the records of many callers share a batch. A caller that wants not to
+wait at all calls `Produce` in a goroutine of its own. An asynchronous call
+was rejected: its callback would run on franz-go's one goroutine for
+results, where blocking stalls every producer of the process; a `Processor`
+that used it could commit a record whose output is later lost; and it would
+tie the API to franz-go's.
+
+**Order.** Records to one partition are stored in the order they are given:
+within one call, in the order of its records, and between calls on different
+goroutines, in the order they reach the client. When a record of a partition
+fails, franz-go fails the records buffered after it on that partition too, so
+a later record is never stored after an earlier one failed.
+
+**Errors.** When a record failed, `Produce` returns one error joining each
+failed record's error, with its topic, and its partition when one was chosen,
+so `errors.Is` finds `kgo.ErrRecordTimeout`, `context.DeadlineExceeded` or a
+`kerr` code in it. A failed call doesn't say which of its records were
+stored: the records that failed may have been stored anyway. `Produce`
+rejects a record with no `Topic` before it sends anything, and returns `nil`
+when given no records.
+
+### Records outlive a cancelled call
+
+**`Produce` honours its context up to the moment it hands its records to
+franz-go.** A call whose `ctx` is already done sends nothing, starts no span,
+doesn't reach the breaker, and returns an error that wraps `ctx`'s error.
+
+**After the hand-off, a `ctx` that ends returns the call at once,** with the
+same error, and its records stay in the client, with a context of the call's
+own, until the cluster acknowledges them or `DeliveryTimeout` fails them.
+Their spans and measurements are recorded then. So a handler whose request
+is cancelled returns at once, and the grace period reaches a `Process`
+blocked in `Produce`, as the lifecycle requires.
+
+The records don't follow `ctx` after the hand-off, because franz-go can't
+cancel one caller's records on their own:
+
+- **A sent record can't be taken back.** The broker stores a request it has
+  read, whether the client still waits for it or not. Cancelling the request
+  would change what the caller is told, not what is stored.
+- **Only a batch's first record counts.** franz-go decides whether to fail a
+  batch from its first record's context alone, so a cancelled record in the
+  middle of a batch is sent anyway.
+- **One cancelled record fails its partition.** franz-go fails every record
+  buffered behind it on that partition, whoever produced them.
+- **A cancelled request cuts the connection.** It closes the broker's
+  produce connection and fails every request in flight on it, for every
+  partition that broker leads. They are sent again after a new dial, TLS
+  handshake and SASL authentication.
+- **It bumps the producer epoch.** The next produce, on any broker, waits
+  for the cluster to hand out a new producer ID.
+
+One `Producer` serves the whole process. If a caller's `ctx` reached
+franz-go, any caller could fail any other caller's records: an HTTP client
+that disconnects could fail a dead letter that a `Processor` buffered behind
+that handler's event on the same partition. The `Processor` would get a
+`context.Canceled` that isn't its own, and under `AtLeastOnce` that error
+ends the consumer, and the App exits 1.
+
+### `DeliveryTimeout`, and no retry settings
+
+**`DeliveryTimeout`, 10s by default, bounds how long the cluster has to
+acknowledge the records of one call,** franz-go's retries included. A record
+that isn't acknowledged by then fails, even one already sent, and may still
+have been stored, so a caller that produces it again may store it twice,
+which is at-least-once and what a `Processor` under `AtLeastOnce` already
+handles. Without the bound, a hung broker would hold a call, and the App's
+shutdown, until it answered.
+
+**`DeliveryTimeout` is the one retry setting:** how long a call lets
+franz-go keep trying. There is no retry count, no backoff and no retry
+budget, and no bedrock `retry.Retrier` around `Produce`, because franz-go
+retries, and a retry around it would do harm:
+
+- **Duplicates.** franz-go's idempotent producer retries a batch on the
+  sequence numbers that let the broker drop a batch it has already stored. A
+  retry around `Produce` would hand the records over again under new
+  sequence numbers, and store twice a record whose first send landed.
+- **Order.** franz-go retries a partition's batches in order. A retry around
+  `Produce` would send its records after whatever other calls produced in the
+  meantime.
+- **Retries don't multiply with callers.** franz-go retries a partition's
+  batch, which holds every caller's records for that partition, once per
+  backoff. A thousand callers waiting on a dead partition cost one retry per
+  backoff, not a thousand, so there is no retry storm for a budget to stop.
+
+The default fits the grace periods of the runtime packages: it is half of
+`humus.Main`'s 20s, which a consumer runs on, so a `Process` blocked in
+`Produce` at SIGTERM finishes inside the grace period, and it equals
+`httpserver.Main`'s 10s, where a handler's `Produce` returns sooner anyway
+when the grace period cancels its request.
+
+### The circuit breaker
+
+**A circuit breaker guards the cluster,** so that while the cluster keeps
+failing, `Produce` fails at once rather than hold every caller for
+`DeliveryTimeout`. Without it, an HTTP handler that publishes an event would
+hold its request for 10s during an outage before it answered 503. With it,
+the first few calls wait, and the rest fail at once until a probe gets
+through. It is bedrock's
+[`circuit.Breaker`](https://pkg.go.dev/github.com/z5labs/bedrock/circuit),
+one per `Producer`: one `Producer` is one client to one cluster.
+
+While the breaker is open, `Produce` returns at once, with nothing sent, an
+error wrapping a `*circuit.RejectedError`, which matches
+`circuit.ErrRejected` and says how much longer the breaker stays open in its
+`RetryAfter`. `Produce` doesn't retry a rejected call: whether to wait and
+try again is the caller's, as `queue`'s contract leaves retries to the
+`Processor`.
+
+**Each call to `Produce` is one call through the breaker.** It is admitted
+before any of its records reach franz-go, and counted once every record has
+its result, which may be after `Produce` returns. The breaker counts the
+cluster, not the records or the callers:
+
+- **A success** is a call whose every record was acknowledged.
+- **An ignored call** counts as nothing: its records failed for their own
+  reasons or their topics', not the cluster's, with a Kafka error code
+  franz-go doesn't retry, such as `MESSAGE_TOO_LARGE`, `INVALID_RECORD` or
+  `TOPIC_AUTHORIZATION_FAILED`, or `UNKNOWN_TOPIC_OR_PARTITION` once franz-go
+  has given up on the topic. One topic's mistake doesn't open the breaker for
+  the others.
+- **A failure** is anything else, the cluster not storing records in time:
+  `DeliveryTimeout` passing, `kgo.ErrRecordTimeout`, a retriable error code
+  franz-go stopped on, or a connection that failed.
+
+A caller giving up never counts: the breaker sees each call's result with
+the call's own context, which a caller's `ctx` doesn't cancel. A call whose
+`ctx` was already done, and a call after a broker
+[refused the credentials](#refused-credentials), return before the breaker,
+so it counts neither.
+
+**The defaults:** the breaker opens after 5 failures in a row, or once half
+of the last 20 calls, `Breaker.Window`, failed. It stays open for
+`Breaker.OpenFor`, 10s, and then turns half-open: it lets `Breaker.Probes`
+calls through at once, 1, as probes, each holding its slot for at most
+`Breaker.ProbeTimeout`, 10s, which matches `DeliveryTimeout`, so a probe
+holds its slot no longer than its call does. It opens again on a failed
+probe, and closes after 3 successful ones. `Breaker` is bedrock's own
+`circuit.Config`, with a check for each field, so an operator's bad
+`KAFKA_BREAKER_OPEN_FOR` fails startup naming the variable, with exit 78.
+
+**`BreakerPolicy` is set in code.** It is a `circuit.Policy`, two functions,
+`Trip` and `Probe`, so it can't come from a variable. bedrock ships no
+policy, so `DefaultProducerSettings` holds humus's, and the end user
+replaces it in their `Init`. A policy whose `Trip` always returns `false`
+turns the breaker off:
+
+```go
+ps.BreakerPolicy.Trip = func(circuit.Counts) bool { return false }
+```
+
+**One breaker covers every partition.** When one broker of three is down,
+the calls to the partitions it leads fail and the rest succeed, which the
+default policy may or may not trip on. A breaker per broker or per partition
+would follow Kafka's failures more closely, but franz-go picks a record's
+partition inside the client, after the breaker has admitted the call.
+franz-go moves unkeyed records away from backed-up partitions, and a keyed
+record has only one partition.
+
+Each change of the breaker's state is a log record, as
+[The logs](#the-logs) lists. There are no instruments of humus's own for the
+breaker: its transitions are in the logs, and a rejected call is an error on
+its records' spans.
+
+### Refused credentials
+
+**When a broker refuses the `Producer`'s SASL credentials,** with
+`SASL_AUTHENTICATION_FAILED`, `UNSUPPORTED_SASL_MECHANISM` or
+`ILLEGAL_SASL_STATE`, the `Producer` fails every call. franz-go would
+otherwise retry the connection, and each call would wait out its
+`DeliveryTimeout` with no sign of why. A Service stops the App on a refusal,
+as [Failures](#failures) lists, and a `Producer` can't, so it fails loudly
+instead:
+
+- on the first refusal, it emits one ERROR record, `a broker refused the
+  credentials`, naming the broker, as [The logs](#the-logs) lists, and the
+  calls waiting on their records return the refusal;
+- from then on, every `Produce` returns the refusal at once, with nothing
+  sent, and before the breaker.
+
+The error names the broker as `host:port`, as the Service's does, and
+`errors.Is` finds its `kerr` code in it, such as
+`kerr.SaslAuthenticationFailed`. Credentials don't fix themselves while the
+process runs, so the `Producer` never tries them again: a `Processor` that
+produces fails its record, under `AtLeastOnce` the Service stops, and the App
+is restarted with whatever the secret holds then.
+
+### Shutdown and the grace period
+
+**The `Producer` is not a Service, so the lifecycle doesn't stop it.** The
+Services that use it stop first: the App calls their `Shutdown`, waits for
+every `Serve` to return, and only then runs the `OnStop` functions, so no
+Service is producing when the `Producer` closes. On SIGTERM, a `Process`
+blocked in `Produce` keeps its context, as [Shutdown and rebalances](#shutdown-and-rebalances)
+describes, so its dead letter is stored, and its record committed, as the
+Service drains.
+
+**`NewProducer` registers one function with `s.OnStop`.** It flushes the
+client with the grace period's context, which waits for the records still in
+it, such as those of a call that returned when its `ctx` was done, at most
+`DeliveryTimeout` old. Then it closes the client.
+
+**When the grace period runs out first,** closing the client fails what is
+left with `kgo.ErrClientClosed`, those records are lost, and the function
+returns an error that wraps the context's error, which the lifecycle reports
+as a `*humus.GracePeriodError`, with exit 1. A `Produce` after that, from a
+goroutine the end user left running, fails at once with an error that wraps
+`kgo.ErrClientClosed`.
+
+If the end user's `Init` fails after `NewProducer`, the lifecycle runs the
+`OnStop` functions registered so far, so the client is closed and none of
+franz-go's goroutines outlive the App.
+
 ## Telemetry
 
-The Service reports through the Setup's telemetry, `s.Telemetry`, and never
-through OpenTelemetry's globals: its tracer and meter come from the SDK's
-`TracerProvider` and `MeterProvider`, under the scope
-`github.com/z5labs/humus/queue/kafka`, and its propagator is the SDK's
-`Propagator`.
+The Service and the `Producer` report through the Setup's telemetry,
+`s.Telemetry`, and never through OpenTelemetry's globals: their tracers and
+meters come from the SDK's `TracerProvider` and `MeterProvider`, under the
+scope `github.com/z5labs/humus/queue/kafka`, and their propagator is the
+SDK's `Propagator`.
 
-### The span
+### The process span
 
 Each record is processed under a span of its own, named `process <topic>`,
 such as `process orders`, of kind `CONSUMER`. `Process` is given a context
@@ -607,7 +1017,42 @@ holds a customer's identifier. When `Process` returns an error, under either
 `Delivery`, the error is recorded on the span as an exception event, with
 `error.type` and an error status.
 
-### The three instruments
+### The send span
+
+**The `Producer` sends each record under a span of its own,** named
+`send <topic>`, such as `send orders.dlq`, of kind `PRODUCER`, a child of the
+span in `Produce`'s context. Its attributes are `messaging.system` (`kafka`),
+`messaging.operation.type` and `messaging.operation.name` (both `send`) and
+`messaging.destination.name`, and, once the record is acknowledged,
+`messaging.destination.partition.id` and `messaging.kafka.offset`. The
+record's key is not recorded, as the consumer doesn't record it. The span
+ends when the record is acknowledged or fails, as its result arrives, which
+may be after `Produce` returns. A failure, a rejection by the breaker
+included, is recorded on it as an exception event, with `error.type` and an
+error status.
+
+**The span's context goes into the record's headers.** The Setup's
+propagator injects it, with the baggage of `Produce`'s context: with the
+default propagator, those are `traceparent`, `tracestate` and `baggage`.
+Before injecting, the `Producer` removes every header of the record whose key
+is one of the propagator's fields. A dead letter that copies the consumed
+record's headers would otherwise carry two `traceparent` headers, and the
+consumer would read the first, the old one.
+
+So the `process` span of a Service that consumes the record, on any topic, is
+a child of its `send` span, and inside a `Process`, the `send` span is a child
+of the `process` span: one trace runs from the first producer through every
+topic a record passes through, its dead letter included.
+
+**When a span starts.** `Produce` first checks the call: a record with no
+topic, a `ctx` already done, a closed client or a broker's earlier refusal
+of the credentials returns it at once, and starts no span. Only then does
+each record's span start, and its headers get the trace context, before the
+call goes through the breaker. So a call the breaker rejects has a span for
+each record, which records the rejection, and a call that never got past
+the checks has none.
+
+### The instruments
 
 The Service records three instruments of the messaging conventions, as
 semconv v1.43.0 names them:
@@ -619,26 +1064,45 @@ semconv v1.43.0 names them:
 | `messaging.client.operation.duration` | histogram, in seconds | how long each commit took, with `messaging.operation.name` set to `commit` and `messaging.operation.type` to `settle`, and `error.type` when it failed |
 
 Each also has `messaging.system`, `messaging.consumer.group.name`,
-`messaging.destination.name` and `messaging.destination.partition.id`. The
-messaging conventions are still in development, so humus pins the semconv
-version it uses, and a change to these names is a breaking change to
+`messaging.destination.name` and `messaging.destination.partition.id`.
+
+The `Producer` records two more:
+
+| Instrument | Kind | What it records |
+|---|---|---|
+| `messaging.client.sent.messages` | counter | each record once its result is known, with `messaging.operation.name` set to `send`, and `error.type` when it failed |
+| `messaging.client.operation.duration` | histogram, in seconds | how long each record took, from `Produce` taking it to its result, with `messaging.operation.name` and `messaging.operation.type` set to `send`, and `error.type` when it failed |
+
+Each also has `messaging.system`, `messaging.destination.name` and, once
+franz-go has chosen it, `messaging.destination.partition.id`. The
+`Producer`'s `messaging.client.operation.duration` is the same instrument as
+the Service's commits, told apart by `messaging.operation.name`. A record the
+breaker rejected, a record with no topic, and the records of a call whose
+context was already done were never sent, so neither instrument counts them:
+the conventions say a sent-messages count must not count messages that were
+created but haven't been sent. A rejected record's span records the
+rejection.
+
+The messaging conventions are still in development, so humus pins the
+semconv version it uses, and a change to these names is a breaking change to
 `queue/kafka`.
 
 ### franz-go's broker metrics
 
 franz-go's broker metrics come from the `Meter` of franz-go's
 [kotel](https://pkg.go.dev/github.com/twmb/franz-go/plugin/kotel) plugin,
-which the Service builds with the Setup's `MeterProvider` and nothing else,
-and hands the client as hooks. kotel's tracer is not used: the record's span,
-the propagation through headers and the three instruments above are
-humus's own.
+which the Service and the `Producer` each build with the Setup's
+`MeterProvider` and nothing else, and hand their client as hooks. kotel's
+tracer is not used: the spans, the propagation through headers and the
+instruments above are humus's own.
 
 - **By broker,** with a `node_id` attribute, kotel counts the connections
   opened, the connection errors and the connections closed, the bytes read
   and written, and the read and write errors.
 - **By broker and topic,** with `node_id` and `topic`, it counts the records
-  and the uncompressed bytes fetched. Its produce counters stay empty,
-  because the Service produces nothing.
+  and the uncompressed bytes the Service fetched, and the records and the
+  bytes the `Producer` produced, in `messaging.kafka.produce_records.count`
+  and `messaging.kafka.produce_bytes.count`.
 
 The instruments are kotel's, under its own scope,
 `github.com/twmb/franz-go/plugin/kotel`, with names such as
@@ -671,18 +1135,36 @@ The partition records carry `messaging.system`,
 `messaging.destination.partition.ids`. An error that ends the Service is
 returned, not logged here: the lifecycle logs it.
 
+The `Producer` logs under the same scope:
+
+| Record | Severity | When |
+|---|---|---|
+| `circuit breaker open` | WARN | the [breaker](#the-circuit-breaker) opened, from closed or from half-open |
+| `circuit breaker half-open` | INFO | the breaker's `OpenFor` passed, and it lets probes through |
+| `circuit breaker closed` | INFO | enough probes succeeded |
+| `a broker refused the credentials` | ERROR | the first time a broker [refused the credentials](#refused-credentials). It carries `messaging.system`, `server.address` and `server.port` naming the broker, and the refusal as `exception.message` and `error.type`. |
+
+A breaker record is emitted in the context of the call that changed the
+state, so it carries that call's trace ID. Its attributes are
+`messaging.system`, set to `kafka`, `circuit.previous_state`, and the counts
+of the state the breaker left: `circuit.successes`, `circuit.failures`,
+`circuit.consecutive_successes`, `circuit.consecutive_failures` and
+`circuit.timed_out`. So an alert on `circuit breaker open` says the cluster
+kept failing, and the counts say how.
+
 **franz-go's own logs** go through the same `LoggerProvider`, under the scope
 `github.com/twmb/franz-go/pkg/kgo`, and never to standard error or the `log`
-package's default logger. They include a broker it can't reach, which it logs
-on every attempt while it retries, a rebalance, and a retried request. Each
+package's default logger. The `Producer`'s client logs there too, as
+the Service's does. They include a broker it can't reach, which it logs on
+every attempt while it retries, a rebalance, and a retried request. Each
 of franz-go's messages is one record: the message is its body, and
 franz-go's key-value pairs are its attributes, where a string, a number or a
 bool keeps its type, an error is its text, and any other value is its `fmt`
 text. franz-go's levels are its severities: error is ERROR, warn is WARN,
 info is INFO and debug is DEBUG.
 
-The Service asks the `Logger` of that scope which severities it is enabled
-for, and franz-go builds no message below the lowest of them. So the end
+The Service and the `Producer` ask the `Logger` of that scope which
+severities it is enabled for, and franz-go builds no message below the lowest of them. So the end
 user's `Builder` quiets franz-go as it does any scope:
 
 - **On `humus.Main`'s default telemetry,** whose `LoggerProvider` exports
@@ -718,6 +1200,14 @@ health probes (wave 4) decides how a consumer's pod, which has no HTTP server
 of its own, serves probes, and whether a consumer whose brokers are
 unreachable is ready. If end users find that a consumer should fail instead,
 a bound can be added as a setting, which breaks no one.
+
+**A `Producer` whose brokers are unreachable fails its calls.** Each call
+waits out its `DeliveryTimeout` while franz-go retries the connection, and
+fails with an error matching `context.DeadlineExceeded`. Once enough have
+failed, the [circuit breaker](#the-circuit-breaker) opens, and calls fail at
+once until a probe gets through. A `Processor` that produces fails its
+record, so under `AtLeastOnce` the Service stops, and the record is
+processed again once the App restarts.
 
 ## Retries and panics
 
@@ -882,6 +1372,95 @@ require.Zero(t, st.Code(), st.Cause())
 require.Equal(t, []int64{3, 4}, seen, "3 is delivered again")
 require.Equal(t, int64(5), committed(c)[0])
 ```
+
+### What a Producer stored
+
+A `Producer` is tested the same way, through the end user's `Init`, against
+the cluster on the test Host. The cluster seeds the topic the `Producer`
+produces to, `kfake.SeedTopics(1, dlqTopic)` here for `orders.dlq`, and the
+test reads it back with a client of its own, after the App has exited:
+
+```go
+// readAll returns every record of topic, in each partition's order,
+// through a client that dials h with opts. It polls until a poll finds
+// nothing new for a second, which inside a bubble takes no real time, and
+// fails the test on any error but the poll's own deadline, so a client that
+// can't read the topic isn't mistaken for an empty one.
+func readAll(t *testing.T, h *humustest.Host, c *kfake.Cluster, topic string, opts ...kgo.Opt) []*kgo.Record {
+	t.Helper()
+	cl, err := kgo.NewClient(append([]kgo.Opt{
+		kgo.SeedBrokers(c.ListenAddrs()...),
+		kgo.Dialer(h.Dial),
+		kgo.ConsumeTopics(topic),
+		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
+	}, opts...)...)
+	require.NoError(t, err)
+	defer cl.Close()
+
+	var out []*kgo.Record
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		fetches := cl.PollFetches(ctx)
+		cancel()
+		fetches.EachError(func(_ string, _ int32, err error) {
+			if !errors.Is(err, context.DeadlineExceeded) {
+				require.NoError(t, err, "reading %s", topic)
+			}
+		})
+		n := 0
+		fetches.EachRecord(func(r *kgo.Record) {
+			out = append(out, r)
+			n++
+		})
+		if n == 0 {
+			return out
+		}
+	}
+}
+```
+
+This test produces an order that isn't JSON and one that is, and checks that
+the first became a dead letter, and that both were committed:
+
+```go
+st := <-status
+require.Zero(t, st.Code(), "cause: %v", st.Cause())
+require.Equal(t, "stored order key-1: 1\n", p.Stdout(), "the dead letter didn't stop the partition")
+require.Equal(t, int64(2), committed(c)[0], "the dead letter's record is committed too")
+dead := readAll(t, h, c, dlqTopic)
+require.Len(t, dead, 1)
+require.Equal(t, "key-0", string(dead[0].Key))
+require.Equal(t, "{", string(dead[0].Value))
+require.Len(t, spansNamed(tel, "send "+dlqTopic), 1)
+```
+
+**Wait for the commit, not only for `synctest.Wait`.** `Wait` returns as
+soon as every other goroutine in the bubble is durably blocked, and a
+`Produce` waiting on one of franz-go's timers is, while fake time passes only
+once the test's goroutine blocks too. So `Wait` can return while the dead
+letter is still on its way, and a SIGTERM then finds the next record
+unprocessed. The test waits for the condition it needs instead, the offset
+it expects committed, letting fake time pass meanwhile, which costs it
+nothing:
+
+```go
+// waitCommitted lets fake time pass until the group has committed offset on
+// partition 0 of topic, failing the test if a minute of it passes first.
+// synctest.Wait isn't enough once a Processor produces: Wait returns as
+// soon as every other goroutine is durably blocked, and a Produce waiting
+// on one of franz-go's timers is, while fake time passes only once the
+// test's goroutine blocks too.
+func waitCommitted(t *testing.T, c *kfake.Cluster, offset int64) {
+	t.Helper()
+	for start := time.Now(); committed(c)[0] < offset; time.Sleep(10 * time.Millisecond) {
+		require.Less(t, time.Since(start), time.Minute, "offset %d is never committed", offset)
+	}
+}
+```
+
+A `Producer` that is the whole of an App, such as one called from a job, is
+tested the same way: `queue/kafka`'s own tests run each `Produce` inside a
+[job](/humus/jobs/) whose `Init` builds the `Producer`.
 
 ### The Service contract
 

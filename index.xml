@@ -50,7 +50,7 @@ that finished.&lt;/p&gt;
 &lt;p&gt;The package is &lt;code&gt;job.NewService&lt;/code&gt; and nothing else: no App, no &lt;code&gt;Main&lt;/code&gt;, no
 &lt;code&gt;Settings&lt;/code&gt;. The design behind everything on this page is in
 &lt;a href="https://github.com/z5labs/humus/discussions/682"&gt;Proposal: jobs&lt;/a&gt; and
-&lt;a href="https://github.com/z5labs/humus/discussions/682#discussioncomment-18988201"&gt;its revision&lt;/a&gt;.&lt;/p&gt;</description></item><item><title>Consuming Kafka</title><link>https://z5labs.github.io/humus/kafka/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/kafka/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/queue/kafka"&gt;&lt;code&gt;queue/kafka&lt;/code&gt;&lt;/a&gt;
+&lt;a href="https://github.com/z5labs/humus/discussions/682#discussioncomment-18988201"&gt;its revision&lt;/a&gt;.&lt;/p&gt;</description></item><item><title>Consuming and producing Kafka</title><link>https://z5labs.github.io/humus/kafka/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/kafka/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/queue/kafka"&gt;&lt;code&gt;queue/kafka&lt;/code&gt;&lt;/a&gt;
 package consumes Kafka topics as a &lt;code&gt;humus.Service&lt;/code&gt;, with
 &lt;a href="https://github.com/twmb/franz-go"&gt;franz-go&lt;/a&gt;. The Service joins a consumer
 group, dials the brokers through the Setup&amp;rsquo;s Host, and hands each record to
@@ -58,15 +58,11 @@ the end user&amp;rsquo;s &lt;code&gt;queue.Processor&lt;/code&gt;, one record at
 offset order. The end user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt; sources its &lt;code&gt;Settings&lt;/code&gt;, builds the Service
 with &lt;code&gt;kafka.NewService&lt;/code&gt;, and returns it to &lt;code&gt;humus.Main&lt;/code&gt;, whose defaults are a
 consumer&amp;rsquo;s.&lt;/p&gt;
-&lt;p&gt;&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/queue"&gt;&lt;code&gt;queue&lt;/code&gt;&lt;/a&gt;, in the core
-module, is the contract between the end user&amp;rsquo;s code and any broker: the
-&lt;code&gt;Processor&lt;/code&gt; they write, and when a message is acknowledged. &lt;code&gt;queue/kafka&lt;/code&gt; is
-in the nested module &lt;code&gt;github.com/z5labs/humus/queue/kafka&lt;/code&gt;, so a service that
-doesn&amp;rsquo;t consume Kafka doesn&amp;rsquo;t get franz-go in its module graph. The package
-has no App, no &lt;code&gt;Main&lt;/code&gt;, no defaults of its own and no test package. The design
-behind everything on this page is in
-&lt;a href="https://github.com/z5labs/humus/discussions/683"&gt;Proposal: queue processing and the Kafka runtime&lt;/a&gt;,
-with its &lt;a href="https://github.com/z5labs/humus/discussions/683#discussioncomment-18988751"&gt;revision&lt;/a&gt;.&lt;/p&gt;</description></item><item><title>gRPC services</title><link>https://z5labs.github.io/humus/grpc/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/grpc/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/grpc/grpcserver"&gt;&lt;code&gt;grpcserver&lt;/code&gt;&lt;/a&gt;
+&lt;p&gt;The package produces records too. A &lt;code&gt;kafka.Producer&lt;/code&gt;, which the end user&amp;rsquo;s
+&lt;code&gt;Init&lt;/code&gt; builds with &lt;code&gt;kafka.NewProducer&lt;/code&gt;, produces to one cluster for any
+Service of the process: a &lt;code&gt;Processor&lt;/code&gt; that produces a dead letter or writes
+to another topic, an HTTP handler that publishes an event, a job.
+&lt;a href="#producing"&gt;Producing&lt;/a&gt; describes it.&lt;/p&gt;</description></item><item><title>gRPC services</title><link>https://z5labs.github.io/humus/grpc/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/grpc/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/grpc/grpcserver"&gt;&lt;code&gt;grpcserver&lt;/code&gt;&lt;/a&gt;
 package serves gRPC over TLS as a &lt;code&gt;humus.Service&lt;/code&gt;. The end user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt;
 sources its &lt;code&gt;Settings&lt;/code&gt;, builds the Service with &lt;code&gt;grpcserver.NewService&lt;/code&gt;,
 registers their generated services on it, as they would on a &lt;code&gt;*grpc.Server&lt;/code&gt;,
