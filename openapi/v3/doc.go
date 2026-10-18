@@ -124,6 +124,39 @@
 //     type, and isn't set when that is "".
 //   - The WriterTo Encode returned writes the body.
 //
+// # Streaming
+//
+// Whether a codec buffers or streams is the codec's to say. A decoder that
+// buffers reads the whole body in Decode, and one that streams returns a
+// value that reads the body as the handler reads it, such as the
+// request's body itself, as an io.Reader. An encoder that buffers returns
+// its encoded bytes, such as a *bytes.Reader, and one that streams returns
+// a WriterTo that writes as it goes.
+//
+// The WriterTo is handed a writer that flushes each write, so each part
+// reaches the client as it is written. It runs on the request's goroutine,
+// with the request's context still live, so it may do more work once it
+// has written the body, such as recording that a download completed, with
+// the context the handler captured in the value it returned. When the
+// WriterTo has a Len() int method, as a *bytes.Reader does, the API sets
+// Content-Length to it, so Len must be the number of bytes WriteTo writes:
+// a body longer than its Len fails, and one shorter is cut short.
+// Otherwise the response is chunked over HTTP/1.1.
+//
+// An error from the WriterTo cuts the response short. The status, and
+// whatever part of the body was written, have already gone out, so the API
+// aborts the response: on HTTP/2 the stream is reset, and on HTTP/1.1 the
+// connection is closed before the final chunk. The client sees a failed
+// response rather than one that looks complete. A response with a
+// Content-Length that fails after its last byte has the length it was
+// promised, and looks complete, so a WriterTo that does work after the
+// body should leave Len out, so that a failure is seen.
+//
+// The status is written before the first byte of the body, as HTTP
+// requires. So a status that depends on that work needs the body copied
+// elsewhere first: Encode copies it, to a temporary file, say, does the
+// work, then returns a WriterTo over the copy.
+//
 // # Errors
 //
 // Every error has an answer the end user chose, written by an encoder the
@@ -194,4 +227,13 @@
 // the request's context is done because the client went away, the error
 // goes on the span only. Answers from an Error or from RequestErrors aren't
 // logged.
+//
+// An error from a WriterTo, once the status is written, is the server's
+// too. The API records it as an exception event on the request's span,
+// sets the span's status to Error, and emits one ERROR record, "response
+// failed", in the request's context, with the same attributes. When the
+// request's context is done because the client went away, it goes on the
+// span only. Then the API panics with http.ErrAbortHandler, which
+// httpserver and net/http pass through without logging, so httpserver
+// records no "handler panicked" for it.
 package openapi
