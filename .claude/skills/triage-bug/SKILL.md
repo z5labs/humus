@@ -84,8 +84,13 @@ query($number: Int!) {
 }' > <WORK>/discussion.json
 ```
 
-If `pageInfo.hasNextPage` is true anywhere, page on with `after:` until it isn't. Keep `id`: the
-reply is posted to it.
+If the comments' `pageInfo.hasNextPage` is true, page on with `comments(first: 100, after:
+"<endCursor>")` until it isn't. A comment's replies page through the comment node instead:
+`node(id: "<comment id>") { ... on DiscussionComment { replies(first: 100, after: "<cursor>") { … } } }`.
+Keep the discussion's `id`: the reply is posted to it.
+
+Save every `gh` result to a file under `WORK` and read it from there. Proposals and pull requests
+run long, and output read from the shell can come back cut off.
 
 **If `category.name` isn't `Bugs`, say which category the discussion is in and stop.** Don't
 triage it, post nothing and file nothing. A proposal or a question isn't a bug report, however
@@ -109,9 +114,13 @@ gh pr view <n> --repo z5labs/humus --json title,body,comments,reviews
 gh api repos/z5labs/humus/pulls/<n>/comments    # inline review comments
 ```
 
-Read a linked discussion with the query from step 1. Read a pull request's description,
-comments, reviews and inline review comments: its "Judgment calls" often record what it found
-but didn't fix.
+Read a linked discussion with the query from step 1, saved to `<WORK>/discussion-<n>.json`. Read
+a pull request's description, comments, reviews and inline review comments: its "Judgment
+calls" often record what it found but didn't fix.
+
+A linked discussion's later comments, such as a charter revision or a proposal's closing
+comment, may restate this report. That is the report's echo, not evidence: judge from the code,
+the docs and the tests.
 
 **The package's ethos.** These, with the charter, say what humus promised:
 
@@ -136,6 +145,10 @@ go -C <WORK>/worktree/<module> list -m -f '{{.Dir}}' <dependency module path>
 Run it in the worktree, so the version is the one under test. Read the code the
 behaviour goes through, not its docs alone: a cause is often in when a dependency reads a value,
 not whether it does.
+
+Link a dependency's lines at its tag, as
+`https://github.com/<owner>/<repo>/blob/<tag>/<path>#L<x>-L<y>`. A nested module's tag carries
+its directory, such as `pkg/kadm/v1.19.0`.
 
 ## 3. Answer the first two questions
 
@@ -163,7 +176,8 @@ Compare the behaviour with the package's `doc.go`, its proposal and the proposal
 - behaviour that nothing promises is a **feature request**.
 
 Quote each promise it contradicts. Say whether a fix would change the API: exported names,
-signatures, `Settings` fields, defaults or documented guarantees.
+signatures, `Settings` fields, defaults or documented guarantees. Restoring a promised
+behaviour, and correcting docs that describe the bug, isn't an API change.
 
 ## 4. Reproduce it
 
@@ -189,7 +203,8 @@ Use the repository's own harness, as the package's existing tests do. Read them 
 
 Write the tests in a new file in the package, `triage_<N>_test.go`, with
 `//go:build testcontainers` when they need a container. Base them on the existing test closest
-to the report.
+to the report, and say in the file's comment which test file it extends. When the report cites
+an existing test, run it too, as a baseline, and put it in the results.
 
 Each test **asserts the expected behaviour**, so it fails while the bug is there. Name it for
 what should happen, as the repository's tests are named. A variation that passes while the bug
@@ -205,8 +220,12 @@ is worth far more than one only reasoned.
 Tests generate their secrets rather than hardcoding them: passwords, keys and certificates come
 from `crypto/rand` or the package's test helpers, fresh for each test.
 
+Exploratory runs while writing the tests are fine, and don't count. Before the counted runs,
+freeze the file: `gofmt -l` and `go vet [-tags testcontainers]` report nothing on it.
+
 Run each test **at least 4 times, under `-race`**, each run on its own so one run's state
-doesn't leak into the next, and keep every log:
+doesn't leak into the next, and keep every log. `<package dir>` is `.` for the module's root
+package, or its directory relative to `<module>`:
 
 ```
 for i in 1 2 3 4; do
@@ -218,6 +237,7 @@ done
 
 Record how many runs failed, out of how many. `go test` compiles the worktree on every run, so
 don't edit it while a loop runs: a test changed between runs makes their results incomparable.
+When the loops end, copy the test file to `<WORK>/triage_<N>_test.go`: the story carries it.
 
 ### Evidence
 
@@ -229,7 +249,11 @@ Record what the runs showed, not only that they failed:
   request it sent is what lets the reply say why, not only what. Records captured in memory,
   such as by `humustest`'s telemetry, aren't in `-v` output, so have each test `t.Log` the
   records it needs, with their times, before it ends;
-- the commit, and the versions of the dependency and of any container image.
+- the real system's own logs, for container tests: a broker or server logging what it decided
+  is often the strongest evidence. Have the test `t.Log` the container's lines that name its
+  resources, such as its group or topic;
+- the commit, the Go version, and the versions of the dependency, any container image and the
+  container runtime.
 
 ### When it doesn't reproduce
 
@@ -317,9 +341,9 @@ short list per scenario.>
 ```
 
 - The Description is from the end user's perspective, and summarises the reproduction. It
-  carries the triage's test file, so the story's implementer starts from tests that fail. Name
-  the file for the package's test files, such as `kafka_testcontainers_test.go`, not
-  `triage_<N>_test.go`.
+  carries the triage's test file, from `<WORK>/triage_<N>_test.go`, so the story's implementer
+  starts from tests that fail. Name the file it extends, such as `kafka_testcontainers_test.go`,
+  not `triage_<N>_test.go`: the implementer merges the tests into it.
 - The Acceptance Criteria cover the behaviour to restore, the tests that show it, and the docs
   and comments to correct. They don't design the fix: that's for the story's implementer.
   **Container tests are required** when the bug only shows against the real system; say what
@@ -412,6 +436,8 @@ reasoned from code>
 #<story> is filed to fix it: <a short list of its acceptance criteria>.
 ~~~
 
+- A correction about what the report says happened goes under `### Is it reproducible?`, and
+  one about why goes under `### Why`.
 - The reply doesn't propose a fix or judge the report's suggested fixes. The story's
   implementer designs the fix from the cause.
 - `### Is it reproducible?` gives the commit (short SHA), the versions of the dependencies and
@@ -475,9 +501,8 @@ git -C <MAIN> worktree remove --force <WORK>/worktree
 git -C <MAIN> worktree prune
 ```
 
-Copy anything the reply or the story needs out of the worktree first: the logs are already
-under `<WORK>/runs`, and the triage's test file goes to `<WORK>/triage_<N>_test.go`, so the
-story's implementer can be pointed at the reproductions. Confirm with
+Copy anything the reply or the story needs out of the worktree first. The logs are already
+under `<WORK>/runs` and the test file at `<WORK>/triage_<N>_test.go`, from step 4. Confirm with
 `git -C <MAIN> worktree list` that the worktree is gone.
 
 ## Report
@@ -487,5 +512,5 @@ Finish with a short status:
 - the discussion, and the verdict;
 - how many runs of each reproduction failed, at which commit;
 - the reply's URL and the story's URL, with the project 17 check, or, for a dry run, the
-  absolute paths of `reply.md` and `story.md`;
+  absolute paths of `reply.md`, `story-title.txt`, `story.md`, `triage_<N>_test.go` and `runs/`;
 - that the worktree was removed.
