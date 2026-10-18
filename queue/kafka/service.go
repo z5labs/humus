@@ -30,6 +30,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/health"
 	"github.com/z5labs/humus/queue"
 )
 
@@ -85,11 +86,13 @@ type Service struct {
 }
 
 // call is one call of Serve: the function that cancels the context of
-// processing, committing and leaving the group, and served, which is closed
-// when Serve returns.
+// processing, committing and leaving the group, served, which is closed
+// when Serve returns, and joined, which is set once franz-go first hands
+// the member an assignment.
 type call struct {
 	abort  context.CancelFunc
 	served chan struct{}
+	joined atomic.Bool
 }
 
 // notServed is the call of a Service that was shut down before it was
@@ -194,6 +197,7 @@ func (s *Service) Serve(ctx context.Context) error {
 
 	g := &group{
 		svc:  s,
+		call: c,
 		work: work,
 		// A record's span has no parent but the one its headers carry,
 		// whatever span Serve's context has.
@@ -243,6 +247,35 @@ func (s *Service) clientOpts(g *group) []kgo.Opt {
 		opts = append(opts, kgo.SASL(s.settings.SASL))
 	}
 	return opts
+}
+
+// Joined returns a monitor that is healthy once the Service has joined its
+// consumer group: unhealthy until franz-go first hands the member an
+// assignment, empty or not, and healthy from then until Serve returns. A
+// broker outage after that doesn't make it unhealthy. It never returns an
+// error. A consumer is made ready once it has joined with
+//
+//	health.Readiness(consumer.Joined())
+//
+// It is for readiness only: restarting the pod doesn't bring the brokers
+// back, and an error that a restart would fix already ends Serve.
+//
+// Joined may be called before Serve, in the end user's Init. The monitor
+// reports the Service's state when it is checked, and is safe for
+// concurrent use.
+func (s *Service) Joined() health.Monitor {
+	return health.MonitorFunc(func(context.Context) (bool, error) {
+		c := s.serving.Load()
+		if c == nil || c == notServed {
+			return false, nil
+		}
+		select {
+		case <-c.served:
+			return false, nil
+		default:
+			return c.joined.Load(), nil
+		}
+	})
 }
 
 // Shutdown stops Serve and waits for it to return. Serve stops polling, lets
@@ -336,7 +369,9 @@ func (p *partition) quitting() bool {
 // group is one Serve's membership of the consumer group: the partitions it
 // is assigned and the first error that ends it.
 type group struct {
-	svc  *Service
+	svc *Service
+	// call is the Serve the group belongs to.
+	call *call
 	work context.Context
 	// spanBase is work with no span and no baggage: the context a record's
 	// headers are extracted into.
@@ -513,8 +548,10 @@ func (g *group) partition(tp topicPartition) *partition {
 // every partition the Service still has under the session's member ID.
 // franz-go calls it at the end of every join, even when nothing new is
 // assigned, so a partition a member keeps after rejoining as a new member is
-// held under the new member ID.
+// held under the new member ID. Its first call is what turns Joined's
+// monitor healthy.
 func (g *group) assigned(_ context.Context, cl *kgo.Client, assigned map[string][]int32) {
+	g.call.joined.Store(true)
 	g.logPartitions("partitions assigned", assigned)
 	member, _ := cl.GroupMetadata()
 	g.mu.Lock()
