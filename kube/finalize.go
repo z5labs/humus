@@ -18,8 +18,9 @@ import (
 // Finalize keeps every object until f has cleaned up after it. The
 // controller adds the finalizer name to each object it reconciles. Once an
 // object is being deleted, it calls f in place of the Reconciler until f
-// returns nil, and then removes name. T is the Controller's object type,
-// Object[Spec, Status] for a Resource, which NewController checks.
+// returns nil, and then removes name. T is the Controller's object type:
+// Object[Spec, Status] for a Resource, and T for a Kind[T]. NewController
+// and NewKindController check it.
 //
 // T is inferred from f:
 //
@@ -37,7 +38,7 @@ func Finalize[T any](name string, f func(ctx context.Context, obj T) error) Part
 }
 
 // finalize is the Part Finalize returns. f is its func(context.Context, T)
-// error, which NewController asserts is of the Controller's object type,
+// error, which the Controller's constructor asserts is of its object type,
 // and typ is T, which names it when it isn't.
 type finalize struct {
 	name string
@@ -51,11 +52,12 @@ func (finalize) part() {}
 // finalizeFunc calls a Finalize's f with an object from the cache.
 type finalizeFunc func(ctx context.Context, u *unstructured.Unstructured) error
 
-// finalizerOf returns the finalizeFunc that hands f an Object decoded from
-// the cache's object, its own copy, as reconcilerOf does.
-func finalizerOf[Spec, Status any](f func(context.Context, Object[Spec, Status]) error) finalizeFunc {
+// finalizerOf returns the finalizeFunc that hands f a T, an Object or a
+// Kind's type, decoded from the cache's object, its own copy, as
+// reconcilerOf does.
+func finalizerOf[T any](f func(context.Context, T) error) finalizeFunc {
 	return func(ctx context.Context, u *unstructured.Unstructured) error {
-		obj, err := decodeObject[Spec, Status](u)
+		obj, err := decode[T](u)
 		if err != nil {
 			return err
 		}

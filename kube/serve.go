@@ -54,7 +54,7 @@ const objectNameKey = attribute.Key("humus.kube.object.name")
 //     one for each Owns, through the metadata client, all limited to
 //     Settings.Namespace. A change to an owned resource queues the object
 //     its controller owner reference names, when that reference names the
-//     Resource's group and kind;
+//     Resource's or Kind's group and kind;
 //  3. waits for the informers' caches to sync, then marks Synced healthy;
 //  4. campaigns for the Lease named Settings.Name, in
 //     LeaderElection.Namespace, as LeaderElection.Identity. Every replica
@@ -331,7 +331,7 @@ func (c *Controller) worker(work context.Context, queue workqueue.TypedRateLimit
 
 // process reconciles the object of key, as the cache holds it, and settles
 // the key: a panic forgets it, an error retries it with backoff, a
-// Result.After queues it again after that long, and otherwise it is
+// Result.After, or a KindReconciler's after, queues it again after that long, and otherwise it is
 // forgotten until the object changes or the resync comes. An object being
 // deleted is finalized instead, when the controller's finalizer holds it,
 // and otherwise left alone.

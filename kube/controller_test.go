@@ -97,7 +97,8 @@ type apply struct {
 }
 
 // fakeCluster is client-go's fakes, standing in for an API server: a
-// dynamic client of Memcacheds, a metadata client of the resources a
+// dynamic client of one resource, Memcacheds unless newFakeClusterOf names
+// another, a metadata client of the resources a
 // controller owns, and a clientset for the Lease. The dynamic
 // fake can't apply an unstructured object, so a reactor of the test's own
 // applies a status, setting the object's status to the patch's, and the
@@ -106,6 +107,12 @@ type fakeCluster struct {
 	dyn  *dynamicfake.FakeDynamicClient
 	meta *metadatafake.FakeMetadataClient
 	kube *k8sfake.Clientset
+
+	// gvr is the dynamic client's resource, and namespace the namespace of
+	// the objects the helpers below name: "default", or "" for a
+	// cluster-scoped resource.
+	gvr       schema.GroupVersionResource
+	namespace string
 
 	mu      sync.Mutex
 	applies []apply
@@ -117,13 +124,22 @@ type fakeCluster struct {
 
 func newFakeCluster(t *testing.T, objs ...runtime.Object) *fakeCluster {
 	t.Helper()
+	return newFakeClusterOf(t, Memcached.GVR(), "MemcachedList", "default", objs...)
+}
+
+// newFakeClusterOf returns a fakeCluster whose dynamic client serves gvr,
+// whose list kind is listKind, and whose helpers name objects in namespace.
+func newFakeClusterOf(t *testing.T, gvr schema.GroupVersionResource, listKind, namespace string, objs ...runtime.Object) *fakeCluster {
+	t.Helper()
 	fc := &fakeCluster{
 		dyn: dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
-			map[schema.GroupVersionResource]string{Memcached.GVR(): "MemcachedList"}, objs...),
-		meta: metadatafake.NewSimpleMetadataClient(metadatafake.NewTestScheme()),
-		kube: k8sfake.NewClientset(),
+			map[schema.GroupVersionResource]string{gvr: listKind}, objs...),
+		meta:      metadatafake.NewSimpleMetadataClient(metadatafake.NewTestScheme()),
+		kube:      k8sfake.NewClientset(),
+		gvr:       gvr,
+		namespace: namespace,
 	}
-	fc.dyn.PrependReactor("patch", Memcached.Plural, func(a clienttesting.Action) (bool, runtime.Object, error) {
+	fc.dyn.PrependReactor("patch", gvr.Resource, func(a clienttesting.Action) (bool, runtime.Object, error) {
 		p, ok := a.(clienttesting.PatchActionImpl)
 		if !ok || p.PatchType != types.ApplyPatchType {
 			return false, nil, nil
@@ -140,7 +156,6 @@ func newFakeCluster(t *testing.T, objs ...runtime.Object) *fakeCluster {
 		})
 		fc.mu.Unlock()
 
-		gvr := Memcached.GVR()
 		got, err := fc.dyn.Tracker().Get(gvr, p.Namespace, p.Name)
 		if err != nil {
 			return true, nil, err
@@ -164,7 +179,7 @@ func newFakeCluster(t *testing.T, objs ...runtime.Object) *fakeCluster {
 // deleted once it has no finalizer left. A patch that names another uid is
 // a conflict, as it is from the API server.
 func (fc *fakeCluster) applyMetadata(u *unstructured.Unstructured, manager string, patch map[string]any) (bool, runtime.Object, error) {
-	gvr := Memcached.GVR()
+	gvr := fc.gvr
 	md, _ := patch["metadata"].(map[string]any)
 	if uid, ok := md["uid"].(string); ok && uid != string(u.GetUID()) {
 		return true, nil, apierrors.NewConflict(gvr.GroupResource(), u.GetName(), errors.New("uid mismatch"))
@@ -229,18 +244,18 @@ func (fc *fakeCluster) metadataApplies() []apply {
 	return out
 }
 
-// deleting marks the Memcached default/name as being deleted, as the API
+// deleting marks the object default/name as being deleted, as the API
 // server does while a finalizer holds it.
 func (fc *fakeCluster) deleting(t *testing.T, name string) {
 	t.Helper()
 	u := fc.object(t, name).DeepCopy()
 	u.SetDeletionTimestamp(kptr.To(metav1.NewTime(time.Now())))
-	require.NoError(t, fc.dyn.Tracker().Update(Memcached.GVR(), u, "default"))
+	require.NoError(t, fc.dyn.Tracker().Update(fc.gvr, u, fc.namespace))
 }
 
-// gone reports whether the Memcached default/name is gone from the fakes.
+// gone reports whether the object default/name is gone from the fakes.
 func (fc *fakeCluster) gone(name string) bool {
-	_, err := fc.dyn.Tracker().Get(Memcached.GVR(), "default", name)
+	_, err := fc.dyn.Tracker().Get(fc.gvr, fc.namespace, name)
 	return apierrors.IsNotFound(err)
 }
 
@@ -257,10 +272,10 @@ func (fc *fakeCluster) statusApplies() []apply {
 	return out
 }
 
-// object returns the Memcached default/name as the fakes hold it.
+// object returns the object default/name as the fakes hold it.
 func (fc *fakeCluster) object(t *testing.T, name string) *unstructured.Unstructured {
 	t.Helper()
-	got, err := fc.dyn.Tracker().Get(Memcached.GVR(), "default", name)
+	got, err := fc.dyn.Tracker().Get(fc.gvr, fc.namespace, name)
 	require.NoError(t, err)
 	return got.(*unstructured.Unstructured)
 }
