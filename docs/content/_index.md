@@ -81,6 +81,13 @@ and their typed principals, requirements and scopes, opening a path with
 `auth.Disabled()`, how `openapi.Security`, `auth.NewHandler` and
 `grpcauth.Interceptors` enforce them and answer, leaving probes open,
 verifying JWTs with `auth/jwt`, and how to test an App that requires tokens.
+The `fault` package and its `fault/jsonscenario` package have landed:
+[Failure injection]({{< relref "failure-injection" >}}) explains how a
+service turns failure injection on with `humus.WithFaults`, chooses or
+writes the codec its scenarios travel in, the injection point in every humus
+client and its own, whom each server trusts and which dependencies a
+scenario goes on to, what a fault does to the retries and the breaker, how
+to contain a scenario in production, and how to test one.
 [Configuring a humus service]({{< relref "configuration" >}}) explains how
 a service's settings are sourced, [Telemetry]({{< relref "telemetry" >}})
 explains how a service gets its OpenTelemetry providers, and

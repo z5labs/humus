@@ -1348,6 +1348,22 @@ the panic may have broken. The process exits with Go's exit status 2 and the
 stack trace on stderr, and Kubernetes restarts the pod. A `Processor` that
 wants a panic handled differently recovers it itself.
 
+## Failure injection
+
+A Producer is an injection point per topic, `kafka:<topic>`, such as
+`kafka:orders`: a request or job whose baggage carries a failure scenario
+can make its produce calls to one topic fail or slow down. An abort fails
+every record of the call unsent, and the breaker counts it a failure, as for
+a cluster that is down. The Producer strips the scenario from the records'
+headers, unless `ProducerSettings.ForwardScenario` is set. A Service strips
+the scenario a record carries, before `Process` sees it, unless
+`Settings.TrustScenario` trusts the record, such as by its topic, which the
+cluster's ACLs decide who can write to. When it is nil, the default, no
+record is trusted. Without `humus.WithFaults`, nothing is evaluated or
+stripped. [Failure injection]({{< relref "failure-injection" >}}) explains
+the model, whom to trust and how, and how to test a scenario through a
+record's `baggage` header.
+
 ## Testing
 
 A consumer is tested whole, with

@@ -99,6 +99,18 @@
 // new trace, with no error and nothing logged. Kubernetes sets none of
 // them.
 //
+// # Failure injection
+//
+// The run's BAGGAGE is trusted: a failure scenario in it reaches the run's
+// context, and the points the run's clients evaluate, unstripped. Whoever
+// starts the job, with its pod spec or otherwise, already sets every one
+// of its settings, so a scenario there is set by the same hand. A job
+// started by a service hands on that service's baggage, which that
+// service's own server has already stripped of any scenario from a caller
+// it doesn't trust. So the package has no setting for failure injection,
+// and strips nothing. Failure injection is documented at
+// https://z5labs.github.io/humus/failure-injection/.
+//
 // # Panics
 //
 // The package recovers no panic, and doesn't retry the run. A run that
