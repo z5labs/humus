@@ -135,6 +135,10 @@ func startRabbitMQ(t *testing.T) error {
 	if c != nil {
 		broker.container = c
 	}
+	// The module renders its config, this run's login included, to a fixed
+	// file in os.TempDir() and leaves it there. The container has its copy,
+	// so the file is removed rather than left behind with the password.
+	_ = os.Remove(filepath.Join(os.TempDir(), "rabbitmq-testcontainers.conf"))
 	if err != nil {
 		return err
 	}

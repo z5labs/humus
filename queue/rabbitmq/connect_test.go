@@ -9,6 +9,8 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"syscall"
@@ -174,14 +176,146 @@ func TestConnect_fails_before_dialling_when_TLS_needs_a_host_Addr_lacks(t *testi
 
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
-		l, err := h.Listen("tcp", "rabbit:5671")
-		require.NoError(t, err)
-		defer func() { _ = l.Close() }()
 
 		c := connection("rabbit")
 		c.TLS = &tls.Config{MinVersion: tls.VersionTLS12}
 		conn, err := rabbitmq.Connect(t.Context(), h.Host(), c)
-		require.Error(t, err)
 		require.Nil(t, conn)
+		// The Host's Dial would fail with a *net.OpError.
+		var addrErr *net.AddrError
+		require.ErrorAs(t, err, &addrErr)
+		var opErr *net.OpError
+		require.False(t, errors.As(err, &opErr), "it dialled: %v", err)
+		require.ErrorContains(t, err, "TLS server name")
+	})
+}
+
+// startOnly accepts one connection on l, reads AMQP's protocol header and
+// answers it with a Connection.Start offering PLAIN, then reads until the
+// connection is closed, answering nothing more. The returned channel is
+// closed once the connection is.
+func startOnly(t *testing.T, l net.Listener) <-chan struct{} {
+	t.Helper()
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		conn, err := l.Accept()
+		if err != nil {
+			t.Errorf("accepting: %v", err)
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		header := make([]byte, 8)
+		if _, err := io.ReadFull(conn, header); err != nil {
+			t.Errorf("reading the protocol header: %v", err)
+			return
+		}
+		if _, err := conn.Write(connectionStart()); err != nil {
+			t.Errorf("writing Connection.Start: %v", err)
+			return
+		}
+		_, _ = io.Copy(io.Discard, conn)
+	}()
+	return closed
+}
+
+// connectionStart is a Connection.Start frame for AMQP 0-9-1, with no
+// server properties, the PLAIN mechanism and the en_US locale.
+func connectionStart() []byte {
+	var payload []byte
+	payload = binary.BigEndian.AppendUint16(payload, 10) // class: connection
+	payload = binary.BigEndian.AppendUint16(payload, 10) // method: start
+	payload = append(payload, 0, 9)                      // version 0-9
+	payload = binary.BigEndian.AppendUint32(payload, 0)  // server properties: an empty table
+	for _, s := range []string{"PLAIN", "en_US"} {       // mechanisms, locales
+		payload = binary.BigEndian.AppendUint32(payload, uint32(len(s)))
+		payload = append(payload, s...)
+	}
+	frame := []byte{1, 0, 0} // a method frame, on channel 0
+	frame = binary.BigEndian.AppendUint32(frame, uint32(len(payload)))
+	frame = append(frame, payload...)
+	return append(frame, 0xCE) // frame end
+}
+
+func TestConnect_reports_a_timeout_after_Connection_Start_as_a_timeout(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		h := humustest.NewHost(t)
+		l, err := h.Listen("tcp", "rabbit:5672")
+		require.NoError(t, err)
+		defer func() { _ = l.Close() }()
+		closed := startOnly(t, l)
+
+		c := connection("rabbit:5672")
+		c.ConnectTimeout = 5 * time.Second
+		start := time.Now()
+		conn, err := rabbitmq.Connect(t.Context(), h.Host(), c)
+		require.Nil(t, conn)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		// amqp091 reports any failure after Start as ErrCredentials.
+		require.NotErrorIs(t, err, amqp.ErrCredentials)
+		require.Equal(t, c.ConnectTimeout, time.Since(start))
+
+		synctest.Wait()
+		select {
+		case <-closed:
+		default:
+			t.Fatal("the connection is still open")
+		}
+	})
+}
+
+func TestConnect_stops_the_AMQP_handshake_when_ctx_is_cancelled(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		h := humustest.NewHost(t)
+		l, err := h.Listen("tcp", "rabbit:5672")
+		require.NoError(t, err)
+		defer func() { _ = l.Close() }()
+		closed := silent(t, l)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		time.AfterFunc(time.Second, cancel)
+		start := time.Now()
+		conn, err := rabbitmq.Connect(ctx, h.Host(), connection("rabbit:5672"))
+		require.Nil(t, conn)
+		require.ErrorIs(t, err, context.Canceled)
+		require.Equal(t, time.Second, time.Since(start))
+
+		synctest.Wait()
+		select {
+		case <-closed:
+		default:
+			t.Fatal("the connection is still open")
+		}
+	})
+}
+
+func TestConnect_stops_the_AMQP_handshake_at_ctxs_earlier_deadline(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		h := humustest.NewHost(t)
+		l, err := h.Listen("tcp", "rabbit:5672")
+		require.NoError(t, err)
+		defer func() { _ = l.Close() }()
+		closed := silent(t, l)
+
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+		defer cancel()
+		start := time.Now()
+		conn, err := rabbitmq.Connect(ctx, h.Host(), connection("rabbit:5672"))
+		require.Nil(t, conn)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.Equal(t, 2*time.Second, time.Since(start))
+
+		synctest.Wait()
+		select {
+		case <-closed:
+		default:
+			t.Fatal("the connection is still open")
+		}
 	})
 }
