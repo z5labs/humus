@@ -365,6 +365,8 @@ func TestProducer_records_the_messaging_instruments(t *testing.T) {
 			require.Equal(t, withSend("messaging.operation.type", "send"), setAttrs(durations[0].Attributes))
 
 			require.Equal(t, []string{
+				"humus.circuit.calls",
+				"humus.circuit.state",
 				"messaging.client.operation.duration",
 				"messaging.client.sent.messages",
 			}, metricNames(t, tel, serviceScope))
@@ -522,7 +524,8 @@ func TestProducer_with_a_done_ctx_records_nothing(t *testing.T) {
 
 		require.Empty(t, spansNamed(tel, sendSpan))
 		require.Empty(t, spansNamed(tel, "send "))
-		require.Empty(t, metricNames(t, tel, serviceScope), "neither instrument counts a record that wasn't sent")
+		require.Equal(t, []string{"humus.circuit.state"}, metricNames(t, tel, serviceScope),
+			"neither messaging instrument counts a record that wasn't sent, and humus.circuit.calls doesn't count a call the breaker never saw")
 	})
 }
 
@@ -558,6 +561,8 @@ func TestProducer_uses_no_OpenTelemetry_globals(t *testing.T) {
 		})
 		require.Len(t, spansNamed(tel, sendSpan), 1, "the Setup's TracerProvider recorded the span")
 		require.NotEmpty(t, metricNames(t, tel, serviceScope), "the Setup's MeterProvider recorded the instruments")
+		require.Equal(t, map[string]int64{"humus.circuit.outcome=success": 1}, ownPoints(t, collect(t, t.Context(), tel), c.ListenAddrs()[0], "humus.circuit.calls"),
+			"the Setup's MeterProvider recorded the call the breaker counted")
 		require.NotEmpty(t, metricNames(t, tel, kotelScope), "the Setup's MeterProvider recorded kotel's instruments")
 		got := readAll(t, h, c, topic)
 		require.Len(t, got, 1)
