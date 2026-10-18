@@ -541,12 +541,49 @@
 // the Publish that made it: circuit breaker open at WARN, and circuit
 // breaker half-open and circuit breaker closed at INFO. Its attributes are
 // server.address and server.port, from Connection.Addr,
-// circuit.previous_state, and the counts of the state the breaker left:
-// circuit.successes, circuit.failures, circuit.consecutive_successes,
-// circuit.consecutive_failures and circuit.timed_out. There are no
-// instruments of humus's own for the breaker: its transitions are in the
-// logs, and a rejected Publish is an error on its span. Whether humus
-// records instruments of its own is Proposal: humus's own metrics (wave 5).
+// humus.circuit.previous_state, the state the breaker left, and the counts
+// of that state: humus.circuit.successes, humus.circuit.failures,
+// humus.circuit.consecutive_successes, humus.circuit.consecutive_failures
+// and humus.circuit.timed_out. The bodies and the attributes are those of
+// humus's other clients, so one query finds every breaker.
+//
+// The breaker and the retries are measured too, with four instruments of
+// humus's own, from the Setup's MeterProvider, under the scope
+// github.com/z5labs/humus/queue/rabbitmq. Every data point carries
+// server.address and server.port, from Connection.Addr, the same as the
+// breaker's log records, and nothing per Publish, such as an exchange or a
+// routing key. Every other attribute's value is the String() of bedrock's
+// own type:
+//
+//   - humus.circuit.state, an asynchronous UpDownCounter in {breaker}, with
+//     humus.circuit.state: closed, open or half-open, a circuit.State. At
+//     each collection it reads the breaker's state once and observes 1 for
+//     it and 0 for the other two, so it reads half-open as soon as
+//     Breaker.OpenFor has passed, with no Publish made. Two Publishers of
+//     one broker add up, so they read closed 1 and open 1 when one breaker
+//     is open. It is still read by the App's last collection, after the
+//     OnStop functions, so the final export has the state the App stopped
+//     in.
+//   - humus.circuit.transitions, a Counter in {transition}, with
+//     humus.circuit.state, the state the breaker went to, and
+//     humus.circuit.previous_state, the state it left: one for each change
+//     of state, beside its log record. It catches a breaker that opens and
+//     closes between two collections.
+//   - humus.circuit.calls, a Counter in {call}, with humus.circuit.outcome:
+//     success, failure or ignored, a circuit.Outcome, as each attempt
+//     counted in the breaker, once it has its result; or rejected, for an
+//     attempt the breaker didn't admit. One call is one attempt, so a
+//     Publish retried twice is three calls.
+//   - humus.retry.decisions, a Counter in {decision}, with
+//     humus.retry.decision: again, succeeded, stopped, exhausted, throttled
+//     or expired, a retry.Decision: one after each attempt, with what retry
+//     decided. An attempt the breaker rejected counts the stopped retry
+//     decides for it, and retries the RetryBudget refused count throttled.
+//
+// The Service's connection retries record none of the four: they aren't on
+// the request path, and each failed connect is already a WARN record. A
+// View in the end user's telemetry Builder drops or renames any of them.
+// humus has no setting to turn them off.
 //
 // A retry can publish a message twice: when a connection is lost after the
 // broker took the message but before its confirm arrived, the attempt that
@@ -610,8 +647,8 @@
 // one span, whatever its attempts, and a nack followed by a confirm counts
 // two messages sent, one with error.type nacked. An attempt that fails
 // before it publishes, waiting for a channel or connecting, publishes
-// nothing, so neither instrument records it, and neither does an attempt
-// the breaker rejected. As with the
+// nothing, so neither messaging instrument records it, and neither does an
+// attempt the breaker rejected. As with the
 // Service, a routing key that carries identifiers makes a series per key in
 // both instruments.
 //

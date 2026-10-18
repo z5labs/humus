@@ -248,6 +248,9 @@ type Publisher struct {
 	serverAddr string
 	serverPort int
 
+	// metrics are humus's own instruments of the breaker and the retries.
+	metrics *instruments
+
 	// slots holds a token for each publish in flight, so there are at most
 	// Channels of them.
 	slots chan struct{}
@@ -304,8 +307,11 @@ type confirmChannel struct {
 // The Publisher reports through s.Telemetry, and never through
 // OpenTelemetry's globals, under the Service's scope,
 // github.com/z5labs/humus/queue/rabbitmq: a span for every Publish, two
-// instruments for every attempt, and a log record for every change of the
-// breaker's state, as Publish describes.
+// messaging instruments for every attempt, a log record for every change
+// of the breaker's state, and four instruments of humus's own for the
+// breaker and the retries, as Publish describes. humus.circuit.state's
+// callback is registered last, once nothing after it can fail, so a
+// NewPublisher that returns an error leaves none behind.
 func NewPublisher(s *humus.Setup, settings PublisherSettings) (*Publisher, error) {
 	if err := checkPublisherSettings(settings); err != nil {
 		return nil, fmt.Errorf("rabbitmq: NewPublisher: %w", err)
@@ -323,6 +329,10 @@ func NewPublisher(s *humus.Setup, settings PublisherSettings) (*Publisher, error
 	// CheckAddr has accepted Addr, so it splits, and its port is a number.
 	host, port, _ := net.SplitHostPort(settings.Connection.Addr)
 	portNum, _ := strconv.Atoi(port)
+	metrics, err := newInstruments(meter, host, portNum)
+	if err != nil {
+		return nil, fmt.Errorf("rabbitmq: NewPublisher: creating the instruments: %w", err)
+	}
 
 	stopped, stop := context.WithCancel(context.Background())
 	p := &Publisher{
@@ -335,14 +345,21 @@ func NewPublisher(s *humus.Setup, settings PublisherSettings) (*Publisher, error
 		retrier:    retrier,
 		serverAddr: host,
 		serverPort: portNum,
+		metrics:    metrics,
 		slots:      make(chan struct{}, settings.Channels),
 		connLock:   make(chan struct{}, 1),
 		stopped:    stopped,
 		stop:       stop,
 	}
-	breaker, err := circuit.New(settings.Breaker, settings.BreakerPolicy, classifyBreaker, p.observe)
+	breaker, err := circuit.New(settings.Breaker, settings.BreakerPolicy, metrics.countCalls(classifyBreaker), p.observe)
 	if err != nil {
 		return nil, fmt.Errorf("rabbitmq: NewPublisher: building the circuit breaker: %w", err)
+	}
+	// humus.circuit.state's callback is registered last, once nothing after
+	// it can fail, so a NewPublisher that returns an error leaves none
+	// behind.
+	if err := metrics.observeState(meter, breaker); err != nil {
+		return nil, fmt.Errorf("rabbitmq: NewPublisher: registering humus.circuit.state's callback: %w", err)
 	}
 	p.breaker = breaker
 	p.dial = func(ctx context.Context) (publishConn, error) {
@@ -497,10 +514,18 @@ func (p *Publisher) close(ctx context.Context) error {
 // "circuit breaker open" at WARN, and "circuit breaker half-open" and
 // "circuit breaker closed" at INFO. Each has server.address and
 // server.port, from Connection.Addr, the state the breaker left as
-// circuit.previous_state, and the counts of that state, as
-// circuit.successes, circuit.failures, circuit.consecutive_successes,
-// circuit.consecutive_failures and circuit.timed_out. humus records no
-// instrument of its own for the breaker.
+// humus.circuit.previous_state, and the counts of that state, as
+// humus.circuit.successes, humus.circuit.failures,
+// humus.circuit.consecutive_successes, humus.circuit.consecutive_failures
+// and humus.circuit.timed_out.
+//
+// The breaker and the retries are measured with humus's own instruments,
+// each with server.address and server.port: humus.circuit.state reads the
+// breaker's state at each collection, humus.circuit.transitions counts each
+// change of state, humus.circuit.calls counts each attempt with the
+// circuit.Outcome the breaker gave it, or rejected for an attempt the
+// breaker didn't admit, and humus.retry.decisions counts the
+// retry.Decision after each attempt, stopped for a rejected one.
 //
 // Settings.Timeout bounds the whole Publish, every attempt and the waits
 // between them included, unless ctx has an earlier deadline, which then
@@ -561,7 +586,7 @@ func (p *Publisher) Publish(ctx context.Context, m Publishing) (err error) {
 
 	for a := range p.retrier.Attempts(ctx) {
 		err = p.attempt(ctx, m, msg)
-		a.Done(err)
+		p.metrics.done(ctx, a, err)
 	}
 	if err != nil && ctx.Err() != nil && !errors.Is(err, ctx.Err()) {
 		// ctx ended during the wait after a failed attempt: the caller sees
@@ -579,6 +604,7 @@ func (p *Publisher) Publish(ctx context.Context, m Publishing) (err error) {
 func (p *Publisher) attempt(ctx context.Context, m Publishing, msg amqp.Publishing) error {
 	t, err := p.breaker.Allow(ctx)
 	if err != nil {
+		p.metrics.rejected(ctx)
 		return fmt.Errorf("rabbitmq: publishing to %s: %w", destination(m), err)
 	}
 	defer t.Release()
