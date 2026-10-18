@@ -337,9 +337,9 @@
 // [Service.Consuming] closes that gap. It returns a health.Monitor that is
 // unhealthy until the broker first answers the Service's basic.consume, and
 // healthy from then until Serve returns, through any number of lost
-// connections and reconnects. It goes in the readiness of whatever exposes
-// the probes: in a consumer's pod, which has no server of its own, a probes
-// server of its own, httphealth.NewService:
+// connections and reconnects. It goes in the readiness of whatever serves
+// the pod's probes. A consumer's pod has no server of its own, so that is a
+// probes server made with httphealth.NewService:
 //
 //	consumer, err := rabbitmq.NewService(s, settings, queue.ProcessorFunc[rabbitmq.Message](h.Handle))
 //	if err != nil {

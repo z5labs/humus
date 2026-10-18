@@ -139,7 +139,32 @@ func TestService_Consuming_stays_healthy_while_it_connects_again(t *testing.T) {
 	})
 }
 
-func TestService_Consuming_is_unhealthy_when_Serve_fails_before_consuming(t *testing.T) {
+func TestService_Consuming_stays_unhealthy_while_each_consume_fails(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		u := newUnit(t, settings(), nop)
+		// Every consume fails with an error a later attempt may fix, so
+		// Serve keeps running, and the monitor is checked while it does.
+		var attempts atomic.Int32
+		rabbitmq.SetOpen(u.svc, func(ctx context.Context) (rabbitmq.Channel, io.Closer, error) {
+			attempts.Add(1)
+			ch, conn, err := newStandIn().open(ctx)
+			return refusingConsume{Channel: ch, err: forced}, conn, err
+		})
+		served := u.serve(t.Context())
+
+		time.Sleep(2 * time.Minute)
+		require.Greater(t, attempts.Load(), int32(2), "the Service kept trying to consume")
+		require.NotEmpty(t, records(u.tel.Logs(), "connecting failed"))
+		require.False(t, consuming(t, u.svc.Consuming()), "a consume that failed doesn't make it healthy")
+
+		require.NoError(t, u.svc.Shutdown(t.Context()))
+		require.NoError(t, <-served)
+	})
+}
+
+func TestService_Consuming_stays_unhealthy_when_Serve_ends_on_a_refused_queue(t *testing.T) {
 	t.Parallel()
 
 	synctest.Test(t, func(t *testing.T) {
@@ -150,7 +175,27 @@ func TestService_Consuming_is_unhealthy_when_Serve_fails_before_consuming(t *tes
 			return refusingConsume{Channel: ch, err: notFound}, conn, err
 		})
 		require.ErrorIs(t, u.svc.Serve(t.Context()), notFound, "a queue the broker refuses ends Serve")
-		require.False(t, consuming(t, u.svc.Consuming()), "never consumed, so never healthy")
+		require.False(t, consuming(t, u.svc.Consuming()), "unhealthy once Serve has returned")
+	})
+}
+
+func TestService_Shutdown_while_the_consume_is_unanswered_returns_and_it_never_turns_healthy(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		u := newUnit(t, settings(), nop)
+		u.ch.holdConsumes()
+		served := u.serve(t.Context())
+		synctest.Wait()
+		require.Equal(t, []string{qos10, consume}, u.ch.Calls(), "the Service sent its basic.consume")
+		require.False(t, consuming(t, u.svc.Consuming()), "unhealthy while the consume is unanswered")
+
+		// A pod terminated before it ever turned ready: Shutdown closes the
+		// connection, which ends the unanswered consume.
+		require.NoError(t, u.svc.Shutdown(t.Context()))
+		require.NoError(t, <-served)
+		require.Equal(t, []string{qos10, consume, closeConn}, u.ch.Calls(), "the connection was closed")
+		require.False(t, consuming(t, u.svc.Consuming()))
 	})
 }
 
@@ -159,6 +204,7 @@ func TestService_Consuming_stays_unhealthy_with_nothing_listening(t *testing.T) 
 
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t) // nothing listens at rabbit:5672
+		tel := humustest.NewTelemetry()
 		svcs := make(chan *rabbitmq.Service, 1)
 		p, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
 			svc, err := rabbitmq.NewService(s, settings(), nop)
@@ -167,10 +213,11 @@ func TestService_Consuming_stays_unhealthy_with_nothing_listening(t *testing.T) 
 			}
 			svcs <- svc
 			return []humus.Service{svc}, nil
-		}, humustest.WithApp(humus.WithHost(h.Host())))
+		}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
 		svc := <-svcs
 		m := svc.Consuming()
 
+		failed := 0
 		for range 4 {
 			time.Sleep(30 * time.Second)
 			select {
@@ -178,13 +225,16 @@ func TestService_Consuming_stays_unhealthy_with_nothing_listening(t *testing.T) 
 				t.Fatalf("the App exited while the broker was unreachable: %v", st.Cause())
 			default:
 			}
+			attempts := len(records(tel.Logs(), "connecting failed"))
+			require.Greater(t, attempts, failed, "the Service is still trying to connect")
+			failed = attempts
 			require.False(t, consuming(t, m), "never consumed, so unhealthy while the Service retries")
 		}
 
 		p.Signal(syscall.SIGTERM)
 		st := <-status
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
-		require.False(t, consuming(t, m))
+		require.Empty(t, records(tel.Logs(), "consuming"), "it never consumed")
 	})
 }
 
