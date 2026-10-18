@@ -14,6 +14,7 @@ import (
 	"net"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,16 +22,26 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/z5labs/bedrock/retry"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/baggage"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/propagation"
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
+	"go.opentelemetry.io/otel/semconv/v1.43.0/messagingconv"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/health"
 	"github.com/z5labs/humus/queue"
 )
 
-// scopeName is the instrumentation scope of the package's own logs.
+// scopeName is the instrumentation scope of the package's own spans,
+// instruments and logs.
 const scopeName = "github.com/z5labs/humus/queue/rabbitmq"
+
+// processOperation is the messaging.operation.name of processing a
+// delivery.
+const processOperation = "process"
 
 // consumerTag is the tag of every consumer the Service starts. Consumer tags
 // are scoped to a channel, and the Service starts one consumer on each
@@ -73,6 +84,11 @@ type Service struct {
 	retrier  *retry.Retrier
 	logger   log.Logger
 
+	tracer     trace.Tracer
+	propagator propagation.TextMapPropagator
+	consumed   messagingconv.ClientConsumedMessages
+	processing messagingconv.ProcessDuration
+
 	// serverAddr and serverPort are Connection.Addr's host and port.
 	serverAddr string
 	serverPort int
@@ -104,9 +120,33 @@ var notServed = &call{}
 // settings.Queue and hands each delivery to p. It opens no connection: Serve
 // connects.
 //
-// The Service logs through s.Telemetry's LoggerProvider, under the scope
-// github.com/z5labs/humus/queue/rabbitmq, and reaches the broker only
-// through s.Host.
+// The Service reports through s.Telemetry, and never through
+// OpenTelemetry's globals, under the scope
+// github.com/z5labs/humus/queue/rabbitmq: its logs, a span for every
+// delivery, and two instruments. It reaches the broker only through s.Host.
+//
+// A delivery's span is named "process <queue>", of kind CONSUMER, and
+// Process is given its context. Its parent is the trace context
+// s.Telemetry.Propagator extracts from the message's string headers; a
+// message whose headers carry none starts a new trace. Its attributes are
+// messaging.system (rabbitmq), messaging.operation.type and
+// messaging.operation.name (both process), messaging.destination.name
+// ({exchange}:{routing key}:{queue}, leaving out what is empty, and the
+// routing key when it equals the queue's name),
+// messaging.rabbitmq.destination.routing_key when it isn't empty,
+// messaging.rabbitmq.message.delivery_tag, messaging.message.id and
+// messaging.message.conversation_id when they are set, server.address and
+// server.port. A processing error is recorded on it, with error.type and an
+// error status. The body is never recorded.
+//
+// The instruments are messaging.client.consumed.messages, which counts the
+// deliveries handed to p, and messaging.process.duration, how long each
+// Process took, with error.type when it failed. Each has messaging.system,
+// messaging.operation.name, messaging.destination.name, server.address and
+// server.port. An ack has no reply, so it has no duration, and none is
+// recorded. Since the destination name includes the routing key, a
+// publisher that puts identifiers in its routing keys gives both
+// instruments a series per key.
 //
 // It reports every field of settings that fails its check in one error that
 // names each one, including a Concurrency above Prefetch, and it rejects a
@@ -126,6 +166,12 @@ func NewService(s *humus.Setup, settings Settings, p queue.Processor[Message]) (
 	if err != nil {
 		return nil, fmt.Errorf("rabbitmq: NewService: %w", err)
 	}
+	meter := s.Telemetry.MeterProvider.Meter(scopeName)
+	consumed, err1 := messagingconv.NewClientConsumedMessages(meter)
+	processing, err2 := messagingconv.NewProcessDuration(meter)
+	if err := errors.Join(err1, err2); err != nil {
+		return nil, fmt.Errorf("rabbitmq: NewService: creating the instruments: %w", err)
+	}
 	// CheckAddr has accepted Addr, so it splits, and its port is a number.
 	host, port, _ := net.SplitHostPort(settings.Connection.Addr)
 	portNum, _ := strconv.Atoi(port)
@@ -136,6 +182,10 @@ func NewService(s *humus.Setup, settings Settings, p queue.Processor[Message]) (
 		proc:       p,
 		retrier:    retrier,
 		logger:     s.Telemetry.LoggerProvider.Logger(scopeName),
+		tracer:     s.Telemetry.TracerProvider.Tracer(scopeName),
+		propagator: s.Telemetry.Propagator,
+		consumed:   consumed,
+		processing: processing,
 		serverAddr: host,
 		serverPort: portNum,
 		stopped:    stopped,
@@ -413,6 +463,11 @@ type session struct {
 	// work is the context of processing, which only Shutdown cancels.
 	work context.Context
 
+	// spanBase is work with no span and no baggage: the context a
+	// delivery's trace context is extracted into, so its span's parent is
+	// only what its headers carry.
+	spanBase context.Context
+
 	// received counts the deliveries taken from the consumer, and last is
 	// the tag of the last one. Only the dispatching goroutine uses them.
 	received int64
@@ -466,6 +521,7 @@ func (s *session) consume(running, work, logCtx context.Context) (cause, err err
 	defer stopClosing()
 
 	s.work = work
+	s.spanBase = baggage.ContextWithoutBaggage(trace.ContextWithSpanContext(work, trace.SpanContext{}))
 	s.stopping, s.stopNow = context.WithCancel(running)
 	defer s.stopNow()
 
@@ -709,16 +765,16 @@ func (s *session) worker(jobs <-chan amqp.Delivery, logCtx context.Context) {
 			if s.work.Err() != nil {
 				continue
 			}
-			if err := s.process(d); err != nil && s.work.Err() == nil {
-				svc.logProcessingError(logCtx, d, err)
-			}
+			// process logs a failure itself, inside the delivery's span,
+			// and processing goes on.
+			_ = s.process(d, logCtx)
 			continue
 		}
 		if s.stopping.Err() != nil {
 			// Handed out as the session stopped: nacked with the rest.
 			continue
 		}
-		err := s.process(d)
+		err := s.process(d, logCtx)
 		switch {
 		case s.work.Err() != nil:
 			// Shutdown's context cut processing short, and closed the
@@ -740,10 +796,101 @@ func (s *session) worker(jobs <-chan amqp.Delivery, logCtx context.Context) {
 	}
 }
 
-// process hands d to the Processor, with the context of processing. No
-// panic is recovered.
-func (s *session) process(d amqp.Delivery) error {
-	return s.svc.proc.Process(s.work, newMessage(s.svc.settings.Queue, d))
+// process hands d to the Processor, under the delivery's span, and records
+// the delivery as consumed and how long processing it took. No panic is
+// recovered.
+//
+// The span's parent is the trace context the propagator extracts from d's
+// headers, whose baggage is on Process's context too. When the headers
+// carry none, the span is the root of a new trace.
+//
+// Under queue.AtMostOnce, process logs a failure itself, with logCtx and
+// the delivery's span context, unless Shutdown's context cut processing
+// short.
+func (s *session) process(d amqp.Delivery, logCtx context.Context) error {
+	svc := s.svc
+	headers := map[string]any(d.Headers)
+	parent := svc.propagator.Extract(s.spanBase, (*headerCarrier)(&headers))
+
+	attrs := svc.instrumentAttrs(destinationName(d.Exchange, d.RoutingKey, svc.settings.Queue))
+	spanAttrs := append(attrs[:len(attrs):len(attrs)],
+		semconv.MessagingSystemRabbitMQ,
+		semconv.MessagingOperationTypeProcess,
+		semconv.MessagingOperationName(processOperation),
+		semconv.MessagingRabbitMQMessageDeliveryTag(deliveryTag(d.DeliveryTag)),
+	)
+	if d.RoutingKey != "" {
+		spanAttrs = append(spanAttrs, semconv.MessagingRabbitMQDestinationRoutingKey(d.RoutingKey))
+	}
+	if d.MessageId != "" {
+		spanAttrs = append(spanAttrs, semconv.MessagingMessageID(d.MessageId))
+	}
+	if d.CorrelationId != "" {
+		spanAttrs = append(spanAttrs, semconv.MessagingMessageConversationID(d.CorrelationId))
+	}
+	ctx, span := svc.tracer.Start(parent, "process "+svc.settings.Queue,
+		trace.WithSpanKind(trace.SpanKindConsumer),
+		trace.WithAttributes(spanAttrs...),
+	)
+	defer span.End()
+
+	svc.consumed.Add(ctx, 1, processOperation, messagingconv.SystemRabbitMQ, attrs...)
+	start := time.Now()
+	err := svc.proc.Process(ctx, newMessage(svc.settings.Queue, d))
+	elapsed := time.Since(start).Seconds()
+
+	if err != nil {
+		errType := semconv.ErrorType(err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		span.SetAttributes(errType)
+		attrs = append(attrs, errType)
+		if svc.settings.Delivery == queue.AtMostOnce && s.work.Err() == nil {
+			svc.logProcessingError(trace.ContextWithSpan(logCtx, span), d, err)
+		}
+	}
+	svc.processing.Record(ctx, elapsed, processOperation, messagingconv.SystemRabbitMQ, attrs...)
+	return err
+}
+
+// instrumentAttrs returns the attributes both instruments record for a
+// delivery to destination, beside messaging.system and
+// messaging.operation.name: messaging.destination.name, server.address and
+// server.port.
+func (svc *Service) instrumentAttrs(destination string) []attribute.KeyValue {
+	return []attribute.KeyValue{
+		semconv.MessagingDestinationName(destination),
+		semconv.ServerAddress(svc.serverAddr),
+		semconv.ServerPort(svc.serverPort),
+	}
+}
+
+// destinationName is a delivery's messaging.destination.name, as semconv
+// v1.43.0 defines it for RabbitMQ: {exchange}:{routing key}:{queue}, leaving
+// out what is empty, and the routing key when it equals the queue's name. A
+// message published to the queue orders on the default exchange is orders.
+func destinationName(exchange, routingKey, queue string) string {
+	parts := make([]string, 0, 3)
+	if exchange != "" {
+		parts = append(parts, exchange)
+	}
+	if routingKey != "" && routingKey != queue {
+		parts = append(parts, routingKey)
+	}
+	if queue != "" {
+		parts = append(parts, queue)
+	}
+	return strings.Join(parts, ":")
+}
+
+// deliveryTag is tag as messaging.rabbitmq.message.delivery_tag records it.
+// A channel numbers its deliveries from 1, so a tag never reaches
+// math.MaxInt; one that did would be recorded as math.MaxInt.
+func deliveryTag(tag uint64) int {
+	if tag > math.MaxInt {
+		return math.MaxInt
+	}
+	return int(tag)
 }
 
 // fail records err as the error Serve returns, if it is the first, and stops
@@ -868,7 +1015,7 @@ func (svc *Service) logLost(ctx context.Context, lost error) {
 }
 
 // logProcessingError emits an ERROR record for the error processing d
-// returned under queue.AtMostOnce.
+// returned under queue.AtMostOnce, with ctx, which carries d's span.
 func (svc *Service) logProcessingError(ctx context.Context, d amqp.Delivery, err error) {
 	attrs := []attribute.KeyValue{
 		semconv.MessagingDestinationName(svc.settings.Queue),

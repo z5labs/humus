@@ -30,6 +30,7 @@ import (
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/bedrocktest"
 	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/goleak"
 
 	"github.com/z5labs/humus"
@@ -600,4 +601,56 @@ func TestService_leaves_no_goroutine_of_amqp091_behind(t *testing.T) {
 	st := exit(t, status)
 	require.Zero(t, st.Code(), "cause: %v", st.Cause())
 	require.NoError(t, goleak.Find(before))
+}
+
+func TestService_continues_the_trace_of_a_message_published_to_RabbitMQ(t *testing.T) {
+	t.Parallel()
+
+	q := declareQueue(t)
+	// Published by the test's own channel, with the traceparent header a
+	// publisher's W3C trace context propagator injects.
+	ch := adminChannel(t)
+	dc, err := ch.PublishWithDeferredConfirmWithContext(t.Context(), "", q, true, false, amqp.Publishing{
+		MessageId: "traced",
+		Headers:   amqp.Table{"traceparent": traceparent},
+		Body:      []byte("traced"),
+	})
+	require.NoError(t, err)
+	ok, err := dc.WaitContext(t.Context())
+	require.NoError(t, err)
+	require.True(t, ok, "the broker nacked the message")
+
+	var (
+		got    recorder
+		mu     sync.Mutex
+		inSpan trace.SpanContext
+	)
+	tel := humustest.NewTelemetry()
+	p, status := startApp(t, consumerSettings(plainText(t), q), func(ctx context.Context, m rabbitmq.Message) error {
+		mu.Lock()
+		inSpan = trace.SpanContextFromContext(ctx)
+		mu.Unlock()
+		got.add(m)
+		return nil
+	}, humustest.WithApp(humus.WithTelemetry(tel.Builder())))
+	eventually(t, func() bool { return len(got.ids()) == 1 }, "the message was never processed")
+	p.Signal(syscall.SIGTERM)
+
+	st := exit(t, status)
+	require.Zero(t, st.Code(), "cause: %v", st.Cause())
+
+	spans := spansNamed(tel, "process "+q)
+	require.Len(t, spans, 1)
+	span := spans[0]
+	sc := publisherSpanContext(t)
+	require.Equal(t, trace.SpanKindConsumer, span.SpanKind())
+	require.True(t, span.Parent().IsRemote(), "the parent is the publisher's, from the headers")
+	require.Equal(t, sc.TraceID(), span.Parent().TraceID())
+	require.Equal(t, sc.SpanID(), span.Parent().SpanID())
+	mu.Lock()
+	require.Equal(t, span.SpanContext(), inSpan, "Process's context carries the message's span")
+	mu.Unlock()
+	a := spanAttrs(span)
+	require.Equal(t, q, a["messaging.destination.name"].AsString(), "published to the queue on the default exchange")
+	require.Equal(t, "traced", a["messaging.message.id"].AsString())
 }
