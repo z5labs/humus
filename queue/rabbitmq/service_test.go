@@ -193,7 +193,9 @@ func TestService_at_least_once_failure_rejects_it_acks_in_flight_and_nacks_the_r
 			return nil
 		})
 		served := u.serve(t.Context())
-		u.ch.deliver("a", "b", "c", "d")
+		u.ch.deliver("a")
+		synctest.Wait() // a is in flight
+		u.ch.deliver("b", "c", "d")
 		synctest.Wait()
 
 		// b failed while a is in flight: b is rejected and the consumer
