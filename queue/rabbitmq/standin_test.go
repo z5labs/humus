@@ -95,6 +95,18 @@ func (s *standIn) give(redelivered bool, ids []string) {
 	}
 }
 
+// send gives the Service each delivery, as the broker would, with the next
+// delivery tags, from 1, in place of the tags they carry.
+func (s *standIn) send(ds ...amqp.Delivery) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, d := range ds {
+		s.nextTag++
+		d.DeliveryTag = s.nextTag
+		s.deliveries <- d
+	}
+}
+
 // holdConsumes makes the stand-in hold each ConsumeWithContext until
 // answerConsume.
 func (s *standIn) holdConsumes() {

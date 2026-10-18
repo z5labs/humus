@@ -162,7 +162,63 @@
 // each failed attempt to connect, with the error, and each lost connection,
 // with the AMQP reply code as error.type and its reason as
 // exception.message when the broker gave one; and at ERROR, each processing
-// error under AtMostOnce.
+// error under AtMostOnce, with its delivery's span context.
+//
+// # Telemetry
+//
+// The Service reports through the Setup's telemetry and never through
+// OpenTelemetry's globals: its tracer and meter come from the SDK's
+// TracerProvider and MeterProvider, under the scope
+// github.com/z5labs/humus/queue/rabbitmq, and its propagator is the SDK's
+// Propagator. Their names and attributes are OpenTelemetry's semantic
+// conventions for RabbitMQ, as semconv v1.43.0 has them.
+//
+// Each delivery is processed under a span of its own, named "process
+// <queue>", of kind CONSUMER, whose context Process is given. The span's
+// parent is the trace context the propagator extracts from the message's
+// headers, so a publisher's trace continues through the consumer, and the
+// publisher's baggage, and only the publisher's, is on Process's context
+// too. Only a header whose value is a string is read: a traceparent header
+// of any other type, such as bytes, is ignored. A message whose headers
+// carry no trace context starts a new trace. The span's attributes are:
+//
+//   - messaging.system (rabbitmq), and messaging.operation.type and
+//     messaging.operation.name, both process;
+//   - messaging.destination.name, as semconv defines it for RabbitMQ:
+//     {exchange}:{routing key}:{queue}, leaving out what is empty, and the
+//     routing key when it equals the queue's name, so a message published
+//     to the queue orders on the default exchange is orders, and one
+//     published to the exchange shop with the routing key order.created is
+//     shop:order.created:orders;
+//   - messaging.rabbitmq.destination.routing_key, when the routing key isn't
+//     empty, and messaging.rabbitmq.message.delivery_tag;
+//   - messaging.message.id, and messaging.message.conversation_id, from the
+//     correlation ID, when they are set;
+//   - server.address and server.port, from Connection.Addr.
+//
+// The message's body is never recorded. When Process returns an error,
+// under either Delivery, the error is recorded on the span as an exception
+// event, with error.type and an error status.
+//
+// The Service records two instruments of OpenTelemetry's messaging
+// conventions:
+//
+//   - messaging.client.consumed.messages counts the deliveries handed to the
+//     Processor;
+//   - messaging.process.duration is how long each Process took, in seconds,
+//     with error.type when it failed.
+//
+// Each has messaging.system, messaging.operation.name (process),
+// messaging.destination.name, server.address and server.port. The broker
+// sends no reply to an ack, so settling a delivery has no duration, and
+// the Service records no messaging.client.operation.duration.
+//
+// Because semconv's destination name includes the routing key, each routing
+// key a delivery arrives with is a series of its own in both instruments. A
+// publisher that puts identifiers, such as an order's ID, in its routing
+// keys gives the consumer a series per key, which a metrics backend may
+// struggle with; such a publisher's routing keys belong in headers, or in
+// the body, instead.
 //
 // # Settings
 //
