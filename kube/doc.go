@@ -377,7 +377,8 @@
 // NewController returns one error that names every mistake it finds: each
 // field of the Settings that fails its check, the bounds between them, each
 // mistake in the Resource, as [Resource.CRD] reports it, a Settings.Namespace
-// for a cluster-scoped Resource, and a nil Reconciler.
+// for a cluster-scoped Resource, an [Owns] with no Version or no Resource,
+// and a nil Reconciler.
 //
 // A [Reconciler] is handed its object, and returns what the object's status
 // is now:
@@ -424,8 +425,8 @@
 //     second, bursting to 100. The error never ends the Service;
 //   - otherwise, a positive [Result.After] reconciles it again after that
 //     long, unless it changes first;
-//   - otherwise it is reconciled again when it changes, or when the resync
-//     comes, every Settings.Resync.
+//   - otherwise it is reconciled again when it changes, or a resource it
+//     owns changes, or when the resync comes, every Settings.Resync.
 //
 // Reconciles are level-triggered: a Reconciler isn't told what changed,
 // only handed the object as it is now, and brings the cluster to what it
@@ -434,13 +435,48 @@
 // reconciles in all. Settings.Workers objects are reconciled at once, and
 // one object is never reconciled twice at once.
 //
+// # Owned resources
+//
+// [Owns] reconciles an object again whenever a resource it controls changes
+// or is deleted, such as the Deployment its Reconciler applies:
+//
+//	ctrl, err := kube.NewController(s, client, settings, Memcached, Reconciler{Kube: kc},
+//		kube.Owns(appsv1.SchemeGroupVersion.WithResource("deployments")),
+//	)
+//
+// So a hand-made change to the Deployment is undone, and a change in its
+// status reaches the Memcached's status, with no polling. When a resource of
+// an Owns is added, changed or deleted, and its owner reference with
+// controller: true names the Resource's group and kind, the object that
+// reference names is reconciled. An owner reference without controller:
+// true, one that names another group or kind, and a resource with no owner
+// reference reconcile nothing. The controller watches each owned resource
+// through the metadata client, since it looks only at their owner
+// references, limited to Settings.Namespace.
+//
+// The end user sets the controller owner reference when they apply the
+// resource, with client-go's apply configurations:
+//
+//	d, err := r.Kube.AppsV1().Deployments(m.Namespace).Apply(ctx,
+//		appsv1ac.Deployment(m.Name, m.Namespace).
+//			WithOwnerReferences(metav1ac.OwnerReference().
+//				WithAPIVersion(m.APIVersion).WithKind(m.Kind).WithName(m.Name).WithUID(m.UID).
+//				WithController(true).WithBlockOwnerDeletion(true)).
+//			WithSpec(spec(m)),
+//		metav1.ApplyOptions{FieldManager: "memcached-controller", Force: true},
+//	)
+//
+// A resource the controller doesn't own isn't mapped to its objects. A
+// Reconciler that depends on one polls it, with [Result.After].
+//
 // # Serving
 //
-// [Controller.Serve] first lists the resource once, with a limit of 1. An
-// error, such as a CRD that isn't installed, ends Serve with an error that
-// names the resource, so the App exits 1, rather than leave a controller
-// that waits forever. It then starts an informer on the resource, limited to
-// Settings.Namespace, waits for its cache to sync, and campaigns for the
+// [Controller.Serve] first lists the resource, and each resource an Owns
+// names, once, with a limit of 1. An error, such as a CRD that isn't
+// installed, ends Serve with an error that names the resource, so the App
+// exits 1, rather than leave a controller that waits forever. It then starts
+// an informer on the resource, and one on each owned resource, limited to
+// Settings.Namespace, waits for their caches to sync, and campaigns for the
 // Lease.
 //
 // Every controller elects a leader, on a Lease named Settings.Name, in
@@ -458,14 +494,14 @@
 // backlog is left for the next leader, which lists every object when its
 // informer starts: the work queue is shut down, never drained. Then the
 // controller releases the Lease, so the next replica takes it without
-// waiting out LeaseDuration, stops its informer, and Serve returns nil, so
+// waiting out LeaseDuration, stops its informers, and Serve returns nil, so
 // the App exits 0. A reconcile's context is cancelled only when
 // [Controller.Shutdown]'s context is done or the Lease is lost: then
 // Shutdown cancels the reconciles in flight, waits for them, and returns an
 // error that wraps the context's error. humus.Main's defaults, a 20s grace
 // period and no drain, fit a controller.
 //
-// [Controller.Synced] is unhealthy until the cache has synced, and healthy
+// [Controller.Synced] is unhealthy until the caches have synced, and healthy
 // from then until Serve returns, on every replica, leader or not, so a
 // rollout isn't held up by the replicas waiting for the Lease. It is for
 // readiness, served with the health probes:
@@ -478,7 +514,8 @@
 // end user adds their Reconciler's own:
 //   - get, list and watch on its resource, and patch on it and on its
 //     status;
-//   - get, create and update on Leases, in the Lease's namespace.
+//   - get, create and update on Leases, in the Lease's namespace;
+//   - list and watch on each resource an [Owns] names.
 //
 // # Telemetry
 //

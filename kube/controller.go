@@ -21,6 +21,7 @@ import (
 	utiljson "k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/client-go/dynamic"
 	coordinationv1 "k8s.io/client-go/kubernetes/typed/coordination/v1"
+	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/tools/leaderelection"
 
 	"github.com/z5labs/humus"
@@ -84,11 +85,16 @@ type Controller struct {
 	settings   Settings
 	gvr        schema.GroupVersionResource
 	apiVersion string
+	group      string
 	kind       string
 	namespaced bool
 	reconcile  reconcileFunc
 
+	// owned are the resources each Owns names, in order.
+	owned []schema.GroupVersionResource
+
 	dyn    dynamic.Interface
+	meta   metadata.Interface
 	leases coordinationv1.LeasesGetter
 
 	tracer trace.Tracer
@@ -105,7 +111,7 @@ type Controller struct {
 
 // call is one call of Serve: the function that cancels the context the
 // reconciles run with, served, which is closed when Serve returns, and
-// synced, which is set once the cache has synced.
+// synced, which is set once the caches have synced.
 type call struct {
 	abort  context.CancelFunc
 	served chan struct{}
@@ -127,6 +133,7 @@ var notServed = &call{}
 //   - each mistake in r, as [Resource.CRD] reports it;
 //   - a Settings.Namespace that isn't "" for a Resource whose Scope is
 //     Cluster, whose objects are in no namespace;
+//   - an Owns whose GroupVersionResource has no Version or no Resource;
 //   - a nil Reconciler, a nil Part, a nil Setup or a nil Client.
 //
 // The Controller reports through s.Telemetry, and never through
@@ -153,18 +160,32 @@ func NewController[Spec, Status any](s *humus.Setup, c *Client, settings Setting
 	} else if f, ok := rec.(ReconcilerFunc[Spec, Status]); ok && f == nil {
 		errs = append(errs, errors.New("the Reconciler must not be a nil ReconcilerFunc"))
 	}
+	var owned []schema.GroupVersionResource
 	for i, p := range parts {
-		if p == nil {
+		switch p := p.(type) {
+		case nil:
 			errs = append(errs, fmt.Errorf("parts[%d] must not be nil", i))
+		case owns:
+			if p.gvr.Version == "" {
+				errs = append(errs, fmt.Errorf("parts[%d], Owns(%s), has no Version", i, p.gvr))
+			}
+			if p.gvr.Resource == "" {
+				errs = append(errs, fmt.Errorf("parts[%d], Owns(%s), has no Resource", i, p.gvr))
+			}
+			owned = append(owned, p.gvr)
 		}
 	}
 	if len(errs) > 0 {
 		return nil, fmt.Errorf("kube: NewController: %w", errors.Join(errs...))
 	}
 
-	// Neither opens a connection: each only builds a client on the
-	// Client's transport.
+	// None opens a connection: each only builds a client on the Client's
+	// transport.
 	dyn, err := dynamic.NewForConfig(c.Config())
+	if err != nil {
+		return nil, fmt.Errorf("kube: NewController: %w", err)
+	}
+	meta, err := metadata.NewForConfig(c.Config())
 	if err != nil {
 		return nil, fmt.Errorf("kube: NewController: %w", err)
 	}
@@ -178,10 +199,13 @@ func NewController[Spec, Status any](s *humus.Setup, c *Client, settings Setting
 		settings:   settings,
 		gvr:        r.GVR(),
 		apiVersion: schema.GroupVersion{Group: r.Group, Version: r.Version}.String(),
+		group:      r.Group,
 		kind:       r.Kind,
 		namespaced: r.Scope == Namespaced,
 		reconcile:  reconcilerOf(rec),
+		owned:      owned,
 		dyn:        dyn,
+		meta:       meta,
 		leases:     leases,
 		tracer:     s.Telemetry.TracerProvider.Tracer(scopeName),
 		logger:     s.Telemetry.LoggerProvider.Logger(scopeName),
