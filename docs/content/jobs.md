@@ -7,7 +7,7 @@ description: >
   ends, which failures a Job retries, and how the run's span joins the trace
   of the process that started it.
 type: docs
-weight: 13
+weight: 14
 ---
 
 A job is a process that does one piece of work and exits. The

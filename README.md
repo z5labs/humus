@@ -48,7 +48,13 @@ joined its group, with `Joined`. See
 too: they expose an App's probes, `httphealth` at `/health/liveness` and
 `/health/readiness` over HTTPS, and `grpchealth` as gRPC health v1, each
 attached to a server the App already runs or on a probes port of its own.
-See [Health](https://z5labs.github.io/humus/health/). Earlier
+See [Health](https://z5labs.github.io/humus/health/). The
+`httpclient` package has landed too: `httpclient.NewClient` builds a plain
+`*http.Client` for one dependency in the end user's `Init`, which dials
+through the Setup's Host, retries what is safe to send twice as the end
+user's `Classify` decides, and fails calls at once with a circuit breaker
+while the dependency keeps failing. See
+[Calling HTTP services](https://z5labs.github.io/humus/http-client/). Earlier
 releases remain available on [pkg.go.dev](https://pkg.go.dev/github.com/z5labs/humus?tab=versions).
 
 The plan is in the charter,
