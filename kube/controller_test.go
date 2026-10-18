@@ -244,7 +244,7 @@ func (fc *fakeCluster) metadataApplies() []apply {
 	return out
 }
 
-// deleting marks the object default/name as being deleted, as the API
+// deleting marks the object name, in fc.namespace, as being deleted, as the API
 // server does while a finalizer holds it.
 func (fc *fakeCluster) deleting(t *testing.T, name string) {
 	t.Helper()
@@ -253,7 +253,8 @@ func (fc *fakeCluster) deleting(t *testing.T, name string) {
 	require.NoError(t, fc.dyn.Tracker().Update(fc.gvr, u, fc.namespace))
 }
 
-// gone reports whether the object default/name is gone from the fakes.
+// gone reports whether the object name, in fc.namespace, is gone from the
+// fakes.
 func (fc *fakeCluster) gone(name string) bool {
 	_, err := fc.dyn.Tracker().Get(fc.gvr, fc.namespace, name)
 	return apierrors.IsNotFound(err)
@@ -272,7 +273,7 @@ func (fc *fakeCluster) statusApplies() []apply {
 	return out
 }
 
-// object returns the object default/name as the fakes hold it.
+// object returns the object name, in fc.namespace, as the fakes hold it.
 func (fc *fakeCluster) object(t *testing.T, name string) *unstructured.Unstructured {
 	t.Helper()
 	got, err := fc.dyn.Tracker().Get(fc.gvr, fc.namespace, name)
