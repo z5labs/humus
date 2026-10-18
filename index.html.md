@@ -33,11 +33,14 @@ down on `grpcserver.Main`'s drain and grace period, and how to test it with
 [Consuming and producing Kafka](/humus/kafka/) explains the contract
 a `queue.Processor` keeps, how a service consumes Kafka topics with
 `kafka.NewService` on `humus.Main`'s defaults and what each delivery commits,
-how it produces records, such as dead letters, with a `kafka.Producer`, and
-how to test both on kfake. The core of the `health` package has
-landed too:
+how it produces records, such as dead letters, with a `kafka.Producer`, how
+a consumer turns ready once it has joined its group, with `Joined`, and how
+to test both on kfake. The `health` package has landed too, with
+`httphealth` and the `grpc` module's `grpchealth`, which expose its probes:
 [Health](/humus/health/) explains monitors, liveness and readiness,
-and the health Service that owns an App's readiness.
+the health Service that owns an App's readiness, and how a pod's probes reach
+Kubernetes, attached to a server it already runs or on a probes port of its
+own.
 [Configuring a humus service](/humus/configuration/) explains how
 a service's settings are sourced, [Telemetry](/humus/telemetry/)
 explains how a service gets its OpenTelemetry providers, and

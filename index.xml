@@ -23,7 +23,9 @@ the defaults an HTTP server behind a load balancer needs: a 5s drain and a
 runs the same App in a test, on the same defaults, with an HTTP/2 client.&lt;/p&gt;
 &lt;p&gt;The package is the server half of what &lt;code&gt;rest.Run&lt;/code&gt; did before the reset,
 without the REST DSL. It exports no App, runs no health Service and serves
-no probes. The design behind everything on this page is in
+no probes: &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/httphealth"&gt;&lt;code&gt;httphealth&lt;/code&gt;&lt;/a&gt;
+answers them, as &lt;a href="#health-probes"&gt;Health probes&lt;/a&gt; describes. The design behind
+everything on this page is in
 &lt;a href="https://github.com/z5labs/humus/discussions/680"&gt;Proposal: HTTP server foundation&lt;/a&gt;,
 with its &lt;a href="https://github.com/z5labs/humus/discussions/680#discussioncomment-18988464"&gt;revision 1&lt;/a&gt;
 and &lt;a href="https://github.com/z5labs/humus/discussions/680#discussioncomment-18988543"&gt;revision 2&lt;/a&gt;.&lt;/p&gt;</description></item><item><title>Health</title><link>https://z5labs.github.io/humus/health/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/health/</guid><description>&lt;p&gt;A service reports its health as &lt;a href="#monitors"&gt;monitors&lt;/a&gt; it combines into two
@@ -31,16 +33,14 @@ and &lt;a href="https://github.com/z5labs/humus/discussions/680#discussioncommen
 readiness is owned by a &lt;a href="#the-health-service"&gt;health Service&lt;/a&gt; it returns
 from &lt;code&gt;Init&lt;/code&gt; like any other Service. All of it is in the
 &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/health"&gt;&lt;code&gt;health&lt;/code&gt;&lt;/a&gt; package, which
-depends on nothing but the standard library.&lt;/p&gt;
+depends on nothing but the standard library and serves no protocol.
+&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/httphealth"&gt;&lt;code&gt;httphealth&lt;/code&gt;&lt;/a&gt; and
+&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/grpc/grpchealth"&gt;&lt;code&gt;grpc/grpchealth&lt;/code&gt;&lt;/a&gt;
+&lt;a href="#exposing-the-probes"&gt;expose the probes&lt;/a&gt; to Kubernetes.&lt;/p&gt;
 &lt;p&gt;The design behind this page is in
-&lt;a href="https://github.com/z5labs/humus/discussions/634#discussioncomment-18976159"&gt;Proposal: health monitors and probes, Revision 2&lt;/a&gt;.&lt;/p&gt;
-&lt;h2 id="monitors"&gt;Monitors&lt;/h2&gt;
-&lt;p&gt;A &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/health#Monitor"&gt;&lt;code&gt;Monitor&lt;/code&gt;&lt;/a&gt; is
-anything that can report whether it is healthy right now: a database ping, a
-flag the service sets once it has started, a check of a queue&amp;rsquo;s depth. It has
-one method, &lt;code&gt;Healthy(ctx context.Context) (bool, error)&lt;/code&gt;, which returns
-&lt;code&gt;false&lt;/code&gt;, or an error, when the monitor is not healthy. Two
-monitors come with the package:&lt;/p&gt;</description></item><item><title>Jobs</title><link>https://z5labs.github.io/humus/jobs/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/jobs/</guid><description>&lt;p&gt;A job is a process that does one piece of work and exits. The
+&lt;a href="https://github.com/z5labs/humus/discussions/634#discussioncomment-18976159"&gt;Proposal: health monitors and probes, Revision 2&lt;/a&gt;,
+and, for exposing the probes, in
+&lt;a href="https://github.com/z5labs/humus/discussions/761"&gt;Proposal: exposing health probes&lt;/a&gt;.&lt;/p&gt;</description></item><item><title>Jobs</title><link>https://z5labs.github.io/humus/jobs/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/jobs/</guid><description>&lt;p&gt;A job is a process that does one piece of work and exits. The
 &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/job"&gt;&lt;code&gt;job&lt;/code&gt;&lt;/a&gt; package turns that
 work, the run, into a &lt;code&gt;humus.Service&lt;/code&gt; that runs it once, stops it on either
 shutdown signal and records one span around it. The job runs on
