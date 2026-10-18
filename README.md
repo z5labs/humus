@@ -103,6 +103,21 @@ process and a [humustest](https://pkg.go.dev/github.com/z5labs/humus/humustest)
 Host, whose network and filesystem the test controls. See
 [Testing a humus App](https://z5labs.github.io/humus/testing/).
 
+## Releases
+
+humus is several Go modules: the root `github.com/z5labs/humus`, and the
+nested `grpc`, `queue/kafka`, `queue/rabbitmq` and `example` modules. Every
+humus module is released with the same version on every release, whether or
+not it changed, so one version names a set of modules that work together.
+Require the same version of every humus module you use:
+
+```sh
+go get github.com/z5labs/humus@vX.Y.Z github.com/z5labs/humus/grpc@vX.Y.Z
+```
+
+The release workflow and how to run it are described in
+[`.github/workflows/release.yaml`](.github/workflows/release.yaml).
+
 ## License
 
 Released under the [MIT License](LICENSE).

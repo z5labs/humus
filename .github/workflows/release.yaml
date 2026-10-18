@@ -1,0 +1,403 @@
+name: Release
+
+# humus holds more than one Go module: the root module and every nested module
+# with its own go.mod, such as grpc and queue/kafka. The Go toolchain resolves a
+# nested module's versions from tags prefixed with its directory, so version
+# v0.16.0 of github.com/z5labs/humus/grpc is the tag grpc/v0.16.0.
+#
+# Strategy. Versions are in lockstep, after OpenTelemetry Go: every module is
+# tagged with the same version on every release, whether or not it changed. One
+# version number identifies a consistent set of modules, and nobody has to work
+# out which modules changed.
+#
+# The nested modules require the root module, and may require each other. Each
+# such requirement is replaced by the local directory, so the repository builds
+# from its own tree, but a replace applies only in the main module: an end
+# user's build sees the required version itself. So at every release each
+# requirement between humus modules names the release's version, and between
+# releases it names the last one. Only this workflow changes them; Renovate is
+# told to leave them alone.
+#
+# Releasing. Run this workflow from main with the version to release, vX.Y.Z,
+# optionally with a pre-release suffix such as v0.16.0-rc.1:
+#
+#   gh workflow run release.yaml --ref main -f version=v0.16.0
+#
+# or Actions > Release > Run workflow. Nothing else is done by hand:
+#
+#   1. Bump. It checks the version and main with a dry run (below), then runs
+#      .github/scripts/release-modules.sh --bump, which sets every requirement
+#      between humus modules to the version. If that changes anything, it
+#      opens a pull request from release/<version>, waits for every check on
+#      it to pass, and merges it through the merge queue. The merge commit is
+#      the release commit. If nothing changes, main itself is.
+#   2. Tag. At the release commit, release-modules.sh creates <version> for the
+#      root module and <dir>/<version> for every nested module, in one atomic
+#      push, so a failure leaves no partial set.
+#   3. Resolve. For each module, a new module outside the repository, requiring
+#      nothing else, gets that module alone at the version through
+#      proxy.golang.org and builds its packages, as an end user would. Each is
+#      fetched on its own, because getting them together lets the root's own
+#      requirement hide a nested module that requires the wrong version of it.
+#      That request is also what gets pkg.go.dev to index the version.
+#   4. Release. It publishes the GitHub release for the version's tag, with
+#      generated notes, marked as a pre-release for vX.Y.Z-pre; the maintainer
+#      promotes a pre-release by hand. Edit the notes afterwards if they need
+#      more.
+#
+# What is checked. Before any tag is created, release-modules.sh refuses a
+# version that is not a Go module version (such as 0.16.0, v0.16 or
+# v0.16.0+build), a major version of 2 or more (those need /vN module paths
+# first), a nested module whose path is not its directory under
+# github.com/z5labs/humus, a release commit at which any requirement between
+# humus modules names another version (listing each), and a tag that already
+# exists at a different commit. A tag already at the release commit is
+# skipped. The modules are discovered at the release commit: every tracked
+# go.mod, except any under testdata or a directory starting with . or _, and
+# any module with no Go files of its own, such as the Hugo module under docs/.
+#
+# Dry run. To see what a release of any commit would do, without changing
+# anything, run from a clone:
+#
+#   .github/scripts/release-modules.sh --dry-run --commit origin/main v0.16.0
+#
+# It makes every check and prints the requirements the bump would set and the
+# tags that would be created. To set the requirements in a working tree, as
+# the bump does: .github/scripts/release-modules.sh --bump v0.16.0. The tests
+# for the script are .github/scripts/release-modules_test.sh, run by Build.
+#
+# When a run fails, every completed step stays done and a new run of the same
+# version picks up where it stopped:
+#
+#   - Bump refused the version or main: nothing was changed. Fix the cause and
+#     run the workflow again.
+#   - A check failed on the bump pull request, or the merge queue dropped it:
+#     the pull request stays open. Fix the cause on main and run the workflow
+#     again; it pushes a fresh bump to release/<version> and reuses the pull
+#     request. Close the pull request instead to abandon the release.
+#   - Tag failed: no tag was pushed. Use "Re-run failed jobs", which keeps the
+#     release commit. A new run would tag the head of main instead.
+#   - Resolve failed: the tags exist and must never move, because the proxy
+#     and checksum database have recorded them, and no GitHub release was
+#     published. If the failure was transient, use "Re-run failed jobs". If a
+#     module really does not build at the version, release the fix as the
+#     next patch version.
+#   - Release failed: use "Re-run failed jobs". A release that already exists
+#     is left as it is.
+#
+# A new run for a version that is already tagged skips the bump, releases the
+# commit the root tag points to, and does nothing that has already been done.
+#
+# One-time setup. A pull request opened, or a merge requested, with this
+# workflow's own GITHUB_TOKEN starts no workflow runs, so the bump pull request
+# would never get its checks. The bump is therefore pushed and merged by the
+# GitHub App the backlog's auto-merge workflow uses, from the repository
+# secrets BACKLOG_APP_ID and BACKLOG_APP_KEY; it needs Contents and Pull
+# requests set to write.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The version to release, vX.Y.Z or vX.Y.Z-pre
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Two releases must not interleave. A run started while another is in
+# progress waits for it; GitHub keeps at most one waiting run, so starting a
+# third replaces the second.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: Bump requirements
+    runs-on: ubuntu-latest
+    # Most of this is waiting for the bump pull request's checks and the merge
+    # queue.
+    timeout-minutes: 120
+    # Every write here is made with the App's token, below; this job's own
+    # token only reads the bump pull request and its checks.
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+      statuses: read
+    outputs:
+      commit: ${{ steps.release-commit.outputs.commit }}
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Require main
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" != refs/heads/main ]; then
+            echo "::error title=Not main::run the Release workflow from main, not $REF"
+            exit 1
+          fi
+
+      - name: Mint a GitHub App installation token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
+        with:
+          app-id: ${{ secrets.BACKLOG_APP_ID }}
+          private-key: ${{ secrets.BACKLOG_APP_KEY }}
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.27.2'
+          cache: false
+
+      # --list checks the version, and the module paths at main, without
+      # touching the remote, so nothing below sees a malformed version.
+      - name: Check the version
+        run: .github/scripts/release-modules.sh --list "$VERSION"
+
+      # A version whose root tag already exists was bumped and tagged by an
+      # earlier run, so this run resumes from the commit that tag points to.
+      - name: Find an earlier run's release commit
+        id: tagged
+        run: |
+          commit=$(git ls-remote --tags origin "refs/tags/$VERSION" "refs/tags/$VERSION^{}" | awk '
+            $2 ~ /\^\{\}$/ { peeled = $1 }
+            $2 !~ /\^\{\}$/ { sha = $1 }
+            END { print (peeled != "" ? peeled : sha) }
+          ')
+          if [ -n "$commit" ]; then
+            echo "$VERSION is already tagged at $commit; releasing that commit"
+            git fetch --quiet --depth 1 origin "$commit"
+            .github/scripts/release-modules.sh --dry-run --commit "$commit" "$VERSION"
+          fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+      - name: Dry run
+        if: steps.tagged.outputs.commit == ''
+        run: .github/scripts/release-modules.sh --dry-run "$VERSION"
+
+      - name: Set the requirements between modules
+        id: bump
+        if: steps.tagged.outputs.commit == ''
+        run: |
+          .github/scripts/release-modules.sh --bump "$VERSION"
+          if git diff --quiet; then
+            echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open the bump pull request
+        id: pr
+        if: steps.tagged.outputs.commit == '' && steps.bump.outputs.commit == ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          bot="$APP_SLUG[bot]"
+          id=$(gh api "users/$bot" --jq .id)
+          git config user.name "$bot"
+          git config user.email "$id+$bot@users.noreply.github.com"
+
+          branch="release/$VERSION"
+          title="chore(release): require $VERSION between humus modules"
+          git commit --quiet --all --message "$title"
+          git push --force origin "HEAD:refs/heads/$branch"
+
+          pr=$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number // empty')
+          if [ -z "$pr" ]; then
+            body="Sets every requirement between humus modules to $VERSION, so each module resolves at $VERSION once it is tagged.
+
+          Opened by the [Release workflow]($RUN_URL), which merges this pull request once every check passes, then tags every module at $VERSION and publishes the release. Close it to abandon the release."
+            url=$(gh pr create --base main --head "$branch" --title "$title" --body "$body")
+            pr=${url##*/}
+          fi
+          echo "pull request #$pr"
+          echo "number=$pr" >> "$GITHUB_OUTPUT"
+
+      # The push starts the pull request's checks, but they take a moment to
+      # register, and watching before they have would see none.
+      - name: Wait for every check to pass
+        if: steps.pr.outputs.number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ steps.pr.outputs.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          sleep 60
+          if ! gh pr checks "$PR" --repo "$REPO" --watch --fail-fast --interval 30; then
+            echo "::error title=Bump checks failed::a check on #$PR did not pass, so the release stopped before merging it"
+            exit 1
+          fi
+
+      # main is merged through the merge queue, which runs the checks again
+      # against main as it will be and merges the pull request once they pass.
+      # A pull request that is neither merged, queued nor armed to queue has
+      # been dropped, which is checked on consecutive polls, since leaving the
+      # queue and becoming merged are not one atomic change.
+      - name: Merge the bump pull request
+        id: merge
+        if: steps.pr.outputs.number != ''
+        env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ steps.pr.outputs.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          GH_TOKEN=$APP_TOKEN gh pr merge "$PR" --repo "$REPO" --squash --auto
+          query='query($owner: String!, $name: String!, $number: Int!) {
+            repository(owner: $owner, name: $name) {
+              pullRequest(number: $number) {
+                state
+                isInMergeQueue
+                autoMergeRequest { enabledAt }
+                mergeCommit { oid }
+              }
+            }
+          }'
+          dropped=0
+          while :; do
+            read -r state queued armed commit < <(
+              gh api graphql -f query="$query" -f owner="${REPO%/*}" -f name="${REPO#*/}" -F number="$PR" \
+                --jq '.data.repository.pullRequest | [.state, .isInMergeQueue, (.autoMergeRequest != null), (.mergeCommit.oid // "-")] | @tsv'
+            )
+            case "$state" in
+            MERGED)
+              echo "#$PR merged as $commit"
+              echo "commit=$commit" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+            CLOSED)
+              echo "::error title=Bump closed::#$PR was closed without merging, so the release stopped"
+              exit 1
+              ;;
+            esac
+            if [ "$queued" = false ] && [ "$armed" = false ]; then
+              dropped=$((dropped + 1))
+              if [ "$dropped" -ge 3 ]; then
+                echo "::error title=Bump dropped::#$PR left the merge queue without merging, so the release stopped"
+                exit 1
+              fi
+            else
+              dropped=0
+            fi
+            sleep 30
+          done
+
+      - name: Release commit
+        id: release-commit
+        env:
+          TAGGED: ${{ steps.tagged.outputs.commit }}
+          UNCHANGED: ${{ steps.bump.outputs.commit }}
+          MERGED: ${{ steps.merge.outputs.commit }}
+        run: |
+          commit=${TAGGED:-${UNCHANGED:-$MERGED}}
+          if [ -z "$commit" ]; then
+            echo "::error title=No release commit::the bump job found no commit to release"
+            exit 1
+          fi
+          echo "releasing $VERSION at $commit"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+  tag:
+    name: Tag modules
+    needs: bump
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ inputs.version }}
+      COMMIT: ${{ needs.bump.outputs.commit }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.bump.outputs.commit }}
+
+      - name: Tag every module
+        run: .github/scripts/release-modules.sh --commit "$COMMIT" "$VERSION"
+
+  resolve:
+    name: Resolve modules
+    needs: [bump, tag]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.bump.outputs.commit }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.27.2'
+          cache: false
+
+      # The proxy fetches a version it has not seen from GitHub on demand, so a
+      # tag pushed moments ago normally resolves on the first request; the
+      # retries only absorb a transient failure.
+      - name: Build every module as an end user gets it
+        env:
+          GOPROXY: https://proxy.golang.org
+          GOFLAGS: ''
+        run: |
+          .github/scripts/release-modules.sh --list "$VERSION" > "$RUNNER_TEMP/modules.txt"
+          failed=0
+          while read -r module; do
+            echo "::group::$module@$VERSION"
+            dir=$(mktemp -d)
+            got=
+            for attempt in 1 2 3 4 5; do
+              rm -f "$dir/go.mod" "$dir/go.sum"
+              go -C "$dir" mod init example.com/release-check
+              if go -C "$dir" get "$module/...@$VERSION"; then
+                got=1
+                break
+              fi
+              echo "attempt $attempt to get $module@$VERSION failed"
+              sleep 30
+            done
+            if [ -z "$got" ]; then
+              echo "::error title=Module did not resolve::$module@$VERSION did not resolve through $GOPROXY"
+              failed=1
+            elif ! go -C "$dir" build "$module/..."; then
+              echo "::error title=Module did not build::$module@$VERSION did not build in a module requiring nothing else"
+              failed=1
+            fi
+            echo "::endgroup::"
+          done < "$RUNNER_TEMP/modules.txt"
+          exit "$failed"
+
+  release:
+    name: Publish the release
+    needs: resolve
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Publish the GitHub release
+        run: |
+          if gh release view "$VERSION" --repo "$REPO" > /dev/null 2>&1; then
+            echo "the release $VERSION already exists; leaving it as it is"
+            exit 0
+          fi
+          flags=(--verify-tag --title "$VERSION" --generate-notes)
+          case "$VERSION" in
+          *-*) flags+=(--prerelease) ;;
+          esac
+          gh release create "$VERSION" --repo "$REPO" "${flags[@]}"
