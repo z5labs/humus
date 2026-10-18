@@ -256,9 +256,15 @@ func TestNewServer_Check_checks_with_the_RPCs_context(t *testing.T) {
 	t.Run("which a blocked monitor waits on until the caller gives up", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			returned := make(chan error, 1)
+			release := make(chan struct{})
 			blocked := health.MonitorFunc(func(ctx context.Context) (bool, error) {
 				<-ctx.Done()
 				returned <- ctx.Err()
+				// No time passes in the bubble while the RPC crosses to
+				// the server, so its deadline is the caller's to the
+				// nanosecond, and an answer sent at once could beat the
+				// caller's own deadline.
+				<-release
 				return false, ctx.Err()
 			})
 			client := serve(t, telemetry.Noop(), health.Probes{Liveness: healthyMonitor, Readiness: blocked})
@@ -267,6 +273,7 @@ func TestNewServer_Check_checks_with_the_RPCs_context(t *testing.T) {
 			defer cancel()
 			begin := time.Now()
 			_, err := client.Check(ctx, &healthpb.HealthCheckRequest{})
+			close(release)
 			require.Equal(t, codes.DeadlineExceeded, status.Code(err), err)
 			require.Equal(t, 30*time.Second, time.Since(begin))
 			require.Error(t, <-returned)
