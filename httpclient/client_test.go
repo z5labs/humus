@@ -43,6 +43,13 @@ import (
 // stops the dependency and requires it to exit 0.
 func startPayments(t *testing.T, h *humustest.Host, host humus.Host, ca *humustest.CA, handler http.Handler) (stop func()) {
 	t.Helper()
+	return startPaymentsWith(t, h, host, telemetry.NoopBuilder, ca, handler)
+}
+
+// startPaymentsWith is startPayments, with the dependency's telemetry built
+// by tel.
+func startPaymentsWith(t *testing.T, h *humustest.Host, host humus.Host, tel telemetry.Builder, ca *humustest.CA, handler http.Handler) (stop func()) {
+	t.Helper()
 	cert := ca.Issue(t, "payments")
 	p, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
@@ -53,7 +60,7 @@ func startPayments(t *testing.T, h *humustest.Host, host humus.Host, ca *humuste
 			return nil, err
 		}
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(telemetry.NoopBuilder)))
+	}, humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(tel)))
 	<-h.Listening("payments:8443")
 	return func() {
 		p.Signal(syscall.SIGTERM)
@@ -84,13 +91,19 @@ func mustParse(t *testing.T, raw string) *url.URL {
 // once the App has exited, with its exit status.
 func runJob(t *testing.T, host humus.Host, settings httpclient.Settings, run func(ctx context.Context, c *http.Client) error) bedrock.ExitStatus {
 	t.Helper()
+	return runJobWith(t, host, telemetry.NoopBuilder, settings, run)
+}
+
+// runJobWith is runJob, with the App's telemetry built by tel.
+func runJobWith(t *testing.T, host humus.Host, tel telemetry.Builder, settings httpclient.Settings, run func(ctx context.Context, c *http.Client) error) bedrock.ExitStatus {
+	t.Helper()
 	_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
 		c, err := httpclient.NewClient(s, settings)
 		if err != nil {
 			return nil, err
 		}
 		return []humus.Service{job.NewService(s, func(ctx context.Context) error { return run(ctx, c) })}, nil
-	}, humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(telemetry.NoopBuilder)))
+	}, humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(tel)))
 	return <-status
 }
 

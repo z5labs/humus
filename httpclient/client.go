@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
 	"github.com/z5labs/humus"
 )
 
@@ -41,7 +43,9 @@ const maxRedirects = 10
 // connections.
 //
 // The client dials through s.Host. A request to any origin other than
-// settings.BaseURL's fails without being sent.
+// settings.BaseURL's fails without being sent. Every request it sends is a
+// client span, and is measured, with s.Telemetry's providers and
+// propagator.
 func NewClient(s *humus.Setup, settings Settings) (*http.Client, error) {
 	if s == nil {
 		return nil, errors.New("httpclient: NewClient: the Setup must not be nil")
@@ -73,8 +77,19 @@ func NewClient(s *humus.Setup, settings Settings) (*http.Client, error) {
 		protocols.SetHTTP2(true)
 	}
 
+	// otelhttp sits inside the origin check, so a refused request is not an
+	// attempt, and outside the layers that see each attempt's span, so they
+	// find it in the request's context. Every provider and the propagator
+	// are passed, so otelhttp never falls back to OpenTelemetry's globals.
+	instrumented := otelhttp.NewTransport(resendCount{next: tr},
+		otelhttp.WithTracerProvider(s.Telemetry.TracerProvider),
+		otelhttp.WithMeterProvider(s.Telemetry.MeterProvider),
+		otelhttp.WithPropagators(s.Telemetry.Propagator),
+		otelhttp.WithSpanNameFormatter(spanName),
+	)
+
 	c := &http.Client{
-		Transport: &originTransport{origin: base, next: tr},
+		Transport: &originTransport{origin: base, next: instrumented, conns: tr},
 		Timeout:   settings.Timeout,
 		Jar:       nil,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -154,10 +169,12 @@ func (o origin) String() string {
 
 // originTransport refuses every request to an origin other than its own,
 // before anything is sent, and passes the rest to next. The check is the
-// client's first step.
+// client's first step. conns is the http.Transport at the bottom of next,
+// which holds the client's connections.
 type originTransport struct {
 	origin origin
-	next   *http.Transport
+	next   http.RoundTripper
+	conns  *http.Transport
 }
 
 // RoundTrip implements http.RoundTripper. A refused request's body is
@@ -172,8 +189,9 @@ func (t *originTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return t.next.RoundTrip(r)
 }
 
-// CloseIdleConnections closes next's idle connections, so that
-// http.Client.CloseIdleConnections reaches them.
+// CloseIdleConnections closes conns's idle connections, so that
+// http.Client.CloseIdleConnections reaches them through the layers between,
+// which otelhttp's Transport doesn't pass it through.
 func (t *originTransport) CloseIdleConnections() {
-	t.next.CloseIdleConnections()
+	t.conns.CloseIdleConnections()
 }

@@ -42,7 +42,7 @@ func transportOf(t *testing.T, c *http.Client) *http.Transport {
 	t.Helper()
 	ot, ok := c.Transport.(*originTransport)
 	require.True(t, ok, "the client's Transport is %T", c.Transport)
-	return ot.next
+	return ot.conns
 }
 
 func mustParse(t *testing.T, raw string) *url.URL {
