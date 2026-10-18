@@ -286,18 +286,76 @@
 // structure it was updating is left as it was when it panicked, for the
 // RPCs that come after.
 //
+// A panic in Settings.TrustScenario is handled the same way: it is
+// recorded, and fails that RPC.
+//
 // Only RPCs are recovered. The lifecycle itself, the end user's Init and
 // the Service's Serve and Shutdown, never recovers a panic.
+//
+// # Failure injection
+//
+// The Service strips the failure scenario an RPC carries from callers the
+// end user hasn't chosen to trust, before any of the end user's code runs,
+// so a caller on the internet can't make the service fail on purpose. It
+// strips with the fault.Injector in the Setup's Faults, which the App
+// builds from humus.WithFaults, in a unary and a stream interceptor that
+// run inside humus's recovery and its streams interceptor, after otelgrpc
+// has extracted the RPC's baggage, and before every interceptor of the end
+// user's. An RPC it doesn't trust reaches the end user's interceptors and
+// handler, unary or stream, with the scenario stripped from its context and
+// every other baggage member kept, and the RPC's server span gets a
+// humus.fit.strip event, with no attributes.
+//
+// Settings.TrustScenario decides which callers are trusted. It is given the
+// RPC's context as it arrived, scenario and all, which holds the RPC's peer
+// and its incoming metadata, and the RPC's full method, such as
+// "/cart.CartService/AddItem". It reports whether the scenario reaches the
+// end user's code. It is asked only about an RPC that carries a scenario,
+// and only when the App has failure injection, so it costs nothing on any
+// other RPC. When it is nil, the default, no caller is trusted, and every
+// scenario is stripped: a server the end user hasn't decided about is a
+// trust boundary. Without humus.WithFaults, nothing is stripped and
+// TrustScenario is never asked.
+//
+// Trust needs nothing from authentication, such as grpcauth's
+// interceptors, which run later, among the end user's. An RPC already
+// carries what is needed to trust it, such as:
+//
+//   - a verified client certificate, in the credentials.TLSInfo of the
+//     RPC's peer, such as one the service mesh issued;
+//   - a listener only internal callers reach, such as a second Service on
+//     an address the internet can't reach, whose TrustScenario returns
+//     true;
+//   - metadata that a gateway sets, and strips from outside callers.
+//
+// For example, a Service behind a mesh trusts a caller whose client
+// certificate the mesh's CA verified:
+//
+//	settings.TLS.ClientAuth = tls.VerifyClientCertIfGiven
+//	settings.TLS.ClientCAs = meshCAs
+//	settings.TrustScenario = func(ctx context.Context, _ string) bool {
+//		p, ok := peer.FromContext(ctx)
+//		if !ok {
+//			return false
+//		}
+//		info, ok := p.AuthInfo.(credentials.TLSInfo)
+//		return ok && len(info.State.VerifiedChains) > 0
+//	}
+//
+// A grpchealth.NewServer that the end user registers on the Service is
+// behind the strip, like every other RPC. grpchealth's own Service is
+// unchanged.
 //
 // # Settings
 //
 // [Settings] holds what an operator changes from one deployment to the
-// next: the address to listen on, and the TLS config to serve with. Every
-// field is a plain value, and each has a check, [CheckAddr] and [CheckTLS],
-// that reports what is wrong with a value without naming the field. The
-// package reads no environment variable and no file: the end user sources
-// the settings in their Init, with whatever variable names they choose,
-// and runs each field's check as they do:
+// next: the address to listen on, and the TLS config to serve with. Each
+// of the two is a plain value with a check, [CheckAddr] and [CheckTLS],
+// that reports what is wrong with a value without naming the field.
+// TrustScenario is the one field that is set in code rather than sourced.
+// The package reads no environment variable and no file: the end user
+// sources the address and the TLS config in their Init, with whatever
+// variable names they choose, and runs each field's check as they do:
 //
 //	settings, err := config.Struct(func(r *config.Resolver) grpcserver.Settings {
 //		return grpcserver.Settings{
@@ -312,9 +370,9 @@
 // reads the file it names, and serverTLS builds a *tls.Config from what it
 // read.
 //
-// Neither field has a default. humus imposes no port, and serves nothing in
-// plain text, so the end user always sources both, with no .Default in
-// their chains. The package has no DefaultSettings: it would only return
+// Neither Addr nor TLS has a default. humus imposes no port, and serves
+// nothing in plain text, so the end user always sources both, with no
+// .Default in their chains. The package has no DefaultSettings: it would only return
 // the zero Settings, whose Addr of "" and nil TLS both checks reject. A
 // variable that isn't set fails as not found, and a value that fails its
 // check fails Init, naming the variable, so the process exits 78.
