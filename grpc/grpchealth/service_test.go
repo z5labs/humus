@@ -41,8 +41,8 @@ import (
 // The tests in this file run inside synctest bubbles, on humustest Hosts.
 // The probes Service listens on localhost:8081, in plain text, and is asked
 // with clients from grpcservertest.NewClient given insecure credentials, as
-// the kubelet asks. Whole Apps run with humustest.Start, or with
-// grpcservertest.Start when a grpcserver.Service runs next to the probes.
+// the kubelet asks. Whole Apps run with grpcservertest.Start, so they shut
+// down as a grpcserver.Main's App does, after its 5s drain.
 
 // probesAddr is the address the tests' probes Service is reached on.
 const probesAddr = "localhost:8081"
@@ -123,7 +123,7 @@ func TestService(t *testing.T) {
 func TestService_answers_the_kubelets_probe(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
-		p, exit := humustest.Start(t, servesProbes(probeSettings),
+		p, exit := grpcservertest.Start(t, servesProbes(probeSettings),
 			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
 		)
 		<-h.Listening(probesAddr)
@@ -200,12 +200,8 @@ func TestService_readiness(t *testing.T) {
 	t.Run("with no Options, SERVING while it serves and NOT_SERVING from the moment Serve's context is done", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
-			p, exit := humustest.Start(t, servesProbes(probeSettings),
-				humustest.WithApp(
-					humus.WithHost(h.Host()),
-					humus.WithTelemetry(telemetry.NoopBuilder),
-					humus.WithDrain(humus.DrainDelay(5*time.Second)),
-				),
+			p, exit := grpcservertest.Start(t, servesProbes(probeSettings),
+				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
 			)
 			<-h.Listening(probesAddr)
 			synctest.Wait()
@@ -222,7 +218,7 @@ func TestService_readiness(t *testing.T) {
 			require.Zero(t, time.Since(sigterm), "readiness turned NOT_SERVING the moment shutdown started")
 			require.Equal(t, serving, check(t, client, "liveness"))
 
-			time.Sleep(4 * time.Second) // still inside the drain
+			time.Sleep(4 * time.Second) // still inside grpcserver's 5s drain
 			require.Equal(t, notServing, check(t, client, "readiness"))
 			require.Equal(t, serving, check(t, client, "liveness"))
 
@@ -235,7 +231,7 @@ func TestService_readiness(t *testing.T) {
 	t.Run("an unhealthy monitor added with health.Readiness answers readiness NOT_SERVING", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
-			p, exit := humustest.Start(t, servesProbes(probeSettings, health.Readiness(result(false, nil))),
+			p, exit := grpcservertest.Start(t, servesProbes(probeSettings, health.Readiness(result(false, nil))),
 				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
 			)
 			<-h.Listening(probesAddr)
@@ -254,7 +250,7 @@ func TestService_readiness(t *testing.T) {
 	t.Run("an unhealthy monitor added with health.Liveness answers liveness NOT_SERVING", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
-			p, exit := humustest.Start(t, servesProbes(probeSettings, health.Liveness(result(false, nil))),
+			p, exit := grpcservertest.Start(t, servesProbes(probeSettings, health.Liveness(result(false, nil))),
 				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
 			)
 			<-h.Listening(probesAddr)
@@ -274,18 +270,28 @@ func TestService_serves_plain_text_only(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
 		h := humustest.NewHost(t)
-		p, exit := humustest.Start(t, servesProbes(probeSettings),
+		p, exit := grpcservertest.Start(t, servesProbes(probeSettings),
 			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
 		)
 		<-h.Listening(probesAddr)
 		synctest.Wait()
 
-		client := healthpb.NewHealthClient(grpcservertest.NewClient(t, h, probesAddr, ca.Pool()))
-		_, err := client.Check(t.Context(), &healthpb.HealthCheckRequest{Service: "liveness"})
+		conn := grpcservertest.NewClient(t, h, probesAddr, ca.Pool())
+		_, err := healthpb.NewHealthClient(conn).Check(t.Context(), &healthpb.HealthCheckRequest{Service: "liveness"})
 		require.Equal(t, codes.Unavailable, status.Code(err), "a client over TLS connected: %v", err)
 
+		// The client goes on reconnecting until it is closed. The Host's
+		// connections are unbuffered net.Pipes, on which a TLS client and a
+		// plaintext server both write first, so a reconnect in flight would
+		// hold GracefulStop past the grace period; over TCP, the kernel's
+		// buffers let each side's first write through.
+		require.NoError(t, conn.Close())
+		synctest.Wait()
+
+		<-p.Notified(syscall.SIGTERM)
 		p.Signal(syscall.SIGTERM)
-		require.Zero(t, (<-exit).Code())
+		st := <-exit
+		require.Zero(t, st.Code(), "cause: %v; stderr: %s", st.Cause(), p.Stderr())
 	})
 }
 
@@ -298,7 +304,7 @@ func TestService_recovers_a_panic_of_a_monitor(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
 		tel := humustest.NewTelemetry()
-		p, exit := humustest.Start(t, servesProbes(probeSettings, health.Liveness(panicking)),
+		p, exit := grpcservertest.Start(t, servesProbes(probeSettings, health.Liveness(panicking)),
 			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
 		)
 		<-h.Listening(probesAddr)
@@ -351,7 +357,7 @@ func TestService_logs_listening(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
 		tel := humustest.NewTelemetry()
-		p, exit := humustest.Start(t, servesProbes(probeSettings),
+		p, exit := grpcservertest.Start(t, servesProbes(probeSettings),
 			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
 		)
 		<-h.Listening(probesAddr)
@@ -419,7 +425,7 @@ func TestNewService_the_listener(t *testing.T) {
 				}
 				return nil, errInit
 			}
-			_, exit := humustest.Start(t, init,
+			_, exit := grpcservertest.Start(t, init,
 				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
 			)
 
@@ -457,7 +463,7 @@ func TestService_Addr_reports_the_port_the_Host_picked(t *testing.T) {
 			addrs <- svc.Addr()
 			return []humus.Service{svc}, nil
 		}
-		p, exit := humustest.Start(t, init,
+		p, exit := grpcservertest.Start(t, init,
 			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
 		)
 
@@ -546,7 +552,7 @@ func TestService_records_no_span_and_no_metric(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
 		tel := humustest.NewTelemetry()
-		p, exit := humustest.Start(t, servesProbes(probeSettings, health.Liveness(result(false, errSecret))),
+		p, exit := grpcservertest.Start(t, servesProbes(probeSettings, health.Liveness(result(false, errSecret))),
 			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
 		)
 		<-h.Listening(probesAddr)
@@ -600,7 +606,7 @@ func TestService_uses_no_OpenTelemetry_globals(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
 		tel := humustest.NewTelemetry()
-		p, exit := humustest.Start(t, servesProbes(probeSettings, health.Liveness(result(false, errSecret)), health.Readiness(panicking)),
+		p, exit := grpcservertest.Start(t, servesProbes(probeSettings, health.Liveness(result(false, errSecret)), health.Readiness(panicking)),
 			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
 		)
 		<-h.Listening(probesAddr)
