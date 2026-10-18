@@ -64,6 +64,65 @@
 // the trace of the probe's span. A team that doesn't want the probes' spans
 // drops them in its sampler.
 //
+// # The probes server
+//
+// [NewService] serves the handler, and nothing else, on a port of its own.
+// Attach the handler wherever the pod already runs a server the kubelet can
+// reach, rather than opening another port. The probes server is for the
+// pods that can't: a pod with no server, such as a Kafka consumer's or a
+// long-running job's, and a pod whose server requires client certificates,
+// which the kubelet never presents.
+//
+// The probes server owns the App's readiness, as a health Service does. It
+// builds a health Service from the health.Options it is given, and runs it
+// for as long as it serves, so the end user's Init returns no health
+// Service next to it:
+//
+//	probes, err := httphealth.NewService(s, probeSettings, health.Readiness(consumer.Joined()))
+//	if err != nil {
+//		return nil, err
+//	}
+//	return []humus.Service{consumer, probes}, nil
+//
+// Readiness is false until the Service's Serve starts, and false for good
+// once Serve's context is done, which is when the App starts shutting down,
+// or once Shutdown is called. Otherwise it checks the monitors
+// health.Readiness adds. Liveness checks the monitors health.Liveness adds,
+// and is healthy when there are none.
+//
+// It serves HTTPS, as every HTTP port humus serves does, so its probes set
+// scheme: HTTPS:
+//
+//	readinessProbe:
+//	  httpGet:
+//	    path: /health/readiness
+//	    port: probes
+//	    scheme: HTTPS
+//
+// The kubelet doesn't verify the certificate of such a probe, and presents
+// none of its own: see Settings, below.
+//
+// It speaks HTTP/1.1 alone, as the kubelet does, and offers only http/1.1
+// in ALPN. A probe in plain HTTP, one that leaves out scheme: HTTPS, fails
+// its TLS handshake, and the failure is logged at ERROR, so the log says why
+// the probe failed.
+//
+// It serves through the drain. Once the App starts shutting down, a
+// readiness probe is answered 503, not refused, and a liveness probe is
+// still answered 200, until the App shuts the Service down.
+//
+// A probes port isn't for the public. The server answers anyone who can
+// reach the port, and every request checks a monitor. The port is the
+// container's, for the kubelet, and isn't routed by a Kubernetes Service
+// or an ingress.
+//
+// The probes server records no span and no metric, and extracts no trace
+// context: a probe every few seconds would be most of a quiet service's
+// traces. It logs under this package's import path, through the Setup's
+// LoggerProvider: "listening" at INFO, with the address as server.address,
+// when it starts serving, and each line of net/http's error log, such as a
+// TLS handshake error, as one ERROR record.
+//
 // # Settings
 //
 // A probes server of its own, for a pod with no server to attach the
