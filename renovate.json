@@ -46,6 +46,17 @@
       "automerge": true
     },
     {
+      "description": "The requirements between humus modules name the last release and are set only by the release workflow, so Renovate leaves them alone",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchPackageNames": [
+        "github.com/z5labs/humus",
+        "github.com/z5labs/humus/**"
+      ],
+      "enabled": false
+    },
+    {
       "description": "The minimum Go version in go.mod follows a support schedule, so it is bumped by hand",
       "matchManagers": [
         "gomod"
