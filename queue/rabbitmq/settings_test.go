@@ -342,6 +342,7 @@ func TestDefaultPublisherSettings(t *testing.T) {
 			OpenFor:      10 * time.Second,
 			ProbeTimeout: 10 * time.Second,
 		},
+		ForwardScenario: false,
 	}, d)
 }
 
@@ -507,10 +508,11 @@ func TestDefaultSettings(t *testing.T) {
 			Heartbeat:      10 * time.Second,
 			ConnectTimeout: 30 * time.Second,
 		},
-		Queue:       "",
-		Delivery:    queue.AtLeastOnce,
-		Prefetch:    10,
-		Concurrency: 1,
+		Queue:         "",
+		Delivery:      queue.AtLeastOnce,
+		Prefetch:      10,
+		Concurrency:   1,
+		TrustScenario: nil,
 	}, rabbitmq.DefaultSettings())
 }
 

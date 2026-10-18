@@ -102,6 +102,15 @@ type Settings struct {
 	// Default: 1. Valid: from 1 to Prefetch. Check: CheckConcurrency, and
 	// NewService for the bound of Prefetch.
 	Concurrency int
+
+	// TrustScenario reports whether the failure scenario a delivery
+	// carries reaches the Processor. A delivery it doesn't trust has the
+	// scenario stripped from its context first. It is asked only about a
+	// delivery that carries a scenario, and only when the App has failure
+	// injection. It is set in code, not sourced.
+	//
+	// Default: nil, which trusts no publisher. Valid: any. Check: none.
+	TrustScenario func(m Message) bool
 }
 
 // DefaultSettings returns the Service's defaults. Connection.Addr,
@@ -118,10 +127,11 @@ func DefaultSettings() Settings {
 			Heartbeat:      10 * time.Second,
 			ConnectTimeout: 30 * time.Second,
 		},
-		Queue:       "",
-		Delivery:    queue.AtLeastOnce,
-		Prefetch:    10,
-		Concurrency: 1,
+		Queue:         "",
+		Delivery:      queue.AtLeastOnce,
+		Prefetch:      10,
+		Concurrency:   1,
+		TrustScenario: nil,
 	}
 }
 
@@ -190,6 +200,16 @@ type PublisherSettings struct {
 	// close after 3 successful ones. Valid: Trip and Probe set, which
 	// NewPublisher checks. Check: none.
 	BreakerPolicy circuit.Policy
+
+	// ForwardScenario sends the failure scenario a call carries on in the
+	// headers of the messages it publishes, for consumers that take part
+	// in failure injection with the same codec. When it is false, the
+	// scenario is stripped from each message's baggage header, and the
+	// rest of the call's baggage still goes. It is set in code, not
+	// sourced.
+	//
+	// Default: false. Valid: either. Check: none.
+	ForwardScenario bool
 }
 
 // DefaultPublisherSettings returns the Publisher's defaults: the Connection
@@ -218,6 +238,7 @@ func DefaultPublisherSettings() PublisherSettings {
 			Trip:  defaultTrip,
 			Probe: defaultProbe,
 		},
+		ForwardScenario: false,
 	}
 }
 

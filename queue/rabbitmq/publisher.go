@@ -28,6 +28,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/fault"
 )
 
 // sendOperation is the messaging.operation.name of publishing a message.
@@ -251,6 +252,9 @@ type Publisher struct {
 	// metrics are humus's own instruments of the breaker and the retries.
 	metrics *instruments
 
+	// faults is the App's failure injection, from the Setup.
+	faults fault.Injector
+
 	// slots holds a token for each publish in flight, so there are at most
 	// Channels of them.
 	slots chan struct{}
@@ -346,6 +350,7 @@ func NewPublisher(s *humus.Setup, settings PublisherSettings) (*Publisher, error
 		serverAddr: host,
 		serverPort: portNum,
 		metrics:    metrics,
+		faults:     s.Faults,
 		slots:      make(chan struct{}, settings.Channels),
 		connLock:   make(chan struct{}, 1),
 		stopped:    stopped,
@@ -550,7 +555,14 @@ func (p *Publisher) close(ctx context.Context) error {
 // into a copy of m.Headers, so the consumer's span is its child. m.Headers
 // itself is never changed. A failed Publish is recorded on its span, with
 // error.type and an error status, a Publish the breaker rejected included.
-// The body is never recorded.
+// The body is never recorded. Unless ForwardScenario is set, a failure
+// scenario is stripped from the context the headers are injected from,
+// with a humus.fit.strip event on the span.
+//
+// With failure injection, each attempt the breaker admits evaluates its
+// point, rabbitmq:<messaging.destination.name>, before it sends anything,
+// as the package doc's Failure injection describes: an abort fails the
+// attempt as a lost connection does, and a Delay is waited inside Timeout.
 //
 // Each attempt that publishes m records messaging.client.sent.messages, and
 // messaging.client.operation.duration, from the publish to the broker's
@@ -582,7 +594,7 @@ func (p *Publisher) Publish(ctx context.Context, m Publishing) (err error) {
 	defer cancel()
 
 	msg := m.amqpPublishing()
-	p.propagator.Inject(ctx, (*headerCarrier)(&msg.Headers))
+	p.propagator.Inject(p.headersContext(ctx, span), (*headerCarrier)(&msg.Headers))
 
 	for a := range p.retrier.Attempts(ctx) {
 		err = p.attempt(ctx, m, msg)
@@ -597,10 +609,12 @@ func (p *Publisher) Publish(ctx context.Context, m Publishing) (err error) {
 }
 
 // attempt is one attempt of a Publish, and one call through the breaker.
-// Once the breaker admits it, it takes a channel, publishes msg, which is m
-// with its trace context, on it, and gives the channel back. While the
-// breaker is open, it returns an error wrapping the breaker's
-// *circuit.RejectedError at once, having sent nothing.
+// Once the breaker admits it, failure injection evaluates m's point, and
+// unless a fault ended the attempt, it takes a channel, publishes msg,
+// which is m with its trace context, on it, and gives the channel back.
+// While the breaker is open, it returns an error wrapping the breaker's
+// *circuit.RejectedError at once, without evaluating m's point or
+// sending anything.
 func (p *Publisher) attempt(ctx context.Context, m Publishing, msg amqp.Publishing) error {
 	t, err := p.breaker.Allow(ctx)
 	if err != nil {
@@ -609,10 +623,13 @@ func (p *Publisher) attempt(ctx context.Context, m Publishing, msg amqp.Publishi
 	}
 	defer t.Release()
 
-	// Wave 5's failure injection has its seam here: the attempt is inside
-	// the breaker, and nothing of it has been written to the broker.
-
-	err = p.send(ctx, m, msg)
+	// Failure injection has its point here: the attempt is inside the
+	// breaker, so an attempt the breaker rejected evaluates nothing, and
+	// the breaker counts an attempt a fault ended as it counts any other;
+	// and nothing of it has been written to the broker.
+	if err = p.inject(ctx, m); err == nil {
+		err = p.send(ctx, m, msg)
+	}
 	t.Done(err)
 	return err
 }
