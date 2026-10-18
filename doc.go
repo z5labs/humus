@@ -77,7 +77,13 @@
 // landed: it serves an http.Handler over TLS as a Service, with HTTP/2
 // preferred, and httpserver.Main runs it with a drain and a grace period for
 // a server behind a load balancer, documented at
-// https://z5labs.github.io/humus/http/. The grpc module has landed: its
+// https://z5labs.github.io/humus/http/. The openapi/v3 package has landed:
+// it serves an API of typed operations on typed paths, whose every body
+// names its codec and every error its answer, and the API's OpenAPI 3.2
+// document, written from the same declarations, as the http.Handler that
+// httpserver serves, with jsoncodec for JSON bodies and problem for RFC 9457
+// problem details beside it, documented at
+// https://z5labs.github.io/humus/openapi/. The grpc module has landed: its
 // grpcserver package serves gRPC over TLS as a Service, ending every stream
 // at shutdown with Unavailable, and grpcserver.Main runs it with a drain and
 // a grace period for a server behind a Kubernetes Service, documented at

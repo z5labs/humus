@@ -11,7 +11,7 @@ description: >
   records, streams, what it records, readiness with Connected, and how to
   test the end user's whole App next to a grpcserver backend.
 type: docs
-weight: 18
+weight: 19
 ---
 
 The [`grpcclient`](https://pkg.go.dev/github.com/z5labs/humus/grpc/grpcclient)
