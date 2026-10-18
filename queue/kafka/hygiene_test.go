@@ -45,14 +45,14 @@ func TestPackage_reads_no_environment_and_no_file(t *testing.T) {
 	names, err := filepath.Glob("*.go")
 	require.NoError(t, err)
 	fset := token.NewFileSet()
-	checked := 0
+	var checked []string
 	for _, name := range names {
 		if strings.HasSuffix(name, "_test.go") {
 			continue
 		}
 		f, err := parser.ParseFile(fset, name, nil, parser.SkipObjectResolution)
 		require.NoError(t, err)
-		checked++
+		checked = append(checked, name)
 
 		for _, imp := range f.Imports {
 			path, err := strconv.Unquote(imp.Path.Value)
@@ -89,7 +89,8 @@ func TestPackage_reads_no_environment_and_no_file(t *testing.T) {
 			return true
 		})
 	}
-	require.NotZero(t, checked)
+	// The consumer's files and the producer's are all checked.
+	require.Subset(t, checked, []string{"service.go", "settings.go", "dial.go", "logger.go", "producer.go"})
 }
 
 // TestPackage_uses_kotels_Meter_alone checks the package's own source, test

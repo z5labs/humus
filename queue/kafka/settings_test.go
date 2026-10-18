@@ -213,3 +213,55 @@ func TestDefaultSettings_checks(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckDeliveryTimeout(t *testing.T) {
+	t.Parallel()
+
+	runCheck(t, kafka.CheckDeliveryTimeout, []checkCase[time.Duration]{
+		{name: "one nanosecond", value: time.Nanosecond, valid: true},
+		{name: "the default", value: 10 * time.Second, valid: true},
+		{name: "a minute", value: time.Minute, valid: true},
+		{name: "zero", value: 0, cause: "must be positive"},
+		{name: "negative", value: -time.Second, cause: "must be positive"},
+	})
+}
+
+func TestDefaultProducerSettings(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, kafka.ProducerSettings{
+		Brokers:         nil,
+		TLS:             nil,
+		SASL:            nil,
+		DeliveryTimeout: 10 * time.Second,
+	}, kafka.DefaultProducerSettings())
+}
+
+func TestDefaultProducerSettings_checks(t *testing.T) {
+	t.Parallel()
+
+	d := kafka.DefaultProducerSettings()
+
+	t.Run("Brokers", func(t *testing.T) {
+		t.Parallel()
+
+		err := kafka.CheckBrokers(d.Brokers)
+		require.Error(t, err, "Brokers has no default, so its check fails")
+		requireUnnamed(t, err)
+	})
+
+	t.Run("DeliveryTimeout", func(t *testing.T) {
+		t.Parallel()
+
+		require.NoError(t, kafka.CheckDeliveryTimeout(d.DeliveryTimeout))
+	})
+
+	t.Run("with Brokers set, every check passes", func(t *testing.T) {
+		t.Parallel()
+
+		ps := kafka.DefaultProducerSettings()
+		ps.Brokers = []string{"127.0.0.1:9092"}
+		require.NoError(t, kafka.CheckBrokers(ps.Brokers))
+		require.NoError(t, kafka.CheckDeliveryTimeout(ps.DeliveryTimeout))
+	})
+}
