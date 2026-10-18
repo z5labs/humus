@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
@@ -111,12 +112,25 @@ func newAttemptTimeout(d time.Duration, next http.RoundTripper) attemptTimeout {
 
 // RoundTrip implements http.RoundTripper. An attempt it cancelled fails
 // with an error that wraps t.cause, whatever net/http made of the
-// cancellation.
+// cancellation, even if its headers arrived as the timer fired: the
+// cancelled context would fail the body's first read.
 func (t attemptTimeout) RoundTrip(r *http.Request) (*http.Response, error) {
 	ctx, cancel := context.WithCancelCause(r.Context())
-	timer := time.AfterFunc(t.d, func() { cancel(t.cause) })
+	// settled is set once, by whichever comes first: the timer, which then
+	// cancels the attempt, or the attempt's end, which then stops it.
+	var settled atomic.Bool
+	timer := time.AfterFunc(t.d, func() {
+		if settled.CompareAndSwap(false, true) {
+			cancel(t.cause)
+		}
+	})
 	resp, err := t.next.RoundTrip(r.WithContext(ctx))
-	fired := !timer.Stop()
+	fired := !settled.CompareAndSwap(false, true)
+	timer.Stop()
+	if err == nil && fired {
+		_ = resp.Body.Close()
+		resp, err = nil, t.cause
+	}
 	if err != nil {
 		cancel(nil)
 		if fired && r.Context().Err() == nil && !errors.Is(err, context.DeadlineExceeded) {

@@ -709,3 +709,154 @@ func (b *closeRecorder) Close() error {
 	b.closed.Store(true)
 	return b.ReadCloser.Close()
 }
+
+func TestClient_a_call_cancelled_during_a_wait_after_an_error_returns_why(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := humustest.NewHost(t) // nothing listens at payments:8443
+
+		settings := paymentsSettings(t, humustest.NewCA(t))
+		settings.Classify = func(*http.Response, error) httpclient.Classification {
+			return httpclient.Classification{Retry: retry.Retry, RetryAfter: 4 * time.Second, Breaker: circuit.Failure}
+		}
+		var r timed
+		st := runJob(t, h.Host(), settings, func(ctx context.Context, c *http.Client) error {
+			ctx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			time.AfterFunc(time.Second, cancel)
+			r = timedGet(ctx, c, "https://payments:8443/charges/1")
+			return nil
+		})
+		requireExitZero(t, st)
+
+		require.ErrorIs(t, r.err, context.Canceled)
+		require.ErrorContains(t, r.err, "the last attempt failed")
+		require.Equal(t, time.Second, r.took)
+	})
+}
+
+func TestClient_AttemptTimeout_ends_with_the_headers(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := humustest.NewHost(t)
+		ca := humustest.NewCA(t)
+		var c calls
+		stop := startPayments(t, h, h.Host(), ca, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			c.record(r)
+			_, _ = io.WriteString(w, "first, ")
+			w.(http.Flusher).Flush()
+			time.Sleep(7 * time.Second) // past AttemptTimeout, within Timeout
+			_, _ = io.WriteString(w, "then the rest")
+		}))
+		defer stop()
+
+		r := callWith(t, h, paymentsSettings(t, ca), "https://payments:8443/charges/1")
+
+		require.NoError(t, r.err)
+		require.Equal(t, "first, then the rest", r.body, "a body slower than AttemptTimeout is read whole")
+		require.Equal(t, 7*time.Second, r.took)
+		require.Equal(t, 1, c.count())
+	})
+}
+
+func TestClient_a_request_sent_once_still_counts_in_the_budget(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := humustest.NewHost(t)
+		ca := humustest.NewCA(t)
+		var c calls
+		stop := startPayments(t, h, h.Host(), ca, unavailable(&c, ""))
+		defer stop()
+
+		var getAttempts int
+		st := runJob(t, h.Host(), paymentsSettings(t, ca), func(ctx context.Context, cl *http.Client) error {
+			// Each POST answered 503 is classified Retry, and takes a token
+			// although it isn't retried: five leave 5 of the 10.
+			for range 5 {
+				req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://payments:8443/charges", strings.NewReader("{}"))
+				if err != nil {
+					return err
+				}
+				resp, err := cl.Do(req)
+				if err != nil {
+					return err
+				}
+				if err := resp.Body.Close(); err != nil {
+					return err
+				}
+			}
+			before := c.count()
+			if _, err := get(ctx, cl, "https://payments:8443/charges/1"); err != nil {
+				return err
+			}
+			getAttempts = c.count() - before
+			return nil
+		})
+		requireExitZero(t, st)
+
+		require.Equal(t, 1, getAttempts, "the budget allows the GET no retry")
+	})
+}
+
+func TestClient_Transport_keeps_a_101_responses_writable_body(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := humustest.NewHost(t)
+		l, err := h.Listen("tcp", "payments:8080")
+		require.NoError(t, err)
+		srv := &http.Server{
+			Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				conn, rw, err := http.NewResponseController(w).Hijack()
+				if err != nil {
+					return
+				}
+				defer func() { _ = conn.Close() }()
+				_, _ = rw.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: echo\r\n\r\n")
+				_ = rw.Flush()
+				b := make([]byte, 4)
+				if _, err := io.ReadFull(rw, b); err != nil {
+					return
+				}
+				_, _ = rw.Write(b)
+				_ = rw.Flush()
+			}),
+			ReadHeaderTimeout: time.Second,
+		}
+		served := make(chan error, 1)
+		go func() { served <- srv.Serve(l) }()
+
+		settings := httpclient.DefaultSettings()
+		settings.BaseURL = mustParse(t, "http://payments:8080")
+		var echoed string
+		st := runJob(t, h.Host(), settings, func(ctx context.Context, c *http.Client) error {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://payments:8080/echo", nil)
+			if err != nil {
+				return err
+			}
+			req.Header.Set("Connection", "Upgrade")
+			req.Header.Set("Upgrade", "echo")
+			// http.Client wraps the body of a call with a Timeout in a type
+			// that can't be written to, so the upgrade goes through the
+			// client's Transport, as a WebSocket library's dialer does.
+			resp, err := c.Transport.RoundTrip(req)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = resp.Body.Close() }()
+			rw, ok := resp.Body.(io.ReadWriteCloser)
+			if !ok || resp.StatusCode != http.StatusSwitchingProtocols {
+				return fmt.Errorf("a %d whose body is a %T", resp.StatusCode, resp.Body)
+			}
+			if _, err := io.WriteString(rw, "ping"); err != nil {
+				return err
+			}
+			b := make([]byte, 4)
+			if _, err := io.ReadFull(rw, b); err != nil {
+				return err
+			}
+			echoed = string(b)
+			return nil
+		})
+		requireExitZero(t, st)
+		require.Equal(t, "ping", echoed)
+
+		require.NoError(t, srv.Close())
+		require.ErrorIs(t, <-served, http.ErrServerClosed)
+	})
+}

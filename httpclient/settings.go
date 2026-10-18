@@ -54,8 +54,9 @@ type Settings struct {
 	// Default: 5s. Valid: positive. Check: CheckAttemptTimeout.
 	AttemptTimeout time.Duration
 
-	// MaxAttempts bounds the attempts of one call, the first included. 1
-	// turns retries off.
+	// MaxAttempts bounds the attempts of each request a call sends, the
+	// first included. A redirect is a request of its own. 1 turns retries
+	// off.
 	//
 	// Default: 3. Valid: 1 or more. Check: CheckMaxAttempts.
 	MaxAttempts int

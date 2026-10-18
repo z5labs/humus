@@ -161,8 +161,9 @@
 // out PUT and DELETE. RFC 9110 defines both as idempotent, and a service
 // that sends them relies on that already.
 //
-// Retries are bounded three ways. Settings.MaxAttempts bounds one call's
-// attempts, 3 by default, and 1 turns retries off. Settings.RetryBudget
+// Retries are bounded three ways. Settings.MaxAttempts bounds the attempts
+// of each request a call sends, 3 by default, and 1 turns retries off. A
+// redirect is a request of its own, with attempts of its own. Settings.RetryBudget
 // bounds every call to the dependency together, as retry.Budget describes:
 // each attempt classified Retry takes a token, each Success adds a tenth of
 // one back, and retries stop while half the tokens or fewer are left. So

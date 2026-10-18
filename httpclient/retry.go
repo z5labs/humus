@@ -147,6 +147,11 @@ func (t *retryTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 			}
 		}
 	}
+	if resp == nil && err != nil && call.Err() != nil && !errors.Is(err, call.Err()) {
+		// The call ended during the wait after a failed attempt: the
+		// caller sees why it ended, and why the attempt before failed.
+		err = fmt.Errorf("%w; the last attempt failed: %w", context.Cause(call), err)
+	}
 	return resp, err
 }
 
