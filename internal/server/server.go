@@ -39,6 +39,7 @@ import (
 // Server is an *http.Server, its listener, and the state that makes it a
 // humus.Service. It is safe for concurrent use.
 type Server struct {
+	name   string
 	ln     net.Listener
 	srv    *http.Server
 	logger log.Logger
@@ -48,16 +49,21 @@ type Server struct {
 }
 
 // New listens on addr with s.Host.Listen("tcp", addr). A failure to listen,
-// such as EADDRINUSE, is its error. It registers a function with s.OnStop
-// that closes the listener, so a listener whose Server never serves,
-// because Init failed after New, is still closed.
+// such as EADDRINUSE, is its error, unwrapped. It registers a function with
+// s.OnStop that closes the listener, so a listener whose Server never
+// serves, because Init failed after New, is still closed.
+//
+// name prefixes every other error of the Server's, including the one the
+// function registered with s.OnStop returns, which no caller can wrap, so
+// each package's errors read as its own: name "httpserver" gives
+// "httpserver: serving: ...".
 //
 // The Server serves srv, which the caller configures with its TLSConfig,
 // which must hold the certificate, its timeouts, limits, Protocols and
 // handler. New sets srv.ErrorLog, which emits each of net/http's lines as
 // one ERROR record through logger, and the caller must not use srv after
 // New, other than through the Server. The Server logs through logger too.
-func New(s *humus.Setup, addr string, srv *http.Server, logger log.Logger) (*Server, error) {
+func New(s *humus.Setup, name, addr string, srv *http.Server, logger log.Logger) (*Server, error) {
 	ln, err := s.Host.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
@@ -66,13 +72,13 @@ func New(s *humus.Setup, addr string, srv *http.Server, logger log.Logger) (*Ser
 		// Serve closes the listener when it returns, so it is usually
 		// closed already.
 		if err := ln.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-			return fmt.Errorf("closing the listener: %w", err)
+			return fmt.Errorf("%s: closing the listener: %w", name, err)
 		}
 		return nil
 	})
 
 	srv.ErrorLog = stdlog.New(&errorLog{logger: logger}, "", 0)
-	return &Server{ln: ln, srv: srv, logger: logger}, nil
+	return &Server{name: name, ln: ln, srv: srv, logger: logger}, nil
 }
 
 // Addr returns the address the Server listens on, with the port the Host
@@ -96,7 +102,7 @@ func (s *Server) Serve(context.Context) error {
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
-	return fmt.Errorf("serving: %w", err)
+	return fmt.Errorf("%s: serving: %w", s.name, err)
 }
 
 // Shutdown stops accepting connections, closes idle ones and waits for
@@ -116,13 +122,13 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		if ctx.Err() == nil {
 			// Every connection was drained, and a listener failed to
 			// close.
-			return fmt.Errorf("shutting down: %w", err)
+			return fmt.Errorf("%s: shutting down: %w", s.name, err)
 		}
 	}
 	// Close's only error is a listener's, and the Server is stopped
 	// whatever it is: ctx's error says why it did not stop gracefully.
 	_ = s.srv.Close()
-	return fmt.Errorf("shutting down: %w", ctx.Err())
+	return fmt.Errorf("%s: shutting down: %w", s.name, ctx.Err())
 }
 
 // emit emits one record at sev, with body and attrs, through logger.

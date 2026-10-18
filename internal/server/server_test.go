@@ -40,6 +40,10 @@ import (
 // the logger the caller passed.
 const scope = "example.com/probes"
 
+// name is the name each test passes to New, which prefixes the Server's
+// errors.
+const name = "probes"
+
 // tlsConfig returns a TLS config with a certificate for localhost from ca.
 func tlsConfig(t *testing.T, ca *humustest.CA) *tls.Config {
 	t.Helper()
@@ -49,7 +53,7 @@ func tlsConfig(t *testing.T, ca *humustest.CA) *tls.Config {
 // newServer returns a Server on addr, serving h over TLS with a certificate
 // from ca, and logging through s's logger named scope.
 func newServer(s *humus.Setup, addr string, cfg *tls.Config, h http.Handler) (*server.Server, error) {
-	return server.New(s, addr, &http.Server{Handler: h, TLSConfig: cfg}, s.Telemetry.LoggerProvider.Logger(scope))
+	return server.New(s, name, addr, &http.Server{Handler: h, TLSConfig: cfg}, s.Telemetry.LoggerProvider.Logger(scope))
 }
 
 // serves returns an Init whose only Service is a Server serving h on :8443.
@@ -183,7 +187,7 @@ func TestServer_serves_the_callers_http_Server(t *testing.T) {
 			time.Sleep(2 * time.Second)
 			_, _ = io.WriteString(w, "too late")
 		})
-		srv, err := server.New(s, ":8443", &http.Server{
+		srv, err := server.New(s, name, ":8443", &http.Server{
 			Handler:      slow,
 			TLSConfig:    tlsConfig(t, ca),
 			WriteTimeout: time.Second,
@@ -266,7 +270,7 @@ func TestServer_Shutdown(t *testing.T) {
 			start := time.Now()
 			err = srv.Shutdown(done)
 			require.ErrorIs(t, err, context.Canceled)
-			require.ErrorContains(t, err, "shutting down")
+			require.ErrorContains(t, err, "probes: shutting down: ")
 			require.Zero(t, time.Since(start))
 
 			require.ErrorIs(t, <-cancelled, context.Canceled)
@@ -390,7 +394,7 @@ func TestServer_Serve_without_a_certificate_fails(t *testing.T) {
 		require.NoError(t, err)
 
 		err = srv.Serve(t.Context())
-		require.ErrorContains(t, err, "serving")
+		require.ErrorContains(t, err, "probes: serving: ")
 		require.NoError(t, srv.Shutdown(t.Context()))
 	})
 }

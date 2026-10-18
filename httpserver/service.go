@@ -77,7 +77,7 @@ func NewService(s *humus.Setup, settings Settings, h http.Handler) (*Service, er
 	// The server listens on settings.Addr, and registers the listener's
 	// close with s.OnStop. Its error log and its "listening" record go
 	// through logger, so they keep this package's scope.
-	srv, err := server.New(s, settings.Addr, &http.Server{
+	srv, err := server.New(s, "httpserver", settings.Addr, &http.Server{
 		Handler:           instrumented,
 		TLSConfig:         cfg,
 		ReadHeaderTimeout: settings.ReadHeaderTimeout,
@@ -141,10 +141,7 @@ func (svc *Service) Addr() net.Addr {
 // Service answers requests through the App's drain. It returns nil once
 // Shutdown has stopped it, including a Shutdown called before Serve.
 func (svc *Service) Serve(ctx context.Context) error {
-	if err := svc.srv.Serve(ctx); err != nil {
-		return fmt.Errorf("httpserver: %w", err)
-	}
-	return nil
+	return svc.srv.Serve(ctx)
 }
 
 // Shutdown stops accepting connections, closes idle ones and waits for
@@ -153,13 +150,12 @@ func (svc *Service) Serve(ctx context.Context) error {
 // in-flight request, and returns an error that wraps ctx's error. Calling it
 // again returns nil.
 func (svc *Service) Shutdown(ctx context.Context) error {
-	if err := svc.srv.Shutdown(ctx); err != nil {
-		return fmt.Errorf("httpserver: %w", err)
-	}
-	return nil
+	return svc.srv.Shutdown(ctx)
 }
 
-// emit emits one record at sev, with body and attrs, through logger.
+// emit emits one record at sev, with body and attrs, through logger. The
+// Service's own records are emitted by internal/server; recordPanics emits
+// through this.
 func emit(ctx context.Context, logger log.Logger, sev log.Severity, body string, attrs ...attribute.KeyValue) {
 	var r log.Record
 	r.SetTimestamp(time.Now())
