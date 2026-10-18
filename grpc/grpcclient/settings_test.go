@@ -244,6 +244,7 @@ func TestDefaultSettings(t *testing.T) {
 			OpenFor:      10 * time.Second,
 			ProbeTimeout: 10 * time.Second,
 		},
+		ForwardScenario: false,
 	}, withoutFuncs)
 
 	t.Run("its BreakerPolicy trips after 5 failures in a row, or once half of 20 or more failed", func(t *testing.T) {

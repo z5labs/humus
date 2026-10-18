@@ -28,6 +28,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/fault"
 	"github.com/z5labs/humus/health"
 )
 
@@ -65,6 +66,12 @@ type Client struct {
 	// instrumentation scope.
 	tracer trace.Tracer
 	logger log.Logger
+
+	// faults is the Setup's failure injection, with which each attempt
+	// evaluates its method's point, and forward is ForwardScenario: unless
+	// it is set, each attempt strips the scenario from what it sends.
+	faults  fault.Injector
+	forward bool
 
 	// connected is Connected's latch, set by the first check that finds
 	// the connection ready. Every monitor Connected returns reads it.
@@ -144,6 +151,8 @@ func NewClient(s *humus.Setup, settings Settings, opts ...grpc.DialOption) (*Cli
 		metrics:  metrics,
 		tracer:   s.Telemetry.TracerProvider.Tracer(scopeName),
 		logger:   s.Telemetry.LoggerProvider.Logger(scopeName),
+		faults:   s.Faults,
+		forward:  settings.ForwardScenario,
 	}
 	c.breaker, err = circuit.New(settings.Breaker, settings.BreakerPolicy, metrics.countCalls(breakerOutcome), c.observe)
 	if err != nil {

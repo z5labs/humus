@@ -324,8 +324,9 @@
 // it, in this order:
 //
 //  1. Allow, with the call's context, and a deferred Release;
-//  2. the call, grpc-go's RPC, which is failure injection's seam in wave
-//     5;
+//  2. failure injection's evaluation of the attempt's point, and then,
+//     unless a fault ended the attempt, the call, grpc-go's RPC (see
+//     Failure injection, below);
 //  3. Classify, once, unless the result is one the Client decides;
 //  4. Done, with the result carrying its Classification, whose Breaker the
 //     breaker counts.
@@ -486,7 +487,8 @@
 // one, and baggage when the context holds any. So a
 // backend served with grpcserver joins the caller's trace, its server span
 // a child of the attempt's client span, and its handler sees the caller's
-// baggage.
+// baggage, less a failure scenario the Client strips (see Failure
+// injection).
 //
 // Each attempt also records the histogram rpc.client.call.duration on the
 // Setup's MeterProvider, in otelgrpc's instrumentation scope.
@@ -529,7 +531,9 @@
 // The rest of the Client's own telemetry is what the circuit breaker adds,
 // under the same scope: the span of a call the breaker rejected, which
 // never reached grpc-go, and one log record for each change of the
-// breaker's state, as The circuit breaker, above, describes.
+// breaker's state, as The circuit breaker, above, describes; and the span
+// of an attempt a fault ended, which never reached grpc-go either, as
+// Failure injection, below, describes.
 //
 // Nothing reaches OpenTelemetry's globals: every provider and the
 // propagator are passed to otelgrpc, so it never falls back to them, and
@@ -540,6 +544,82 @@
 // variables, and OTEL_SEMCONV_STABILITY_OPT_IN, which otelgrpc reads, and
 // which asks for the old RPC conventions with rpc/old or rpc/dup. The
 // Client adds nothing to that list.
+//
+// # Failure injection
+//
+// Every Client is an injection point per method, named after it:
+// grpc:<service>/<method>, the full method without its leading slash, as
+// rpc.method writes it, such as grpc:payments.v1.Payments/Charge. A call
+// whose context carries a failure scenario can then make that one method
+// of the dependency fail or slow down, and the end user sees how the whole
+// service copes: its retries, its breaker and its fallbacks. The Client
+// evaluates its points with the fault.Injector in the Setup's Faults,
+// which the App builds from humus.WithFaults. Without humus.WithFaults,
+// nothing is evaluated or stripped, and a scenario goes to the dependency
+// as any baggage does.
+//
+// Each attempt of a unary call, and each attempt to open a stream,
+// evaluates its point once, after the circuit breaker's Allow and before
+// grpc-go is called, inside Timeout. An attempt the breaker rejects
+// evaluates nothing. On a call that carries a scenario, the evaluation is
+// a humus.fit.evaluation event on the span in the call's context, the
+// caller's, since the attempt's own span doesn't exist yet. A retried
+// attempt evaluates the point again, and meets the same fault.
+//
+// An abort ends the attempt with status Unavailable, as for a server the
+// Client can't reach, and an error wrapping a *fault.InjectedError naming
+// the point, which matches fit.ErrInjected. grpc-go isn't called, so
+// otelgrpc makes no span for it: the Client records one of its own, in its
+// own scope, named and attributed as a rejected call's is, with
+// rpc.response.status_code UNAVAILABLE and the error.type
+// github.com/z5labs/humus/fault.InjectedError.
+//
+// A delay is waited before grpc-go is called, inside Timeout, and then the
+// attempt goes on as usual, so the delay is in no span of otelgrpc's. A
+// delay that the attempt's context cuts short ends the attempt as grpc-go
+// would: with status DeadlineExceeded, at Timeout or a deadline of the
+// caller's, or Canceled, once the caller gives up. Its error wraps a
+// *fault.InjectedError whose Err is the context's cause, which matches
+// context.DeadlineExceeded or context.Canceled and not fit.ErrInjected.
+// grpc-go isn't called, and the attempt has a span of the Client's own, as
+// an abort does, from the start of the wait to its end, with the same
+// error.type.
+//
+// A fault is a real failure: the Client decides an attempt a fault ended
+// with Classify, as it decides any other attempt, the ones it decides
+// itself included. Under the default Classify:
+//
+//   - an abort is Retry, Failure, as Unavailable is;
+//   - a delay cut short by its deadline is Stop, Failure, as any deadline
+//     is;
+//   - a delay the caller cancelled is Stop, Ignored.
+//
+// They draw on the retry budget, and the breaker counts them, so a
+// scenario that aborts a method of the dependency opens the breaker for
+// every caller, as a dependency that is down does. An end user's Classify
+// can single out a *fault.InjectedError with errors.As, such as to answer
+// Stop, Ignored, which keeps the breaker closed and makes one attempt per
+// call:
+//
+//	settings.Classify = func(method string, err error, trailer metadata.MD) grpcclient.Classification {
+//		var injected *fault.InjectedError
+//		if errors.As(err, &injected) {
+//			return grpcclient.Classification{Retry: retry.Stop, Breaker: circuit.Ignored}
+//		}
+//		return classify(method, err, trailer) // DefaultSettings().Classify
+//	}
+//
+// The Client strips the scenario from what it sends, unless
+// Settings.ForwardScenario is set: a dependency the end user hasn't decided
+// about is a trust boundary. The strip happens after the point is
+// evaluated, since the point reads the scenario about to be stripped, and
+// before grpc-go is called, so otelgrpc injects from the stripped context:
+// the dependency still gets the attempt's trace context and every other
+// baggage member. Each strip adds a humus.fit.strip event, with no
+// attributes, to the span in the call's context. Set ForwardScenario for a
+// dependency that takes part in failure injection with the same codec,
+// such as another service of the end user's, so that a scenario can reach
+// the points it calls in turn.
 //
 // # Closing
 //
