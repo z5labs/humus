@@ -404,7 +404,8 @@
 // The Setup's propagator puts the attempt's trace context and the request
 // context's baggage in each attempt's headers, so a dependency served with
 // httpserver joins the caller's trace, with the attempt's span as its
-// server span's parent, and its handler sees the caller's baggage.
+// server span's parent, and its handler sees the caller's baggage, less a
+// failure scenario the client strips (see Failure injection).
 //
 // otelhttp records http.client.request.duration and
 // http.client.request.body.size for each attempt, in its own scope, with the
@@ -460,6 +461,72 @@
 // The tracer, the meter and the propagator all come from the Setup's
 // telemetry, so nothing reaches OpenTelemetry's globals: a process that
 // sets them sees none of the client's spans or metrics.
+//
+// # Failure injection
+//
+// Every client is an injection point, named after its dependency:
+// http:<host>:<port> of Settings.BaseURL, with the scheme's port when the
+// URL has none, such as http:payments:8443. A request whose context
+// carries a failure scenario can then make that one dependency fail or
+// slow down, and the end user sees how the whole service copes: its
+// retries, its breaker and its fallbacks. The client evaluates its point
+// with the fault.Injector in the Setup's Faults, which the App builds from
+// humus.WithFaults. Without humus.WithFaults, nothing is evaluated or
+// stripped, and a scenario goes to the dependency as any baggage does.
+//
+// Each attempt evaluates the point once, in a layer around the call to the
+// http.Transport, inside the circuit breaker and inside AttemptTimeout. An
+// attempt the breaker rejects evaluates nothing. On a request that carries
+// a scenario, the evaluation is a humus.fit.evaluation event on the
+// attempt's span, otelhttp's. A retried attempt evaluates the point again,
+// and meets the same fault.
+//
+// An abort is a transport error. The attempt fails with a
+// *fault.InjectedError naming the point, which matches fit.ErrInjected,
+// with no response, and nothing is sent. The call returns it wrapped in an
+// *url.Error, as net/http wraps any transport error. Its error.type, on
+// the attempt's span and in http.client.request.duration, is
+// github.com/z5labs/humus/fault.InjectedError.
+//
+// A delay is waited inside AttemptTimeout, so it is in the attempt's span
+// and in http.client.request.duration, and then the attempt goes on as
+// usual. A delay that the attempt's context cuts short ends the attempt
+// with a *fault.InjectedError whose Err is that context's cause, such as
+// AttemptTimeout's, which matches context.DeadlineExceeded and not
+// fit.ErrInjected. Its error.type is github.com/z5labs/humus/fault.InjectedError
+// too. A call that Timeout ends returns net/http's timeout error, which
+// matches context.DeadlineExceeded but holds no *fault.InjectedError, since
+// net/http replaces the error the transport returned.
+//
+// A fault is a real failure: Classify decides an attempt a fault ended as
+// it decides any other. Under the default Classify, an abort and a delay
+// cut short are Retry, Failure, as any other error is. They draw on the
+// retry budget, and the breaker counts them, so a scenario that aborts the
+// dependency opens the breaker for every caller, as a dependency that is
+// down does. An end user's Classify can single out a *fault.InjectedError
+// with errors.As, such as to answer Stop, Ignored, which keeps the breaker
+// closed and makes one attempt per call:
+//
+//	settings.Classify = func(resp *http.Response, err error) httpclient.Classification {
+//		var injected *fault.InjectedError
+//		if errors.As(err, &injected) {
+//			return httpclient.Classification{Retry: retry.Stop, Breaker: circuit.Ignored}
+//		}
+//		return classify(resp, err) // DefaultSettings().Classify
+//	}
+//
+// The client strips the scenario from what it sends, unless
+// Settings.ForwardScenario is set: a dependency the end user hasn't
+// decided about is a trust boundary. The strip happens in the injection
+// layer, after the point is evaluated, since the point reads the scenario
+// about to be stripped. otelhttp has written the attempt's headers by then,
+// so the layer clones the request, deletes the propagator's fields, and
+// injects them again from the stripped context: the dependency still gets
+// the attempt's trace context and every other baggage member. Each strip
+// adds a humus.fit.strip event, with no attributes, to the attempt's span.
+// Set ForwardScenario for a dependency that takes part in failure
+// injection with the same codec, such as another service of the end
+// user's, so that a scenario can reach the points it calls in turn.
 //
 // # Shutdown
 //

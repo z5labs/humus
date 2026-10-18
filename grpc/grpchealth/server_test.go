@@ -141,11 +141,9 @@ func requireErrorRecord(t *testing.T, r sdklog.Record, probe string) {
 	t.Helper()
 	require.Equal(t, errSecret.Error(), r.Body().AsString())
 	require.Equal(t, "ERROR", r.SeverityText())
-	v, ok := attr(r, "humus.health.probe")
-	require.True(t, ok, "the record has no humus.health.probe")
+	v, ok := attr(r, "health.probe")
+	require.True(t, ok, "the record has no health.probe")
 	require.Equal(t, probe, v.AsString())
-	_, ok = attr(r, "health.probe")
-	require.False(t, ok, "the record has an unprefixed health.probe")
 }
 
 // probesWith returns Probes whose monitor for name, "", "readiness" or

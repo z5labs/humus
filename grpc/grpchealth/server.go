@@ -30,8 +30,7 @@ const loggerName = "github.com/z5labs/humus/grpc/grpchealth"
 const pollInterval = time.Second
 
 // The names of the two probes, which are also the service names that
-// answer them, and the values of a logged error's humus.health.probe
-// attribute.
+// answer them, and the values of a logged error's health.probe attribute.
 const (
 	liveness  = "liveness"
 	readiness = "readiness"
@@ -104,14 +103,14 @@ func servingStatus(healthy bool, err error) healthpb.HealthCheckResponse_Serving
 }
 
 // logError emits err as one ERROR record, in ctx, whose attribute
-// humus.health.probe is name.
+// health.probe is name.
 func (srv *server) logError(ctx context.Context, name string, err error) {
 	var rec log.Record
 	rec.SetTimestamp(time.Now())
 	rec.SetSeverity(log.SeverityError)
 	rec.SetSeverityText(log.SeverityError.String())
 	rec.SetBody(attribute.StringValue(err.Error()))
-	rec.AddAttributes(attribute.String("humus.health.probe", name))
+	rec.AddAttributes(attribute.String("health.probe", name))
 	srv.logger.Emit(ctx, rec)
 }
 
