@@ -104,6 +104,8 @@
 //
 // A request is served in this order:
 //
+//   - When the operation has requirements, the request is authenticated
+//     against them; see Security.
 //   - Each path parameter is decoded as its type, then each query and
 //     header parameter the operation reads. A path parameter that is
 //     empty, a missing required parameter, a repeated query parameter,
@@ -124,8 +126,8 @@
 //     type, and isn't set when that is "".
 //   - The WriterTo Encode returned writes the body.
 //
-// A panic of the decoder, the handler or Encode is answered by the
-// catch-all; see Panics.
+// A panic of a verifier, the decoder, the handler or Encode is answered by
+// the catch-all; see Panics.
 //
 // # Streaming
 //
@@ -166,7 +168,8 @@
 // end user named:
 //
 //   - A RequestError is answered by [RequestErrors], with its status, and
-//     the handler isn't called.
+//     the handler isn't called. A request refused by [Security] is one, at
+//     401 or 403.
 //   - The handler's error is answered by the first [Error] whose E matches
 //     it, with errors.As: the operation's own first, then the API's. An
 //     operation's Error for an E replaces the API's.
@@ -184,11 +187,84 @@
 // the path's methods. The package writes nothing of its own for either,
 // and redirects nothing.
 //
+// # Security
+//
+// [Security] is what a request must have to be served: one of its
+// requirements, which the auth package declares. A requirement is made of
+// schemes, such as auth.Bearer, each with a verify function that turns a
+// credential into the end user's own principal, which a handler reads back
+// with the scheme's From:
+//
+//	bearer := auth.Bearer("bearer", tokens.Verify).Format("JWT")
+//
+//	api, err := openapi.NewAPI(s, info, unmatched, requestErrors, catchAll,
+//		[]openapi.Operation{
+//			openapi.Get(cart, c.getCart, cartEncoder),
+//			openapi.Delete(cart, c.deleteCart, openapi.EmptyEncoder,
+//				openapi.Security(auth.RequireScopes(bearer, "carts:write")),
+//			),
+//			openapi.Get(openapi.Root().Lit("status"), c.status, statusEncoder,
+//				openapi.Security(auth.Disabled()),
+//			),
+//			openapi.Document(openapi.Root().Lit("openapi.json"),
+//				openapi.Security(auth.Disabled()),
+//			),
+//		},
+//		openapi.Security(auth.RequireScopes(bearer, "carts:read")),
+//	)
+//
+// Given to NewAPI, Security is every operation's, and the document's.
+// Given to an operation or to [Document], it replaces the API's, whatever
+// the API's was. Security(auth.Disabled()) makes what it is given to
+// public: no credential is read, and From of every scheme returns false.
+// An API without Security authenticates nothing. Security() with no
+// requirement is a mistake, as are auth.Disabled() beside another
+// requirement or inside an auth.All, and every mistake auth.NewHandler
+// reports in a requirement, which NewAPI reports in its one error.
+//
+// An operation with requirements authenticates the request before
+// anything else: before it decodes a parameter, checks the Content-Type
+// or reads the body. So a client that isn't authenticated gets a 401,
+// never a 400 that says which parameter it got wrong, and its body is
+// never read. A request that Unmatched answers matched no operation, and
+// isn't authenticated.
+//
+// A request is answered by what its credentials meet:
+//
+//   - A request no requirement authenticated is a RequestError with Status
+//     401 and Err auth.ErrUnauthenticated, and one that a scheme
+//     authenticated, but without a scope its requirement needs, is a
+//     RequestError with Status 403 and Err auth.ErrForbidden.
+//     RequestErrors answers both, and isn't logged: a refusal is the
+//     client's mistake. Err is the sentinel, never a verifier's error, so
+//     no verifier's reason reaches the client. The API sets
+//     WWW-Authenticate before RequestErrors' encoder runs, as it sets
+//     Allow before MethodNotAllowed: a Bearer or Basic challenge for a
+//     401, and Bearer's insufficient_scope for a 403.
+//   - A verifier's error that doesn't wrap auth.ErrUnauthenticated, such
+//     as a directory that is down, is the server's, never a 401. It is
+//     answered as a handler's error is: by the first [Error] that matches
+//     it, such as an Error at 503, which clients retry, else by the
+//     catch-all, which records it as "request failed".
+//   - A verifier's panic is answered by the catch-all, and recorded as
+//     "operation panicked"; see Panics.
+//
+// An Error or a catch-all at 401 on an operation that can answer 401, and
+// at 403 on one whose requirements name a scope, is a NewAPI error, as one
+// at RequestErrors' other statuses is.
+//
+// The document is secured like the API: a request for it must meet the
+// API's Security, unless Document is given its own. A team that keeps an
+// internal API's document open for its tooling says so in one line,
+// Document(p, openapi.Security(auth.Disabled())), where a review sees it.
+// Document takes Security and no other option.
+//
 // # Panics
 //
 // A panic of the end user's code, on the goroutine serving an operation's
 // request, is answered as the document says, so the API keeps its contract even when
-// that code has a bug. The API recovers a panic of the decoder's Decode,
+// that code has a bug. The API recovers a panic of a scheme's verify
+// function, of the decoder's Decode,
 // of the handler, of the encoder's Encode, and of the Len of the WriterTo
 // it returns, which all run before the status is written. The operation's catch-all answers it, with its status
 // and wrap of an error that doesn't carry the panic's value, so the value
@@ -239,8 +315,20 @@
 //   - its responses: the success status, under the encoder's media type
 //     with its Schema, or with no content when that is ""; each Error, the
 //     operation's own and the API's, with its encoder's; RequestErrors' E at
-//     400 when the operation reads a parameter or a body, and at 413 and 415
-//     when it reads a body; and the catch-all at its status.
+//     400 when the operation reads a parameter or a body, at 413 and 415
+//     when it reads a body, at 401 when it has requirements, and at 403
+//     when one of them names a scope; and the catch-all at its status;
+//   - its own Security, when it was given one, under its security: [] for
+//     Security(auth.Disabled()).
+//
+// The Security given to NewAPI is the document's top-level security, and
+// components.securitySchemes holds every scheme of every requirement,
+// keyed by its name: Bearer and Basic as http schemes, with Bearer's
+// Format as its bearerFormat, an API key as an apiKey in its header,
+// query parameter or cookie, MutualTLS as mutualTLS, OAuth2 as oauth2 with
+// its flows, and OpenIDConnect as openIdConnect with its discovery URL,
+// each with its Description. A requirement is an object from each of its
+// schemes' names to its scopes, and auth.Anonymous() is {}.
 //
 // Schemas are inline, since one Go type can have a different schema under
 // each codec. A codec whose bodies are a Go type's fields writes its Schema

@@ -63,7 +63,8 @@ func receiverName(recv ast.Expr) string {
 
 // TestPackage_exports_only_its_API checks the package's exported names,
 // and the exported methods of its exported types, against the API the
-// OpenAPI proposal, #760, gives it.
+// OpenAPI proposal, #760, gives it, with the authentication proposal's
+// Security, #870.
 func TestPackage_exports_only_its_API(t *testing.T) {
 	t.Parallel()
 
@@ -108,7 +109,7 @@ func TestPackage_exports_only_its_API(t *testing.T) {
 		"HeaderParameter", "Info", "NewAPI", "Operation", "OperationID", "Option", "Param", "ParamFrom",
 		"ParamValue", "Patch", "Path", "PathParam", "PathParameter", "Post", "Put", "Query", "QueryParam",
 		"QueryParameter", "Request", "RequestError", "RequestErrorAnswer", "RequestErrors", "Root", "Schema",
-		"SchemaOf", "Status", "Summary", "Tags", "Unmatched",
+		"SchemaOf", "Security", "Status", "Summary", "Tags", "Unmatched",
 	}, exported)
 	slices.Sort(methods)
 	constraints := []string{"Description", "Enum", "Example", "MaxLength", "Maximum", "MinLength", "Minimum", "Pattern"}

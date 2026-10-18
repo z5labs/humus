@@ -48,6 +48,7 @@ type parts struct {
 	catchAll      answerer
 	requestErrors answerer
 	params        []operationParam
+	security      *securityOption // nil when no Security was given
 
 	// The operation's metadata in the document.
 	summary     string
@@ -214,6 +215,8 @@ func (o catchAllOption[E]) bind() (*answer, error) {
 type RequestError struct {
 	// Status is:
 	//   - 400 for a parameter or a body that doesn't decode;
+	//   - 401 for a request no Security requirement authenticated;
+	//   - 403 for one authenticated without a scope its requirement needs;
 	//   - 413 for a body over http.MaxBytesHandler's limit;
 	//   - 415 for a Content-Type the operation's decoder doesn't read, or
 	//     none.
@@ -223,7 +226,10 @@ type RequestError struct {
 	// and is "" otherwise.
 	Param string
 
-	// Err is why: the parameter's error or the decoder's.
+	// Err is why: the parameter's error or the decoder's. It is
+	// auth.ErrUnauthenticated for a 401, and auth.ErrForbidden for a 403,
+	// never a verifier's own error, so a verifier's reason never reaches
+	// the client.
 	Err error
 }
 
@@ -242,8 +248,9 @@ func (e *RequestError) Unwrap() error {
 
 // RequestErrors answers every RequestError with its Status and with wrap's
 // value, written by enc. Every operation can answer with it: at 400 when
-// the operation reads a parameter or a body, and at 413 and 415 when it
-// reads a body. NewAPI requires one. Given to an operation, it replaces the
+// the operation reads a parameter or a body, at 413 and 415 when it reads
+// a body, at 401 when it has Security requirements, and at 403 when one
+// of them names a scope. NewAPI requires one. Given to an operation, it replaces the
 // API's for that operation.
 //
 // Its answers aren't logged: a request the API rejects is the client's

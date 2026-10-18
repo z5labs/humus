@@ -114,6 +114,26 @@ type List struct {
 // requirements name them first.
 func (l *List) Schemes() []*Scheme { return l.schemes }
 
+// Disabled reports whether l is Disabled.
+func (l *List) Disabled() bool { return l.disabled }
+
+// Requirements returns l's requirements, in order, each as its schemes
+// with their scopes: Anonymous's has none. A Disabled list has none.
+func (l *List) Requirements() [][]Item { return l.reqs }
+
+// Scoped reports whether a requirement of l names a scope, so that a
+// request can be forbidden.
+func (l *List) Scoped() bool {
+	for _, items := range l.reqs {
+		for _, it := range items {
+			if len(it.Scopes) > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Compile checks reqs, and returns them as a List, or every mistake it
 // finds in them:
 //   - no requirement;
@@ -217,7 +237,7 @@ func (c *compiler) item(at string, it Item, l *List) {
 	if first, ok := c.byName[s.Name]; !ok {
 		c.byName[s.Name] = s
 		l.schemes = append(l.schemes, s)
-	} else if !first.same(s) && !c.reported[s.Name] {
+	} else if !first.Same(s) && !c.reported[s.Name] {
 		c.reported[s.Name] = true
 		c.fail("%s: two different schemes are named %q", at, s.Name)
 	}
