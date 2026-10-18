@@ -157,3 +157,17 @@ func TestOriginTransport_refuses_another_origin(t *testing.T) {
 	require.True(t, body.closed, "the refused request's body is closed")
 	require.False(t, dialled)
 }
+
+func TestSpanName(t *testing.T) {
+	t.Parallel()
+
+	for method, want := range map[string]string{
+		"":                 "GET",
+		http.MethodGet:     "GET",
+		http.MethodPost:    "POST",
+		http.MethodPatch:   "PATCH",
+		http.MethodConnect: "CONNECT",
+	} {
+		require.Equal(t, want, spanName("", &http.Request{Method: method}), "method %q", method)
+	}
+}

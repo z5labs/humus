@@ -179,7 +179,12 @@ func TestClient_traces_each_attempt(t *testing.T) {
 			require.EqualValues(t, http.StatusFound, attrs(first)["http.response.status_code"].AsInt64())
 			require.NotContains(t, attrs(first), attribute.Key("http.request.resend_count"))
 			require.EqualValues(t, 1, attrs(second)["http.request.resend_count"].AsInt64())
-			require.Equal(t, first.Parent().SpanID(), second.Parent().SpanID(), "both attempts are children of the job's span")
+			job := jobSpan(t, tel).SpanContext()
+			for _, s := range []sdktrace.ReadOnlySpan{first, second} {
+				require.Equal(t, trace.SpanKindClient, s.SpanKind())
+				require.Equal(t, job.TraceID(), s.SpanContext().TraceID())
+				require.Equal(t, job.SpanID(), s.Parent().SpanID(), "each attempt is a child of the job's span")
+			}
 		})
 	})
 

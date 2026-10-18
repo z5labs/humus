@@ -147,7 +147,9 @@
 // shows up in the caller's trace. The span is named after the method, such
 // as GET: the HTTP semantic conventions name a client span after its method
 // and URL template, and a client has no template, only whatever URL service
-// code built, which would make a span name per resource. The span carries
+// code built, which would make a span name per resource. A request with an
+// empty method is a GET, as net/http sends it, and its span is named GET.
+// The span carries
 // otelhttp's attributes, among them url.full, with any user info removed,
 // server.address, server.port, http.response.status_code and
 // network.protocol.version, which is the version the attempt was answered

@@ -14,8 +14,14 @@ import (
 
 // spanName names an attempt's span after its method, such as GET, as the
 // HTTP semantic conventions name a client span that has no URL template.
-// A client has none: it sends whatever URL service code built.
+// A client has none: it sends whatever URL service code built. An empty
+// method is GET, as net/http sends it. Any other method names its span as
+// it is: service code chooses it, not whoever the service serves, so it
+// can't grow the span names without bound.
 func spanName(_ string, r *http.Request) string {
+	if r.Method == "" {
+		return http.MethodGet
+	}
 	return r.Method
 }
 
