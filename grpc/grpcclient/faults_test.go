@@ -287,22 +287,23 @@ func runFront(t *testing.T, run frontRun) frontResult {
 
 	edge := testpb.NewTestServiceClient(grpcservertest.NewClient(t, h, "front:8443", ca.Pool()))
 	var edgeErrs []error
-	for _, sc := range run.scenarios {
+	call := func(sc *fit.Scenario) error {
 		ctx := edgeContext(t, codec, sc)
 		if run.cancelAfter > 0 {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithCancel(ctx)
+			defer cancel()
 			stop := time.AfterFunc(run.cancelAfter, cancel)
 			defer stop.Stop()
-			defer cancel()
 		}
-		var err error
 		if run.stream {
-			err = drainStream(edge.StreamingOutputCall(ctx, &testpb.StreamingOutputCallRequest{}))
-		} else {
-			_, err = edge.EmptyCall(ctx, &testpb.Empty{})
+			return drainStream(edge.StreamingOutputCall(ctx, &testpb.StreamingOutputCallRequest{}))
 		}
-		edgeErrs = append(edgeErrs, err)
+		_, err := edge.EmptyCall(ctx, &testpb.Empty{})
+		return err
+	}
+	for _, sc := range run.scenarios {
+		edgeErrs = append(edgeErrs, call(sc))
 	}
 
 	<-fp.Notified(syscall.SIGTERM)
