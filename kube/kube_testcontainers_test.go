@@ -210,28 +210,117 @@ func TestResource_CRD_is_accepted_by_the_API_server(t *testing.T) {
 	require.Equal(t, "cache", got.Name)
 
 	// The schema is the API server's: a Memcached without its required
-	// image is refused.
-	_, err = memcacheds.Create(ctx, &unstructured.Unstructured{Object: map[string]any{
+	// size is refused.
+	_, err = memcacheds.Create(ctx, memcached("no-size", map[string]any{"image": "memcached:1.6"}), metav1.CreateOptions{FieldValidation: "Strict"})
+	require.ErrorContains(t, err, "spec.size: Required value")
+}
+
+// memcached returns a Memcached named name, in the default namespace, with
+// spec as it is given.
+func memcached(name string, spec map[string]any) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "cache.example.com/v1alpha1",
 		"kind":       "Memcached",
-		"metadata":   map[string]any{"name": "no-image", "namespace": "default"},
-		"spec":       map[string]any{"size": int64(1)},
-	}}, metav1.CreateOptions{})
-	require.ErrorContains(t, err, "spec.image: Required value")
+		"metadata":   map[string]any{"name": name, "namespace": "default"},
+		"spec":       spec,
+	}}
+}
+
+func TestResource_CRD_rules_are_enforced_by_the_API_server(t *testing.T) {
+	ctx := t.Context()
+	client := k3sClient(t)
+
+	crd, err := Memcached.CRD()
+	require.NoError(t, err)
+	// A name of its own, so the CRD the test above deletes isn't in the
+	// way while it terminates.
+	crd.Name = "memcacheds.rules.example.com"
+	crd.Spec.Group = "rules.example.com"
+	createCRD(t, client, crd)
+
+	dyn, err := dynamic.NewForConfig(client.Config())
+	require.NoError(t, err)
+	gvr := Memcached.GVR()
+	gvr.Group = "rules.example.com"
+	memcacheds := dyn.Resource(gvr).Namespace("default")
+	create := func(name string, spec map[string]any) (*unstructured.Unstructured, error) {
+		obj := memcached(name, spec)
+		obj.SetAPIVersion("rules.example.com/v1alpha1")
+		return memcacheds.Create(ctx, obj, metav1.CreateOptions{FieldValidation: "Strict"})
+	}
+
+	_, err = create("too-small", map[string]any{"size": int64(0), "image": "memcached:1.6"})
+	require.ErrorContains(t, err, "spec.size in body should be greater than or equal to 1")
+
+	_, err = create("too-large", map[string]any{"size": int64(4), "image": "memcached:1.6"})
+	require.ErrorContains(t, err, "spec.size in body should be less than or equal to 3")
+
+	_, err = create("redis", map[string]any{"size": int64(1), "image": "redis:7"})
+	require.ErrorContains(t, err, "spec.image in body should match '^memcached:'")
+
+	created, err := create("defaulted", map[string]any{"size": int64(1)})
+	require.NoError(t, err)
+	var got kube.Object[MemcachedSpec, MemcachedStatus]
+	require.NoError(t, runtime.DefaultUnstructuredConverter.FromUnstructured(created.Object, &got))
+	require.Equal(t, MemcachedSpec{Size: 1, Image: "memcached:1.6.26-alpine3.19"}, got.Spec)
+}
+
+func TestResource_CRD_validation_rules_are_enforced_by_the_API_server(t *testing.T) {
+	ctx := t.Context()
+	client := k3sClient(t)
+
+	crd, err := Widget.CRD()
+	require.NoError(t, err)
+	crd.Name = "widgets.rules.humus.dev"
+	crd.Spec.Group = "rules.humus.dev"
+	createCRD(t, client, crd)
+
+	dyn, err := dynamic.NewForConfig(client.Config())
+	require.NoError(t, err)
+	gvr := Widget.GVR()
+	gvr.Group = "rules.humus.dev"
+	widgets := dyn.Resource(gvr).Namespace("default")
+	create := func(name string, change func(spec map[string]any)) error {
+		spec := map[string]any{
+			"name":     name,
+			"ports":    []any{map[string]any{"name": "http", "port": int64(80)}},
+			"template": map[string]any{"image": "memcached:1.6"},
+			"timeout":  "1m",
+			"memory":   "64Mi",
+			"extra":    nil,
+		}
+		change(spec)
+		_, err := widgets.Create(ctx, &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "rules.humus.dev/v1beta1",
+			"kind":       "Widget",
+			"metadata":   map[string]any{"name": name, "namespace": "default"},
+			"spec":       spec,
+		}}, metav1.CreateOptions{FieldValidation: "Strict"})
+		return err
+	}
+
+	require.NoError(t, create("ok", func(map[string]any) {}))
+
+	// The Widget's own CEL rule, from TypeRules.Validation.
+	err = create("negative", func(spec map[string]any) { spec["replicas"] = int64(-1) })
+	require.ErrorContains(t, err, "replicas must not be negative")
+
+	// The template field's CEL rule, from FieldOf.Validation.
+	err = create("no-image", func(spec map[string]any) { spec["template"] = map[string]any{"image": ""} })
+	require.ErrorContains(t, err, "a template names its image")
+
+	// The version's schema, from Schema.
+	err = create("bad-version", func(spec map[string]any) { spec["version"] = "one" })
+	require.ErrorContains(t, err, "spec.version in body should match")
 }
 
 func TestResource_CRD_of_every_mapped_type_is_accepted_by_the_API_server(t *testing.T) {
 	client := k3sClient(t)
 
-	// The golden test's Widget holds a field of each type CRD maps, so the
-	// API server checks each mapping is a structural schema it accepts.
-	crd, err := kube.Resource[GoldenSpec, GoldenStatus]{
-		Group:   "test.humus.dev",
-		Version: "v1beta1",
-		Kind:    "Widget",
-		Plural:  "widgets",
-		Scope:   kube.Namespaced,
-	}.CRD()
+	// The golden test's Widget holds a field of each type CRD maps, and a
+	// constraint of each kind, so the API server checks each mapping is a
+	// structural schema it accepts, and compiles each CEL rule.
+	crd, err := Widget.CRD()
 	require.NoError(t, err)
 	createCRD(t, client, crd)
 }

@@ -41,6 +41,10 @@ type Resource[Spec, Status any] struct {
 	Kind    string // such as Memcached
 	Plural  string // such as memcacheds
 	Scope   Scope
+
+	// Rules constrain the fields of Spec, of Status, and of the types they
+	// hold. See [Rules].
+	Rules []TypeRules
 }
 
 // GVR is the resource's group, version and plural name.
@@ -50,7 +54,8 @@ func (r Resource[Spec, Status]) GVR() schema.GroupVersionResource {
 
 // CRD returns the resource's CustomResourceDefinition: one version, served
 // and stored, with the status subresource, and a schema reflected from Spec
-// and Status. It returns one error that names every mistake it finds.
+// and Status and constrained by Rules. It returns one error that names
+// every mistake it finds.
 //
 // The CRD is named <Plural>.<Group>. Its singular name is Kind in lower
 // case, and its list kind is Kind followed by List. It carries its own
@@ -61,12 +66,18 @@ func (r Resource[Spec, Status]) GVR() schema.GroupVersionResource {
 // The mistakes it reports are:
 //   - a missing Group, Version, Kind or Plural, or a Scope that is neither
 //     Namespaced nor Cluster;
-//   - a type that implements json.Marshaler or encoding.TextMarshaler, since
-//     its fields aren't its encoding;
+//   - a type that implements json.Marshaler or encoding.TextMarshaler and
+//     has no [Schema], since its fields aren't its encoding;
 //   - a map whose keys aren't strings, an interface, a channel, a function,
 //     a complex number or an unsafe pointer, none of which has a schema;
 //   - a type that contains itself, which a schema without $ref can't
-//     express.
+//     express;
+//   - a constraint that doesn't fit its field's type, such as Pattern on a
+//     number;
+//   - a [Field] that names no field of the value given to [Rules], or names
+//     a nested struct's field, which only that struct's own Rules
+//     constrain;
+//   - two Rules, or two Schemas, for one type.
 //
 // CRD doesn't compile CEL. The API server compiles every rule when the CRD
 // is applied.
@@ -85,7 +96,9 @@ func (r Resource[Spec, Status]) CRD() (*apiextensionsv1.CustomResourceDefinition
 		errs = append(errs, fmt.Errorf("%s is %q, not %q or %q", "Resource.Scope", r.Scope, Namespaced, Cluster))
 	}
 
-	ref := newReflector()
+	rules, ruleErrs := compileRules(r.Rules)
+	errs = append(errs, ruleErrs...)
+	ref := newReflector(rules)
 	root := ref.root(reflect.TypeFor[Spec](), reflect.TypeFor[Status]())
 	errs = append(errs, ref.errs...)
 	if len(errs) > 0 {

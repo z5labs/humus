@@ -150,6 +150,8 @@
 //		Scope:   kube.Namespaced,
 //	}
 //
+// Its Rules, under Rules below, constrain the fields.
+//
 // One of its objects is an [Object], and [Resource.GVR] names the resource
 // to client-go's dynamic client.
 //
@@ -177,10 +179,10 @@
 // json tag, or by the field's name when the tag gives none. An embedded
 // struct with no name in its tag is inlined, as encoding/json does, and a
 // field with the string option is a string. A field is required unless its
-// json tag has omitempty or omitzero: the encoding decides it, since a
-// field the encoder always writes is always there. A field promoted from an
-// embedded pointer isn't required either, since a nil pointer leaves it
-// out.
+// json tag has omitempty or omitzero, or it has a Default: the encoding
+// decides it, since a field the encoder always writes is always there. A
+// field promoted from an embedded pointer isn't required either, since a
+// nil pointer leaves it out.
 //
 // The CRD's root has apiVersion, kind and metadata, a required spec, and
 // status. It has one version, served and stored, with the status
@@ -189,10 +191,88 @@
 // CRD returns one error that names every mistake it finds, each where in
 // the object it is: a missing Group, Version, Kind or Plural, a Scope that
 // is neither Namespaced nor Cluster, a type that encodes itself with a
-// MarshalJSON or MarshalText method, a map whose keys aren't strings, an
-// interface, a channel, a function, and a type that contains itself, which
-// a schema without $ref can't express. It doesn't compile CEL: the API
-// server compiles every rule when the CRD is applied.
+// MarshalJSON or MarshalText method and has no Schema, a map whose keys
+// aren't strings, an interface, a channel, a function, a type that
+// contains itself, which a schema without $ref can't express, and every
+// mistake in the resource's rules, below.
+//
+// # Rules
+//
+// [Resource.Rules] constrain the fields of Spec, of Status and of the types
+// they hold, with typed values attached to each field by pointer:
+//
+//	var (
+//		spec   MemcachedSpec
+//		status MemcachedStatus
+//
+//		Memcached = kube.Resource[MemcachedSpec, MemcachedStatus]{
+//			Group:   "cache.example.com",
+//			Version: "v1alpha1",
+//			Kind:    "Memcached",
+//			Plural:  "memcacheds",
+//			Scope:   kube.Namespaced,
+//			Rules: []kube.TypeRules{
+//				kube.Rules(&spec,
+//					kube.Field(&spec.Size).Minimum(1).Maximum(3).Description("How many memcached pods run."),
+//					kube.Field(&spec.Image).Pattern(regexp.MustCompile(`^memcached:`)).Default("memcached:1.6.26-alpine3.19"),
+//				),
+//				kube.Rules(&status,
+//					kube.Field(&status.Conditions).ListMap("type"),
+//				),
+//			},
+//		}
+//	)
+//
+// [Rules] constrains the fields of one type, each named by a [Field] of a
+// pointer into a value of the type. Each constraint is a method of
+// [FieldOf], whose value has the field's type, so a misspelled constraint,
+// or a value of the wrong type, doesn't compile:
+//
+//	kube.Field(&spec.Size).Minimun(1)       // kube.FieldOf[int32] has no field or method Minimun
+//	kube.Field(&spec.Size).Minimum("one")   // cannot use "one" (untyped string constant) as int32 value
+//	kube.Field(&spec.Image).Default(3)      // cannot use 3 (untyped int constant) as string value
+//
+// Each constraint becomes its counterpart on the field's schema:
+//
+//	FieldOf method             schema
+//	Description                description
+//	Default                    default, and the field is optional
+//	Enum                       enum
+//	Minimum, Maximum           minimum, maximum, of a number
+//	MinLength, MaxLength       minLength, maxLength, of a string
+//	Pattern                    pattern, of a string
+//	MinItems, MaxItems         minItems, maxItems, of a list
+//	ListSet                    x-kubernetes-list-type: set
+//	ListMap                    x-kubernetes-list-type: map, and x-kubernetes-list-map-keys
+//	Validation                 a CEL rule and its message, in x-kubernetes-validations
+//
+// [TypeRules.Description] and [TypeRules.Validation] describe and constrain
+// the type's own schema, and [Schema] gives a type's schema whole: it is
+// how a type that encodes itself, with a MarshalJSON or MarshalText method,
+// gets a schema at all.
+//
+// Rules belong to a type, not to a place in an object. Rules of a type
+// constrain its fields, those promoted from embedded structs included,
+// wherever the type appears in Spec or Status, so a type such as a port or
+// a template is constrained once, and constrained alike everywhere. A field
+// of a nested struct, such as &spec.Template.Port, is constrained by that
+// struct's own Rules, and a rule on it in the outer type's Rules is a
+// mistake.
+//
+// A description is a value, not the field's doc comment: the schema is
+// reflected from the types at run time, when doc comments are gone, so
+// kubectl explain shows only what Description gives.
+//
+// Rules needs a value of the type for its Fields to point into, usually a
+// package-level variable, as spec and status are above. Rules reads
+// nothing from the value: it only finds which field each pointer names.
+//
+// CRD reports every mistake in the rules with the rest: a constraint that
+// doesn't fit its field's type, such as Pattern on a number; a Field that
+// names no field of the value given to Rules, or a nested struct's field;
+// and two Rules, or two Schemas, for one type. It doesn't compile CEL: the
+// API server compiles every rule when the CRD is applied, which the end
+// user's tests against a cluster do.
 //
 // The end user checks the CRD's YAML into their repository, and a golden
 // test keeps it true to the types. sigs.k8s.io/yaml writes it, and the
