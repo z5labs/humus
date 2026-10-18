@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/dynamicinformer"
+	"k8s.io/client-go/metadata/metadatainformer"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
@@ -46,15 +47,18 @@ const objectNameKey = attribute.Key("humus.kube.object.name")
 // Serve runs the controller until ctx is done, Shutdown is called, or the
 // replica loses the Lease. It:
 //
-//  1. checks the resource is served, by listing it once with a limit of 1.
-//     An error, such as a CRD that isn't installed, ends Serve with an
-//     error that names the resource;
-//  2. starts an informer on the resource, through the dynamic client,
-//     limited to Settings.Namespace;
-//  3. waits for the informer's cache to sync, then marks Synced healthy;
+//  1. checks the resource, and each resource an Owns names, is served, by
+//     listing it once with a limit of 1. An error, such as a CRD that isn't
+//     installed, ends Serve with an error that names the resource;
+//  2. starts an informer on the resource, through the dynamic client, and
+//     one for each Owns, through the metadata client, all limited to
+//     Settings.Namespace. A change to an owned resource queues the object
+//     its controller owner reference names, when that reference names the
+//     Resource's group and kind;
+//  3. waits for the informers' caches to sync, then marks Synced healthy;
 //  4. campaigns for the Lease named Settings.Name, in
 //     LeaderElection.Namespace, as LeaderElection.Identity. Every replica
-//     runs steps 1 to 3, so its cache is warm when it takes the Lease;
+//     runs steps 1 to 3, so its caches are warm when it takes the Lease;
 //  5. once it holds the Lease, reconciles with Settings.Workers workers.
 //     The work queue never hands one object's key to two workers at once.
 //
@@ -62,7 +66,7 @@ const objectNameKey = attribute.Key("humus.kube.object.name")
 // each finishes the reconcile it has in flight, and a key one takes after
 // that is marked done without being reconciled. The work queue is shut
 // down, never drained, so its backlog is left for the next leader. Then
-// Serve releases the Lease, stops its informer, and returns nil.
+// Serve releases the Lease, stops its informers, and returns nil.
 //
 // When the replica loses the Lease, the workers stop taking keys, the
 // reconciles in flight are cancelled, and Serve returns ErrLostLeadership
@@ -104,9 +108,18 @@ func (c *Controller) Serve(ctx context.Context) error {
 		}
 		return fmt.Errorf("kube: listing %s: %w", c.gvr, err)
 	}
+	for _, gvr := range c.owned {
+		_, err := c.ownedResource(gvr).List(running, metav1.ListOptions{Limit: 1})
+		if err != nil {
+			if running.Err() != nil {
+				return nil
+			}
+			return fmt.Errorf("kube: listing %s, which the Controller owns: %w", gvr, err)
+		}
+	}
 
-	// 2. The informer, and the queue its events fill. Every replica queues
-	// keys, so a new leader starts with them.
+	// 2. The informers, and the queue their events fill. Every replica
+	// queues keys, so a new leader starts with them.
 	queue := c.newQueue(logger)
 	defer queue.ShutDown()
 	informer := dynamicinformer.NewFilteredDynamicInformer(c.dyn, c.gvr, c.settings.Namespace, c.settings.Resync, cache.Indexers{}, nil).Informer()
@@ -124,16 +137,39 @@ func (c *Controller) Serve(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("kube: watching %s: %w", c.gvr, err)
 	}
+	informers := []cache.SharedIndexInformer{informer}
+	enqueueOwner := func(obj any) {
+		if key, ok := c.ownerKey(obj); ok {
+			queue.Add(key)
+		}
+	}
+	for _, gvr := range c.owned {
+		// No resync: the owner's own informer resyncs it.
+		owned := metadatainformer.NewFilteredMetadataInformer(c.meta, gvr, c.settings.Namespace, 0, cache.Indexers{}, nil).Informer()
+		_, err = owned.AddEventHandler(cache.ResourceEventHandlerFuncs{
+			AddFunc:    enqueueOwner,
+			UpdateFunc: func(_, obj any) { enqueueOwner(obj) },
+			DeleteFunc: enqueueOwner,
+		})
+		if err != nil {
+			return fmt.Errorf("kube: watching %s: %w", gvr, err)
+		}
+		informers = append(informers, owned)
+	}
 	informing, stopInforming := context.WithCancel(context.WithoutCancel(ctx))
 	var informed sync.WaitGroup
-	informed.Go(func() { informer.RunWithContext(informing) })
+	synced := make([]cache.InformerSynced, 0, len(informers))
+	for _, inf := range informers {
+		informed.Go(func() { inf.RunWithContext(informing) })
+		synced = append(synced, inf.HasSynced)
+	}
 	defer func() {
 		stopInforming()
 		informed.Wait()
 	}()
 
-	// 3. The cache syncs.
-	if !cache.WaitForCacheSync(running.Done(), informer.HasSynced) {
+	// 3. The caches sync.
+	if !cache.WaitForCacheSync(running.Done(), synced...) {
 		return nil
 	}
 	cl.synced.Store(true)
@@ -398,8 +434,8 @@ func (c *Controller) emit(ctx context.Context, sev log.Severity, body string, at
 	c.logger.Emit(ctx, r)
 }
 
-// Synced returns a monitor that is healthy once the controller's cache has
-// synced: unhealthy until then, and healthy from then until Serve returns,
+// Synced returns a monitor that is healthy once the controller's caches have
+// synced, its resource's and each owned resource's: unhealthy until then, and healthy from then until Serve returns,
 // on every replica, leader or not, so a rollout isn't held up by the
 // replicas waiting for the Lease. It never returns an error. A controller is
 // made ready with
@@ -421,7 +457,7 @@ type syncedMonitor struct {
 	c *Controller
 }
 
-// Healthy reports whether the Serve of the Controller has synced its cache
+// Healthy reports whether the Serve of the Controller has synced its caches
 // and not yet returned. It never returns an error.
 func (m syncedMonitor) Healthy(context.Context) (bool, error) {
 	cl := m.c.serving.Load()
@@ -438,7 +474,7 @@ func (m syncedMonitor) Healthy(context.Context) (bool, error) {
 
 // Shutdown stops Serve and waits for it to return. Serve stops taking keys,
 // lets each reconcile in flight finish, releases the Lease, and stops its
-// informer.
+// informers.
 //
 // If ctx is done first, or is done already, Shutdown cancels the context
 // the reconciles in flight run with, waits for Serve to return, and returns

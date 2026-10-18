@@ -25,7 +25,9 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	apiwait "k8s.io/apimachinery/pkg/util/wait"
+	appsv1 "k8s.io/api/apps/v1"
 	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
@@ -88,8 +90,8 @@ func controllerSettings() kube.Settings {
 }
 
 // startController starts an App on humus.OSHost() whose only Service is a
-// Controller of r, reconciled by a deployer, in the shared k3s.
-func startController(t *testing.T, r kube.Resource[MemcachedSpec, MemcachedStatus]) (*bedrocktest.Process, <-chan bedrock.ExitStatus) {
+// Controller of r, with parts, reconciled by a deployer, in the shared k3s.
+func startController(t *testing.T, r kube.Resource[MemcachedSpec, MemcachedStatus], parts ...kube.Part) (*bedrocktest.Process, <-chan bedrock.ExitStatus) {
 	t.Helper()
 	k3sClient(t) // k3s is started
 	return humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
@@ -101,7 +103,7 @@ func startController(t *testing.T, r kube.Resource[MemcachedSpec, MemcachedStatu
 		if err != nil {
 			return nil, err
 		}
-		ctrl, err := kube.NewController(s, client, controllerSettings(), r, deployer{kube: kc})
+		ctrl, err := kube.NewController(s, client, controllerSettings(), r, deployer{kube: kc}, parts...)
 		if err != nil {
 			return nil, err
 		}
@@ -200,4 +202,54 @@ func TestController_App_exits_1_when_the_CRD_isnt_installed(t *testing.T) {
 	st := appExit(t, status)
 	require.Equal(t, 1, st.Code())
 	require.ErrorContains(t, st.Cause(), "kube: listing absent.example.com/v1alpha1, Resource=memcacheds: ")
+}
+
+func TestController_undoes_a_hand_made_scale_of_a_Deployment_it_owns(t *testing.T) {
+	ctx := t.Context()
+	client := k3sClient(t)
+
+	r := Memcached
+	r.Group = "owns.example.com"
+	crd, err := r.CRD()
+	require.NoError(t, err)
+	createCRD(t, client, crd)
+
+	dyn, err := dynamic.NewForConfig(client.Config())
+	require.NoError(t, err)
+	kc, err := kubernetes.NewForConfig(client.Config())
+	require.NoError(t, err)
+	obj := memcached("cache", map[string]any{"size": int64(2), "image": "memcached:1.6"})
+	obj.SetAPIVersion("owns.example.com/v1alpha1")
+	_, err = dyn.Resource(r.GVR()).Namespace("default").Create(ctx, obj, metav1.CreateOptions{FieldValidation: "Strict"})
+	require.NoError(t, err)
+
+	p, status := startController(t, r, kube.Owns(appsv1.SchemeGroupVersion.WithResource("deployments")))
+
+	deployments := kc.AppsV1().Deployments("default")
+	replicas := func(want int32) func(context.Context) (bool, error) {
+		return func(ctx context.Context) (bool, error) {
+			d, err := deployments.Get(ctx, "cache", metav1.GetOptions{})
+			if err != nil {
+				return false, nil
+			}
+			return d.Spec.Replicas != nil && *d.Spec.Replicas == want, nil
+		}
+	}
+	err = apiwait.PollUntilContextTimeout(ctx, 250*time.Millisecond, appWaitLimit, true, replicas(2))
+	require.NoError(t, err, "the Deployment was never applied")
+
+	// A scale by hand, as kubectl scale makes it. Nothing about the
+	// Memcached changes, and its resync is 10h away, so only Owns brings
+	// the controller back to the Deployment.
+	scaled, err := deployments.Patch(ctx, "cache", types.MergePatchType, []byte(`{"spec":{"replicas":5}}`),
+		metav1.PatchOptions{FieldManager: "kubectl-scale"})
+	require.NoError(t, err)
+	require.Equal(t, int32(5), *scaled.Spec.Replicas)
+
+	err = apiwait.PollUntilContextTimeout(ctx, 250*time.Millisecond, 30*time.Second, true, replicas(2))
+	require.NoError(t, err, "the hand-made scale was never undone")
+
+	p.Signal(syscall.SIGTERM)
+	st := appExit(t, status)
+	require.Zero(t, st.Code(), "cause: %v", st.Cause())
 }

@@ -31,6 +31,7 @@ import (
 	utiljson "k8s.io/apimachinery/pkg/util/json"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
+	metadatafake "k8s.io/client-go/metadata/fake"
 	clienttesting "k8s.io/client-go/testing"
 	kptr "k8s.io/utils/ptr"
 
@@ -94,11 +95,13 @@ type apply struct {
 }
 
 // fakeCluster is client-go's fakes, standing in for an API server: a
-// dynamic client of Memcacheds, and a clientset for the Lease. The dynamic
+// dynamic client of Memcacheds, a metadata client of the resources a
+// controller owns, and a clientset for the Lease. The dynamic
 // fake can't apply an unstructured object, so a reactor of the test's own
 // applies a status: it sets the object's status to the patch's.
 type fakeCluster struct {
 	dyn  *dynamicfake.FakeDynamicClient
+	meta *metadatafake.FakeMetadataClient
 	kube *k8sfake.Clientset
 
 	mu      sync.Mutex
@@ -110,6 +113,7 @@ func newFakeCluster(t *testing.T, objs ...runtime.Object) *fakeCluster {
 	fc := &fakeCluster{
 		dyn: dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
 			map[schema.GroupVersionResource]string{Memcached.GVR(): "MemcachedList"}, objs...),
+		meta: metadatafake.NewSimpleMetadataClient(metadatafake.NewTestScheme()),
 		kube: k8sfake.NewClientset(),
 	}
 	fc.dyn.PrependReactor("patch", Memcached.Plural, func(a clienttesting.Action) (bool, runtime.Object, error) {
@@ -177,12 +181,12 @@ func (fc *fakeCluster) holder(t *testing.T) string {
 }
 
 // newController returns a Controller of Memcached on fc, reconciled by rec,
-// built with s and settings.
-func newController(t *testing.T, s *humus.Setup, fc *fakeCluster, settings kube.Settings, rec kube.Reconciler[MemcachedSpec, MemcachedStatus]) *kube.Controller {
+// built with s, settings and parts.
+func newController(t *testing.T, s *humus.Setup, fc *fakeCluster, settings kube.Settings, rec kube.Reconciler[MemcachedSpec, MemcachedStatus], parts ...kube.Part) *kube.Controller {
 	t.Helper()
-	ctrl, err := kube.NewController(s, testClient(t, s), settings, Memcached, rec)
+	ctrl, err := kube.NewController(s, testClient(t, s), settings, Memcached, rec, parts...)
 	require.NoError(t, err)
-	kube.SetClients(ctrl, fc.dyn, fc.kube.CoordinationV1())
+	kube.SetClients(ctrl, fc.dyn, fc.meta, fc.kube.CoordinationV1())
 	return ctrl
 }
 
@@ -318,6 +322,12 @@ func TestNewController_reports_every_mistake(t *testing.T) {
 			want: []string{"the Reconciler must not be a nil ReconcilerFunc"}},
 		{name: "a nil Part", parts: []kube.Part{nil},
 			want: []string{"parts[0] must not be nil"}},
+		{name: "an Owns with no Version", parts: []kube.Part{kube.Owns(schema.GroupVersionResource{Group: "apps", Resource: "deployments"})},
+			want: []string{"parts[0], Owns(apps/, Resource=deployments), has no Version"}},
+		{name: "an Owns with no Resource", parts: []kube.Part{kube.Owns(deployments), kube.Owns(schema.GroupVersionResource{Version: "v1"})},
+			want: []string{"parts[1], Owns(/v1, Resource=), has no Resource"}},
+		{name: "an Owns with neither", parts: []kube.Part{kube.Owns(schema.GroupVersionResource{})},
+			want: []string{"parts[0], Owns(/, Resource=), has no Version", "parts[0], Owns(/, Resource=), has no Resource"}},
 		{name: "several together",
 			settings: func(s *kube.Settings) {
 				s.Name = ""
@@ -371,7 +381,7 @@ func TestNewController_reports_every_mistake(t *testing.T) {
 
 	t.Run("none", func(t *testing.T) {
 		t.Parallel()
-		ctrl, err := kube.NewController(s, client, testSettings(), Memcached, rec)
+		ctrl, err := kube.NewController(s, client, testSettings(), Memcached, rec, kube.Owns(deployments))
 		require.NoError(t, err)
 		require.NotNil(t, ctrl)
 	})
