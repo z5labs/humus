@@ -6,14 +6,11 @@
 package httpserver
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	stdlog "log"
 	"net"
 	"net/http"
-	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -21,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel/log"
 
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/internal/server"
 )
 
 // loggerName is the name of the logger the Service logs through.
@@ -35,12 +33,7 @@ const (
 // Service is a humus.Service that serves an http.Handler over TLS. It is
 // safe for concurrent use.
 type Service struct {
-	ln     net.Listener
-	srv    *http.Server
-	logger log.Logger
-
-	// shutdown is set by the first Shutdown.
-	shutdown atomic.Bool
+	srv *server.Server
 }
 
 // NewService runs every check on settings, reporting every bad field in one
@@ -70,19 +63,6 @@ func NewService(s *humus.Setup, settings Settings, h http.Handler) (*Service, er
 
 	logger := s.Telemetry.LoggerProvider.Logger(loggerName)
 
-	ln, err := s.Host.Listen("tcp", settings.Addr)
-	if err != nil {
-		return nil, fmt.Errorf("httpserver: NewService: %w", err)
-	}
-	s.OnStop(func(context.Context) error {
-		// Serve closes the listener when it returns, so it is usually
-		// closed already.
-		if err := ln.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-			return fmt.Errorf("httpserver: closing the listener: %w", err)
-		}
-		return nil
-	})
-
 	// The operation name is empty, so otelhttp names each span after the
 	// method and the request's route pattern, as the semantic conventions
 	// do. Every provider and the propagator are passed, so otelhttp never
@@ -94,21 +74,23 @@ func NewService(s *humus.Setup, settings Settings, h http.Handler) (*Service, er
 		otelhttp.WithPropagators(s.Telemetry.Propagator),
 	)
 
-	return &Service{
-		ln: ln,
-		srv: &http.Server{
-			Handler:           instrumented,
-			TLSConfig:         cfg,
-			ReadHeaderTimeout: settings.ReadHeaderTimeout,
-			ReadTimeout:       settings.ReadTimeout,
-			WriteTimeout:      settings.WriteTimeout,
-			IdleTimeout:       settings.IdleTimeout,
-			MaxHeaderBytes:    settings.MaxHeaderBytes,
-			ErrorLog:          stdlog.New(&errorLog{logger: logger}, "", 0),
-			Protocols:         &protocols,
-		},
-		logger: logger,
-	}, nil
+	// The server listens on settings.Addr, and registers the listener's
+	// close with s.OnStop. Its error log and its "listening" record go
+	// through logger, so they keep this package's scope.
+	srv, err := server.New(s, settings.Addr, &http.Server{
+		Handler:           instrumented,
+		TLSConfig:         cfg,
+		ReadHeaderTimeout: settings.ReadHeaderTimeout,
+		ReadTimeout:       settings.ReadTimeout,
+		WriteTimeout:      settings.WriteTimeout,
+		IdleTimeout:       settings.IdleTimeout,
+		MaxHeaderBytes:    settings.MaxHeaderBytes,
+		Protocols:         &protocols,
+	}, logger)
+	if err != nil {
+		return nil, fmt.Errorf("httpserver: NewService: %w", err)
+	}
+	return &Service{srv: srv}, nil
 }
 
 // checkSettings runs every check on settings, and rejects a nil handler. It
@@ -152,24 +134,17 @@ func nextProtos(configured []string, http2Only bool) []string {
 // Addr returns the address the Service listens on, with the port the Host
 // picked when settings.Addr has port 0.
 func (svc *Service) Addr() net.Addr {
-	return svc.ln.Addr()
+	return svc.srv.Addr()
 }
 
 // Serve serves until Shutdown. It keeps serving after ctx is done, so the
 // Service answers requests through the App's drain. It returns nil once
 // Shutdown has stopped it, including a Shutdown called before Serve.
-func (svc *Service) Serve(context.Context) error {
-	svc.emit(context.Background(), log.SeverityInfo, "listening",
-		attribute.String("server.address", svc.Addr().String()),
-	)
-
-	// The certificate is in the TLS config, which CheckTLS made sure of, so
-	// ServeTLS is given no file names.
-	err := svc.srv.ServeTLS(svc.ln, "", "")
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
+func (svc *Service) Serve(ctx context.Context) error {
+	if err := svc.srv.Serve(ctx); err != nil {
+		return fmt.Errorf("httpserver: %w", err)
 	}
-	return fmt.Errorf("httpserver: serving: %w", err)
+	return nil
 }
 
 // Shutdown stops accepting connections, closes idle ones and waits for
@@ -178,31 +153,13 @@ func (svc *Service) Serve(context.Context) error {
 // in-flight request, and returns an error that wraps ctx's error. Calling it
 // again returns nil.
 func (svc *Service) Shutdown(ctx context.Context) error {
-	if !svc.shutdown.CompareAndSwap(false, true) {
-		return nil
+	if err := svc.srv.Shutdown(ctx); err != nil {
+		return fmt.Errorf("httpserver: %w", err)
 	}
-	if ctx.Err() == nil {
-		err := svc.srv.Shutdown(ctx)
-		if err == nil {
-			return nil
-		}
-		if ctx.Err() == nil {
-			// Every connection was drained, and a listener failed to
-			// close.
-			return fmt.Errorf("httpserver: shutting down: %w", err)
-		}
-	}
-	// Close's only error is a listener's, and the Service is stopped
-	// whatever it is: ctx's error says why it did not stop gracefully.
-	_ = svc.srv.Close()
-	return fmt.Errorf("httpserver: shutting down: %w", ctx.Err())
+	return nil
 }
 
-// emit emits one record at sev, with body and attrs.
-func (svc *Service) emit(ctx context.Context, sev log.Severity, body string, attrs ...attribute.KeyValue) {
-	emit(ctx, svc.logger, sev, body, attrs...)
-}
-
+// emit emits one record at sev, with body and attrs, through logger.
 func emit(ctx context.Context, logger log.Logger, sev log.Severity, body string, attrs ...attribute.KeyValue) {
 	var r log.Record
 	r.SetTimestamp(time.Now())
@@ -211,17 +168,4 @@ func emit(ctx context.Context, logger log.Logger, sev log.Severity, body string,
 	r.SetBody(attribute.StringValue(body))
 	r.AddAttributes(attrs...)
 	logger.Emit(ctx, r)
-}
-
-// errorLog is the writer of the http.Server's ErrorLog. net/http writes
-// each of its lines with one call of the log.Logger, which is one Write, and
-// errorLog emits each as an ERROR record, so nothing reaches the real
-// standard error.
-type errorLog struct {
-	logger log.Logger
-}
-
-func (w *errorLog) Write(b []byte) (int, error) {
-	emit(context.Background(), w.logger, log.SeverityError, string(bytes.TrimSuffix(b, []byte("\n"))))
-	return len(b), nil
 }
