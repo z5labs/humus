@@ -104,7 +104,16 @@
 // The Service logs, at INFO, the partitions it is assigned, has revoked and
 // loses, with the topic and the partitions as attributes, through the
 // LoggerProvider of the Setup's telemetry, under the scope
-// github.com/z5labs/humus/queue/kafka.
+// github.com/z5labs/humus/queue/kafka. The records "partitions assigned",
+// "partitions revoked" and "partitions lost" carry messaging.system,
+// messaging.consumer.group.name, messaging.destination.name and
+// humus.messaging.destination.partition.ids, the partitions they name. The
+// WARN record "batch skipped: its commit was refused" carries the batch's
+// partition as messaging.destination.partition.id, and its first and last
+// offsets as humus.messaging.kafka.offset.first and
+// humus.messaging.kafka.offset.last, beside messaging.system,
+// messaging.consumer.group.name, messaging.destination.name and the
+// refusal as error.type and exception.message.
 //
 // # Failures
 //

@@ -1211,8 +1211,12 @@ The Service logs through the Setup's `LoggerProvider`, under its scope:
 
 The partition records carry `messaging.system`,
 `messaging.consumer.group.name`, `messaging.destination.name` and
-`messaging.destination.partition.ids`. An error that ends the Service is
-returned, not logged here: the lifecycle logs it.
+`humus.messaging.destination.partition.ids`, the partitions they name. The
+skipped batch's record carries the same three, its partition as
+`messaging.destination.partition.id`, its first and last offsets as
+`humus.messaging.kafka.offset.first` and `humus.messaging.kafka.offset.last`,
+and the refusal as `error.type` and `exception.message`. An error that ends
+the Service is returned, not logged here: the lifecycle logs it.
 
 The `Producer` logs under the same scope:
 

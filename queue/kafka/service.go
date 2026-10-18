@@ -45,16 +45,20 @@ const (
 	commitOperation  = "commit"
 )
 
-// partitionsKey is the attribute that lists the partitions of a topic in
-// the records of an assignment, a revoke and a loss. OpenTelemetry's
-// messaging conventions name one partition, and these records name several.
-const partitionsKey = attribute.Key("messaging.destination.partition.ids")
+// partitionsKey is humus.messaging.destination.partition.ids, the attribute
+// that lists the partitions of a topic in the records of an assignment, a
+// revoke and a loss. OpenTelemetry's messaging conventions name one
+// partition, and these records name several, so the name is humus's own
+// and starts with humus.
+const partitionsKey = attribute.Key("humus.messaging.destination.partition.ids")
 
-// firstOffsetKey and lastOffsetKey bound the offsets of a batch that was
-// skipped.
+// firstOffsetKey and lastOffsetKey are humus.messaging.kafka.offset.first
+// and humus.messaging.kafka.offset.last, which bound the offsets of a batch
+// that was skipped. OpenTelemetry's messaging conventions name one offset,
+// so the names are humus's own and start with humus.
 const (
-	firstOffsetKey = attribute.Key("messaging.kafka.offset.first")
-	lastOffsetKey  = attribute.Key("messaging.kafka.offset.last")
+	firstOffsetKey = attribute.Key("humus.messaging.kafka.offset.first")
+	lastOffsetKey  = attribute.Key("humus.messaging.kafka.offset.last")
 )
 
 // Service consumes Settings.Topics as a member of the consumer group
