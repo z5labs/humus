@@ -416,7 +416,7 @@
 // github.com/z5labs/humus/httpclient. Every data point carries the
 // dependency's server.address and server.port, of BaseURL's origin, and
 // nothing per call, such as a method or a route. Every other attribute's
-// value is the String of bedrock's own type:
+// value is the String() of bedrock's own type:
 //
 //   - humus.circuit.state, an asynchronous UpDownCounter in {breaker}, with
 //     humus.circuit.state: closed, open or half-open. At each collection it
