@@ -100,11 +100,15 @@ func (c *Client) reject(ctx context.Context, method string, err error) *result {
 
 // observe counts t, a transition of the breaker, in
 // humus.circuit.transitions, and emits one log record for it, in the
-// context of the call that made it: circuit breaker open at WARN, and
+// context of the call that made it, without its cancellation: the call has
+// often ended by then, as a call whose deadline passed has, and an
+// exporter handed a done context would drop the record. The record keeps
+// the call's span. Its bodies are circuit breaker open at WARN, and
 // circuit breaker half-open and circuit breaker closed at INFO. Its
 // attributes are Addr's host and port, the state the breaker left and the
 // counts of that state.
 func (c *Client) observe(ctx context.Context, t circuit.Transition) {
+	ctx = context.WithoutCancel(ctx)
 	c.metrics.transition(ctx, t)
 
 	severity := log.SeverityInfo
