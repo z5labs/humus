@@ -12,6 +12,7 @@ import (
 	"net"
 	"reflect"
 	"strconv"
+	"strings"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -132,6 +133,10 @@ const maxHeartbeat = 65535 * time.Second
 // The causes the checks report. None of them names a field: whoever calls a
 // check names the field, or the variable that sourced it.
 var (
+	errURI           = errors.New("is a URI, not host:port")
+	errNotHostPort   = errors.New("is not host:port")
+	errNoHost        = errors.New("has no host")
+	errNoPort        = errors.New("has no port from 1 to 65535")
 	errEmpty         = errors.New("must not be empty")
 	errNotSet        = errors.New("must be set")
 	errNotPositive   = errors.New("must be positive")
@@ -143,17 +148,21 @@ var (
 )
 
 // CheckAddr rejects anything but host:port with a host and a port from 1 to
-// 65535.
+// 65535. Its error never quotes the value: the likeliest wrong value is an
+// AMQP URI, whose login would otherwise reach the logs.
 func CheckAddr(addr string) error {
+	if strings.Contains(addr, "://") {
+		return errURI
+	}
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		return fmt.Errorf("%q is not host:port", addr)
+		return errNotHostPort
 	}
 	if host == "" {
-		return fmt.Errorf("%q has no host", addr)
+		return errNoHost
 	}
 	if n, err := strconv.ParseUint(port, 10, 16); err != nil || n == 0 {
-		return fmt.Errorf("%q has no port from 1 to 65535", addr)
+		return errNoPort
 	}
 	return nil
 }

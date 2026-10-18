@@ -68,17 +68,46 @@ func TestCheckAddr(t *testing.T) {
 		{name: "an IPv6 host", value: "[::1]:5672", valid: true},
 		{name: "port 1", value: "localhost:1", valid: true},
 		{name: "the highest port", value: "localhost:65535", valid: true},
-		{name: "the empty string", value: "", cause: `"" is not host:port`},
-		{name: "a host with no port", value: "localhost", cause: `"localhost" is not host:port`},
-		{name: "no host", value: ":5672", cause: `":5672" has no host`},
-		{name: "port 0", value: "localhost:0", cause: `"localhost:0" has no port from 1 to 65535`},
+		{name: "the empty string", value: "", cause: "is not host:port"},
+		{name: "a host with no port", value: "localhost", cause: "is not host:port"},
+		{name: "no host", value: ":5672", cause: "has no host"},
+		{name: "port 0", value: "localhost:0", cause: "has no port from 1 to 65535"},
 		{name: "a port above 65535", value: "localhost:65536", cause: "has no port from 1 to 65535"},
 		{name: "a negative port", value: "localhost:-1", cause: "has no port from 1 to 65535"},
 		{name: "a named port", value: "localhost:amqp", cause: "has no port from 1 to 65535"},
 		{name: "an empty port", value: "localhost:", cause: "has no port from 1 to 65535"},
-		{name: "a URI", value: "amqp://localhost:5672", cause: "is not host:port"},
-		{name: "a URI with a login", value: "amqp://guest:guest@localhost:5672/", cause: "is not host:port"},
+		{name: "a URI", value: "amqp://localhost:5672", cause: "is a URI, not host:port"},
+		{name: "a TLS URI", value: "amqps://localhost:5671/", cause: "is a URI, not host:port"},
 	})
+}
+
+// TestCheckAddr_never_quotes_the_value checks that a login in a wrong
+// address doesn't reach the error, and so the logs.
+func TestCheckAddr_never_quotes_the_value(t *testing.T) {
+	t.Parallel()
+
+	password := rand.Text()
+	testCases := []struct {
+		name  string
+		value string
+	}{
+		{name: "a URI with a login", value: "amqp://orders:" + password + "@localhost:5672/"},
+		{name: "a TLS URI with a login", value: "amqps://orders:" + password + "@localhost:5671/orders"},
+		{name: "a login with no scheme", value: "orders:" + password + "@localhost:5672"},
+		{name: "a login with no port", value: "orders@" + password},
+		{name: "a login with port 0", value: password + ":0"},
+		{name: "a login with no host", value: ":" + password},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := rabbitmq.CheckAddr(tc.value)
+			require.Error(t, err)
+			require.NotContains(t, err.Error(), password)
+			requireUnnamed(t, err)
+		})
+	}
 }
 
 func TestCheckVhost(t *testing.T) {

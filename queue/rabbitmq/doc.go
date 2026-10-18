@@ -48,9 +48,19 @@
 // humus imposes no port, and AMQP has no anonymous login, so there is no
 // login to default to.
 //
-// humus takes no URL. An end user who keeps an AMQP URI parses it with
-// amqp.ParseURI in their Init and fills the Connection from it: its host
-// and port make Addr, its Vhost is Vhost, and its PlainAuth is SASL.
+// humus takes no URL, and [CheckAddr] rejects one without quoting it, so a
+// login in it never reaches the logs. An end user who keeps an AMQP URI
+// parses it with amqp.ParseURI in their Init and fills the Connection from
+// it:
+//
+//   - Addr is net.JoinHostPort(u.Host, strconv.Itoa(u.Port)), which
+//     brackets an IPv6 host;
+//   - Vhost is u.Vhost;
+//   - SASL is u.PlainAuth(). ParseURI fills in guest and guest when the URI
+//     carries no login, so an Init that requires one checks u.Username
+//     itself;
+//   - an amqps URI, whose port defaults to 5671, means TLS must be set: a
+//     nil TLS would dial a TLS port in plain text.
 //
 // A nil TLS is plain text, because humus can't control what a service
 // connects to. Set, the broker is dialled with it, and an empty ServerName
