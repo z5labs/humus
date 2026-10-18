@@ -90,7 +90,7 @@ func TestPackage_reads_no_environment_and_no_file(t *testing.T) {
 		})
 	}
 	// The consumer's files and the producer's are all checked.
-	require.Subset(t, checked, []string{"service.go", "settings.go", "dial.go", "logger.go", "producer.go"})
+	require.Subset(t, checked, []string{"service.go", "settings.go", "dial.go", "logger.go", "producer.go", "breaker.go"})
 }
 
 // TestPackage_uses_kotels_Meter_alone checks the package's own source, test

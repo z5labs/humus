@@ -21,3 +21,6 @@ func KgoLevel(svc *Service) kgo.LogLevel {
 func CloseProducer(p *Producer) {
 	p.client.Close()
 }
+
+// Classify is the Producer's breaker classifier.
+var Classify = classify

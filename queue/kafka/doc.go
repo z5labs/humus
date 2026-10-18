@@ -208,11 +208,20 @@
 // acknowledge the records of one call, franz-go's retries included. A
 // record that isn't acknowledged by then fails, even one already sent, and
 // may still have been stored, so a caller that produces it again may store
-// it twice, which is at-least-once. There are no retry settings: franz-go's
-// idempotent producer retries a batch on the sequence numbers that let the
-// broker drop a batch it already stored, and keeps each partition in order.
-// A retry around Produce would hand the records over again, under new
-// sequence numbers, and store twice a record whose first send landed.
+// it twice, which is at-least-once. DeliveryTimeout is the one retry
+// setting: how long a call lets franz-go keep trying. There is no retry
+// count, no backoff and no retry budget, and no bedrock retry.Retrier
+// around Produce, because franz-go retries, and a retry around it would do
+// harm. franz-go's idempotent producer retries a batch on the sequence
+// numbers that let the broker drop a batch it already stored, so a retry
+// around Produce, handing the records over again under new sequence
+// numbers, would store twice a record whose first send landed. franz-go
+// retries a partition's batches in order, and a retry around Produce would
+// send its records after whatever other calls produced in the meantime.
+// And franz-go's retries don't multiply with callers: it retries a
+// partition's batch, which holds every caller's records for that
+// partition, once per backoff, so a thousand callers waiting on a dead
+// partition cost one retry per backoff, not a thousand.
 // Acks from all in-sync replicas and idempotence are franz-go's defaults,
 // and not settings, and so are its partitioner, which hashes keyed records
 // with murmur2 as Kafka's Java producer does, its linger, compression,
@@ -232,6 +241,53 @@
 // failed call doesn't say which of its records were stored: the records
 // that failed may have been stored anyway. Produce rejects a record with no
 // Topic before it sends anything, and returns nil when given no records.
+//
+// A circuit breaker, bedrock's circuit.Breaker, guards the cluster, so
+// that while the cluster keeps failing Produce fails at once rather than
+// hold every caller for DeliveryTimeout: an HTTP handler that publishes an
+// event answers 503 quickly during an outage, rather than after 10s. The
+// first few calls wait, and the rest fail at once until a probe gets
+// through. The dependency the breaker guards is the cluster: one Producer
+// is one client to one cluster, with one breaker, which NewProducer builds
+// from ProducerSettings' Breaker and BreakerPolicy. A process that produces
+// to two clusters builds two Producers.
+//
+// Each call to Produce is one call through the breaker. It is admitted
+// once each record's span has started and its headers carry the trace
+// context, and before any record reaches franz-go, and it is counted once
+// every record has its result, which may be after Produce returns. While
+// the breaker is open, Produce returns an error wrapping a
+// *circuit.RejectedError, which matches circuit.ErrRejected and says how
+// much longer the breaker stays open, at once and with nothing sent. Each
+// record's span records the rejection as a failure, and neither instrument
+// counts the record, which was never sent. Produce doesn't retry a
+// rejected call: whether to wait and try again is the caller's, as queue's
+// contract leaves retries to the Processor. A call whose context is already
+// done, and a call after the cluster refused the credentials, return before
+// the breaker, so it counts neither.
+//
+// The breaker counts the cluster, not the records or the callers. It sees
+// each call's result with the call's own context, which a caller giving up
+// doesn't cancel, so a caller giving up never counts:
+//
+//   - a success is a call whose every record was acknowledged;
+//   - a call is ignored, and counts as nothing, when its records failed for
+//     their own reasons or their topics', not the cluster's: a Kafka error
+//     code franz-go doesn't retry, such as MESSAGE_TOO_LARGE, INVALID_RECORD
+//     or TOPIC_AUTHORIZATION_FAILED, or UNKNOWN_TOPIC_OR_PARTITION once
+//     franz-go has given up on the topic. One topic's mistake doesn't open
+//     the breaker for the others;
+//   - a failure is anything else, the cluster not storing records in time:
+//     DeliveryTimeout passing, kgo.ErrRecordTimeout, a retriable error code
+//     franz-go stopped on, or a connection that failed.
+//
+// One breaker covers every partition. When one broker of three is down,
+// the calls to the partitions it leads fail and the rest succeed, which the
+// default policy may or may not trip on. A breaker per broker or per
+// partition would follow Kafka's failures more closely, but franz-go picks
+// a record's partition inside the client, after the breaker has admitted
+// the call. franz-go moves unkeyed records away from backed-up partitions,
+// and a keyed record has only one partition.
 //
 // When a broker refuses the Producer's SASL credentials, with
 // SASL_AUTHENTICATION_FAILED, UNSUPPORTED_SASL_MECHANISM or
@@ -266,6 +322,17 @@
 //
 // The Producer's client logs through the Setup's LoggerProvider, under the
 // scope github.com/twmb/franz-go/pkg/kgo, as the Service's does.
+//
+// Each change of the breaker's state is one log record of the Producer's,
+// under the scope github.com/z5labs/humus/queue/kafka, in the context of
+// the call that made it: circuit breaker open at WARN, and circuit breaker
+// half-open and circuit breaker closed at INFO. Its attributes are
+// messaging.system, set to kafka, circuit.previous_state, and the counts
+// of the state the breaker left: circuit.successes, circuit.failures,
+// circuit.consecutive_successes, circuit.consecutive_failures and
+// circuit.timed_out. There are no instruments of humus's own for the
+// breaker: its transitions are in the logs, and a rejected call is an error
+// on its records' spans.
 //
 // # Telemetry
 //
