@@ -296,7 +296,7 @@ func (o *Orders) addLine(_ context.Context, req openapi.Request[Line]) (Line, er
 	return line, nil
 }
 
-// find returns the order id, or a NotFound naming it.
+// find returns the order whose ID is id, or a NotFound naming id.
 func (o *Orders) find(id string) (*Order, error) {
 	ord, ok := o.byID[id]
 	if !ok {
