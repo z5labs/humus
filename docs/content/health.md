@@ -198,7 +198,7 @@ another port. A probes port is only for:
 | an HTTPS API | `httpserver.Main` | a health Service, and `httphealth.NewHandler` attached to the API's mux; `httphealth.NewService` instead when the API requires client certificates | `httpGet`, `scheme: HTTPS`, on the API's port or the probes port |
 | a gRPC service, on a cluster whose `grpc` probes can use TLS | `grpcserver.Main` | a health Service, and `grpchealth.NewServer` registered on the end user's Service; `grpchealth.NewService` instead when the Service requires client certificates | `grpc` with `service: liveness` or `readiness`, over TLS on the Service's port, or on the probes port |
 | a gRPC service, on any other cluster | `grpcserver.Main` | `grpchealth.NewService` on a plaintext port of its own | `grpc` with `service: liveness` or `readiness`, on that port |
-| a Kubernetes Job's pod | `humus.Main` | none | none |
+| a Kubernetes Job's pod, usually | `humus.Main` | none | none |
 
 A probes server adds no drain, since nothing routes traffic to it, so a
 consumer's or a job's pod with a probes server stays on `humus.Main`.
@@ -214,7 +214,10 @@ returned from `Init` next to the API's Service:
 ```go
 db := openStore() // the end user's database
 hs := health.NewService(health.Readiness(health.MonitorFunc(func(ctx context.Context) (bool, error) {
-	return db.Ping(ctx) == nil, nil
+	if err := db.Ping(ctx); err != nil {
+		return false, err // logged, never in the probe's answer
+	}
+	return true, nil
 })))
 
 api := http.NewServeMux()
@@ -331,10 +334,12 @@ and listens on `Addr` through the Setup's Host, in `Init`.
 does,** so its probes set `scheme: HTTPS`. The kubelet doesn't verify the
 certificate of such a probe, so the end user's own certificate serves, the
 one their other ports serve or any other: the probes need none of their
-own. The server serves a clone of `Settings.TLS`, offering only `http/1.1`
+own. A `tls.Config` shared with an API that requires client certificates
+can't be passed as it is, though, as the next paragraph explains: pass a
+`Clone` of it with `ClientAuth` set to `tls.NoClientCert`. The server serves a clone of `Settings.TLS`, offering only `http/1.1`
 in ALPN, since the kubelet speaks HTTP/1.1, and it serves no HTTP/2. A probe
-that leaves out `scheme: HTTPS` fails its TLS handshake, which is logged at
-ERROR, so the log says why the probe failed.
+that leaves out `scheme: HTTPS` is answered 400 by `net/http`, so it fails,
+and the failed TLS handshake is logged at ERROR, so the log says why.
 
 **`CheckTLS` rejects a config that requires a client certificate,** one
 whose `ClientAuth` is `RequireAnyClientCert` or
@@ -581,26 +586,31 @@ than replacing them with pods that never consume. A broker outage after the
 first join doesn't make the consumer unready: it hits every pod at once, and
 would only block a rollout that might be the fix.
 
-**`Joined` is for readiness only.** A liveness monitor would restart every
-pod in a broker outage, and the kubelet's restart backoff would then hold
-them down after the brokers come back, while franz-go rejoins on its own.
-The errors a restart would fix already end `Serve`, so the pod exits and is
-restarted without a probe.
+**`Joined` is for readiness only.** In liveness, it would restart a pod
+that starts while the brokers are unreachable, before it has ever joined,
+and the kubelet's restart backoff would then hold it down after the brokers
+come back. A liveness monitor that turned unhealthy whenever the member is
+out of its group would do the same to every pod in a broker outage, while
+franz-go rejoins on its own. The errors a restart would fix already end
+`Serve`, so the pod exits and is restarted without a probe.
 
 ### Jobs
 
-**A Kubernetes Job's pod has no probes.** Nothing routes to it, and a job
-that hangs is ended by its `activeDeadlineSeconds`, when it sets one. So a
-job's `Init` returns the job and nothing else, and needs no health Service:
-nothing in the lifecycle asks for readiness.
+**A Kubernetes Job's pod usually needs no probes.** Nothing routes to it,
+and a job that hangs is ended by its `activeDeadlineSeconds`, when it sets
+one. So a job's `Init` returns the job and nothing else, and needs no health
+Service: nothing in the lifecycle asks for readiness.
 
 A long-running job that wants a liveness probe returns
 `httphealth.NewService`'s Service next to its
 [`job.Service`]({{< relref "jobs#more-than-the-job" >}}), and stays on
-`humus.Main`:
+`humus.Main`. The probe is only as good as its liveness monitor: with none,
+it checks only that the process answers, so a job that can hang gives it a
+monitor of its own progress, here `progress`, which the run keeps healthy
+while it makes progress:
 
 ```go
-probes, err := httphealth.NewService(s, probeSettings)
+probes, err := httphealth.NewService(s, probeSettings, health.Liveness(progress))
 if err != nil {
 	return nil, err
 }
@@ -664,6 +674,9 @@ func TestInit_is_not_ready_during_the_drain(t *testing.T) {
 }
 ```
 
+The API stands in for one that requires client certificates, the case for
+a probes port next to an API; one that doesn't attaches its probes, and is
+tested the same way, with the probes requested on the API's port.
 `probeSettings` returns `httphealth.Settings` on `:8081` with a certificate
 for `localhost` from the CA, and `probe` makes the request, reads and
 closes the body, and returns the status code. `kubelet` is the Host's HTTP

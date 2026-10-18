@@ -597,7 +597,10 @@ func TestService_a_job_next_to_a_probes_server_ends_the_App(t *testing.T) {
 			TLS:  &tls.Config{Certificates: []tls.Certificate{ca.Issue(t, "localhost").TLS()}},
 		}
 		finish := make(chan struct{})
+		var progressing health.Binary
+		progress := &progressing // healthy while the job makes progress
 		run := func(ctx context.Context) error {
+			progressing.MarkHealthy()
 			select {
 			case <-finish:
 				return nil
@@ -607,7 +610,7 @@ func TestService_a_job_next_to_a_probes_server_ends_the_App(t *testing.T) {
 		}
 
 		_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
-			probes, err := httphealth.NewService(s, probeSettings)
+			probes, err := httphealth.NewService(s, probeSettings, health.Liveness(progress))
 			if err != nil {
 				return nil, err
 			}

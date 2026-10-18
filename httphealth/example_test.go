@@ -96,7 +96,10 @@ func APIInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 
 	db := openStore() // the end user's database
 	hs := health.NewService(health.Readiness(health.MonitorFunc(func(ctx context.Context) (bool, error) {
-		return db.Ping(ctx) == nil, nil
+		if err := db.Ping(ctx); err != nil {
+			return false, err // logged, never in the probe's answer
+		}
+		return true, nil
 	})))
 
 	api := http.NewServeMux()
