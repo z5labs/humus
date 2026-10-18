@@ -7,7 +7,7 @@ description: >
   config package, so that a bad value fails startup with exit 78 and an error
   naming the variable.
 type: docs
-weight: 20
+weight: 21
 ---
 
 humus packages are configured with plain Go values. They read no environment

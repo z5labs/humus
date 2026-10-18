@@ -7,8 +7,8 @@ description: >
   paths and parameters, operations and the codecs every body names, jsoncodec
   and codecs of one's own, streaming ones included, the answers to errors,
   rejected requests, 404s and 405s, problem details, what happens on a panic
-  or on a failure after the status, the OpenAPI 3.2 document, what the API
-  records, how to test it, and what each piece of rest.Run became.
+  or on a failure after the status, security, the OpenAPI 3.2 document, what
+  the API records, how to test it, and what each piece of rest.Run became.
 type: docs
 weight: 12
 ---
@@ -661,14 +661,18 @@ with its `Status` and `wrap`'s value. `NewAPI` requires one, and an
 operation's own replaces it. A `RequestError` has:
 
 - `Status`: 400 for a parameter or a body that doesn't decode, 413 for a
-  body over `http.MaxBytesHandler`'s limit, and 415 for a `Content-Type` the
-  operation's decoder doesn't read, or none;
+  body over `http.MaxBytesHandler`'s limit, 415 for a `Content-Type` the
+  operation's decoder doesn't read, or none, and 401 and 403 for a request
+  that its [Security](#security) refused;
 - `Param`: the parameter that doesn't decode, for a 400 about one, and `""`
   otherwise;
-- `Err`: why, the parameter's error or the decoder's.
+- `Err`: why, the parameter's error or the decoder's, or
+  `auth.ErrUnauthenticated` for a 401 and `auth.ErrForbidden` for a 403,
+  never a verifier's own error.
 
 The document lists `RequestErrors`' answer at 400 on an operation that reads
-a parameter or a body, and at 413 and 415 on one that reads a body. Its
+a parameter or a body, at 413 and 415 on one that reads a body, at 401 on one
+with requirements, and at 403 on one whose requirements name a scope. Its
 answers aren't logged: a request the API rejects is the client's mistake.
 
 ### Unmatched
@@ -704,6 +708,32 @@ encoding the end user names. It is opt-in, and `openapi` never uses it:
 Each takes any encoder of `problem.Details`: `jsoncodec.Problem` writes
 `application/problem+json`, and an XML codec of the end user's own could
 write `application/problem+xml`.
+
+## Security
+
+`openapi.Security(reqs...)` is what a request must have to be served: one of
+its requirements, which the [`auth`](https://pkg.go.dev/github.com/z5labs/humus/auth)
+package declares, such as `auth.Require(bearer)` or
+`auth.RequireScopes(bearer, "carts:write")`. Given to `NewAPI`, it is every
+operation's, and the document's. Given to an operation or to `Document`, it
+replaces the API's, and `openapi.Security(auth.Disabled())` makes what it is
+given to public. An API without `Security` authenticates nothing.
+
+An operation with requirements authenticates the request before it decodes a
+parameter or reads the body. A request no requirement authenticated, and one
+that lacked a scope, are `RequestError`s at 401 and 403, which
+`RequestErrors` answers after the API has set `WWW-Authenticate`. A
+verifier's error that doesn't wrap `auth.ErrUnauthenticated` is the server's,
+and is answered as a handler's error is, by the first `Error` that matches
+it or by the catch-all. The document lists every scheme under
+`components.securitySchemes`, and each operation's requirements under its
+`security`.
+
+[Authentication and authorization]({{< relref "auth" >}}) covers schemes and
+their principals, requirements and scopes, `auth.Disabled()` and
+`auth.Anonymous()`, the answers and challenges, verifying JWTs with
+`auth/jwt`, answering a `*jwt.KeySetError`, and testing an API that requires
+tokens.
 
 ## Panics
 
@@ -988,7 +1018,9 @@ document is public, served with `Document(path,
 openapi.Security(auth.Disabled()))`, and a `*jwt.KeySetError`, a key set
 that is down before any key was fetched, is answered with a 503 by an
 `openapi.Error`. The `app` package doc says how it authenticates, and how its
-tests get their tokens.
+tests get their tokens, and
+[Authentication and authorization]({{< relref "auth" >}}) describes each
+piece.
 
 Its tests run the whole service as [Testing](#testing) shows, its golden
 document is `app/testdata/openapi.json`, and a test behind the

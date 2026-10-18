@@ -6,8 +6,8 @@ description: >
   grpcserver.Settings, registers generated services on the Service from
   NewService and returns it, the certificate it requires, what server options
   can change, how it ends streams and shuts down on grpcserver.Main's
-  defaults, how Kubernetes' probes reach it, what it records, and how to test
-  it with grpcservertest.
+  defaults, how Kubernetes' probes reach it, how grpcauth authenticates its
+  RPCs, what it records, and how to test it with grpcservertest.
 type: docs
 weight: 18
 ---
@@ -242,7 +242,9 @@ with `grpc.ChainUnaryInterceptor` and `grpc.ChainStreamInterceptor`, keepalive
 parameters, with `grpc.KeepaliveParams` and `grpc.KeepaliveEnforcementPolicy`,
 message size limits, with `grpc.MaxRecvMsgSize` and `grpc.MaxSendMsgSize`, and
 a second stats handler, as in
-`grpcserver.NewService(s, settings, grpc.ChainUnaryInterceptor(authenticate))`.
+`grpcserver.NewService(s, settings, unary, stream)`, with the two
+interceptors `grpcauth.Interceptors` returns, as
+[Authentication](#authentication) shows.
 
 `NewService` builds the server with humus's options first, then `opts`, then
 humus's transport credentials:
@@ -554,10 +556,56 @@ package answers gRPC health v1 from an App's `health.Probes`, in two ways:
   alpha and off by default; see Kubernetes'
   [Use TLS with gRPC probes](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/#grpc-probe-tls).
   grpc-go's clients reach it on every cluster, for client-side health
-  checking.
+  checking. Under `grpcauth`, its methods are opened by name, as
+  [Authentication](#authentication) shows.
 
 [Health]({{< relref "health#exposing-the-probes" >}}) shows both wirings,
 the names they answer, the manifests and how to test them.
+
+## Authentication
+
+The module's [`grpcauth`](https://pkg.go.dev/github.com/z5labs/humus/grpc/grpcauth)
+package authenticates and authorizes each RPC by its method, with the schemes
+and requirements the [`auth`](https://pkg.go.dev/github.com/z5labs/humus/auth)
+package declares. `grpcauth.Interceptors` returns a unary and a stream
+interceptor, built from rules: `grpcauth.Default`, the requirement of every
+method no rule names, and `grpcauth.Method`, one method's, by the full-name
+constant protoc-gen-go-grpc generates.
+
+`grpcauth` exempts no method on its own, so **gRPC health registered on the
+Service with `grpchealth.NewServer` passes through it like every RPC,** and
+the kubelet's probes present no credentials. The rules open Health's
+`Check`, `Watch` and `List` by name, with `auth.Disabled()`:
+
+```go
+unary, stream, err := grpcauth.Interceptors(s,
+	grpcauth.Default(auth.Require(bearer)),
+	grpcauth.Method(testpb.TestService_StreamingOutputCall_FullMethodName, auth.RequireScopes(bearer, "greetings:write")),
+	grpcauth.Method(healthpb.Health_Check_FullMethodName, auth.Disabled()), // the kubelet presents no credentials
+	grpcauth.Method(healthpb.Health_Watch_FullMethodName, auth.Disabled()),
+	grpcauth.Method(healthpb.Health_List_FullMethodName, auth.Disabled()),
+)
+if err != nil {
+	return nil, err
+}
+svc, err := grpcserver.NewService(s, grpcserver.Settings{Addr: ":9090", TLS: tlsConfig}, unary, stream)
+if err != nil {
+	return nil, err
+}
+testpb.RegisterTestServiceServer(svc, greeterService{bearer: bearer})
+hs := health.NewService()
+healthpb.RegisterHealthServer(svc, grpchealth.NewServer(s, hs.Probes()))
+return []humus.Service{svc, hs}, nil
+```
+
+Without those three rules, the probes get `Unauthenticated` and the pod never
+turns ready, which fails at the first deploy, never silently. A probes
+Service of its own, `grpchealth.NewService`, has no authentication and needs
+no rule.
+
+[Authentication and authorization]({{< relref "auth" >}}) covers schemes,
+requirements and scopes, the answers `grpcauth` gives and the gRPC status a
+verifier's error ends with, verifying JWTs with `auth/jwt`, and testing.
 
 ## Telemetry
 
