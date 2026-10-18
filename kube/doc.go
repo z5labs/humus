@@ -423,6 +423,7 @@
 // so an error path that returns a zero Result can't wipe the conditions.
 //
 // Each reconcile settles its object one way:
+//   - a panic is recovered, and never retried (see Panics);
 //   - an error retries it after a backoff of its own, from RetryBaseDelay,
 //     doubling to RetryMaxDelay, under an overall limit of 10 retries a
 //     second, bursting to 100. The error never ends the Service;
@@ -437,6 +438,29 @@
 // more, returns the same status, which isn't applied, and settles: two
 // reconciles in all. Settings.Workers objects are reconciled at once, and
 // one object is never reconciled twice at once.
+//
+// # Panics
+//
+// A panic in Reconcile, or in a [Finalize]'s f, is recovered and recorded
+// (see Telemetry), but never retried. A panic is a mistake in the
+// controller, such as a nil pointer, an index out of range or a division by
+// zero: it shows the code's assumptions about the cluster are wrong, so a
+// retry would only panic again, and fill the logs and traces with the same
+// bug once per backoff. So the object is settled as one that reconciled
+// with no [Result.After] is: no status is applied, since there is no
+// Result, and it is reconciled again only when it, or a resource it owns,
+// changes, when the resync comes, or when a new leader takes over. A change
+// made while the panicked reconcile ran reconciles it again once that
+// reconcile is done, as after any reconcile. The rollout that ships the fix
+// starts a new leader, which reconciles every object, the panicked ones
+// with the fixed code.
+//
+// The panic never ends the Service, and the other objects go on being
+// reconciled. A panic of f leaves the object with its finalizer, so its
+// deletion waits for its next reconcile.
+//
+// This differs from controller-runtime, which turns a panic into an error
+// and retries it with backoff.
 //
 // # Owned resources
 //
@@ -494,11 +518,13 @@
 // controller calls f, handed the object as the Reconciler is, and never the
 // Reconciler. An error from f retries the object with backoff, as a
 // reconcile's does, so f may be called again for an object it has already
-// cleaned up after. Once f returns nil, the controller removes the
-// finalizer, and the API server completes the deletion, unless another
-// finalizer still holds the object. An object being deleted that the
-// finalizer doesn't hold, as one deleted before its first reconcile, is left
-// alone.
+// cleaned up after. A panic of f is recovered and never retried, as a
+// Reconciler's is (see Panics): the finalizer stays, and the deletion waits
+// for the object's next reconcile. Once f returns nil, the controller
+// removes the finalizer, and the API server completes the deletion, unless
+// another finalizer still holds the object. An object being deleted that
+// the finalizer doesn't hold, as one deleted before its first reconcile, is
+// left alone.
 //
 // The finalizer is applied, not updated: both adding it and removing it are
 // server-side applies of the object's metadata, under the field manager
@@ -576,6 +602,11 @@
 //   - a failed reconcile, a failed f among them, is one WARN record,
 //     "reconcile failed", in the span's context, with the object and the
 //     error;
+//   - a panic of Reconcile, or of f, is an exception event on the span,
+//     with exception.type, exception.message and exception.stacktrace, the
+//     stack of the panic, and sets the span's status to Error. It is one
+//     ERROR record, "reconcile panicked", in the span's context, with the
+//     object and the same three attributes, and no "reconcile failed";
 //   - client-go's own records, from the reflector, the work queue and
 //     leader election, reach the LoggerProvider through a logger the
 //     controller puts in their context. Those klog writes by default arrive:

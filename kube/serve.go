@@ -73,6 +73,8 @@ const objectNameKey = attribute.Key("humus.kube.object.name")
 // once they have returned.
 //
 // A reconcile error never ends Serve: the object is retried with backoff.
+// Nor does a panic of the Reconciler or of a Finalize's f, which is
+// recovered and recorded, and never retried.
 //
 // A Controller is served once. A Serve called after Shutdown, or after an
 // earlier Serve, returns nil at once.
@@ -320,9 +322,9 @@ func (c *Controller) worker(work context.Context, queue workqueue.TypedRateLimit
 }
 
 // process reconciles the object of key, as the cache holds it, and settles
-// the key: an error retries it with backoff, a Result.After queues it again
-// after that long, and otherwise it is forgotten until the object changes or
-// the resync comes. An object being deleted is finalized instead, when the
+// the key: a panic forgets it, an error retries it with backoff, a
+// Result.After queues it again after that long, and otherwise it is
+// forgotten until the object changes or the resync comes. An object being deleted is finalized instead, when the
 // controller's finalizer holds it, and otherwise left alone.
 func (c *Controller) process(work context.Context, queue workqueue.TypedRateLimitingInterface[string], indexer cache.Indexer, key string) {
 	obj, exists, err := indexer.GetByKey(key)
@@ -339,8 +341,13 @@ func (c *Controller) process(work context.Context, queue workqueue.TypedRateLimi
 		return
 	}
 
-	after, err := c.reconcileObject(work, u)
+	after, recovered, err := c.reconcileObject(work, u)
 	switch {
+	case recovered:
+		// A panic is a bug in the controller, which a retry would only
+		// hit again: the object waits for a change, the resync, or a new
+		// leader, as a settled one does.
+		queue.Forget(key)
 	case err != nil:
 		queue.AddRateLimited(key)
 	case after > 0:
@@ -355,11 +362,15 @@ func (c *Controller) process(work context.Context, queue workqueue.TypedRateLimi
 // Reconciler returned, whether or not it returned an error. A failure sets
 // the span's status to Error, and is one WARN record in the span's context.
 //
+// A panic of the Reconciler, or of a Finalize's f, is recovered, recorded
+// by recordPanic, and reported as recovered. Nothing is applied after it: no
+// status, since there is no Result, and no removal of the finalizer.
+//
 // With a Finalize, the span holds what the controller does in place of the
 // Reconciler: it adds the finalizer to an object that hasn't got it, and
 // calls f for an object being deleted, then removes the finalizer once f
 // returns nil.
-func (c *Controller) reconcileObject(work context.Context, u *unstructured.Unstructured) (time.Duration, error) {
+func (c *Controller) reconcileObject(work context.Context, u *unstructured.Unstructured) (after time.Duration, recovered bool, err error) {
 	attrs := make([]attribute.KeyValue, 0, 2)
 	if ns := u.GetNamespace(); ns != "" {
 		attrs = append(attrs, semconv.K8SNamespaceName(ns))
@@ -372,14 +383,13 @@ func (c *Controller) reconcileObject(work context.Context, u *unstructured.Unstr
 	)
 	defer span.End()
 
-	var (
-		after time.Duration
-		err   error
-	)
 	switch {
 	case u.GetDeletionTimestamp() != nil:
 		// process finalizes only an object its finalizer holds.
-		err = c.finalize(ctx, u)
+		if p := guard(func() { err = c.finalize(ctx, u) }); p != nil {
+			c.recordPanic(ctx, attrs, p)
+			return 0, true, nil
+		}
 		if err == nil {
 			err = c.applyFinalizer(ctx, u, false)
 		}
@@ -388,7 +398,10 @@ func (c *Controller) reconcileObject(work context.Context, u *unstructured.Unstr
 		err = c.applyFinalizer(ctx, u, true)
 	default:
 		var status any
-		status, after, err = c.reconcile(ctx, u)
+		if p := guard(func() { status, after, err = c.reconcile(ctx, u) }); p != nil {
+			c.recordPanic(ctx, attrs, p)
+			return 0, true, nil
+		}
 		if status != nil {
 			err = errors.Join(err, c.applyStatus(ctx, u, status))
 		}
@@ -400,7 +413,7 @@ func (c *Controller) reconcileObject(work context.Context, u *unstructured.Unstr
 			semconv.ExceptionMessage(err.Error()),
 		)...)
 	}
-	return after, err
+	return after, false, err
 }
 
 // applyStatus applies status to u's status subresource with server-side
