@@ -30,8 +30,8 @@ const maxMemberBytes = 2048
 //
 // percent-encoded, as W3C Baggage requires. It is a fit.Decoder and a
 // fit.Encoder, and is safe for concurrent use. The zero Codec names no
-// member: it decodes and strips nothing, and encodes nothing. Build one
-// with New.
+// member: it decodes and strips nothing, and its Encode returns an error.
+// Build one with New.
 type Codec struct {
 	key string
 }
