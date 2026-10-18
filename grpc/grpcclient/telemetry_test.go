@@ -215,10 +215,9 @@ func TestClient_measures_each_attempt(t *testing.T) {
 		require.NoError(t, err)
 		var found *metricdata.Metrics
 		for _, sm := range rm.ScopeMetrics {
-			require.NotContains(t, sm.Scope.Name, "humus", "humus records no instrument of its own")
-			if sm.Scope.Name != otelgrpc.ScopeName {
-				continue
-			}
+			// The backend runs in the same App, so its metrics are in rm
+			// too: otelgrpc's, in the same scope.
+			require.Equal(t, otelgrpc.ScopeName, sm.Scope.Name, "humus records no instrument of its own")
 			for i := range sm.Metrics {
 				if sm.Metrics[i].Name == "rpc.client.call.duration" {
 					found = &sm.Metrics[i]

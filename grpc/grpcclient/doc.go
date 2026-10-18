@@ -205,14 +205,15 @@
 // the full method without its leading slash, such as
 // "cart.v1.CartService/AddItem", and carries the attributes of
 // OpenTelemetry's RPC semantic conventions, among them rpc.system.name,
-// grpc, rpc.method, and rpc.response.status_code, the name of the call's
-// code, such as UNAVAILABLE. Its status is Error for every code other than
+// which is grpc, rpc.method, and rpc.response.status_code, the name of the
+// call's code, such as UNAVAILABLE. Its status is Error for every code other than
 // OK: otelgrpc counts every failed call as an error on the client's side,
 // NotFound included, unlike on a server's.
 //
 // Each attempt carries the trace context of its span, and the baggage of
 // the call's context, in its metadata, written by the Setup's propagator:
-// traceparent and tracestate, and baggage, with the default one. So a
+// with the default one, traceparent, tracestate when the span context has
+// one, and baggage when the context holds any. So a
 // backend served with grpcserver joins the caller's trace, its server span
 // a child of the attempt's client span, and its handler sees the caller's
 // baggage.
