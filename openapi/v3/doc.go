@@ -124,6 +124,9 @@
 //     type, and isn't set when that is "".
 //   - The WriterTo Encode returned writes the body.
 //
+// A panic of the decoder, the handler or Encode is answered by the
+// catch-all; see Panics.
+//
 // # Streaming
 //
 // Whether a codec buffers or streams is the codec's to say. A decoder that
@@ -181,6 +184,37 @@
 // the path's methods. The package writes nothing of its own for either,
 // and redirects nothing.
 //
+// # Panics
+//
+// A panic of the end user's code, while an operation serves a request, is
+// answered as the document says, so the API keeps its contract even when
+// that code has a bug. The API recovers a panic of the decoder's Decode,
+// of the handler, and of the encoder's Encode, which all run before the
+// status is written. The operation's catch-all answers it, with its status
+// and wrap of an error that doesn't carry the panic's value, so the value
+// never reaches the client, and the response is the one the document lists
+// for the catch-all. The API keeps serving every other request.
+//
+// A panic of the encoder's WriterTo comes after the status, so it can't be
+// answered: it cuts the response short, as a WriterTo's error does.
+//
+// Recovering has a cost: whatever the panicking code left half-changed,
+// such as a map it was halfway through writing, or a lock it took without
+// a deferred unlock, stays that way for the requests that follow. Nothing
+// is rolled back.
+//
+// These pass through, unrecovered, to httpserver, which records them and
+// aborts the response:
+//
+//   - a panic with http.ErrAbortHandler, which the end user's code uses to
+//     abort a response on purpose, and which httpserver passes through
+//     without recording;
+//   - a panic while answering: in a wrap, or in the encoder of an [Error],
+//     a CatchAll or RequestErrors, which would panic again if it answered
+//     its own panic;
+//   - a panic in Unmatched's handlers, which are the end user's own
+//     http.Handlers.
+//
 // # The document
 //
 // [Document] returns the operation that serves the API's OpenAPI document,
@@ -227,6 +261,15 @@
 // the request's context is done because the client went away, the error
 // goes on the span only. Answers from an Error or from RequestErrors aren't
 // logged.
+//
+// A panic the API recovers is recorded as an exception event on the
+// request's span, with exception.type, exception.message and
+// exception.stacktrace, the stack of the panic, and the span's status is
+// set to Error. The API emits one ERROR record, "operation panicked", in
+// the request's context, with http.request.method, http.route and the
+// same exception attributes, even when the client went away: a panic is a
+// bug whatever the client did. httpserver records no "handler panicked"
+// for it, since the panic never reaches httpserver.
 //
 // An error from a WriterTo, once the status is written, is the server's
 // too. The API records it as an exception event on the request's span,

@@ -13,6 +13,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -54,6 +55,11 @@ func parseMediaType(mt string) string {
 // ServeHTTP decodes r's parameters and body, calls the handler, and writes
 // its response, or the answer to its error. r is the copy of the request
 // chi routed, carrying the path's values.
+//
+// A panic of the decoder's Decode, of the handler, or of the encoder's
+// Encode is recovered, recorded, and answered by the catch-all. A panic of
+// the encoder's WriterTo is recovered and recorded, and cuts the response
+// short.
 func (rt *route) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	st, rerr := rt.params(r)
 	if rerr != nil {
@@ -64,7 +70,12 @@ func (rt *route) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rt.reject(w, r, rerr)
 		return
 	}
-	body, err := rt.codecs.decode(r)
+	var body any
+	var err error
+	if p := guard(func() { body, err = rt.codecs.decode(r) }); p != nil {
+		rt.answerPanic(w, r, p)
+		return
+	}
 	if err != nil {
 		status := http.StatusBadRequest
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
@@ -73,17 +84,25 @@ func (rt *route) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rt.reject(w, r, &RequestError{Status: status, Err: err})
 		return
 	}
-	resp, err := rt.codecs.handle(r.Context(), st, body)
+	var resp any
+	if p := guard(func() { resp, err = rt.codecs.handle(r.Context(), st, body) }); p != nil {
+		rt.answerPanic(w, r, p)
+		return
+	}
 	if err != nil {
 		rt.answerError(w, r, err)
 		return
 	}
-	wt, err := rt.codecs.encode(resp)
+	var wt io.WriterTo
+	if p := guard(func() { wt, err = rt.codecs.encode(resp) }); p != nil {
+		rt.answerPanic(w, r, p)
+		return
+	}
 	if err != nil {
 		rt.fail(w, r, fmt.Errorf("encoding the response: %w", err))
 		return
 	}
-	rt.write(w, r, rt.status, rt.codecs.encMediaType, wt)
+	rt.respond(w, r, wt)
 }
 
 // params decodes each of the path's parameters from r, then each query and
@@ -226,26 +245,116 @@ func (rt *route) log(r *http.Request, body string, err error) {
 	)
 }
 
-// write writes status, then the WriterTo's body, with rt's rule for a
-// WriterTo that fails once the status is written.
+// write writes an answer: status, then the WriterTo's body, with rt's rule
+// for a WriterTo that fails once the status is written. A panic of the
+// WriterTo isn't recovered: it is the end user's answer that panicked, so
+// it reaches httpserver, which records it and aborts the response.
+func (rt *route) write(w http.ResponseWriter, r *http.Request, status int, mediaType string, wt io.WriterTo) {
+	if err := write(w, status, mediaType, wt); err != nil {
+		rt.abort(r, err)
+	}
+}
+
+// respond writes the operation's response: its status, then the body of
+// the WriterTo its encoder returned, with rt's rule for a WriterTo that
+// fails once the status is written. A panic of the WriterTo is recorded as
+// answerPanic records one, and cuts the response short, as a failure does.
+func (rt *route) respond(w http.ResponseWriter, r *http.Request, wt io.WriterTo) {
+	var err error
+	if p := guard(func() { err = write(w, rt.status, rt.codecs.encMediaType, wt) }); p != nil {
+		rt.recordPanic(r, p)
+		panic(http.ErrAbortHandler)
+	}
+	if err != nil {
+		rt.abort(r, err)
+	}
+}
+
+// abort cuts short a response whose WriterTo failed with err once the
+// status was written.
 //
 // That failure can't change the response, so it is cut short: the error is
 // recorded on the request's span, with the span's status set to Error, and
 // as one ERROR record, "response failed", unless the client went away.
-// Then write panics with http.ErrAbortHandler, which net/http and
+// Then abort panics with http.ErrAbortHandler, which net/http and
 // httpserver pass through without logging. On HTTP/2 the stream is reset,
 // and on HTTP/1.1 the connection is closed, so the client sees a failed
 // response rather than a complete one.
-func (rt *route) write(w http.ResponseWriter, r *http.Request, status int, mediaType string, wt io.WriterTo) {
-	err := write(w, status, mediaType, wt)
-	if err == nil {
-		return
-	}
+func (rt *route) abort(r *http.Request, err error) {
 	span := trace.SpanFromContext(r.Context())
 	span.RecordError(err)
 	span.SetStatus(codes.Error, "response failed")
 	rt.log(r, "response failed", err)
 	panic(http.ErrAbortHandler)
+}
+
+// panicked is a panic guard recovered: its value, and the stack of the
+// goroutine where it was recovered, which still holds the panic's frames.
+type panicked struct {
+	value any
+	stack []byte
+}
+
+// guard calls f, and returns the panic it recovers, or nil when f returns.
+// A panic with http.ErrAbortHandler is passed through untouched, as
+// net/http and httpserver pass it, so the end user's code can still abort
+// a response on purpose.
+func guard(f func()) (p *panicked) {
+	defer func() {
+		v := recover()
+		if v == nil {
+			return
+		}
+		if v == http.ErrAbortHandler {
+			panic(v)
+		}
+		// The stack is taken here, in the deferred call, where it still
+		// holds the frames of the panic.
+		p = &panicked{value: v, stack: debug.Stack()}
+	}()
+	f()
+	return nil
+}
+
+// answerPanic records p, and answers it with the catch-all, with its status
+// and wrap of an error that doesn't carry the panic's value, so the value
+// never reaches the client.
+// When the catch-all's own encoder fails, its status is sent alone, as fail
+// sends it. A panic of the catch-all's wrap or encoder isn't recovered: it
+// reaches httpserver, which records it and aborts the response.
+func (rt *route) answerPanic(w http.ResponseWriter, r *http.Request, p *panicked) {
+	rt.recordPanic(r, p)
+	ca := rt.answers.catchAll
+	wt, _, err := ca.encode(errors.New("the operation panicked"))
+	if err != nil {
+		rt.record(r, fmt.Errorf("encoding %s's answer: %w", ca.name, err))
+		w.WriteHeader(ca.status)
+		return
+	}
+	rt.write(w, r, ca.status, ca.mediaType, wt)
+}
+
+// recordPanic records p as an exception event on the request's span, with
+// exception.type, exception.message and exception.stacktrace, sets the
+// span's status to Error, and emits one ERROR record, "operation
+// panicked", in the request's context, so the record carries the span's
+// trace and span IDs. A panic is a bug whatever the client did, so it is
+// logged even when the client went away.
+func (rt *route) recordPanic(r *http.Request, p *panicked) {
+	ctx := r.Context()
+	exception := []attribute.KeyValue{
+		semconv.ExceptionType(fmt.Sprintf("%T", p.value)),
+		semconv.ExceptionMessage(fmt.Sprint(p.value)),
+		semconv.ExceptionStacktrace(string(p.stack)),
+	}
+	span := trace.SpanFromContext(ctx)
+	span.AddEvent(semconv.ExceptionEventName, trace.WithAttributes(exception...))
+	span.SetStatus(codes.Error, "operation panicked")
+	attrs := append([]attribute.KeyValue{
+		semconv.HTTPRequestMethodKey.String(r.Method),
+		semconv.HTTPRoute(rt.path.String()),
+	}, exception...)
+	emit(ctx, rt.logger, log.SeverityError, "operation panicked", attrs...)
 }
 
 // write writes status, then the WriterTo's body, with the Content-Type

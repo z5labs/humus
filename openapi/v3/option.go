@@ -159,6 +159,10 @@ func (o errorOption[E]) bind() (*answer, error) {
 // the API records it: an exception event on the request's span, and one
 // ERROR record, "request failed". wrap decides what the client sees, and
 // should not put the error's text in the body: the record has it.
+//
+// The catch-all also answers a panic of the operation's decoder, handler or
+// encoder. wrap is then given an error that doesn't carry the panic's
+// value, and the panic is recorded as "operation panicked" instead.
 func CatchAll[E error](status int, wrap func(error) E, enc func() Encoder[E]) Fallback {
 	return catchAllOption[E]{status: status, wrap: wrap, enc: enc}
 }
