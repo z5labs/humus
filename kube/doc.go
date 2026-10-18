@@ -126,6 +126,65 @@
 // [CheckServer] and [CheckTLS] check the two required ones, and NewClient
 // reports every bad field together.
 //
+// # Settings
+//
+// [Settings] holds what configures a controller: its name, the namespace
+// it watches, how many objects it reconciles at once, how often it
+// resyncs, how it backs off an object whose reconcile failed, and the
+// Lease its replicas elect their leader with, in its [LeaderElection].
+// Every field is a plain value, [DefaultSettings] gives the package's
+// defaults, and each checked field has a check that reports what is wrong
+// with a value without naming the field. The package reads no environment
+// variable: the end user sources the settings in their Init, with whatever
+// variable names they choose, and runs each field's check as they do:
+//
+//	d := kube.DefaultSettings()
+//	settings, err := config.Struct(func(r *config.Resolver) kube.Settings {
+//		k := d
+//		// No .Default: the name, and the Lease's namespace and identity, are required.
+//		k.Name = r.Get(env("CONTROLLER_NAME").Validate(kube.CheckName))
+//		k.Workers = r.Get(env("CONTROLLER_WORKERS").Parse(strconv.Atoi).Default(d.Workers).Validate(kube.CheckWorkers))
+//		k.LeaderElection.Namespace = r.Get(env("POD_NAMESPACE").Validate(kube.CheckNamespace))
+//		k.LeaderElection.Identity = r.Get(env("POD_NAME").Validate(kube.CheckIdentity))
+//		return k
+//	}).Read(ctx)
+//
+// Here env is the end user's own helper, which names a variable. A
+// variable that isn't set fails as not found, and a value that fails its
+// check fails Init, naming the variable, so the process exits 78.
+//
+// Name, LeaderElection.Namespace and LeaderElection.Identity have no
+// default, so the end user always sources them, with no .Default in their
+// chains. DefaultSettings leaves them "", which [CheckName],
+// [CheckNamespace] and [CheckIdentity] reject. humus imposes no name and no
+// namespace, as it imposes no port.
+//
+// In a pod, the Lease's Namespace and Identity come from POD_NAMESPACE and
+// POD_NAME, as above, which the pod's spec sets from the downward API:
+//
+//	env:
+//	  - name: POD_NAMESPACE
+//	    valueFrom:
+//	      fieldRef:
+//	        fieldPath: metadata.namespace
+//	  - name: POD_NAME
+//	    valueFrom:
+//	      fieldRef:
+//	        fieldPath: metadata.name
+//
+// Each replica's pod has a name of its own, so each has an identity of its
+// own in the Lease.
+//
+// The defaults are Kubernetes' own. RetryBaseDelay's 5ms and
+// RetryMaxDelay's 1000s are the per-object backoff of client-go's
+// DefaultTypedControllerRateLimiter. The Lease's 15s LeaseDuration, 10s
+// RenewDeadline and 2s RetryPeriod are kube-controller-manager's defaults.
+//
+// Some bounds take more than one field to tell, so no one field's check
+// has them: RetryMaxDelay is at least RetryBaseDelay, LeaseDuration is
+// longer than RenewDeadline, and RenewDeadline is longer than 1.2
+// RetryPeriods. The defaults keep all three.
+//
 // # Custom resources
 //
 // A [Resource] declares a custom resource as Go values: its group, version,
