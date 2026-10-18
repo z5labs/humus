@@ -73,7 +73,15 @@ generated code takes, dials through the Setup's Host, retries as the end
 user's `Classify` decides, fails calls at once with a circuit breaker while
 the dependency keeps failing, and turns readiness on once it has connected,
 with `Connected`. See
-[Calling gRPC services](https://z5labs.github.io/humus/grpc-client/). Earlier
+[Calling gRPC services](https://z5labs.github.io/humus/grpc-client/). The
+`auth` and `auth/jwt` packages and the `grpc` module's `grpcauth` package
+have landed too: `auth` authenticates and authorizes the requests a service
+serves, with typed schemes whose principals a handler reads with `From`, and
+requirements that `openapi.Security`, `auth.NewHandler` and
+`grpcauth.Interceptors` enforce, while `auth/jwt` verifies JWT bearer tokens
+against keys from an identity provider's JSON Web Key Set or a `KeySet` of
+the end user's. See
+[Authentication and authorization](https://z5labs.github.io/humus/auth/). Earlier
 releases remain available on [pkg.go.dev](https://pkg.go.dev/github.com/z5labs/humus?tab=versions).
 
 The plan is in the charter,
