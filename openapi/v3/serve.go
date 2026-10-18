@@ -38,8 +38,8 @@ type route struct {
 	bodyType string // the decoder's media type, parsed and lowercased
 	meta     parts  // its own parts, for its metadata in the document
 
-	// doc is the encoded document, which the route Document returns
-	// serves in place of a handler. It is nil for every other route.
+	// doc is the encoded document. The document's route serves it in
+	// place of a handler; it is nil on every other route.
 	doc documentHandler
 }
 
@@ -65,7 +65,7 @@ func parseMediaType(mt string) string {
 // catch-all. A panic of the encoder's WriterTo is recovered and recorded,
 // and cuts the response short.
 //
-// The route Document returns authenticates r, then serves the document.
+// The document's route authenticates r, then serves the document.
 func (rt *route) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r, ok := rt.authenticate(w, r)
 	if !ok {
