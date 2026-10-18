@@ -46,8 +46,8 @@ func sourceFiles(t *testing.T) (*token.FileSet, []*ast.File) {
 // TestPackage_exports_only_Settings_its_checks_and_the_Client
 // checks that the package's only exported names, methods included, are
 // Settings, DefaultSettings and the checks, and the Client with NewClient,
-// Invoke and NewStream: in particular, the Client has no Close, and there
-// is no App and no Main.
+// Invoke, NewStream and Connected: in particular, the Client has no Close,
+// and there is no App and no Main.
 func TestPackage_exports_only_Settings_its_checks_and_the_Client(t *testing.T) {
 	t.Parallel()
 
@@ -80,7 +80,7 @@ func TestPackage_exports_only_Settings_its_checks_and_the_Client(t *testing.T) {
 	}
 	slices.Sort(exported)
 	require.Equal(t, []string{
-		"CheckAddr", "CheckTLS", "CheckTimeout", "Client", "DefaultSettings",
+		"CheckAddr", "CheckTLS", "CheckTimeout", "Client", "Connected", "DefaultSettings",
 		"Invoke", "NewClient", "NewStream", "Settings",
 	}, exported)
 }

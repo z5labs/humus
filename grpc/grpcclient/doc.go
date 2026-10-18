@@ -244,11 +244,77 @@
 // Client has no Close of its own, so the end user's code can't close a
 // connection that other Services share, under them.
 //
-// NewClient dials nothing, as grpc.NewClient doesn't: the first RPC dials.
-// So a dependency that is down when the service starts doesn't fail Init,
-// and the service doesn't crash-loop over another service's outage. Its RPCs
-// fail with codes.Unavailable until the dependency is reachable. A service
-// that must not start without its dependency calls it in Init.
+// NewClient dials nothing, as grpc.NewClient doesn't: the first RPC dials,
+// or the first check of [Client.Connected]. So a dependency that is down
+// when the service starts doesn't fail Init, and the service doesn't
+// crash-loop over another service's outage. Its RPCs fail with
+// codes.Unavailable until the dependency is reachable. A service that must
+// not turn ready without its dependency puts Connected in its readiness, as
+// Readiness, below, sets out.
+//
+// # Readiness
+//
+// [Client.Connected] returns a health.Monitor for readiness. It is healthy
+// once the Client has connected to Addr: unhealthy until its connection is
+// first ready, its TLS handshake done, and healthy from then until the
+// connection is closed. It never returns an error. It goes in the readiness
+// of whatever exposes the probes:
+//
+//	hs := health.NewService(health.Readiness(carts.Connected()))
+//	return []humus.Service{api, hs}, nil
+//
+// What it gates is a rollout. NewClient dials nothing, so without it a
+// release with a wrong Addr, a CA that doesn't trust the server, a missing
+// TLS config, or a dependency it can't reach turns ready, replaces the pods
+// that worked, and fails every RPC. With Connected in its readiness, it
+// never turns ready, and the rollout stops at its progress deadline with
+// the old pods still serving.
+//
+// It latches, as kafka's (*Service).Joined does, for the same reason. After
+// the first connection, an outage of the dependency hits every pod at once.
+// Turning them all unready would take the service out of its load
+// balancer, so its callers would get no answer instead of this service's
+// own error, and the parts of it that don't need the dependency would stop
+// too. It would also block a rollout that might be the fix. So once the
+// connection has been ready, the monitor stays healthy whatever the
+// connection's state: after a GOAWAY, from a server's MaxConnectionAge or a
+// rollout of the dependency, after a lost connection, and after grpc-go
+// closes a connection idle for 30 minutes. Every monitor Connected returns
+// reads the same latch, kept on the Client, so an HTTP probe and a gRPC one
+// agree.
+//
+// Connected is for readiness only. A liveness monitor would restart every
+// pod in an outage of the dependency, and restarting the pod doesn't bring
+// a dependency back.
+//
+// Its first check dials. Until the connection is first ready, a check while
+// it is idle starts it, so a service with Connected in its readiness dials
+// at its first probe rather than its first RPC. The check then waits for
+// the connection's state to change, until it is ready, the connection is
+// closed, or the check's context is done. So a reachable dependency passes
+// the first probe, and an unreachable one fails it when the probe's own
+// timeout ends the check. A check makes no RPC: the dependency sees no
+// call, the trace has no span, and nothing is logged. A connection that
+// fails shows in the RPCs that wait on it, and in grpc-go's own logger.
+//
+// After Setup.OnStop has closed the connection, the monitor is unhealthy.
+// By then every Service has stopped, and the health Service has already
+// turned readiness false.
+//
+// A monitor that calls the dependency's grpc.health.v1 service is the end
+// user's own, a few lines over the Client:
+//
+//	health.MonitorFunc(func(ctx context.Context) (bool, error) {
+//		resp, err := healthpb.NewHealthClient(carts).Check(ctx, &healthpb.HealthCheckRequest{Service: "cart.v1.CartService"})
+//		return err == nil && resp.GetStatus() == healthpb.HealthCheckResponse_SERVING, nil
+//	})
+//
+// Such a monitor makes an RPC through the Client, so whatever fails the
+// Client's calls fails it too: an outage of the dependency, and an open
+// circuit breaker, which fails calls at once while the dependency keeps
+// failing. It then turns unhealthy, and with it every pod, in the outage
+// Connected's latch exists to ride out. Connected makes no RPC, so neither
+// turns it unhealthy.
 //
 // # Settings
 //
