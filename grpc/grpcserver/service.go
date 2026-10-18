@@ -50,7 +50,10 @@ var (
 // with codes.Internal, as the package doc describes under Panics. Inside
 // them, a second stream interceptor gives each stream's handler a context
 // that Shutdown cancels, as the package doc describes under Streams at
-// shutdown.
+// shutdown. Inside those, a unary and a stream interceptor strip the
+// failure scenario an RPC carries, with s.Faults, unless
+// settings.TrustScenario trusts the caller, as the package doc describes
+// under Failure injection.
 //
 // opts come after humus's own options, and humus's transport credentials
 // come after opts. An option that grpc-go keeps one value of, such as
@@ -73,12 +76,20 @@ func NewService(s *humus.Setup, settings Settings, opts ...grpc.ServerOption) (*
 	// The credentials come last, so grpc-go keeps them over any grpc.Creds
 	// in opts. credentials.NewTLS clones the config, so the end user's is
 	// never changed.
-	all := make([]grpc.ServerOption, 0, 1+len(opts)+1)
-	all = append(all, grpc.StatsHandler(otelgrpc.NewServerHandler(
-		otelgrpc.WithTracerProvider(s.Telemetry.TracerProvider),
-		otelgrpc.WithMeterProvider(s.Telemetry.MeterProvider),
-		otelgrpc.WithPropagators(s.Telemetry.Propagator),
-	)))
+	//
+	// The strip interceptors come before opts, so they are chained after
+	// server.New's recovery and streams interceptors, and before every
+	// interceptor of the end user's.
+	all := make([]grpc.ServerOption, 0, 3+len(opts)+1)
+	all = append(all,
+		grpc.StatsHandler(otelgrpc.NewServerHandler(
+			otelgrpc.WithTracerProvider(s.Telemetry.TracerProvider),
+			otelgrpc.WithMeterProvider(s.Telemetry.MeterProvider),
+			otelgrpc.WithPropagators(s.Telemetry.Propagator),
+		)),
+		grpc.ChainUnaryInterceptor(server.StripUnary(s.Faults, settings.TrustScenario)),
+		grpc.ChainStreamInterceptor(server.StripStream(s.Faults, settings.TrustScenario)),
+	)
 	all = append(all, opts...)
 	all = append(all, grpc.Creds(credentials.NewTLS(settings.TLS)))
 

@@ -27,6 +27,13 @@
 // which Shutdown cancels when it starts. A stream whose handler then
 // returns nil or a context error ends with codes.Unavailable and the
 // message "server is shutting down". Unary RPCs are not cancelled.
+//
+// StripUnary and StripStream are the interceptors that strip the failure
+// scenario an RPC carries from a caller the end user doesn't trust. New
+// doesn't add them: a server that strips passes them in its options, so
+// they run inside the recovery and the streams interceptor, and outside
+// every interceptor of the end user's. grpcserver.NewService does;
+// grpchealth's own server, which serves only health checks, doesn't.
 package server
 
 import (

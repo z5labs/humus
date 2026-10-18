@@ -145,9 +145,17 @@ func recordAttr(r sdklog.Record, key string) (attribute.Value, bool) {
 }
 
 // requireRecorded fails t unless run holds exactly one ERROR record, of
-// the Service's logger, for the panic of the RPC whose span is span, and
-// span has the panic as an exception event and the status Error.
+// the Service's logger, for the panic in this file of the RPC whose span
+// is span, and span has the panic as an exception event and the status
+// Error.
 func requireRecorded(t *testing.T, run panicRun, span sdktrace.ReadOnlySpan) {
+	t.Helper()
+	requireRecordedIn(t, run, span, "panic_test.go")
+}
+
+// requireRecordedIn is requireRecorded for a panic in the test file named
+// file, whose frame the stack trace must reach.
+func requireRecordedIn(t *testing.T, run panicRun, span sdktrace.ReadOnlySpan, file string) {
 	t.Helper()
 	require.Equal(t, otelcodes.Error, span.Status().Code)
 
@@ -163,7 +171,7 @@ func requireRecorded(t *testing.T, run panicRun, span sdktrace.ReadOnlySpan) {
 		evAttrs[kv.Key] = kv.Value
 	}
 	require.Equal(t, "boom", evAttrs["exception.message"].AsString())
-	require.Contains(t, evAttrs["exception.stacktrace"].AsString(), "panic_test.go")
+	require.Contains(t, evAttrs["exception.stacktrace"].AsString(), file)
 
 	require.Len(t, run.errors, 1)
 	rec := run.errors[0]
@@ -180,7 +188,7 @@ func requireRecorded(t *testing.T, run panicRun, span sdktrace.ReadOnlySpan) {
 	require.Equal(t, "boom", msg.AsString())
 	stack, ok := recordAttr(rec, "exception.stacktrace")
 	require.True(t, ok, "the record has no exception.stacktrace")
-	require.Contains(t, stack.AsString(), "panic_test.go", "the stack trace does not reach the panic")
+	require.Contains(t, stack.AsString(), file, "the stack trace does not reach the panic")
 
 	require.Empty(t, run.stderr)
 }

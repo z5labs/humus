@@ -6,6 +6,7 @@
 package grpcserver
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -14,8 +15,9 @@ import (
 )
 
 // Settings configures a Service. Every field is a plain value, and a
-// field's zero value means zero, never "use the default". Neither field
-// has a default, so the end user sources both.
+// field's zero value means zero, never "use the default". Neither Addr nor
+// TLS has a default, so the end user sources both. TrustScenario is set in
+// code, not sourced.
 type Settings struct {
 	// Addr is the address the Service listens on through the Setup's Host,
 	// as host:port. It is required: humus imposes no port. An empty host
@@ -34,6 +36,19 @@ type Settings struct {
 	// GetConfigForClient set, and a MaxVersion of TLS 1.2 or later, or
 	// none. Check: CheckTLS.
 	TLS *tls.Config
+
+	// TrustScenario reports whether the failure scenario an RPC carries
+	// reaches the end user's interceptors and handler. An RPC it doesn't
+	// trust has the scenario stripped from its context first. ctx is the
+	// RPC's context as it arrived, scenario and all: it holds the RPC's
+	// peer, from peer.FromContext, and its incoming metadata, from
+	// metadata.FromIncomingContext. method is the RPC's full method, such
+	// as "/cart.CartService/AddItem". It is asked only about an RPC that
+	// carries a scenario, and only when the App has failure injection. It
+	// is set in code, not sourced.
+	//
+	// Default: nil, which trusts no caller. Valid: any. Check: none.
+	TrustScenario func(ctx context.Context, method string) bool
 }
 
 // CheckAddr reports why addr is not a valid Addr, or nil if it is. A valid
