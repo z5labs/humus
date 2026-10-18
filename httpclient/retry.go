@@ -97,6 +97,7 @@ func newRetrier(settings Settings) (*retry.Retrier, error) {
 type retryTransport struct {
 	origin  origin
 	retrier *retry.Retrier
+	metrics *instruments
 	next    http.RoundTripper
 	conns   *http.Transport
 }
@@ -124,7 +125,7 @@ func (t *retryTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 		if at.Number() > 1 && r.Body != nil && r.Body != http.NoBody {
 			body, bodyErr := r.GetBody()
 			if bodyErr != nil {
-				at.Done(&result{class: Classification{Retry: retry.Stop, Breaker: circuit.Ignored}})
+				t.metrics.done(call, at, &result{class: Classification{Retry: retry.Stop, Breaker: circuit.Ignored}})
 				return nil, fmt.Errorf("httpclient: rewinding the request's body: %w", bodyErr)
 			}
 			req = r.Clone(call)
@@ -137,7 +138,7 @@ func (t *retryTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 			// Nothing inside otelhttp ran, so there is no result to count.
 			a.class = Classification{Retry: retry.Stop, Breaker: circuit.Ignored}
 		}
-		if at.Done(&result{class: a.class}) != retry.Again || !replayable {
+		if t.metrics.done(call, at, &result{class: a.class}) != retry.Again || !replayable {
 			break
 		}
 		if resp != nil {

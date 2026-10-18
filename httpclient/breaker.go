@@ -10,18 +10,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strconv"
 	"sync"
 	"time"
 
 	"github.com/z5labs/bedrock/circuit"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/log"
-	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 )
-
-// loggerName is the name of the logger the client logs through.
-const loggerName = "github.com/z5labs/humus/httpclient"
 
 // verdict is the error the breaker layer passes to Ticket.Done. It carries
 // the outcome the layer has already decided, so the breaker's classifier
@@ -60,23 +55,20 @@ func readFailed(call context.Context) circuit.Outcome {
 	return circuit.Failure
 }
 
-// newObserver returns the breaker's observer for the dependency at o. It
-// emits one log record for each transition, in the context of the call
-// that made it, without its cancellation: the call has often ended by then,
-// as a call whose deadline passed has, and an exporter handed a done
-// context would drop the record. The record keeps the call's span. Its
-// bodies are circuit breaker open at WARN, and circuit breaker half-open
-// and circuit breaker closed at INFO. Its attributes are the
-// dependency's server.address and server.port, the state the breaker left
-// and the counts of that state.
-func newObserver(logger log.Logger, o origin) func(context.Context, circuit.Transition) {
-	server := []attribute.KeyValue{semconv.ServerAddress(o.host)}
-	// originOf gives every http and https URL a port, and url.Parse accepts
-	// only a numeric one.
-	if port, err := strconv.Atoi(o.port); err == nil {
-		server = append(server, semconv.ServerPort(port))
-	}
+// newObserver returns the breaker's observer for the dependency m measures.
+// It counts each transition in humus.circuit.transitions, and emits one log
+// record for it, in the context of the call that made it, without its
+// cancellation: the call has often ended by then, as a call whose deadline
+// passed has, and an exporter handed a done context would drop the record.
+// The record keeps the call's span. Its bodies are circuit breaker open at
+// WARN, and circuit breaker half-open and circuit breaker closed at INFO.
+// Its attributes are the dependency's server.address and server.port, the
+// state the breaker left and the counts of that state.
+func newObserver(logger log.Logger, m *instruments) func(context.Context, circuit.Transition) {
 	return func(ctx context.Context, t circuit.Transition) {
+		ctx = context.WithoutCancel(ctx)
+		m.transition(ctx, t)
+
 		severity := log.SeverityInfo
 		if t.To == circuit.Open {
 			severity = log.SeverityWarn
@@ -86,16 +78,16 @@ func newObserver(logger log.Logger, o origin) func(context.Context, circuit.Tran
 		r.SetSeverity(severity)
 		r.SetSeverityText(severity.String())
 		r.SetBody(attribute.StringValue("circuit breaker " + t.To.String()))
-		r.AddAttributes(server...)
+		r.AddAttributes(m.server...)
 		r.AddAttributes(
-			attribute.String("circuit.previous_state", t.From.String()),
-			attribute.Int("circuit.successes", t.Counts.Successes),
-			attribute.Int("circuit.failures", t.Counts.Failures),
-			attribute.Int("circuit.consecutive_successes", t.Counts.ConsecutiveSuccesses),
-			attribute.Int("circuit.consecutive_failures", t.Counts.ConsecutiveFailures),
-			attribute.Int("circuit.timed_out", t.Counts.TimedOut),
+			previousStateKey.String(t.From.String()),
+			attribute.Int("humus.circuit.successes", t.Counts.Successes),
+			attribute.Int("humus.circuit.failures", t.Counts.Failures),
+			attribute.Int("humus.circuit.consecutive_successes", t.Counts.ConsecutiveSuccesses),
+			attribute.Int("humus.circuit.consecutive_failures", t.Counts.ConsecutiveFailures),
+			attribute.Int("humus.circuit.timed_out", t.Counts.TimedOut),
 		)
-		logger.Emit(context.WithoutCancel(ctx), r)
+		logger.Emit(ctx, r)
 	}
 }
 

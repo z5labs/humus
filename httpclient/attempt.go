@@ -30,6 +30,7 @@ import (
 type attemptTransport struct {
 	classify func(resp *http.Response, err error) Classification
 	breaker  *circuit.Breaker
+	metrics  *instruments
 	next     http.RoundTripper
 }
 
@@ -70,6 +71,7 @@ func (t attemptTransport) RoundTrip(r *http.Request) (resp *http.Response, err e
 	}()
 	ticket, err := t.breaker.Allow(a.call)
 	if err != nil {
+		t.metrics.rejected(r.Context())
 		a.class, a.classified = Classification{Retry: retry.Stop, Breaker: circuit.Ignored}, true
 		return nil, err
 	}
