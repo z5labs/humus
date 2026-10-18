@@ -162,9 +162,9 @@
 //
 //	probes, err := httphealth.NewService(s, probeSettings, health.Readiness(consumer.Joined()))
 //
-// A rollout whose new pods can't reach the brokers then stops at its
-// progress deadline, with the old pods still consuming, rather than
-// replacing them with pods that never consume. A member assigned no
+// A rollout whose new pods can't reach the brokers then stalls, and is
+// reported failed at its progress deadline, rather than replacing every old
+// pod with pods that never consume. A member assigned no
 // partition, because the group has more members than the topics have
 // partitions, has joined, and is ready.
 //

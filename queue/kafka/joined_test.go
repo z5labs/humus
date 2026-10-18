@@ -107,7 +107,8 @@ func TestService_Joined(t *testing.T) {
 			require.True(t, joined(t, svc1))
 
 			second, secondSvcs, _ := joinedConsumer(settings(c.ListenAddrs()...))
-			p2, status2 := humustest.Start(t, second, humustest.WithApp(humus.WithHost(h.Host())))
+			tel := humustest.NewTelemetry()
+			p2, status2 := humustest.Start(t, second, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
 			svc2 := <-secondSvcs
 			time.Sleep(time.Minute) // the group rebalances
 			synctest.Wait()
@@ -120,8 +121,11 @@ func TestService_Joined(t *testing.T) {
 				counts = append(counts, m.NumAssigned())
 			}
 			require.ElementsMatch(t, []int{0, 1}, counts, "one member holds the partition, and the other none")
+			// The Service logs only an assignment with partitions in it, so
+			// the second was only ever handed empty ones.
+			require.Empty(t, records(tel.Logs(), "partitions assigned"), "the second Service was assigned no partition")
 			require.True(t, joined(t, svc1), "the first stays healthy through the rebalance")
-			require.True(t, joined(t, svc2), "the second is healthy, whichever of the two holds the partition")
+			require.True(t, joined(t, svc2), "the second is healthy, though it holds no partition")
 
 			p2.Signal(syscall.SIGTERM)
 			st := <-status2
@@ -153,7 +157,8 @@ func TestService_Joined(t *testing.T) {
 			require.True(t, joined(t, svc), "a broker outage after the join doesn't make it unhealthy")
 
 			p.Signal(syscall.SIGTERM)
-			<-status
+			st := <-status
+			require.Zero(t, st.Code(), st.Cause())
 			require.False(t, joined(t, svc), "unhealthy once Serve has returned")
 		})
 	})
