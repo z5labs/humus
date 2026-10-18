@@ -1184,7 +1184,7 @@ user's `Builder` quiets franz-go as it does any scope:
 retries each connection with backoff, and the Service processes records once
 the brokers are back. Failing `Serve` after a bound would turn a broker
 outage into a crash loop of every consumer. A consumer that can't connect
-shows up in two places:
+shows up in three places:
 
 - **kotel's `messaging.kafka.connect_errors.count`** counts each failed
   attempt, by broker, so a consumer that never connects shows up in its
@@ -1192,14 +1192,42 @@ shows up in two places:
 - **franz-go's logs** record each attempt at WARN, as
   `unable to open connection to broker`, with the broker's address and the
   error.
+- **Its readiness**, through [`Joined`](#readiness): a consumer that has
+  never joined its group is not ready, so a rollout whose new pods can't
+  reach the brokers stalls.
 
-**Readiness is not decided here.** The usual answer to a consumer that can't
-connect is to report it not ready, and a consumer serves no probes today:
-the process runs exactly the Services its `Init` returns. Proposal: exposing
-health probes (wave 4) decides how a consumer's pod, which has no HTTP server
-of its own, serves probes, and whether a consumer whose brokers are
-unreachable is ready. If end users find that a consumer should fail instead,
-a bound can be added as a setting, which breaks no one.
+## Readiness
+
+**A consumer is ready once it has joined its group.** `Joined` returns a
+`health.Monitor` that is unhealthy until franz-go first hands the member an
+assignment, empty or not, and healthy from then until `Serve` returns. It
+goes in the readiness of whatever exposes the probes: a probes server, such
+as `httphealth.NewService` in a pod with no server of its own, or a
+[health Service](/humus/health/#the-health-service):
+
+```go
+probes := health.NewService(health.Readiness(consumer.Joined()))
+```
+
+`httphealth.NewService` takes the same `health.Readiness(consumer.Joined())`
+option. A rollout whose new pods can't reach the brokers then stalls, and is
+reported failed at its progress deadline, rather than replacing every old pod
+with pods that never consume. A member assigned no partition, because
+the group has more members than the topics have partitions, has joined, and
+is ready. `Joined` may be called in `Init`, before `Serve`, and its monitor
+never returns an error.
+
+**A broker outage after the first join doesn't make a consumer unready.** The
+outage hits every pod at once, so taking them all out of service would gain
+nothing, and franz-go rejoins the group on its own once the brokers are
+back. Neither does a rebalance, nor a fenced-out member rejoining.
+
+**`Joined` is for readiness only.** A liveness monitor would restart every
+pod in a broker outage, and the kubelet's restart backoff, up to five
+minutes by default, would then hold them down after the brokers return,
+while franz-go rejoins on its own. The errors a restart would fix, an error
+code franz-go doesn't retry and credentials a broker refuses, already end
+`Serve`, so the pod exits and is restarted without a probe.
 
 **A `Producer` whose brokers are unreachable fails its calls.** Each call
 waits out its `DeliveryTimeout` while franz-go retries the connection, and
