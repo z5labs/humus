@@ -545,8 +545,8 @@ before it has started. One that starts fast needs none.
   `LoggerProvider`, under the package's import path,
   `github.com/z5labs/humus/httphealth` or
   `github.com/z5labs/humus/grpc/grpchealth`, in the request's context. Its
-  body is the error, and its attribute `health.probe` is `liveness` or
-  `readiness`. A monitor that is unhealthy without an error, such as the
+  body is the error, and its attribute `humus.health.probe` is `liveness`
+  or `readiness`. A monitor that is unhealthy without an error, such as the
   health Service's own readiness once the App starts shutting down, logs
   nothing.
 - **Probes servers record no spans and no metrics,** and extract no trace

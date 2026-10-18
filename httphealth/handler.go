@@ -75,7 +75,7 @@ func (h noStore) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // probe answers one probe by checking its monitor.
 type probe struct {
 	// name is the probe's name, liveness or readiness, which is the value of
-	// a logged error's health.probe attribute.
+	// a logged error's humus.health.probe attribute.
 	name    string
 	monitor health.Monitor
 	logger  log.Logger
@@ -93,7 +93,7 @@ func (p probe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rec.SetSeverity(log.SeverityError)
 		rec.SetSeverityText(log.SeverityError.String())
 		rec.SetBody(attribute.StringValue(err.Error()))
-		rec.AddAttributes(attribute.String("health.probe", p.name))
+		rec.AddAttributes(attribute.String("humus.health.probe", p.name))
 		p.logger.Emit(ctx, rec)
 	}
 
