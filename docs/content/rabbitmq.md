@@ -11,7 +11,7 @@ description: >
   circuit breaker, what both record, and how to test an App that uses
   RabbitMQ, which humus ships no fake broker for.
 type: docs
-weight: 16
+weight: 17
 ---
 
 The [`queue/rabbitmq`](https://pkg.go.dev/github.com/z5labs/humus/queue/rabbitmq)

@@ -10,7 +10,7 @@ description: >
   HTTP/2 behind a Kubernetes Service, what it records, and how to test the
   calls against a fake dependency.
 type: docs
-weight: 12
+weight: 13
 ---
 
 The [`httpclient`](https://pkg.go.dev/github.com/z5labs/humus/httpclient)

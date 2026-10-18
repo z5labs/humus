@@ -31,8 +31,14 @@ status. See [Jobs](https://z5labs.github.io/humus/jobs/). The
 Service, with HTTP/2 preferred, and `httpserver.Main` runs it with a drain and
 a grace period for a server behind a load balancer, while `httpservertest`
 tests it on the same defaults. See
-[Serving HTTP](https://z5labs.github.io/humus/http/). The `grpc` module has
-landed as well: `grpcserver` serves gRPC over TLS as a Service, ending every
+[Serving HTTP](https://z5labs.github.io/humus/http/). The `openapi/v3`
+package has landed too: it serves an API of typed operations on typed paths,
+whose every body names its codec and every error its answer, and the API's
+OpenAPI 3.2 document, written from the same declarations, as the handler
+`httpserver` serves, with `jsoncodec` for JSON bodies and `problem` for RFC
+9457 problem details beside it. See
+[Serving an API with OpenAPI](https://z5labs.github.io/humus/openapi/). The
+`grpc` module has landed as well: `grpcserver` serves gRPC over TLS as a Service, ending every
 stream at shutdown with `Unavailable`, and `grpcserver.Main` runs it with a
 drain and a grace period for a server behind a Kubernetes Service, while
 `grpcservertest` tests it on the same defaults. See

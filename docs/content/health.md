@@ -7,7 +7,7 @@ description: >
   expose the probes to Kubernetes, attached to a server the pod runs or on a
   probes port, with their answers, manifests, startup probes and tests.
 type: docs
-weight: 13
+weight: 14
 ---
 
 A service reports its health as [monitors](#monitors) it combines into two

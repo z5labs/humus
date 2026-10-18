@@ -6,7 +6,7 @@ description: >
   humus.Main would run, under synctest, with no real socket, no file outside
   the test's temp directory and no secret in the repository.
 type: docs
-weight: 21
+weight: 22
 ---
 
 A humus App runs whole inside a test.
