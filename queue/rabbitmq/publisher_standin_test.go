@@ -277,6 +277,12 @@ func (ch *pubChan) shutdown(err *amqp.Error) {
 	}
 }
 
+func (ch *pubChan) IsClosed() bool {
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
+	return ch.closed
+}
+
 // isClosed reports whether ch is closed, and whether the Publisher closed
 // it.
 func (ch *pubChan) isClosed() (closed, byPublisher bool) {

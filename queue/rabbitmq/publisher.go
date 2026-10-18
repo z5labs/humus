@@ -110,6 +110,7 @@ type publishChannel interface {
 	NotifyReturn(c chan amqp.Return) chan amqp.Return
 	NotifyClose(c chan *amqp.Error) chan *amqp.Error
 	PublishWithContext(ctx context.Context, exchange, key string, mandatory, immediate bool, msg amqp.Publishing) error
+	IsClosed() bool
 	Close() error
 }
 
@@ -438,18 +439,9 @@ func (p *Publisher) connection(ctx context.Context) (publishConn, error) {
 	return conn, nil
 }
 
-// open reports whether cc and its connection are still open. A channel
-// that closed has sent its error, or closed its listener.
+// open reports whether cc and its connection are still open.
 func (cc *confirmChannel) open() bool {
-	if cc.conn.IsClosed() {
-		return false
-	}
-	select {
-	case <-cc.closes:
-		return false
-	default:
-		return true
-	}
+	return !cc.conn.IsClosed() && !cc.ch.IsClosed()
 }
 
 // publish publishes m on cc with mandatory set, and waits for the broker's
