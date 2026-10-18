@@ -209,7 +209,7 @@ startup with exit 78, naming the variable.
 | `AttemptTimeout` | `5s` | positive | `CheckAttemptTimeout` |
 | `MaxAttempts` | `3` | 1 or more | `CheckMaxAttempts` |
 | `BackoffBase` | `100ms` | positive | `CheckBackoffBase` |
-| `BackoffMax` | `5s` | positive, and at least `BackoffBase` | `CheckBackoffMax` |
+| `BackoffMax` | `5s` | positive, and at least `BackoffBase`, which `NewClient` checks | `CheckBackoffMax` |
 | `RetryBudget` | `{MaxTokens: 10, TokenRatio: 0.1}` | `MaxTokens` from 3 to `retry.TokenLimit`, `TokenRatio` from 0.001 to `retry.TokenLimit` | `CheckRetryBudgetMaxTokens`, `CheckRetryBudgetTokenRatio` |
 | `Classify` | the table under [How an attempt's result counts](#how-an-attempts-result-counts) | set | none: set in code |
 | `Breaker` | `{Window: 20, Probes: 1, OpenFor: 10s, ProbeTimeout: 10s}` | `Window` and `Probes` from 1 to `circuit.MaxCount`, the durations positive | `CheckBreakerWindow`, `CheckBreakerProbes`, `CheckBreakerOpenFor`, `CheckBreakerProbeTimeout` |
@@ -223,8 +223,18 @@ the client's origin. Credentials go in a header that service code sets.
 **`Classify` and `BreakerPolicy` are set in code, not sourced.** What a
 dependency's answers mean, and how it fails, are the end user's knowledge,
 not an operator's choice. `NewClient` runs every check again, and rejects a
-`BackoffMax` below `BackoffBase` and a nil `Classify`, `Trip` or `Probe`,
-failing `Init` with exit 1, since the fault is in the code.
+nil `Classify`, `Trip` or `Probe`, failing `Init` with exit 1, since the
+fault is in the code.
+
+**Two rules take two fields, and only `NewClient` checks them:** a
+`BackoffMax` below `BackoffBase`, and a `BaseURL` whose scheme disagrees
+with `TLS`, as [TLS and plain text](#tls-and-plain-text) describes. A check
+given to `Validate` sees one value, so neither fails in `config.Struct`.
+Both fail `Init` with exit 1, and an error that names the fields, such as
+`Settings.TLS must be set for an https Settings.BaseURL`, rather than with
+exit 78 naming a variable, even when an operator's values caused them. An
+`Init` whose operators set both variables of either pair checks the pair
+itself after `Read`, and returns a `*config.Error` naming the variables.
 [How a bad value fails]({{< relref "configuration#how-a-bad-value-fails" >}})
 explains the exit codes.
 
@@ -334,7 +344,8 @@ it.
   ends. The breaker ignores the caller giving up, and counts the deadline
   against the dependency;
 - **a body that fails once service code reads it,** which
-  [the breaker](#the-circuit-breaker) counts as a failure.
+  [the breaker](#the-circuit-breaker) counts as a failure, or ignores when
+  the caller cancelled the call's context.
 
 And whatever `Classify` returns:
 
@@ -417,7 +428,12 @@ settings.Classify = func(resp *http.Response, err error) httpclient.Classificati
 
 Its read counts against `Timeout`, but not against `AttemptTimeout`, which
 ends with the headers. [The response body](#the-response-body)'s rules apply
-to the body it leaves.
+to the body it leaves, but not to its own read: `io.ReadAll` holds the whole
+body in memory, so a `Classify` for an API whose bodies can be large reads
+through an `io.LimitReader`. The client counts what this `Classify` returns,
+so a read that fails because the caller gave up counts as the `Failure` it
+returns here. A `Classify` for which that matters returns `circuit.Ignored`
+when `resp.Request.Context().Err()` is `context.Canceled`.
 
 **One `Classify` serves every API that shares a convention,** such as a
 company's own services. The function is the end user's own, so it is
@@ -481,7 +497,11 @@ that wraps `context.DeadlineExceeded`, and the attempt fails with an error
 that wraps it too. The call's context is still live, so the error reaches
 `Classify`, and the default retries it, as any failed attempt. With the
 defaults, an attempt to a dependency that hangs fails after 5s, which leaves
-time for a second before `Timeout`'s 10s. `AttemptTimeout` stops counting
+time for a second before `Timeout`'s 10s. The second has less than 5s left,
+so `Timeout` ends it, and the call, before `AttemptTimeout` would: against a
+dependency that hangs, the defaults make two attempts, not `MaxAttempts`'
+three. A client that wants every attempt sets `Timeout` above
+`AttemptTimeout` times `MaxAttempts`, plus the waits. `AttemptTimeout` stops counting
 once the headers arrive, so a slow body isn't cut off: that is `Timeout`'s
 to bound.
 
@@ -513,9 +533,12 @@ nothing about the dependency. The client decides some of it itself:
 **The default opens after 5 failures in a row, or once half of the last 20
 or more results failed.** It then rejects every attempt for `OpenFor`, 10s,
 and then lets one probe through at a time: a failed probe reopens it, and 3
-successful ones close it. `Settings.Breaker` configures the window, the
-probes and the durations from configuration, and `Settings.BreakerPolicy`
-decides when it opens and closes, in code. A policy whose `Trip` always
+successful ones close it. `Settings.Breaker` configures, from
+configuration, the `Window` of results the policy sees, how many `Probes`
+may be in flight at once, 1 by default, and the durations `OpenFor` and
+`ProbeTimeout`. `Settings.BreakerPolicy` decides when it opens and closes,
+in code: its `Trip` decides the 5 and the half of 20, and its `Probe` the 3
+successful probes. A policy whose `Trip` always
 returns false turns the breaker off:
 
 ```go
@@ -639,8 +662,11 @@ span's parent, and its handler sees the caller's baggage.
 **`otelhttp` records `http.client.request.duration` and
 `http.client.request.body.size` for each attempt,** in its own scope, with
 the status code, or `error.type` for an attempt that failed with no
-response. A rejected attempt is among them, with the `error.type`
-`github.com/z5labs/bedrock/circuit.RejectedError`. humus records no
+response. A rejected attempt is among them, with an `error.type` that
+`otelhttp` writes differently from the span's: the package path,
+`github.com/z5labs/bedrock/circuit.RejectedError`, where the span has
+`*circuit.RejectedError`. A query or an alert on rejections matches the
+form of the signal it reads. humus records no
 instrument of its own, for the breaker, the retry budget or anything else.
 
 The breaker's state changes are the client's only log records, as
@@ -681,17 +707,21 @@ func startPaymentsWith(t *testing.T, h *humustest.Host, host humus.Host, tel tel
 }
 ```
 
-The certificate is for `payments`, so it is served at `payments:8443`, the
-host the client's `BaseURL` names. `startPayments` is the same with no
-telemetry.
+It listens on `:8443`, every name on the Host's network, so the client's
+dial of `payments:8443` reaches it, and its certificate is for `payments`,
+the host the client's `BaseURL` names, so the client's verification passes.
+`startPayments` is the same with no telemetry.
 
 The end user's whole App then runs against it, with the end user's own
 `Init` above, and the environment production gives it. The test writes the
 App's certificate and the dependency's CA into the Host's filesystem with
 `humustest.WithFiles`, and names them with `humustest.WithEnv`, as
 [Giving the App its certificate]({{< relref "http#giving-the-app-its-certificate" >}})
-describes; `keyPairPEM` and `caPEM` are helpers of the test file that
-PEM-encode them:
+describes. `keyPairPEM` and `caPEM` are helpers of the test file that
+PEM-encode them: `keyPairPEM` a certificate's chain and private key, and
+`caPEM` the CA certificate that issued a certificate. `orders` and the
+dependency's certificate are both issued by `ca`, so `caPEM(orders)` is the
+dependency's CA too:
 
 ```go
 synctest.Test(t, func(t *testing.T) {
