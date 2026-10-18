@@ -633,14 +633,15 @@
 //
 // humus generates no RBAC. A Controller needs these rules itself, and the
 // end user adds their Reconciler's own:
-//   - get, list and watch on its resource, and patch on it and on its
-//     status;
+//   - get, list and watch on its resource, and patch on its status;
 //   - get, create and update on Leases, in the Lease's namespace;
-//   - list and watch on each resource an [Owns] names.
+//   - list and watch on each resource an [Owns] names;
+//   - patch on its resource, when a [Finalize] is given, which applies the
+//     finalizer.
 //
-// A controller of a [Kind] needs get, list and watch on its kind, and patch
-// on it when a [Finalize] is given, in place of the rules on its resource
-// and its status.
+// A controller of a [Kind] needs get, list and watch on its kind, in place
+// of the rules on its resource and its status, since it writes no status,
+// and patch on it when a [Finalize] is given.
 //
 // # Telemetry
 //

@@ -56,6 +56,11 @@ once, riding out a broker's rolling upgrade, and publishes with a
 `Publisher` whose calls return nil only once the broker has confirmed the
 message, and a consumer turns ready once it consumes, with `Consuming`. See
 [Consuming and publishing with RabbitMQ](https://z5labs.github.io/humus/rabbitmq/). The
+`kube` module has landed too: it writes Kubernetes controllers as Services on
+client-go, without controller-runtime, declaring custom resources as Go
+values whose CRDs it reflects from Go types, and reconciling their objects,
+or those of Kubernetes' own kinds, with leader election on a Lease. See
+[Writing a Kubernetes controller](https://z5labs.github.io/humus/kubernetes/). The
 `httphealth` package and the `grpc` module's `grpchealth` package have landed
 too: they expose an App's probes, `httphealth` at `/health/liveness` and
 `/health/readiness` over HTTPS, and `grpchealth` as gRPC health v1, each
@@ -121,7 +126,7 @@ Host, whose network and filesystem the test controls. See
 ## Releases
 
 humus is several Go modules: the root `github.com/z5labs/humus`, and the
-nested `grpc`, `queue/kafka`, `queue/rabbitmq` and `example` modules. Every
+nested `grpc`, `queue/kafka`, `queue/rabbitmq`, `kube` and `example` modules. Every
 humus module is released with the same version on every release, whether or
 not it changed, so one version names a set of modules that work together.
 Require the same version of every humus module you use:
