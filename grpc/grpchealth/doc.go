@@ -90,6 +90,23 @@
 // kubelet's probes reach a probes Service on a plaintext port of its own,
 // below.
 //
+// On a Service secured with grpcauth.Interceptors, the health server's
+// RPCs pass through the interceptors like every other RPC, and the
+// kubelet's probes present no credentials. grpcauth exempts no method on
+// its own, so the end user names Health's Check, Watch and List with
+// grpcauth.Method and auth.Disabled():
+//
+//	unary, stream, err := grpcauth.Interceptors(s,
+//		grpcauth.Default(auth.Require(bearer)),
+//		grpcauth.Method(healthpb.Health_Check_FullMethodName, auth.Disabled()),
+//		grpcauth.Method(healthpb.Health_Watch_FullMethodName, auth.Disabled()),
+//		grpcauth.Method(healthpb.Health_List_FullMethodName, auth.Disabled()),
+//	)
+//
+// Without them, the probes get codes.Unauthenticated and the pod never
+// turns ready. A probes Service on a port of its own, below, has no
+// authentication and needs no rule.
+//
 // A probe through the server is an RPC like any other of the Service, so
 // the Service's instrumentation traces and measures it, and a monitor's
 // ERROR record carries the trace of the probe's span. A team that doesn't

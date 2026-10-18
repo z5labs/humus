@@ -17,13 +17,22 @@
 //		if err != nil {
 //			return nil, err
 //		}
-//		svc, err := grpcserver.NewService(s, settings, grpc.ChainUnaryInterceptor(authenticate))
+//		unary, stream, err := grpcauth.Interceptors(s, grpcauth.Default(auth.Require(bearer)))
+//		if err != nil {
+//			return nil, err
+//		}
+//		svc, err := grpcserver.NewService(s, settings, unary, stream)
 //		if err != nil {
 //			return nil, err
 //		}
 //		cartpb.RegisterCartServiceServer(svc, carts)
 //		return []humus.Service{svc}, nil
 //	}
+//
+// Here bearer is the end user's auth.Bearer scheme. grpcauth.Interceptors
+// returns a unary and a stream interceptor that serve an RPC only when it
+// meets its method's requirement, here a token bearer verifies. They are
+// options like any other, as the Options section below describes.
 //
 // NewService listens on the address through the Setup's Host, so a port
 // that is already taken fails Init, and a connection that arrives before
