@@ -7,6 +7,7 @@ package rabbitmq_test
 
 import (
 	"crypto/rand"
+	"math"
 	"regexp"
 	"strings"
 	"testing"
@@ -14,6 +15,7 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/retry"
 
 	"github.com/z5labs/humus/queue"
 	"github.com/z5labs/humus/queue/rabbitmq"
@@ -23,7 +25,8 @@ import (
 // a check reports what is wrong, and whoever calls it names the field or
 // the variable.
 var fieldNames = regexp.MustCompile(`(?i)\b(?:settings|connection|addr|address|vhost|virtual ?host|tls|sasl|` +
-	`authentication|heartbeat|connect ?timeout|queue|delivery|prefetch|concurrency|channels|timeout)\b`)
+	`authentication|heartbeat|connect ?timeout|queue|delivery|prefetch|concurrency|channels|timeout|` +
+	`(?:max ?)?attempts|backoff ?(?:base|max)?|(?:retry ?)?budget|max ?tokens|token ?ratio)\b`)
 
 // requireUnnamed fails the test if err names a field of Settings,
 // PublisherSettings or Connection.
@@ -233,13 +236,95 @@ func TestCheckTimeout(t *testing.T) {
 	})
 }
 
+func TestCheckMaxAttempts(t *testing.T) {
+	t.Parallel()
+
+	runCheck(t, rabbitmq.CheckMaxAttempts, []checkCase[int]{
+		{name: "one, which turns retries off", value: 1, valid: true},
+		{name: "the default", value: 3, valid: true},
+		{name: "many", value: 1000, valid: true},
+		{name: "zero", value: 0, cause: "must be at least 1"},
+		{name: "negative", value: -1, cause: "must be at least 1"},
+	})
+}
+
+func TestCheckBackoffBase(t *testing.T) {
+	t.Parallel()
+
+	runCheck(t, rabbitmq.CheckBackoffBase, []checkCase[time.Duration]{
+		{name: "a nanosecond", value: time.Nanosecond, valid: true},
+		{name: "the default", value: 100 * time.Millisecond, valid: true},
+		{name: "zero", value: 0, cause: "must be positive"},
+		{name: "negative", value: -time.Second, cause: "must be positive"},
+	})
+}
+
+func TestCheckBackoffMax(t *testing.T) {
+	t.Parallel()
+
+	runCheck(t, rabbitmq.CheckBackoffMax, []checkCase[time.Duration]{
+		{name: "a nanosecond", value: time.Nanosecond, valid: true},
+		{name: "the default", value: 5 * time.Second, valid: true},
+		{name: "zero", value: 0, cause: "must be positive"},
+		{name: "negative", value: -time.Second, cause: "must be positive"},
+	})
+}
+
+func TestCheckRetryBudgetMaxTokens(t *testing.T) {
+	t.Parallel()
+
+	runCheck(t, rabbitmq.CheckRetryBudgetMaxTokens, []checkCase[int]{
+		{name: "the fewest", value: 3, valid: true},
+		{name: "the default", value: 10, valid: true},
+		{name: "the most", value: retry.TokenLimit, valid: true},
+		{name: "two", value: 2, cause: "must be from 3 to 65536"},
+		{name: "zero", value: 0, cause: "must be from 3 to 65536"},
+		{name: "above the most", value: retry.TokenLimit + 1, cause: "must be from 3 to 65536"},
+	})
+}
+
+func TestCheckRetryBudgetTokenRatio(t *testing.T) {
+	t.Parallel()
+
+	runCheck(t, rabbitmq.CheckRetryBudgetTokenRatio, []checkCase[float64]{
+		{name: "the least", value: 0.001, valid: true},
+		{name: "the default", value: 0.1, valid: true},
+		{name: "the most", value: retry.TokenLimit, valid: true},
+		{name: "below the least", value: 0.0009, cause: "must be from 0.001 to 65536"},
+		{name: "zero", value: 0, cause: "must be from 0.001 to 65536"},
+		{name: "negative", value: -1, cause: "must be from 0.001 to 65536"},
+		{name: "above the most", value: retry.TokenLimit + 1, cause: "must be from 0.001 to 65536"},
+		{name: "NaN", value: math.NaN(), cause: "must be from 0.001 to 65536"},
+		{name: "infinity", value: math.Inf(1), cause: "must be from 0.001 to 65536"},
+	})
+}
+
+// TestCheckRetryBudget_accepts_exactly_what_retry_NewBudget_accepts runs
+// both checks and retry.NewBudget over the edges of each field's range.
+func TestCheckRetryBudget_accepts_exactly_what_retry_NewBudget_accepts(t *testing.T) {
+	t.Parallel()
+
+	for _, tokens := range []int{math.MinInt, -1, 0, 1, 2, 3, 4, 10, retry.TokenLimit - 1, retry.TokenLimit, retry.TokenLimit + 1, math.MaxInt} {
+		for _, ratio := range []float64{math.Inf(-1), -1, 0, 0.0009, 0.001, 0.0011, 0.1, 1, retry.TokenLimit, retry.TokenLimit + 0.5, math.Inf(1), math.NaN()} {
+			cfg := retry.BudgetConfig{MaxTokens: tokens, TokenRatio: ratio}
+			_, err := retry.NewBudget(cfg)
+			checked := rabbitmq.CheckRetryBudgetMaxTokens(tokens) == nil && rabbitmq.CheckRetryBudgetTokenRatio(ratio) == nil
+			require.Equal(t, err == nil, checked, "%+v: retry.NewBudget says %v", cfg, err)
+		}
+	}
+}
+
 func TestDefaultPublisherSettings(t *testing.T) {
 	t.Parallel()
 
 	require.Equal(t, rabbitmq.PublisherSettings{
-		Connection: rabbitmq.DefaultSettings().Connection,
-		Channels:   8,
-		Timeout:    10 * time.Second,
+		Connection:  rabbitmq.DefaultSettings().Connection,
+		Channels:    8,
+		Timeout:     10 * time.Second,
+		MaxAttempts: 3,
+		BackoffBase: 100 * time.Millisecond,
+		BackoffMax:  5 * time.Second,
+		RetryBudget: retry.BudgetConfig{MaxTokens: 10, TokenRatio: 0.1},
 	}, rabbitmq.DefaultPublisherSettings())
 }
 
@@ -259,6 +344,12 @@ func TestDefaultPublisherSettings_with_the_required_fields_set_passes_every_chec
 	require.NoError(t, rabbitmq.CheckConnectTimeout(d.Connection.ConnectTimeout))
 	require.NoError(t, rabbitmq.CheckChannels(d.Channels))
 	require.NoError(t, rabbitmq.CheckTimeout(d.Timeout))
+	require.NoError(t, rabbitmq.CheckMaxAttempts(d.MaxAttempts))
+	require.NoError(t, rabbitmq.CheckBackoffBase(d.BackoffBase))
+	require.NoError(t, rabbitmq.CheckBackoffMax(d.BackoffMax))
+	require.GreaterOrEqual(t, d.BackoffMax, d.BackoffBase)
+	require.NoError(t, rabbitmq.CheckRetryBudgetMaxTokens(d.RetryBudget.MaxTokens))
+	require.NoError(t, rabbitmq.CheckRetryBudgetTokenRatio(d.RetryBudget.TokenRatio))
 }
 
 func TestDefaultSettings(t *testing.T) {

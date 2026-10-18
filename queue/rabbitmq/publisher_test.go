@@ -17,6 +17,7 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/retry"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/humustest"
@@ -176,16 +177,20 @@ func TestPublisher_a_return_before_the_confirm_is_ErrUnroutable(t *testing.T) {
 	})
 }
 
-func TestPublisher_a_nack_is_an_error_that_says_so(t *testing.T) {
+func TestPublisher_with_MaxAttempts_1_a_nack_is_returned_after_one_attempt(t *testing.T) {
 	t.Parallel()
 
 	synctest.Test(t, func(t *testing.T) {
-		pub, s := newPublisher(t, publisherSettings())
+		settings := publisherSettings()
+		settings.MaxAttempts = 1
+		pub, s := newPublisher(t, settings)
 		done := publishAsync(t.Context(), pub, accepted)
 		(<-s.published).nack()
 		err := <-done
 		require.ErrorContains(t, err, "the broker nacked the message")
 		require.NotErrorIs(t, err, rabbitmq.ErrUnroutable)
+		synctest.Wait()
+		require.Empty(t, s.published, "MaxAttempts 1 turns retries off")
 	})
 }
 
@@ -373,11 +378,13 @@ func TestPublisher_connects_again_after_the_connection_is_lost(t *testing.T) {
 		})
 	})
 
-	t.Run("with a publish in flight", func(t *testing.T) {
+	t.Run("with a publish in flight and MaxAttempts 1", func(t *testing.T) {
 		t.Parallel()
 
 		synctest.Test(t, func(t *testing.T) {
-			pub, s := newPublisher(t, publisherSettings())
+			settings := publisherSettings()
+			settings.MaxAttempts = 1
+			pub, s := newPublisher(t, settings)
 			done := publishAsync(t.Context(), pub, accepted)
 			<-s.published
 			s.conn(0).lose(forced)
@@ -547,13 +554,47 @@ func TestNewPublisher_names_every_bad_field_together(t *testing.T) {
 	s.Connection.Heartbeat = 0
 	s.Channels = 0
 	s.Timeout = 0
+	s.MaxAttempts = 0
+	s.BackoffBase = 0
+	s.BackoffMax = -time.Second
+	s.RetryBudget = retry.BudgetConfig{MaxTokens: 2, TokenRatio: 0}
 	pub, err := rabbitmq.NewPublisher(setup(t), s)
 	require.Nil(t, pub)
 	require.EqualError(t, err, "rabbitmq: NewPublisher: PublisherSettings.Connection.Addr is not host:port\n"+
 		"PublisherSettings.Connection.SASL must be set\n"+
 		"PublisherSettings.Connection.Heartbeat must be from 1s to 65535s\n"+
 		"PublisherSettings.Channels must be from 1 to 65535\n"+
-		"PublisherSettings.Timeout must be positive")
+		"PublisherSettings.Timeout must be positive\n"+
+		"PublisherSettings.MaxAttempts must be at least 1\n"+
+		"PublisherSettings.BackoffBase must be positive\n"+
+		"PublisherSettings.BackoffMax must be positive\n"+
+		"PublisherSettings.RetryBudget.MaxTokens must be from 3 to 65536\n"+
+		"PublisherSettings.RetryBudget.TokenRatio must be from 0.001 to 65536")
+}
+
+func TestNewPublisher_names_a_BackoffMax_below_BackoffBase_with_the_other_bad_fields(t *testing.T) {
+	t.Parallel()
+
+	s := publisherSettings()
+	s.Channels = 0
+	s.BackoffBase = 2 * time.Second
+	s.BackoffMax = time.Second
+	s.RetryBudget.TokenRatio = 0
+	pub, err := rabbitmq.NewPublisher(setup(t), s)
+	require.Nil(t, pub)
+	require.EqualError(t, err, "rabbitmq: NewPublisher: PublisherSettings.Channels must be from 1 to 65535\n"+
+		"PublisherSettings.BackoffMax must be at least PublisherSettings.BackoffBase\n"+
+		"PublisherSettings.RetryBudget.TokenRatio must be from 0.001 to 65536")
+}
+
+func TestNewPublisher_accepts_a_BackoffMax_equal_to_BackoffBase(t *testing.T) {
+	t.Parallel()
+
+	s := publisherSettings()
+	s.BackoffBase = time.Second
+	s.BackoffMax = time.Second
+	_, err := rabbitmq.NewPublisher(setup(t), s)
+	require.NoError(t, err)
 }
 
 func TestNewPublisher_checks_every_field(t *testing.T) {
@@ -570,6 +611,11 @@ func TestNewPublisher_checks_every_field(t *testing.T) {
 		{field: "PublisherSettings.Connection.ConnectTimeout", change: func(s *rabbitmq.PublisherSettings) { s.Connection.ConnectTimeout = 0 }},
 		{field: "PublisherSettings.Channels", change: func(s *rabbitmq.PublisherSettings) { s.Channels = 65536 }},
 		{field: "PublisherSettings.Timeout", change: func(s *rabbitmq.PublisherSettings) { s.Timeout = -time.Second }},
+		{field: "PublisherSettings.MaxAttempts", change: func(s *rabbitmq.PublisherSettings) { s.MaxAttempts = 0 }},
+		{field: "PublisherSettings.BackoffBase", change: func(s *rabbitmq.PublisherSettings) { s.BackoffBase = 0 }},
+		{field: "PublisherSettings.BackoffMax", change: func(s *rabbitmq.PublisherSettings) { s.BackoffMax = 0 }},
+		{field: "PublisherSettings.RetryBudget.MaxTokens", change: func(s *rabbitmq.PublisherSettings) { s.RetryBudget.MaxTokens = 2 }},
+		{field: "PublisherSettings.RetryBudget.TokenRatio", change: func(s *rabbitmq.PublisherSettings) { s.RetryBudget.TokenRatio = 0.0001 }},
 	} {
 		t.Run(tc.field, func(t *testing.T) {
 			t.Parallel()

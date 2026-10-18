@@ -16,6 +16,7 @@ import (
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/z5labs/bedrock/retry"
 
 	"github.com/z5labs/humus/queue"
 )
@@ -138,22 +139,52 @@ type PublisherSettings struct {
 	// Default: 8. Valid: 1 to 65535. Check: CheckChannels.
 	Channels int
 
-	// Timeout bounds a whole Publish, including its confirm. A deadline the
-	// caller's context has already, if it is earlier, wins.
+	// Timeout bounds a whole Publish: every attempt, the waits between
+	// them, and each confirm. A deadline the caller's context has already,
+	// if it is earlier, wins.
 	//
 	// Default: 10s. Valid: positive. Check: CheckTimeout.
 	Timeout time.Duration
+
+	// MaxAttempts bounds the attempts of one Publish, the first included.
+	// 1 turns retries off.
+	//
+	// Default: 3. Valid: 1 or more. Check: CheckMaxAttempts.
+	MaxAttempts int
+
+	// BackoffBase and BackoffMax are retry.Exponential's arguments: the wait
+	// after attempt n is drawn from [0, min(BackoffMax, BackoffBase·2ⁿ⁻¹)).
+	//
+	// Default: 100ms and 5s. Valid: positive, and BackoffMax at least
+	// BackoffBase, which NewPublisher checks. Check: CheckBackoffBase,
+	// CheckBackoffMax.
+	BackoffBase time.Duration
+	BackoffMax  time.Duration
+
+	// RetryBudget limits the retries of every Publish of the Publisher
+	// together, as retry.Budget describes.
+	//
+	// Default: {MaxTokens: 10, TokenRatio: 0.1}. Valid: MaxTokens from 3 to
+	// retry.TokenLimit; TokenRatio from 0.001 to retry.TokenLimit. Check:
+	// CheckRetryBudgetMaxTokens, CheckRetryBudgetTokenRatio.
+	RetryBudget retry.BudgetConfig
 }
 
 // DefaultPublisherSettings returns the Publisher's defaults: the Connection
-// of DefaultSettings, 8 Channels and a Timeout of 10s. Connection.Addr and
+// of DefaultSettings, 8 Channels, a Timeout of 10s, 3 MaxAttempts, a
+// BackoffBase of 100ms and a BackoffMax of 5s, and a RetryBudget of 10
+// tokens, each confirmed attempt adding back 0.1. Connection.Addr and
 // Connection.SASL have none, so they are "" and nil, which CheckAddr and
 // CheckSASL reject: the end user always sources both.
 func DefaultPublisherSettings() PublisherSettings {
 	return PublisherSettings{
-		Connection: DefaultSettings().Connection,
-		Channels:   8,
-		Timeout:    10 * time.Second,
+		Connection:  DefaultSettings().Connection,
+		Channels:    8,
+		Timeout:     10 * time.Second,
+		MaxAttempts: 3,
+		BackoffBase: 100 * time.Millisecond,
+		BackoffMax:  5 * time.Second,
+		RetryBudget: retry.BudgetConfig{MaxTokens: 10, TokenRatio: 0.1},
 	}
 }
 
@@ -179,6 +210,8 @@ var (
 	errTooLong       = fmt.Errorf("must be at most %d bytes", maxQueueName)
 	errNotUint16     = errors.New("must be from 1 to 65535")
 	errBelowOne      = errors.New("must be at least 1")
+	errTokens        = fmt.Errorf("must be from 3 to %d", retry.TokenLimit)
+	errTokenRatio    = fmt.Errorf("must be from 0.001 to %d", retry.TokenLimit)
 )
 
 // CheckAddr rejects anything but host:port with a host and a port from 1 to
@@ -281,6 +314,53 @@ func CheckChannels(n int) error {
 func CheckTimeout(d time.Duration) error {
 	if d <= 0 {
 		return errNotPositive
+	}
+	return nil
+}
+
+// CheckMaxAttempts rejects fewer than 1 attempt: every Publish makes at
+// least its first. 1 turns retries off.
+func CheckMaxAttempts(n int) error {
+	if n < 1 {
+		return errBelowOne
+	}
+	return nil
+}
+
+// CheckBackoffBase rejects a duration that is not positive, as
+// retry.Exponential does.
+func CheckBackoffBase(d time.Duration) error {
+	if d <= 0 {
+		return errNotPositive
+	}
+	return nil
+}
+
+// CheckBackoffMax rejects a duration that is not positive. NewPublisher
+// also rejects a BackoffMax below BackoffBase, which takes both fields to
+// tell.
+func CheckBackoffMax(d time.Duration) error {
+	if d <= 0 {
+		return errNotPositive
+	}
+	return nil
+}
+
+// CheckRetryBudgetMaxTokens accepts 3 to retry.TokenLimit tokens, as
+// retry.NewBudget does: a budget allows no retry while it holds half of its
+// tokens or fewer, so one of 1 or 2 tokens would never allow one.
+func CheckRetryBudgetMaxTokens(n int) error {
+	if n < 3 || n > retry.TokenLimit {
+		return errTokens
+	}
+	return nil
+}
+
+// CheckRetryBudgetTokenRatio accepts 0.001 to retry.TokenLimit tokens, as
+// retry.NewBudget does. NaN is rejected.
+func CheckRetryBudgetTokenRatio(r float64) error {
+	if !(r >= 0.001 && r <= retry.TokenLimit) {
+		return errTokenRatio
 	}
 	return nil
 }
