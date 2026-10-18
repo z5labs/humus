@@ -181,6 +181,22 @@ func TestChecks(t *testing.T) {
 	}
 }
 
+// TestChecks_accept_what_retry_NewBudget_accepts checks the two budget
+// checks against retry.NewBudget itself, at and around each bound, so that
+// NewClient never meets a budget its checks passed and NewBudget rejects.
+func TestChecks_accept_what_retry_NewBudget_accepts(t *testing.T) {
+	t.Parallel()
+
+	for _, n := range []int{math.MinInt, -1, 0, 2, 3, 10, retry.TokenLimit, retry.TokenLimit + 1, math.MaxInt} {
+		_, err := retry.NewBudget(retry.BudgetConfig{MaxTokens: n, TokenRatio: 0.1})
+		require.Equal(t, err == nil, grpcclient.CheckRetryBudgetMaxTokens(n) == nil, "MaxTokens %d", n)
+	}
+	for _, r := range []float64{math.Inf(-1), -0.1, 0, 0.0009, 0.001, 0.1, 1, retry.TokenLimit, retry.TokenLimit + 0.001, math.Inf(1), math.NaN()} {
+		_, err := retry.NewBudget(retry.BudgetConfig{MaxTokens: 10, TokenRatio: r})
+		require.Equal(t, err == nil, grpcclient.CheckRetryBudgetTokenRatio(r) == nil, "TokenRatio %v", r)
+	}
+}
+
 func TestDefaultSettings(t *testing.T) {
 	t.Parallel()
 

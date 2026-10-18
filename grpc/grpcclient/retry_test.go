@@ -7,6 +7,7 @@ package grpcclient_test
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -204,6 +205,17 @@ func TestClient_streams(t *testing.T) {
 			}
 			settings := grpcclient.DefaultSettings()
 			settings.Addr = "nowhere:9090"
+			classify := settings.Classify
+			var (
+				mu       sync.Mutex
+				trailers []metadata.MD
+			)
+			settings.Classify = func(method string, err error, trailer metadata.MD) grpcclient.Classification {
+				mu.Lock()
+				trailers = append(trailers, trailer)
+				mu.Unlock()
+				return classify(method, err, trailer)
+			}
 
 			_, err := app{
 				host:     humustest.NewHost(t).Host(),
@@ -217,6 +229,7 @@ func TestClient_streams(t *testing.T) {
 
 			require.Equal(t, codes.Unavailable, status.Code(err), "err = %v", err)
 			require.EqualValues(t, 3, opens.Load())
+			require.Equal(t, []metadata.MD{nil, nil, nil}, trailers, "Classify gets each failed open with no trailer")
 		})
 	})
 
@@ -370,6 +383,28 @@ func TestClient_decides_what_is_about_the_call(t *testing.T) {
 			require.Equal(t, codes.Canceled, status.Code(err), "err = %v", err)
 			require.EqualValues(t, 1, b.calls.Load())
 			require.Zero(t, asked.Load(), "Classify isn't asked about an error once the call's context is done")
+		})
+	})
+
+	t.Run("a call made with a context already done makes one attempt, and fails", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			b := &backend{}
+
+			var (
+				asked     atomic.Int32
+				streamErr error
+			)
+			_, err := withBackend(t, b, retryAll(&asked), func(ctx context.Context, c testpb.TestServiceClient) error {
+				ctx, cancel := context.WithCancel(ctx)
+				cancel()
+				_, streamErr = c.StreamingOutputCall(ctx, &testpb.StreamingOutputCallRequest{})
+				return emptyCall(ctx, c)
+			}).run(t)
+
+			require.Equal(t, codes.Canceled, status.Code(err), "err = %v", err)
+			require.Equal(t, codes.Canceled, status.Code(streamErr), "err = %v", streamErr)
+			require.Zero(t, b.calls.Load())
+			require.Zero(t, asked.Load())
 		})
 	})
 

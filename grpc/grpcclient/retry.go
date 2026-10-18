@@ -121,5 +121,7 @@ func decided(call context.Context) Classification {
 
 // opened is the Classification of a stream that opened, which the Client
 // decides without asking Classify: the call is over for retry, which never
-// retries an open stream. The breaker counts the stream at its end.
+// retries an open stream. Only its Retry is read. Its Breaker is never
+// counted: the breaker counts a stream once, at its end, with the
+// Classification of how it ended.
 var opened = Classification{Retry: retry.Success, Breaker: circuit.Success}

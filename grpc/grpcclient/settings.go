@@ -87,7 +87,10 @@ type Settings struct {
 	// for OK, and the attempt's trailer, which holds grpc-retry-pushback-ms.
 	// status.FromError gives the error's code and its details, such as a
 	// google.rpc.RetryInfo. It isn't asked about what the Client decides
-	// itself: an error once the call's context has ended.
+	// itself: an error once the call's context has ended. It is asked
+	// about OK, a nil error, too, so a Classify that returns retry.Retry
+	// for every result sends a call that succeeded again: it returns
+	// retry.Success for OK, as the default does.
 	//
 	// For a stream, it is asked about an open that failed, with no
 	// trailer, since nothing came back. A stream that opens is never
