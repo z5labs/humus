@@ -802,7 +802,11 @@ proc, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]hu
 	}
 	return []humus.Service{svc}, nil
 }, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
-<-h.Listening("idp.internal:443")
+select {
+case <-h.Listening("idp.internal:443"):
+case st := <-status:
+	t.Fatalf("the identity provider exited before it listened: %v", st.Cause())
+}
 ```
 
 The end user's App is started on the same Host, with the provider's key set

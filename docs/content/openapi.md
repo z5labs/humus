@@ -663,7 +663,7 @@ operation's own replaces it. A `RequestError` has:
 - `Status`: 400 for a parameter or a body that doesn't decode, 413 for a
   body over `http.MaxBytesHandler`'s limit, 415 for a `Content-Type` the
   operation's decoder doesn't read, or none, and 401 and 403 for a request
-  its [Security](#security) refused;
+  that its [Security](#security) refused;
 - `Param`: the parameter that doesn't decode, for a 400 about one, and `""`
   otherwise;
 - `Err`: why, the parameter's error or the decoder's, or

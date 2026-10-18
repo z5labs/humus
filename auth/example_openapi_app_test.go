@@ -116,7 +116,11 @@ func serveIdentityProvider(t *testing.T, h *humustest.Host, ca *humustest.CA, p 
 		}
 		return []humus.Service{svc}, nil
 	}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
-	<-h.Listening("idp.internal:443")
+	select {
+	case <-h.Listening("idp.internal:443"):
+	case st := <-status:
+		t.Fatalf("the identity provider exited before it listened: %v", st.Cause())
+	}
 	return func() {
 		proc.Signal(syscall.SIGTERM)
 		st := <-status
