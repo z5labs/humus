@@ -175,7 +175,9 @@ func TestClient_retry_budget(t *testing.T) {
 		b := &backend{answer: unavailable}
 
 		var attempts []int32
-		_, err := withBackend(t, b, nil, func(ctx context.Context, c testpb.TestServiceClient) error {
+		// The breaker is turned off: it would open after the fifth
+		// failure, and reject the calls this test counts the attempts of.
+		_, err := withBackend(t, b, neverTrip, func(ctx context.Context, c testpb.TestServiceClient) error {
 			for range 6 {
 				before := b.calls.Load()
 				if err := emptyCall(ctx, c); status.Code(err) != codes.Unavailable {
@@ -246,6 +248,12 @@ func TestClient_streams(t *testing.T) {
 			require.EqualValues(t, 1, b.calls.Load())
 		})
 	})
+}
+
+// neverTrip turns the breaker off, with a policy whose Trip never returns
+// true.
+func neverTrip(s *grpcclient.Settings) {
+	s.BreakerPolicy.Trip = func(circuit.Counts) bool { return false }
 }
 
 // streamOne returns work that opens a server-streaming RPC that asks for one
@@ -434,7 +442,7 @@ func TestClient_decides_what_is_about_the_call(t *testing.T) {
 			require.Equal(t, codes.Unavailable, status.Code(err), "err = %v", err)
 			require.Equal(t, 1, got)
 			require.EqualValues(t, 1, b.calls.Load())
-			require.Zero(t, asked.Load(), "Classify isn't asked about a stream that opened")
+			require.EqualValues(t, 1, asked.Load(), "Classify is asked about the stream's end, for the breaker, and not about its open")
 		})
 	})
 }

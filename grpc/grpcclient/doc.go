@@ -40,12 +40,13 @@
 // # One Client per dependency
 //
 // A Client is one dependency at one Addr, over one connection, with one
-// retry budget. The end user's Init builds one Client for each dependency,
-// with its own Settings, and shares it between every Service that calls
-// it: the Client is safe for concurrent use, and its RPCs share its
-// connection and its budget. A Client built for each call would dial and
-// handshake for each call, start each with a full budget, and register one
-// more function with Setup.OnStop each time. NewClient takes the
+// retry budget and one circuit breaker. The end user's Init builds one
+// Client for each dependency, with its own Settings, and shares it between
+// every Service that calls it: the Client is safe for concurrent use, and
+// its RPCs share its connection, its budget and its breaker. A Client built
+// for each call would dial and handshake for each call, start each with a
+// full budget and a closed breaker that never sees a second failure, and
+// register one more function with Setup.OnStop each time. NewClient takes the
 // *humus.Setup because it belongs in Init: build the Client there, once,
 // and share it.
 //
@@ -192,10 +193,19 @@
 // dependency's codes mean, which differs from one API to another, and
 // Classify decides it.
 //
-// What the Client decides: Classify isn't asked about an error once the
-// call's context is done, because the caller gave up or the call's deadline
-// passed. Another attempt can't help, so the call ends. And whatever
-// Classify returns:
+// What the Client decides: Classify isn't asked about these, and the call
+// ends, since another attempt can't help:
+//
+//   - a call the circuit breaker rejected. It reached nothing, and the
+//     breaker would reject the next attempt too (see The circuit breaker,
+//     below);
+//   - an error once the call's context was cancelled: the caller gave up.
+//     The breaker ignores it;
+//   - an error once the call's deadline passed: Settings.Timeout, or a
+//     deadline the caller set or inherited. The breaker counts it as a
+//     failure.
+//
+// And whatever Classify returns:
 //
 //   - a RetryAfter longer than BackoffMax ends the call, with the
 //     attempt's error (see The pushback, below);
@@ -300,20 +310,113 @@
 // call in flight should wait on, and a wait past the call's deadline would
 // end it anyway.
 //
+// # The circuit breaker
+//
+// Each Client has one circuit breaker, bedrock's circuit, built by
+// NewClient with circuit.New from [Settings].Breaker and
+// [Settings].BreakerPolicy. It guards the dependency at Addr: every method,
+// from every goroutine, goes through the same breaker. Two Clients of one
+// address have a breaker each, so an end user who wants one API's outage
+// kept apart from another's, served at the same address, builds two
+// Clients.
+//
+// The breaker sits inside the retries. Each attempt is one call through
+// it, in this order:
+//
+//  1. Allow, with the call's context, and a deferred Release;
+//  2. the call, grpc-go's RPC, which is failure injection's seam in wave
+//     5;
+//  3. Classify, once, unless the result is one the Client decides;
+//  4. Done, with the result carrying its Classification, whose Breaker the
+//     breaker counts.
+//
+// What counts is the Breaker of each attempt's Classification. A success
+// counts toward the dependency being healthy, a failure against it, and
+// an Ignored result counts nothing. The caller giving up is ignored. Every
+// deadline counts as a failure, whether it is Settings.Timeout or a
+// deadline the caller set or inherited from the request it serves: a
+// dependency that hangs ends every call that way, so a breaker that
+// ignored deadlines would never open on the outage it exists for.
+//
+// The default policy opens the breaker after 5 failures in a row, or once
+// half of the last 20 or more results failed. While open, the breaker
+// rejects every call for Breaker.OpenFor, 10s by default, and then lets
+// Breaker.Probes calls through at once, one by default: it reopens on a
+// probe that fails, and closes after 3 that succeed. The ratio rule needs
+// 20 results, so with a Breaker.Window below 20 only the rule of 5 failures
+// in a row trips it. A BreakerPolicy whose Trip always returns false turns
+// the breaker off:
+//
+//	settings.BreakerPolicy.Trip = func(circuit.Counts) bool { return false }
+//
+// A call the breaker rejects reaches neither grpc-go nor the backend, and
+// isn't retried: the call ends at once. Its error matches
+// circuit.ErrRejected with errors.Is, and *circuit.RejectedError with
+// errors.As, which says how much longer the breaker stays open. Its gRPC
+// status is Unavailable, as for a server the Client can't reach, with the
+// rejection's message, such as "circuit: call rejected: open for another
+// 4.2s":
+//
+//	_, err := carts.AddItem(ctx, req)
+//	if errors.Is(err, circuit.ErrRejected) {
+//		// Nothing was sent. status.Code(err) is Unavailable.
+//	}
+//
+// Since nothing reached grpc-go, otelgrpc makes no span for a rejected
+// call. The Client starts one of its own, a child of the span in the
+// call's context, under the scope github.com/z5labs/humus/grpc/grpcclient.
+// It has kind client, and is named and attributed as otelgrpc names an
+// attempt's span, with rpc.response.status_code UNAVAILABLE, and with
+// server.address and server.port taken from Addr, since no connection was
+// made. It ends at once, with status Error and the rejection's message.
+//
+// The Client logs one record for each change of the breaker's state, and
+// nothing else, through s.Telemetry's LoggerProvider, under the same
+// scope, in the context of the call that made the change: circuit breaker
+// open at WARN, and circuit breaker half-open and circuit breaker closed at
+// INFO. Each carries server.address and server.port, from Addr,
+// circuit.previous_state, and the counts of the state the breaker left:
+// circuit.successes, circuit.failures, circuit.consecutive_successes,
+// circuit.consecutive_failures and circuit.timed_out. The bodies and the
+// attributes are those of humus's other clients. The Client has no
+// instruments of its own for the breaker.
+//
+// BreakerPolicy's functions run with the breaker locked, on the goroutine
+// whose result they decide on. The Client recovers nothing: a panic in
+// one passes to the goroutine that made the call, and the breaker stays
+// consistent, so the next call goes through it as before.
+//
 // # Streams
 //
 // NewStream runs the same loop, with MaxAttempts and the backoff, but not
-// Timeout. Each attempt opens the stream:
+// Timeout. Each attempt opens the stream, through the breaker:
 //
 //   - Opening is retried. NewStream fails before anything reaches the
 //     server: no connection, or the channel in transient failure. A failed
 //     open is classified as a unary attempt is, and Classify gets it with
 //     no trailer, since nothing came back.
-//   - An open stream is never retried. A stream that opens is a Success,
-//     without asking Classify. The end user's code sends and receives on it
-//     directly, and a retry would replay what it already saw: the call is
-//     committed once its result is handed to its caller. A stream that
-//     fails after it opened ends with that error.
+//   - An open stream is never retried. A stream that opens ends the call
+//     for retry, without asking Classify. The end user's code sends and
+//     receives on it directly, and a retry would replay what it already
+//     saw: the call is committed once its result is handed to its caller.
+//     A stream that fails after it opened ends with that error.
+//
+// A stream that opens takes its attempt's ticket, and the breaker counts
+// it once, when it ends, with the Breaker of Classify's answer: when
+// RecvMsg returns an error, which Classify gets with the stream's
+// Trailer(), and io.EOF given as nil; or, for a client-streaming RPC, when
+// RecvMsg returns its one response, given as nil. A stream whose caller
+// cancelled its context is ignored, without asking Classify. One whose
+// context reached its deadline counts as a failure, as a unary call's
+// does.
+//
+// A stream its caller abandons, without reading it to its end or
+// cancelling its context, never settles its ticket. While the breaker is
+// closed that costs nothing. While it is half-open, the abandoned stream
+// holds a probe's slot, but for at most Breaker.ProbeTimeout: circuit then
+// frees the slot, so that another probe can be admitted, and counts the
+// probe as timed out, which the default policy reads as neither a success
+// nor a failure. So one leaked stream can't keep the breaker from closing.
 //
 // # opts
 //
@@ -388,6 +491,12 @@
 // Setup's MeterProvider, in otelgrpc's instrumentation scope. humus records
 // no instrument of its own: whether it should is the question of Proposal:
 // humus's own metrics, in wave 5.
+//
+// The Client's own telemetry is what the circuit breaker adds, under the
+// scope github.com/z5labs/humus/grpc/grpcclient: the span of a call the
+// breaker rejected, which never reached grpc-go, and one log record for
+// each change of the breaker's state, as The circuit breaker, above,
+// describes.
 //
 // Nothing reaches OpenTelemetry's globals: every provider and the
 // propagator are passed to otelgrpc, so it never falls back to them, and

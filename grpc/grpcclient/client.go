@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 	"slices"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -21,7 +22,10 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 
+	"github.com/z5labs/bedrock/circuit"
 	"github.com/z5labs/bedrock/retry"
+	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/health"
@@ -32,7 +36,7 @@ import (
 //	cartpb.NewCartServiceClient(client)
 //
 // It is safe for concurrent use. One Client is one dependency: one
-// connection and one retry budget. It has no Close: NewClient registers the
+// connection, one retry budget and one circuit breaker. It has no Close: NewClient registers the
 // connection's close with the Setup's OnStop.
 type Client struct {
 	cc      *grpc.ClientConn
@@ -43,6 +47,21 @@ type Client struct {
 	retrier  *retry.Retrier
 	classify func(method string, err error, trailer metadata.MD) Classification
 
+	// breaker guards the dependency, for every method's calls, from every
+	// goroutine. Each attempt, and each stream's open, is one call through
+	// it.
+	breaker *circuit.Breaker
+
+	// host and port are Addr's, the server of the breaker's log records
+	// and of a rejected call's span.
+	host string
+	port int
+
+	// tracer starts the span of a call the breaker rejected, and logger
+	// emits the breaker's log records, both under the scope scopeName.
+	tracer trace.Tracer
+	logger log.Logger
+
 	// connected is Connected's latch, set by the first check that finds
 	// the connection ready. Every monitor Connected returns reads it.
 	connected atomic.Bool
@@ -51,12 +70,15 @@ type Client struct {
 var _ grpc.ClientConnInterface = (*Client)(nil)
 
 // NewClient runs every check on settings, and rejects a BackoffMax below
-// BackoffBase and a nil Classify, reporting every bad field in one error
-// that names each one. It also rejects a nil s, and an s whose Host has no
-// Dial, rather than let grpc-go fall back to dialling the real network. It
-// builds the Client, with one retry.Budget and one retry.Retrier, shared by
-// every method and every goroutine. It opens no connection: the first RPC
-// dials.
+// BackoffBase, a nil Classify, and a BreakerPolicy with a nil Trip or
+// Probe, reporting every bad field in one error that names each one. It
+// also rejects a nil s, and an s whose Host has no Dial, rather than let
+// grpc-go fall back to dialling the real network. It builds the Client,
+// with one retry.Budget, one retry.Retrier and one circuit breaker, built
+// with circuit.New from settings.Breaker and settings.BreakerPolicy, all
+// shared by every method and every goroutine. The breaker sits inside the
+// retries: each attempt is one call through it. It opens no connection:
+// the first RPC dials.
 //
 // The Client dials settings.Addr through s.Host, with grpc-go's passthrough
 // resolver, so no name is looked up but by the Host.
@@ -65,7 +87,11 @@ var _ grpc.ClientConnInterface = (*Client)(nil)
 // TracerProvider, the MeterProvider and the Propagator of s.Telemetry, so
 // each attempt is a client span and is measured, and nothing falls back to
 // OpenTelemetry's globals. A stats handler in opts is a second one, which
-// grpc-go calls as well.
+// grpc-go calls as well. A call the breaker rejects never reaches grpc-go,
+// so the Client starts its span itself, under the scope
+// github.com/z5labs/humus/grpc/grpcclient, from s.Telemetry's
+// TracerProvider. Each change of the breaker's state is one log record,
+// under the same scope, from s.Telemetry's LoggerProvider.
 //
 // opts come after humus's own dial options, and the transport credentials
 // built from settings.TLS come after opts, so a
@@ -88,6 +114,25 @@ func NewClient(s *humus.Setup, settings Settings, opts ...grpc.DialOption) (*Cli
 	retrier, err := newRetrier(settings)
 	if err != nil {
 		// checkSettings accepts only what retry accepts, so this is
+		// humus's bug.
+		return nil, fmt.Errorf("grpcclient: NewClient: %w", err)
+	}
+
+	host, port, _ := net.SplitHostPort(settings.Addr)
+	// CheckAddr accepts only a port from 1 to 65535, written as a number.
+	portNum, _ := strconv.Atoi(port)
+	c := &Client{
+		timeout:  settings.Timeout,
+		retrier:  retrier,
+		classify: settings.Classify,
+		host:     host,
+		port:     portNum,
+		tracer:   s.Telemetry.TracerProvider.Tracer(scopeName),
+		logger:   s.Telemetry.LoggerProvider.Logger(scopeName),
+	}
+	c.breaker, err = circuit.New(settings.Breaker, settings.BreakerPolicy, breakerOutcome, c.observe)
+	if err != nil {
+		// checkSettings accepts only what circuit accepts, so this is
 		// humus's bug.
 		return nil, fmt.Errorf("grpcclient: NewClient: %w", err)
 	}
@@ -127,16 +172,16 @@ func NewClient(s *humus.Setup, settings Settings, opts ...grpc.DialOption) (*Cli
 	s.OnStop(func(context.Context) error {
 		return cc.Close()
 	})
-	return &Client{
-		cc:       cc,
-		timeout:  settings.Timeout,
-		retrier:  retrier,
-		classify: settings.Classify,
-	}, nil
+	c.cc = cc
+	return c, nil
 }
 
 // Invoke makes a unary RPC, retrying it as the package doc describes, and
-// returns the last attempt's error. Settings.Timeout bounds the whole call,
+// returns the last attempt's error. Each attempt goes through the circuit
+// breaker. While it is open, an attempt is rejected at once, reaching
+// neither grpc-go nor the backend, and the call ends with an error that
+// matches circuit.ErrRejected with errors.Is, whose gRPC status is
+// Unavailable. Settings.Timeout bounds the whole call,
 // its retries and the waits between them included, unless ctx has an
 // earlier deadline, which then wins. It is called by generated code.
 func (c *Client) Invoke(ctx context.Context, method string, args, reply any, opts ...grpc.CallOption) error {
@@ -160,7 +205,9 @@ func (c *Client) Invoke(ctx context.Context, method string, args, reply any, opt
 
 // NewStream opens a stream, retrying the open as the package doc
 // describes. Settings.Timeout doesn't apply to it: a stream lives as long
-// as ctx, which its caller ends. The stream is never retried once open. It
+// as ctx, which its caller ends. The stream is never retried once open.
+// Each open goes through the circuit breaker, which counts a stream that
+// opens once, when it ends, as the package doc's "Streams" describes. It
 // is called by generated code.
 func (c *Client) NewStream(ctx context.Context, desc *grpc.StreamDesc, method string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
 	var (

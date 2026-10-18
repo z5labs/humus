@@ -82,7 +82,9 @@ func TestPackage_exports_only_Settings_its_checks_and_the_Client(t *testing.T) {
 	}
 	slices.Sort(exported)
 	require.Equal(t, []string{
-		"CheckAddr", "CheckBackoffBase", "CheckBackoffMax", "CheckMaxAttempts",
+		"CheckAddr", "CheckBackoffBase", "CheckBackoffMax",
+		"CheckBreakerOpenFor", "CheckBreakerProbeTimeout", "CheckBreakerProbes", "CheckBreakerWindow",
+		"CheckMaxAttempts",
 		"CheckRetryBudgetMaxTokens", "CheckRetryBudgetTokenRatio", "CheckTLS", "CheckTimeout",
 		"Classification", "Client", "Connected", "DefaultSettings",
 		"Invoke", "NewClient", "NewStream", "Settings",
