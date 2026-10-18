@@ -63,4 +63,47 @@
 // server's instrumentation traces it, and a monitor's ERROR record carries
 // the trace of the probe's span. A team that doesn't want the probes' spans
 // drops them in its sampler.
+//
+// # Settings
+//
+// A probes server of its own, for a pod with no server to attach the
+// handler to, such as a consumer's or a long-running job's, is configured
+// with [Settings]: its address and its TLS config, as plain Go values. Each
+// field has a check, [CheckAddr] and [CheckTLS], that reports what is wrong
+// with a value without naming the field. The package reads no environment
+// variable and defines no variable name: the end user's Init sources each
+// field, with whatever variable names the service uses, and passes the
+// field's check to Validate, so an operator's bad value fails startup with
+// exit 78, naming the variable.
+//
+// Neither field has a default, so the package has no DefaultSettings, and
+// the zero Settings fails both checks. The end user always sources both,
+// with no .Default in their chains. A variable that isn't set then fails as
+// not found, with exit 78:
+//
+//	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
+//
+//	probeSettings, err := config.Struct(func(r *config.Resolver) httphealth.Settings {
+//		return httphealth.Settings{
+//			// No .Default: both fields are required.
+//			Addr: r.Get(env("PROBES_ADDR").Validate(httphealth.CheckAddr)),
+//			TLS:  r.Get(env("PROBES_TLS_PEM_FILE").Parse(readFile(s.Host.FS)).Parse(serverTLS).Validate(httphealth.CheckTLS)),
+//		}
+//	}).Read(ctx)
+//	if err != nil {
+//		return nil, err // exit 78, naming every bad variable
+//	}
+//
+// readFile and serverTLS are the end user's helpers: how a certificate is
+// stored and encoded, PEM or PKCS#12, is the end user's decision.
+//
+// The probes port serves HTTPS, as every HTTP port humus serves does, so a
+// probe sets scheme: HTTPS. The kubelet doesn't verify the certificate of
+// such a probe, so the end user's own certificate serves, the one their
+// other ports serve or any other: the probes need none of their own. The
+// kubelet presents no client certificate either, so CheckTLS rejects a
+// config whose ClientAuth is RequireAnyClientCert or
+// RequireAndVerifyClientCert, under which every probe would fail and the
+// pod would never turn ready. VerifyClientCertIfGiven, and every weaker
+// ClientAuth, is accepted.
 package httphealth
