@@ -597,7 +597,7 @@ var (
 The handler returns a `NotFound`, wrapped or not, and the API answers it:
 
 ```go
-// find returns the order id, or a NotFound naming it.
+// find returns the order whose ID is id, or a NotFound naming id.
 func (o *Orders) find(id string) (*Order, error) {
 	ord, ok := o.byID[id]
 	if !ok {
