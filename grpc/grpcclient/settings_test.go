@@ -8,9 +8,10 @@ package grpcclient_test
 import (
 	"context"
 	"crypto/tls"
-	"net"
+	"errors"
 	"regexp"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -19,6 +20,7 @@ import (
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/grpc/grpcclient"
 	"github.com/z5labs/humus/humustest"
+	"github.com/z5labs/humus/telemetry"
 )
 
 // fieldNames are words a check's error must not contain: a check reports
@@ -75,6 +77,10 @@ func TestChecks(t *testing.T) {
 				addr("passthrough:///carts:9090"),
 				addr("unix:///run/carts.sock"),
 				addr("carts:9090/v1"),
+				addr("carts?x:9090"),
+				addr("carts#x:9090"),
+				addr("ca%41rts:9090"),
+				addr("car%zz:9090"),
 				addr("::1:9090"),
 			},
 		},
@@ -222,20 +228,30 @@ func TestNewClient_settings(t *testing.T) {
 	})
 
 	t.Run("DefaultSettings with an Addr passes, and dials nothing", func(t *testing.T) {
-		t.Parallel()
-		dialled := false
-		s := &humus.Setup{Host: humus.Host{
-			Dial: func(context.Context, string, string) (net.Conn, error) {
-				dialled = true
-				return nil, net.ErrClosed
-			},
-		}}
-		settings := grpcclient.DefaultSettings()
-		settings.Addr = "carts:9090"
-		c, err := grpcclient.NewClient(s, settings)
-		require.NoError(t, err)
-		require.NotNil(t, c)
-		require.False(t, dialled, "NewClient dialled")
+		synctest.Test(t, func(t *testing.T) {
+			h := humustest.NewHost(t)
+			host, dials := recordDials(h)
+			settings := grpcclient.DefaultSettings()
+			settings.Addr = "carts:9090"
+
+			// Init fails after NewClient, so the App's OnStop functions
+			// close the connection.
+			errInit := errors.New("init failed")
+			var (
+				c      *grpcclient.Client
+				newErr error
+			)
+			_, exit := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+				c, newErr = grpcclient.NewClient(s, settings)
+				return nil, errInit
+			}, humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(telemetry.NoopBuilder)))
+			st := <-exit
+			require.ErrorIs(t, st.Cause(), errInit)
+
+			require.NoError(t, newErr)
+			require.NotNil(t, c)
+			require.Empty(t, dials.all(), "NewClient dialled")
+		})
 	})
 
 	t.Run("an option grpc-go rejects fails NewClient", func(t *testing.T) {

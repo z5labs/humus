@@ -405,7 +405,11 @@ func TestClient_dials_names_only_through_the_Host(t *testing.T) {
 
 // TestClient_uses_no_proxy shows a call reaching the backend directly, with
 // the proxy variables set in the real environment. The Host's Dial sees
-// the backend's address, and nothing else.
+// the backend's address, and nothing else. In grpc-go v1.84.0 the Host's
+// dialler alone already rules a proxy out, since grpc-go consults the
+// proxy variables only for a client with no dialler of its own, so this
+// test guards the behaviour rather than grpc.WithNoProxy: the option keeps
+// it so should grpc-go change that rule.
 func TestClient_uses_no_proxy(t *testing.T) {
 	t.Setenv("HTTPS_PROXY", "http://proxy:3128")
 	t.Setenv("HTTP_PROXY", "http://proxy:3128")

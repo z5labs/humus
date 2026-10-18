@@ -21,9 +21,10 @@ import (
 // among them.
 type Settings struct {
 	// Addr is the address the Client dials through the Setup's Host, as
-	// host:port. The Host resolves the host when it dials. Its host is also
-	// the name the server's certificate is verified for, and the RPCs'
-	// :authority. It is required.
+	// host:port. The Host resolves the host when it dials. Addr is also the
+	// RPCs' :authority, and its host the name the server's certificate is
+	// verified for, unless TLS sets a ServerName, or opts has a
+	// grpc.WithAuthority, which then replaces both. It is required.
 	//
 	// Default: none. Valid: host:port, with a host and a port from 1 to
 	// 65535. Check: CheckAddr.
@@ -59,10 +60,15 @@ func DefaultSettings() Settings {
 // 65535. It rejects an empty host, which grpcserver.CheckAddr accepts: a
 // client dials a host, it doesn't listen on every name. It rejects a scheme,
 // such as dns:///, since the Client never resolves names itself, and a
-// named port, such as :grpc.
+// named port, such as :grpc. It rejects ?, # and %, which grpc-go's target
+// would read as a query, a fragment or an escape, so that the Host would be
+// asked to dial something other than addr.
 func CheckAddr(addr string) error {
 	if strings.Contains(addr, "/") {
 		return fmt.Errorf("%q is not host:port: it names a scheme or a path, and only the Host resolves names", addr)
+	}
+	if strings.ContainsAny(addr, "?#%") {
+		return fmt.Errorf("%q is not host:port: it has a ?, # or %%", addr)
 	}
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {

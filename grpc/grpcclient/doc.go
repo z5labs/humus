@@ -113,6 +113,11 @@
 // host. A Client of carts:9090 sends :authority carts:9090, and requires a
 // certificate for carts.
 //
+// Two settings replace both, as they would on any grpc-go client: a
+// ServerName in Settings.TLS, and a grpc.WithAuthority in opts. A Client of
+// 10.0.0.7:9090 whose TLS has the ServerName carts sends :authority carts,
+// and requires a certificate for carts.
+//
 // # TLS and plain text
 //
 // Settings.TLS is the config the Client dials with: the roots it trusts in
@@ -156,6 +161,12 @@
 // Settings.TLS come after opts, so a grpc.WithTransportCredentials in opts
 // has no effect: Settings.TLS is the one place TLS is configured, and plain
 // text is a nil TLS. NewClient sets no default service config.
+//
+// Since opts come after humus's own options, an option in opts that
+// replaces one of them wins. A grpc.WithContextDialer, or a
+// grpc.WithResolvers with a resolver for the passthrough scheme, takes the
+// dial away from the Host, and with it the test Host's network: the Client
+// then dials only where the end user's dialler or resolver does.
 //
 // # grpc-go's retries
 //
