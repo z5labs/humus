@@ -7,6 +7,9 @@ package kafka_test
 
 import (
 	"context"
+	"crypto/tls"
+	"io"
+	"net/http"
 	"syscall"
 	"testing"
 	"testing/synctest"
@@ -15,6 +18,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/health"
+	"github.com/z5labs/humus/httphealth"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/queue"
 	"github.com/z5labs/humus/queue/kafka"
@@ -202,6 +207,87 @@ func TestService_Joined(t *testing.T) {
 			require.Zero(t, st.Code(), st.Cause())
 			require.Zero(t, members(c), "the Service left the group")
 			require.False(t, joined(t, svc), "unhealthy once Serve has returned, after SIGTERM")
+		})
+	})
+}
+
+// probedConsumer returns an Init for a consumer's pod, which has no server
+// of its own: it consumes settings, and serves its probes on probeSettings
+// with httphealth's probes server, whose readiness waits for the consumer to
+// join its group.
+func probedConsumer(settings kafka.Settings, probeSettings httphealth.Settings) func(context.Context, *humus.Setup) ([]humus.Service, error) {
+	nop := queue.ProcessorFunc[kafka.Message](func(context.Context, kafka.Message) error { return nil })
+	return func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		consumer, err := kafka.NewService(s, settings, nop)
+		if err != nil {
+			return nil, err
+		}
+		probes, err := httphealth.NewService(s, probeSettings, health.Readiness(consumer.Joined()))
+		if err != nil {
+			return nil, err
+		}
+		return []humus.Service{consumer, probes}, nil
+	}
+}
+
+// probe GETs url with h's HTTP client, trusting only ca, and returns the
+// status code.
+func probe(t *testing.T, h *humustest.Host, ca *humustest.CA, url string) int {
+	t.Helper()
+	c := h.HTTPClient()
+	c.Transport.(*http.Transport).TLSClientConfig = &tls.Config{RootCAs: ca.Pool()}
+	resp, err := c.Get(url)
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	require.NoError(t, resp.Body.Close())
+	return resp.StatusCode
+}
+
+func TestInit_a_consumers_probes_server_is_ready_once_it_has_joined(t *testing.T) {
+	const readiness = "https://localhost:8081/health/readiness"
+	probeSettings := func(t *testing.T, ca *humustest.CA) httphealth.Settings {
+		return httphealth.Settings{
+			Addr: ":8081",
+			TLS:  &tls.Config{Certificates: []tls.Certificate{ca.Issue(t, "localhost").TLS()}},
+		}
+	}
+
+	t.Run("ready once the group is joined", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ca := humustest.NewCA(t)
+			h := humustest.NewHost(t)
+			c := cluster(t, h, 1)
+
+			p, status := humustest.Start(t, probedConsumer(settings(c.ListenAddrs()...), probeSettings(t, ca)),
+				humustest.WithApp(humus.WithHost(h.Host())),
+			)
+			<-h.Listening("localhost:8081")
+			synctest.Wait()
+			require.Equal(t, 1, members(c), "the consumer joined the group")
+			require.Equal(t, http.StatusOK, probe(t, h, ca, readiness))
+
+			p.Signal(syscall.SIGTERM)
+			st := <-status
+			require.Zero(t, st.Code(), st.Cause())
+		})
+	})
+
+	t.Run("not ready while no broker answers", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ca := humustest.NewCA(t)
+			h := humustest.NewHost(t) // no broker listens on it
+
+			p, status := humustest.Start(t, probedConsumer(settings("127.0.0.1:9092"), probeSettings(t, ca)),
+				humustest.WithApp(humus.WithHost(h.Host())),
+			)
+			<-h.Listening("localhost:8081")
+			time.Sleep(time.Minute)
+			require.Equal(t, http.StatusServiceUnavailable, probe(t, h, ca, readiness), "ready without joining")
+			require.Equal(t, http.StatusOK, probe(t, h, ca, "https://localhost:8081/health/liveness"))
+
+			p.Signal(syscall.SIGTERM)
+			st := <-status
+			require.Zero(t, st.Code(), st.Cause())
 		})
 	})
 }

@@ -50,9 +50,13 @@
 //
 // # The health Service
 //
-// A [Service] owns an App's readiness. The end user's Init builds one with
-// [NewService], adding monitors to its probes with [Liveness] and
-// [Readiness], and returns it next to the App's other Services. Its
+// A [Service] owns an App's readiness. It is built for probes attached to
+// a server the App already runs: a probes server, such as
+// httphealth.NewService's, owns readiness itself, building a Service from
+// the same Options, so an Init that returns one returns no health Service.
+// The end user's Init builds one with [NewService], adding monitors to its
+// probes with [Liveness] and [Readiness], and returns it next to the App's
+// other Services. Its
 // readiness turns true once its Serve starts, and false as soon as its
 // Serve context is done, which is when the App starts shutting down, before
 // the drain. A load balancer then stops sending the App traffic while it
@@ -63,9 +67,20 @@
 //	})))
 //	return []humus.Service{api, hs}, nil
 //
+// # Exposing the probes
+//
 // health serves no protocol: nothing in it opens a port or answers an
 // orchestrator's probes, and it depends on nothing but the standard library.
-// Exposing probes is Proposal: exposing health probes, in wave 4 of the
-// charter,
-// https://github.com/z5labs/humus/discussions/629#discussioncomment-18983765.
+// Two packages expose the probes, one per protocol:
+//
+//   - github.com/z5labs/humus/httphealth answers HTTP probes, such as
+//     Kubernetes' httpGet probes, at /health/liveness and /health/readiness,
+//     with a handler attached to the end user's HTTPS server or a probes
+//     server on a port of its own;
+//   - github.com/z5labs/humus/grpc/grpchealth answers gRPC health v1, with
+//     a server registered on the end user's gRPC Service or a probes server
+//     on a plaintext port of its own.
+//
+// Exposing the probes is documented at
+// https://z5labs.github.io/humus/health/#exposing-the-probes.
 package health
