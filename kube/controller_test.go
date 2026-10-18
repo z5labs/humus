@@ -11,6 +11,7 @@ import (
 	"errors"
 	"net"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -108,8 +109,9 @@ type fakeCluster struct {
 
 	mu      sync.Mutex
 	applies []apply
-	// finalizers are the finalizers each object's last apply of its
-	// metadata set, by namespace/name.
+	// finalizers are the finalizers each field manager's last apply of an
+	// object's metadata set, by field manager and the object's
+	// namespace/name.
 	finalizers map[string][]string
 }
 
@@ -148,19 +150,20 @@ func newFakeCluster(t *testing.T, objs ...runtime.Object) *fakeCluster {
 		case "status":
 			u.Object["status"] = runtime.DeepCopyJSONValue(patch["status"])
 		case "":
-			return fc.applyMetadata(u, patch)
+			return fc.applyMetadata(u, p.PatchOptions.FieldManager, patch)
 		}
 		return true, u, fc.dyn.Tracker().Update(gvr, u, p.Namespace)
 	})
 	return fc
 }
 
-// applyMetadata applies patch's metadata to u as the API server applies a
-// manager's finalizers: those its last apply set and this one doesn't are
-// removed, and those this one sets are added. An object being deleted is
+// applyMetadata applies patch's metadata to u as the API server applies
+// manager's finalizers: those manager's last apply set and this one doesn't
+// are removed, unless another manager's last apply set them too, and those
+// this one sets are added. An object being deleted is
 // deleted once it has no finalizer left. A patch that names another uid is
 // a conflict, as it is from the API server.
-func (fc *fakeCluster) applyMetadata(u *unstructured.Unstructured, patch map[string]any) (bool, runtime.Object, error) {
+func (fc *fakeCluster) applyMetadata(u *unstructured.Unstructured, manager string, patch map[string]any) (bool, runtime.Object, error) {
 	gvr := Memcached.GVR()
 	md, _ := patch["metadata"].(map[string]any)
 	if uid, ok := md["uid"].(string); ok && uid != string(u.GetUID()) {
@@ -177,14 +180,22 @@ func (fc *fakeCluster) applyMetadata(u *unstructured.Unstructured, patch map[str
 	if fc.finalizers == nil {
 		fc.finalizers = map[string][]string{}
 	}
-	key := u.GetNamespace() + "/" + u.GetName()
+	object := u.GetNamespace() + "/" + u.GetName()
+	key := manager + " " + object
 	before := fc.finalizers[key]
 	fc.finalizers[key] = applied
+	// What another manager's apply set, which this apply can't remove.
+	var others []string
+	for k, fs := range fc.finalizers {
+		if k != key && strings.HasSuffix(k, " "+object) {
+			others = append(others, fs...)
+		}
+	}
 	fc.mu.Unlock()
 
 	finalizers := []string{}
 	for _, f := range u.GetFinalizers() {
-		if !slices.Contains(before, f) || slices.Contains(applied, f) {
+		if !slices.Contains(before, f) || slices.Contains(applied, f) || slices.Contains(others, f) {
 			finalizers = append(finalizers, f)
 		}
 	}

@@ -506,7 +506,11 @@
 // writers of the object's metadata, need no Get first, and never create an
 // object that has been deleted since the cache saw it. Removing it is an
 // apply of the metadata without it, which the API server removes since no
-// other field manager set it. So a Reconciler that applies its own object,
+// other field manager set it. When another field manager set it too, such
+// as a kubectl edit that added it by hand, it stays on the object: the
+// controller then fails the reconcile with an error that says so, and
+// retries, calling f again, until that field manager's finalizer is
+// removed. So a Reconciler that applies its own object,
 // rather than its status, does so under a field manager other than
 // Settings.Name: the controller's applies of the metadata would remove the
 // fields it applied under Settings.Name.
