@@ -8,6 +8,11 @@
 // probes, grpc-health-probe and grpc-go's client-side health checking can
 // all ask a gRPC service whether it is healthy.
 //
+// [NewServer] is the health server, registered on the end user's
+// grpcserver.Service where the cluster's grpc probes can use TLS. [NewService]
+// serves it in plain text on a port of its own, where they can't, which is
+// most clusters today.
+//
 // # The names and their answers
 //
 // [NewServer] answers three service names, each from one of the probes'
@@ -81,7 +86,9 @@
 // cluster with that gate on, and only when the Service requires no client
 // certificate, since the kubelet never presents one: its settings.TLS sets
 // ClientAuth to neither RequireAnyClientCert nor RequireAndVerifyClientCert.
-// grpc-go's clients reach it on every cluster.
+// grpc-go's clients reach it on every cluster. Everywhere else, the
+// kubelet's probes reach a probes Service on a plaintext port of its own,
+// below.
 //
 // A probe through the server is an RPC like any other of the Service, so
 // the Service's instrumentation traces and measures it, and a monitor's
@@ -92,4 +99,89 @@
 // registered on does, and fails the RPC with codes.Internal. A Watch's
 // poller runs outside any RPC, so it recovers a monitor's panic itself: the
 // check is NOT_SERVING, and the panic is logged as the monitor's error.
+//
+// # The plaintext probes port
+//
+// The kubelet's grpc probes connect in plain text on most clusters, so they
+// can't reach a grpcserver.Service, which serves only TLS. [NewService]
+// serves the health server in plain text on a port of its own, for those
+// probes. It answers gRPC health v1 and nothing else: no service of the end
+// user's is registered on it, so nothing of theirs is reachable in plain
+// text, and their own services stay TLS-only on their own port.
+//
+// The probes Service owns the App's readiness, as a health Service does. It
+// builds a health Service from the health.Options it is given, and runs it
+// for as long as it serves, so the end user's Init returns no health
+// Service next to it:
+//
+//	svc, err := grpcserver.NewService(s, settings)
+//	if err != nil {
+//		return nil, err
+//	}
+//	cartpb.RegisterCartServiceServer(svc, carts)
+//	probes, err := grpchealth.NewService(s, probeSettings)
+//	if err != nil {
+//		return nil, err
+//	}
+//	return []humus.Service{svc, probes}, nil
+//
+// Readiness is false until the Service's Serve starts, and false for good
+// once Serve's context is done, which is when the App starts shutting down,
+// or once Shutdown is called. Otherwise it checks the monitors
+// health.Readiness adds. Liveness checks the monitors health.Liveness adds,
+// and is healthy when there are none.
+//
+// The kubelet's grpc probes name the probe in their service field, on the
+// probes port:
+//
+//	livenessProbe:
+//	  grpc:
+//	    port: 8081 # the probes port; the end user's services are served over TLS on their own
+//	    service: liveness
+//	readinessProbe:
+//	  grpc:
+//	    port: 8081
+//	    service: readiness
+//
+// The port stays plaintext until Kubernetes' grpc probes use TLS without a
+// feature gate. TLS is made required on it then, by a proposal of its own.
+//
+// It serves through the drain. Once the App starts shutting down, readiness
+// answers NOT_SERVING, not a refused connection, and liveness still answers
+// SERVING, until the App shuts the Service down. Shutdown ends every stream,
+// a Watch included, with codes.Unavailable, as a grpcserver.Service does,
+// and then stops the server gracefully.
+//
+// A probes port isn't for the public. The server answers anyone who can
+// reach the port, and every RPC checks a monitor. The port is the
+// container's, for the kubelet, and isn't routed by a Kubernetes Service or
+// an ingress.
+//
+// The probes Service records no span and no metric, and extracts no trace
+// context: a probe every few seconds would be most of a quiet service's
+// traces. It logs under this package's import path, through the Setup's
+// LoggerProvider: "listening" at INFO, with the address as server.address,
+// when it starts serving, each monitor's error as above, and a monitor's
+// panic, which fails its RPC with codes.Internal, as one ERROR record.
+//
+// # Settings
+//
+// The probes Service is configured with [Settings]: its address, as a plain
+// Go value. The field has a check, [CheckAddr], that reports what is wrong
+// with a value without naming the field. The package reads no environment
+// variable and defines no variable name: the end user's Init sources the
+// field, with whatever variable name the service uses, and passes the check
+// to Validate, so an operator's bad value fails startup with exit 78,
+// naming the variable. The field has no default, so the package has no
+// DefaultSettings:
+//
+//	probeSettings, err := config.Struct(func(r *config.Resolver) grpchealth.Settings {
+//		return grpchealth.Settings{
+//			// No .Default: the field is required.
+//			Addr: r.Get(env("PROBES_ADDR").Validate(grpchealth.CheckAddr)),
+//		}
+//	}).Read(ctx)
+//	if err != nil {
+//		return nil, err // exit 78, naming every bad variable
+//	}
 package grpchealth

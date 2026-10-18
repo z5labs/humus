@@ -21,11 +21,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// loggerName is the name of the logger a Server logs a recovered panic
-// through: the import path of grpcserver, the package every gRPC server of
-// the grpc module is built from.
-const loggerName = "github.com/z5labs/humus/grpc/grpcserver"
-
 // errPanicked is the error an RPC that panicked fails with. Its message is
 // fixed, so the panic's value never reaches the client.
 var errPanicked = status.Error(codes.Internal, "internal error")

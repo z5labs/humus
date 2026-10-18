@@ -55,12 +55,15 @@ func requireInternal(t *testing.T, err error) {
 	require.Equal(t, "internal error", st.Message())
 }
 
+// The panic is logged under the scope New was given, callerScope, and not
+// under grpcserver's: each package that builds a Server logs its panics as
+// its own.
 func TestServer_recovers_a_panic_of_an_RPC(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
 		tel := humustest.NewTelemetry()
 		init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
-			srv, err := server.New(s, ":8081")
+			srv, err := server.New(s, callerScope, ":8081")
 			if err != nil {
 				return nil, err
 			}
@@ -97,7 +100,7 @@ func TestServer_recovers_a_panic_of_an_RPC(t *testing.T) {
 		var panics []string
 		for _, r := range tel.Logs() {
 			if r.Severity() == log.SeverityError {
-				require.Equal(t, "github.com/z5labs/humus/grpc/grpcserver", r.InstrumentationScope().Name)
+				require.Equal(t, callerScope, r.InstrumentationScope().Name)
 				r.WalkAttributes(func(kv attribute.KeyValue) bool {
 					if kv.Key == "rpc.method" {
 						panics = append(panics, kv.Value.AsString())

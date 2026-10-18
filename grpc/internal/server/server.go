@@ -11,13 +11,16 @@
 // the grace period runs out. It knows nothing of TLS or of
 // grpcserver.Settings: the transport credentials, if any, are among the
 // options it is given. grpcserver.NewService builds on it with TLS
-// required, and a plaintext health server can be built on it too.
+// required, and grpchealth.NewService builds its plaintext health server
+// on it.
 //
 // Its outermost interceptors recover a panic of an RPC's handler, or of an
 // interceptor inside them, and fail only that RPC, with codes.Internal and
 // the message "internal error". The panic is recorded as an exception
 // event on the RPC's span and as one ERROR record, in the RPC's context,
-// through s.Telemetry's logger named after grpcserver.
+// through s.Telemetry's logger whose scope is the one New is given: the
+// import path of the package building the server, so each package's panics
+// are logged as its own.
 //
 // Inside the recovering stream interceptor, a second one gives every
 // streaming RPC's handler a context of its own, derived from the RPC's,
@@ -66,7 +69,12 @@ type Server struct {
 // listen, such as EADDRINUSE, is its error. It registers a function with
 // s.OnStop that closes the listener, so a listener whose Server never
 // serves, because Init failed after New, is still closed.
-func New(s *humus.Setup, addr string, opts ...grpc.ServerOption) (*Server, error) {
+//
+// scope is the instrumentation scope of the logger a recovered panic is
+// logged through, s.Telemetry.LoggerProvider.Logger(scope): the import path
+// of the package building the server, such as
+// "github.com/z5labs/humus/grpc/grpcserver".
+func New(s *humus.Setup, scope, addr string, opts ...grpc.ServerOption) (*Server, error) {
 	ln, err := s.Host.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
@@ -90,7 +98,7 @@ func New(s *humus.Setup, addr string, opts ...grpc.ServerOption) (*Server, error
 	// recovery, so a panic of a handler it ran is still recovered, and
 	// outside opts, so every interceptor of the end user's sees the
 	// context Shutdown cancels.
-	logger := s.Telemetry.LoggerProvider.Logger(loggerName)
+	logger := s.Telemetry.LoggerProvider.Logger(scope)
 	st := newStreams()
 	all := make([]grpc.ServerOption, 0, 3+len(opts))
 	all = append(all,

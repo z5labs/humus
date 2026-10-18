@@ -43,21 +43,34 @@ func sourceFiles(t *testing.T) (*token.FileSet, []*ast.File) {
 	return fset, files
 }
 
-// TestPackage_exports_only_NewServer checks that the package's only
-// exported name is NewServer: the server it returns is of an unexported
-// type, so its methods are healthpb.HealthServer's and no API of the
-// package's own.
-func TestPackage_exports_only_NewServer(t *testing.T) {
+// TestPackage_exports_only_its_API checks that the package's exported
+// names are NewServer, and Settings, CheckAddr, Service and NewService, and
+// that Service's exported methods are Addr, Serve and Shutdown. The server
+// NewServer returns is of an unexported type, so its methods are
+// healthpb.HealthServer's and no API of the package's own. There is no
+// DefaultSettings: Settings' one field has no default.
+func TestPackage_exports_only_its_API(t *testing.T) {
 	t.Parallel()
 
 	_, files := sourceFiles(t)
-	var exported []string
+	var exported, methods []string
 	for _, f := range files {
 		for _, decl := range f.Decls {
 			switch d := decl.(type) {
 			case *ast.FuncDecl:
-				if d.Recv == nil && d.Name.IsExported() {
+				if !d.Name.IsExported() {
+					continue
+				}
+				if d.Recv == nil {
 					exported = append(exported, d.Name.Name)
+					continue
+				}
+				recv := d.Recv.List[0].Type
+				if star, ok := recv.(*ast.StarExpr); ok {
+					recv = star.X
+				}
+				if id, ok := recv.(*ast.Ident); ok && id.IsExported() {
+					methods = append(methods, id.Name+"."+d.Name.Name)
 				}
 			case *ast.GenDecl:
 				for _, spec := range d.Specs {
@@ -78,7 +91,9 @@ func TestPackage_exports_only_NewServer(t *testing.T) {
 		}
 	}
 	slices.Sort(exported)
-	require.Equal(t, []string{"NewServer"}, exported)
+	require.Equal(t, []string{"CheckAddr", "NewServer", "NewService", "Service", "Settings"}, exported)
+	slices.Sort(methods)
+	require.Equal(t, []string{"Service.Addr", "Service.Serve", "Service.Shutdown"}, methods)
 }
 
 // TestPackage_reads_no_environment_and_no_file checks that the package
