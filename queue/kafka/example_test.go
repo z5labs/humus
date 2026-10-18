@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -27,22 +28,34 @@ import (
 	"github.com/z5labs/humus/telemetry"
 )
 
-// The Consuming Kafka page of the docs site quotes the code in this file,
-// and TestDocs_code_samples checks that every quote still matches it.
-// TestInit_processes_and_commits_a_produced_record runs Init, and
-// TestSecureInit_consumes_over_mTLS_with_SASL runs secureInit.
+// The Kafka page of the docs site quotes the code in this file, and
+// TestDocs_code_samples checks that every quote still matches it. The tests
+// in init_test.go run Init and secureInit.
 
 // orders is the end user's Processor: it stores each order once, by the
-// record's key, so an order delivered again is skipped.
+// record's key, so an order delivered again is skipped, and produces an
+// order it can't read to a dead-letter topic.
 type orders struct {
 	mu     sync.Mutex
 	stored map[string]bool
 	out    io.Writer
+	dlq    *kafka.Producer
 }
 
-// Handle stores the order m carries, unless it is stored already. It is
-// idempotent, as a Processor under queue.AtLeastOnce must be.
+// Handle stores the order m carries. An order that isn't JSON would fail
+// on every delivery, so rather than stop the Service on it, Handle produces
+// it to the dead-letter topic, and returns nil once it is stored there.
 func (o *orders) Handle(ctx context.Context, m kafka.Message) error {
+	if !json.Valid(m.Value) {
+		// A dead letter, stored before the record is committed.
+		return o.dlq.Produce(ctx, kafka.Record{Topic: "orders.dlq", Key: m.Key, Value: m.Value, Headers: m.Headers})
+	}
+	return o.store(m)
+}
+
+// store stores the order m carries, unless it is stored already. It is
+// idempotent, as a Processor under queue.AtLeastOnce must be.
+func (o *orders) store(m kafka.Message) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	id := string(m.Key)
@@ -54,8 +67,9 @@ func (o *orders) Handle(ctx context.Context, m kafka.Message) error {
 	return err
 }
 
-// Init is the end user's Init: it sources the Settings with config.Struct,
-// builds the Processor, and returns the Service from NewService.
+// Init is the end user's Init: it sources the Settings and the
+// ProducerSettings with config.Struct, builds the Producer and the
+// Processor, and returns the Service from NewService.
 func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	d := kafka.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
@@ -74,7 +88,24 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		return nil, err // exit 78, naming every bad variable
 	}
 
-	h := &orders{stored: map[string]bool{}, out: s.Process.Stdout}
+	dp := kafka.DefaultProducerSettings()
+	producer, err := config.Struct(func(r *config.Resolver) kafka.ProducerSettings {
+		p := dp
+		// The dead letters go to the orders' own cluster, so Brokers reads the consumer's variable.
+		p.Brokers = r.Get(env("KAFKA_BROKERS").Map(list).Validate(kafka.CheckBrokers))
+		p.DeliveryTimeout = r.Get(env("KAFKA_DELIVERY_TIMEOUT").Parse(time.ParseDuration).Default(dp.DeliveryTimeout).Validate(kafka.CheckDeliveryTimeout))
+		p.Breaker.OpenFor = r.Get(env("KAFKA_BREAKER_OPEN_FOR").Parse(time.ParseDuration).Default(dp.Breaker.OpenFor).Validate(kafka.CheckBreakerOpenFor))
+		return p
+	}).Read(ctx)
+	if err != nil {
+		return nil, err // exit 78, naming every bad variable
+	}
+	dlq, err := kafka.NewProducer(s, producer) // opens no connection: the first Produce does
+	if err != nil {
+		return nil, err
+	}
+
+	h := &orders{stored: map[string]bool{}, out: s.Process.Stdout, dlq: dlq}
 	svc, err := kafka.NewService(s, settings, queue.ProcessorFunc[kafka.Message](h.Handle))
 	if err != nil {
 		return nil, err
@@ -91,7 +122,8 @@ func buildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Diale
 }
 
 // A consumer's main is one call to humus.Main, whose defaults are a
-// consumer's, with an Init that returns the Service from kafka.NewService.
+// consumer's, with an Init that returns the Service from kafka.NewService,
+// and builds the Producer its Processor produces dead letters with.
 // This example has no Output comment, so it is compiled but never run:
 // running it would exit the test binary.
 func Example_main() {
@@ -101,7 +133,8 @@ func Example_main() {
 // secureInit is an Init for brokers that require TLS with a client
 // certificate, and SASL. It sources the brokers' CA and the client's
 // certificate from PEM files, read through s.Host.FS, and SCRAM-SHA-512
-// credentials.
+// credentials, and produces its dead letters to the same cluster with the
+// same ones.
 func secureInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	d := kafka.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
@@ -127,7 +160,15 @@ func secureInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		return nil, err // exit 78, naming every bad variable
 	}
 
-	h := &orders{stored: map[string]bool{}, out: s.Process.Stdout}
+	producer := kafka.DefaultProducerSettings()
+	// The same cluster, over the same TLS and with the same credentials.
+	producer.Brokers, producer.TLS, producer.SASL = settings.Brokers, settings.TLS, settings.SASL
+	dlq, err := kafka.NewProducer(s, producer)
+	if err != nil {
+		return nil, err
+	}
+
+	h := &orders{stored: map[string]bool{}, out: s.Process.Stdout, dlq: dlq}
 	svc, err := kafka.NewService(s, settings, queue.ProcessorFunc[kafka.Message](h.Handle))
 	if err != nil {
 		return nil, err

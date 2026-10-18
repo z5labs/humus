@@ -238,7 +238,7 @@ A runtime package with no defaults of its own needs no test package.
 `queue/kafka` ships none: a consumer runs on `humus.Main`'s defaults, so
 `humustest.Start` already runs it on the ones production uses, and the fake
 Kafka cluster a test runs it against listens on the test Host with one option.
-[Consuming Kafka]({{< relref "kafka#testing" >}}) shows how.
+[Consuming and producing Kafka]({{< relref "kafka#testing" >}}) shows how.
 
 ### Helpers
 
