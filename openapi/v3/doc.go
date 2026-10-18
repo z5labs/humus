@@ -41,11 +41,48 @@
 // operations share. A path declares its path parameters, and an operation
 // reads every parameter of its path. Its handler reads one with
 // [ParamFrom], which panics, naming the parameter and the operation, for a
-// parameter the operation's path doesn't have.
+// parameter the operation doesn't read.
 //
 // NewAPI checks every path, and reports a mistake as an error, never as a
 // panic, so a path declared as a package-level variable can't fail its
 // package's initialization.
+//
+// # Parameters
+//
+// A parameter is declared once, usually as a package-level value, with
+// [PathParam], [QueryParam] or [HeaderParam] and its constraints. Each
+// method returns a copy with one more part, so a declaration can be
+// shared:
+//
+//	var include = openapi.QueryParam[Include]("include").
+//		Description("What the cart includes").
+//		Enum(IncludeItems, IncludeCount).
+//		Default(IncludeItems)
+//
+//	openapi.Get(cart, c.getCart, cartEncoder, openapi.Query(include))
+//
+// A path parameter belongs to its path. A query or header parameter is
+// read by each operation that gives it as a part, with [Query] or
+// [Header]. A path parameter is always required. A query or header
+// parameter is optional unless it is Required, and an absent one is its
+// Default, or T's zero value. A query parameter that appears more than
+// once is rejected, and a header's lines are read as their values joined
+// by commas, as HTTP reads them.
+//
+// The types check where a parameter goes and the values of its
+// constraints, so these don't compile:
+//
+//   - a value of another type in Enum, Default, Example, Minimum or
+//     Maximum, which take the parameter's own T;
+//   - Required or Default on a path parameter, which has neither method;
+//   - a path parameter given to Query, and a query parameter given to
+//     Path.Param;
+//   - a T that isn't a string, bool, int, int64 or float64 type.
+//
+// NewAPI reports the rest: Pattern, MinLength or MaxLength on a type that
+// isn't a string, Minimum or Maximum on a type that isn't a number, a
+// Default or an Example that breaks the parameter's own Enum, Pattern or
+// bounds, a parameter given twice to one operation, and a zero parameter.
 //
 // # Operations and their codecs
 //
@@ -62,8 +99,11 @@
 //
 // A request is served in this order:
 //
-//   - Each path parameter is decoded as its type. A value that is empty,
-//     or doesn't parse, is a [RequestError] with status 400.
+//   - Each path parameter is decoded as its type, then each query and
+//     header parameter the operation reads. A path parameter that is
+//     empty, a missing required parameter, a repeated query parameter,
+//     and a value that doesn't parse or breaks a constraint, is a
+//     [RequestError] with status 400, whose Param is the parameter's name.
 //   - When the decoder's media type isn't "", a request whose Content-Type
 //     names another media type, parameters aside, or none at all, is a
 //     RequestError with status 415.

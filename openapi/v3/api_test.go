@@ -181,6 +181,12 @@ func (s *server) do(method, path, contentType, body string) reply {
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
+	return s.send(req)
+}
+
+// send sends req.
+func (s *server) send(req *http.Request) reply {
+	s.t.Helper()
 	resp, err := s.client.Do(req)
 	require.NoError(s.t, err)
 	defer func() { _ = resp.Body.Close() }()

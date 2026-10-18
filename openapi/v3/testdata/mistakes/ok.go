@@ -17,6 +17,6 @@ import (
 func ok(s *humus.Setup) {
 	_, _ = newAPI(s, []openapi.Operation{
 		openapi.Post(items, addItem, decoder, encoder, openapi.Status(http.StatusCreated)),
-		openapi.Get(carts, getCart, encoder),
+		openapi.Get(carts, getCart, encoder, openapi.Query(includeParam), openapi.Header(limit)),
 	})
 }

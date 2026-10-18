@@ -27,6 +27,7 @@ type route struct {
 	name     string // such as "GET /carts/{cartId}"
 	method   string
 	path     Path
+	opParams []operationParam // its query and header parameters
 	status   int
 	codecs   *codecs
 	answers  resolved
@@ -82,8 +83,9 @@ func (rt *route) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	write(w, r, rt.status, rt.codecs.encMediaType, wt)
 }
 
-// params decodes each of the path's parameters from r. chi matches a
-// request's escaped path when it has one, so its values are unescaped here.
+// params decodes each of the path's parameters from r, then each query and
+// header parameter the operation reads. chi matches a request's escaped
+// path when it has one, so its values are unescaped here.
 func (rt *route) params(r *http.Request) (*requestState, *RequestError) {
 	st := &requestState{op: rt.name, params: make(map[string]any)}
 	for _, seg := range rt.path.segs {
@@ -116,6 +118,17 @@ func (rt *route) params(r *http.Request) (*requestState, *RequestError) {
 			return nil, &RequestError{Status: http.StatusBadRequest, Param: seg.param.name, Err: err}
 		}
 		st.params[pathKey(seg.param.name)] = v
+	}
+	if len(rt.opParams) == 0 {
+		return st, nil
+	}
+	query := r.URL.Query()
+	for _, p := range rt.opParams {
+		v, err := p.read(r, query)
+		if err != nil {
+			return nil, &RequestError{Status: http.StatusBadRequest, Param: p.paramName(), Err: err}
+		}
+		st.params[p.paramKey()] = v
 	}
 	return st, nil
 }

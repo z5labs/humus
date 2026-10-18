@@ -46,6 +46,7 @@ type parts struct {
 	errors        []errorAnswer
 	catchAll      answerer
 	requestErrors answerer
+	params        []operationParam
 }
 
 // answerer is an Error, a CatchAll or a RequestErrors, erased. bind calls

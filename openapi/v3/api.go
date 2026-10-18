@@ -69,6 +69,11 @@ type API struct {
 //     codec's Schema;
 //   - a zero Operation, a nil option, and a literal or a parameter name a
 //     path can't have, or a parameter given twice in one path;
+//   - a zero parameter, and a parameter given twice to one operation;
+//   - Pattern, MinLength or MaxLength on a parameter whose type isn't a
+//     string, Minimum or Maximum on one whose type isn't a number, a nil
+//     Pattern, and a Default or an Example that breaks the parameter's own
+//     Enum, Pattern or bounds;
 //   - two operations at one method and path, and two paths that differ only
 //     in their parameters' names, such as /carts/{id} and /carts/{cartId};
 //   - two answers at one status on one operation: two Errors, an Error and
@@ -285,6 +290,21 @@ func (b *builder) operation(op *operation, api resolved, logger log.Logger) *rou
 		opt.apply(&own)
 	}
 
+	seenParams := make(map[string]bool)
+	for _, p := range own.params {
+		errs := p.check()
+		for _, err := range errs {
+			fail("%w", err)
+		}
+		if len(errs) > 0 || p.paramName() == "" {
+			continue
+		}
+		if seenParams[p.paramKey()] {
+			fail("%s is given twice", p.describe())
+		}
+		seenParams[p.paramKey()] = true
+	}
+
 	answers := api
 	if own.requestErrors != nil {
 		answers.requestErrors = b.bind(name+": "+own.requestErrors.name(), own.requestErrors)
@@ -302,7 +322,7 @@ func (b *builder) operation(op *operation, api resolved, logger log.Logger) *rou
 	}
 	if c != nil {
 		readsBody := c.decMediaType != ""
-		readsParam := op.path.hasParam()
+		readsParam := op.path.hasParam() || len(own.params) > 0
 		checkConflicts(fail, answers, own, readsParam || readsBody, readsBody)
 	}
 
@@ -321,6 +341,7 @@ func (b *builder) operation(op *operation, api resolved, logger log.Logger) *rou
 		method:   op.method,
 		path:     op.path,
 		status:   status,
+		opParams: own.params,
 		codecs:   c,
 		answers:  answers,
 		logger:   logger,
