@@ -208,29 +208,75 @@ func TestClient_propagates_trace_context_and_baggage(t *testing.T) {
 }
 
 func TestClient_measures_each_attempt(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		tel := humustest.NewTelemetry()
-		_, err := traced(t, tel, &backend{}, emptyCall).run(t)
-		require.NoError(t, err)
+	t.Run("each attempt records rpc.client.call.duration in otelgrpc's scope", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			tel := humustest.NewTelemetry()
+			_, err := traced(t, tel, &backend{}, emptyCall).run(t)
+			require.NoError(t, err)
 
-		rm, err := tel.Metrics(t.Context())
-		require.NoError(t, err)
-		var found *metricdata.Metrics
-		for _, sm := range rm.ScopeMetrics {
-			// The backend runs in the same App, so its metrics are in rm
-			// too: otelgrpc's, in the same scope.
-			require.Equal(t, otelgrpc.ScopeName, sm.Scope.Name, "humus records no instrument of its own")
-			for i := range sm.Metrics {
-				if sm.Metrics[i].Name == "rpc.client.call.duration" {
-					found = &sm.Metrics[i]
+			rm, err := tel.Metrics(t.Context())
+			require.NoError(t, err)
+			var found *metricdata.Metrics
+			for _, sm := range rm.ScopeMetrics {
+				// The backend runs in the same App, so its metrics are in
+				// rm too: otelgrpc's, in the same scope.
+				require.Contains(t, []string{otelgrpc.ScopeName, clientScope}, sm.Scope.Name, "no other scope records an instrument")
+				if sm.Scope.Name != otelgrpc.ScopeName {
+					continue
+				}
+				for i := range sm.Metrics {
+					if sm.Metrics[i].Name == "rpc.client.call.duration" {
+						found = &sm.Metrics[i]
+					}
 				}
 			}
-		}
-		require.NotNil(t, found, "no rpc.client.call.duration in otelgrpc's scope: %+v", rm.ScopeMetrics)
-		hist, ok := found.Data.(metricdata.Histogram[float64])
-		require.True(t, ok, "rpc.client.call.duration is a %T, want a float64 histogram", found.Data)
-		require.Len(t, hist.DataPoints, 1)
-		require.EqualValues(t, 1, hist.DataPoints[0].Count)
+			require.NotNil(t, found, "no rpc.client.call.duration in otelgrpc's scope: %+v", rm.ScopeMetrics)
+			hist, ok := found.Data.(metricdata.Histogram[float64])
+			require.True(t, ok, "rpc.client.call.duration is a %T, want a float64 histogram", found.Data)
+			require.Len(t, hist.DataPoints, 1)
+			require.EqualValues(t, 1, hist.DataPoints[0].Count)
+		})
+	})
+
+	t.Run("the package's scope holds humus's four instruments and nothing else, beside otelgrpc's", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			// Five failures open the breaker, so every instrument has a
+			// data point.
+			tel := humustest.NewTelemetry()
+			a := traced(t, tel, &backend{answer: unavailable}, func(ctx context.Context, c testpb.TestServiceClient) error {
+				for range 5 {
+					_ = emptyCall(ctx, c)
+				}
+				return nil
+			})
+			a.settings.MaxAttempts = 1
+			_, err := a.run(t)
+			require.NoError(t, err)
+
+			rm, err := tel.Metrics(t.Context())
+			require.NoError(t, err)
+			for _, sm := range rm.ScopeMetrics {
+				require.Contains(t, []string{otelgrpc.ScopeName, clientScope}, sm.Scope.Name, "no other scope records an instrument")
+			}
+			type instrument struct {
+				unit, description string
+				monotonic         bool
+			}
+			got := map[string]instrument{}
+			for _, m := range ownMetrics(rm) {
+				sum, ok := m.Data.(metricdata.Sum[int64])
+				require.True(t, ok, "%s is a %T", m.Name, m.Data)
+				require.Equal(t, metricdata.CumulativeTemporality, sum.Temporality)
+				got[m.Name] = instrument{unit: m.Unit, description: m.Description, monotonic: sum.IsMonotonic}
+				require.NotEmpty(t, points(t, rm, m.Name)) // every data point carries the dependency's attributes
+			}
+			require.Equal(t, map[string]instrument{
+				"humus.circuit.state":       {unit: "{breaker}", description: "Circuit breakers in each state. Only the current state's value is non-zero.", monotonic: false},
+				"humus.circuit.transitions": {unit: "{transition}", description: "Changes of state of a circuit breaker.", monotonic: true},
+				"humus.circuit.calls":       {unit: "{call}", description: "Calls through a circuit breaker, by how each counted.", monotonic: true},
+				"humus.retry.decisions":     {unit: "{decision}", description: "What retry decided after each attempt.", monotonic: true},
+			}, got)
+		})
 	})
 }
 
@@ -331,6 +377,8 @@ func TestClient_uses_no_OpenTelemetry_globals(t *testing.T) {
 		_, err := traced(t, tel, &backend{}, emptyCall).run(t)
 		require.NoError(t, err)
 		require.Len(t, otelgrpcSpans(tel, trace.SpanKindClient), 1, "the Setup's TracerProvider recorded no client span")
+		require.Equal(t, map[string]int64{"humus.circuit.outcome=success": 1},
+			points(t, collect(t, context.Background(), tel), "humus.circuit.calls"), "the breaker counted the call in the Setup's MeterProvider")
 	})
 
 	require.Empty(t, spans.Ended(), "the global TracerProvider recorded spans")
