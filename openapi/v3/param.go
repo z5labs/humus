@@ -289,6 +289,10 @@ func (p QueryParameter[T]) check() []error {
 	return p.spec.checkNamed(p.describe(), "QueryParameter")
 }
 
+func (p QueryParameter[T]) document() paramDoc {
+	return p.spec.document("query", p.spec.required)
+}
+
 func (p QueryParameter[T]) read(_ *http.Request, query url.Values) (any, error) {
 	values := query[p.spec.name]
 	if len(values) > 1 {
@@ -311,6 +315,10 @@ func (p HeaderParameter[T]) paramName() string { return p.spec.name }
 
 func (p HeaderParameter[T]) check() []error {
 	return p.spec.checkNamed(p.describe(), "HeaderParameter")
+}
+
+func (p HeaderParameter[T]) document() paramDoc {
+	return p.spec.document("header", p.spec.required)
 }
 
 // read reads the header's field lines as one value. HTTP reads several
@@ -348,6 +356,9 @@ type operationParam interface {
 	// read returns the parameter's value in r, whose query is query. Its
 	// error names the parameter.
 	read(r *http.Request, query url.Values) (any, error)
+
+	// document returns the parameter as the document lists it.
+	document() paramDoc
 }
 
 // paramSpec is a parameter's declaration.
@@ -469,6 +480,61 @@ func (s paramSpec[T]) check() []error {
 		}
 	}
 	return errs
+}
+
+// document returns the parameter, in in, as the document lists it: its
+// description, whether it is required, its example, and a schema of its
+// type and its constraints.
+func (s paramSpec[T]) document(in string, required bool) paramDoc {
+	schema := paramSchema{MinLength: s.minLength, MaxLength: s.maxLength}
+	switch reflect.TypeFor[T]().Kind() {
+	case reflect.String:
+		schema.Type = "string"
+	case reflect.Bool:
+		schema.Type = "boolean"
+	case reflect.Int:
+		schema.Type = "integer"
+	case reflect.Int64:
+		schema.Type, schema.Format = "integer", "int64"
+	default: // reflect.Float64, the last type ParamValue allows
+		schema.Type, schema.Format = "number", "double"
+	}
+	for _, v := range s.enum {
+		schema.Enum = append(schema.Enum, jsonValue(v))
+	}
+	if s.pattern != nil {
+		schema.Pattern = s.pattern.String()
+	}
+	if s.minimum != nil {
+		schema.Minimum = jsonValue(*s.minimum)
+	}
+	if s.maximum != nil {
+		schema.Maximum = jsonValue(*s.maximum)
+	}
+	if s.def != nil {
+		schema.Default = jsonValue(*s.def)
+	}
+	doc := paramDoc{Name: s.name, In: in, Description: s.description, Required: required, Schema: schema}
+	if s.example != nil {
+		doc.Example = jsonValue(*s.example)
+	}
+	return doc
+}
+
+// jsonValue returns v as its underlying type, so a named type's
+// MarshalJSON doesn't change how the document writes it.
+func jsonValue[T ParamValue](v T) any {
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.String:
+		return rv.String()
+	case reflect.Bool:
+		return rv.Bool()
+	case reflect.Int, reflect.Int64:
+		return rv.Int()
+	default: // reflect.Float64, the last type ParamValue allows
+		return rv.Float()
+	}
 }
 
 // read returns the value of the parameter what, given the values a request

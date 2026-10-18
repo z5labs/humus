@@ -7,7 +7,9 @@ package openapi_test
 
 import (
 	"context"
+	"math"
 	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"strings"
 	"syscall"
@@ -467,6 +469,72 @@ func TestNewAPI_reports_every_mistake(t *testing.T) {
 			},
 		},
 		{
+			name: "a Document whose path has a parameter",
+			change: func(a *apiArgs) {
+				a.ops = append(a.ops, openapi.Document(cart.Lit("openapi.json")))
+			},
+			want: []string{"Document's path /carts/{cartId}/openapi.json has a parameter"},
+		},
+		{
+			name: "a second Document",
+			change: func(a *apiArgs) {
+				a.ops = append(a.ops, openapi.Document(docPath), openapi.Document(openapi.Root().Lit("spec.json")))
+			},
+			want: []string{"two Documents, at /openapi.json and /spec.json"},
+		},
+		{
+			name: "a Document at an operation's path",
+			change: func(a *apiArgs) {
+				a.ops = append(a.ops, openapi.Get(docPath, noBody, jsonEncoder), openapi.Document(docPath))
+			},
+			want: []string{"two operations are at GET /openapi.json"},
+		},
+		{
+			name: "a Document whose path has a mistake",
+			change: func(a *apiArgs) {
+				a.ops = append(a.ops, openapi.Document(openapi.Root().Lit("open api.json")))
+			},
+			want: []string{`path /open api.json: literal "open api.json" holds ' '`},
+		},
+		{
+			name: "two operations with one OperationID",
+			change: func(a *apiArgs) {
+				a.ops = []openapi.Operation{
+					openapi.Get(cart, getCart, jsonEncoder, openapi.OperationID("cart")),
+					openapi.Delete(cart, nothingBack, openapi.EmptyEncoder, openapi.OperationID("cart")),
+				}
+			},
+			want: []string{`DELETE /carts/{cartId}: its OperationID "cart" is GET /carts/{cartId}'s too`},
+		},
+		{
+			name: "a codec's Schema that isn't JSON",
+			change: func(a *apiArgs) {
+				a.ops = []openapi.Operation{openapi.Get(cart, getCart, encoderWithSchema[cartBody](`{"type":`))}
+			},
+			want: []string{"GET /carts/{cartId}: response: its encoder's Schema isn't JSON"},
+		},
+		{
+			name: "a codec's Schema that isn't a JSON object or boolean",
+			change: func(a *apiArgs) {
+				a.ops = []openapi.Operation{openapi.Post(items, addItem, decoderWithSchema[item](`["object"]`), jsonEncoder)}
+				a.catchAll = openapi.CatchAll(http.StatusInternalServerError, internalError, encoderWithSchema[problem](`"object"`))
+			},
+			want: []string{
+				"catchAll: its encoder's Schema isn't a JSON Schema: a JSON object or boolean",
+				"POST /carts/{cartId}/items: request body: its decoder's Schema isn't a JSON Schema: a JSON object or boolean",
+			},
+		},
+		{
+			name: "with a Document, a parameter's value that JSON can't encode",
+			change: func(a *apiArgs) {
+				a.ops = []openapi.Operation{
+					openapi.Get(carts, noBody, jsonEncoder, openapi.Query(openapi.QueryParam[float64]("ratio").Default(math.Inf(1)))),
+					openapi.Document(docPath),
+				}
+			},
+			want: []string{"encoding the document: json: unsupported value: +Inf"},
+		},
+		{
 			name: "two mistakes, reported together",
 			change: func(a *apiArgs) {
 				a.info.Title = ""
@@ -565,6 +633,24 @@ func TestNewAPI_accepts(t *testing.T) {
 			},
 		},
 		{
+			name: "a Document, and operations with OperationIDs of their own or none",
+			change: func(a *apiArgs) {
+				a.ops = []openapi.Operation{
+					openapi.Get(cart, getCart, jsonEncoder, openapi.OperationID("getCart")),
+					openapi.Delete(cart, nothingBack, openapi.EmptyEncoder, openapi.OperationID("deleteCart")),
+					openapi.Get(carts, noBody, jsonEncoder),
+					openapi.Get(carts.Lit("recent"), noBody, jsonEncoder),
+					openapi.Document(docPath),
+				}
+			},
+		},
+		{
+			name: "a codec's Schema of true",
+			change: func(a *apiArgs) {
+				a.ops = []openapi.Operation{openapi.Get(cart, getCart, encoderWithSchema[cartBody](`true`)), openapi.Document(docPath)}
+			},
+		},
+		{
 			name: "no operations",
 			change: func(a *apiArgs) {
 				a.ops = nil
@@ -579,6 +665,13 @@ func TestNewAPI_accepts(t *testing.T) {
 			api, err := a.newAPI()
 			require.NoError(t, err)
 			require.NotNil(t, api)
+
+			// A document the API serves is valid OpenAPI 3.2.
+			rec := httptest.NewRecorder()
+			api.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, docPath.String(), nil))
+			if rec.Code == http.StatusOK {
+				requireValid(t, rec.Body.Bytes())
+			}
 		})
 	}
 }
@@ -595,6 +688,21 @@ func TestNewAPI_calls_each_codec_function_and_Schema_once(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, calls)
 	require.Equal(t, 1, schemas)
+}
+
+// encoderWithSchema is a JSON encoder function whose encoder's Schema
+// returns schema, as it is.
+func encoderWithSchema[T any](schema string) func() openapi.Encoder[T] {
+	return func() openapi.Encoder[T] {
+		return schemaCodec[T]{jsonCodec: jsonCodec[T]{mediaType: "application/json"}, schema: schema}
+	}
+}
+
+// decoderWithSchema is encoderWithSchema's decoder counterpart.
+func decoderWithSchema[T any](schema string) func() openapi.Decoder[T] {
+	return func() openapi.Decoder[T] {
+		return schemaCodec[T]{jsonCodec: jsonCodec[T]{mediaType: "application/json"}, schema: schema}
+	}
 }
 
 // countingEncoder counts the calls to its Schema.

@@ -39,6 +39,9 @@ type pathParam struct {
 
 	// parse parses and checks one value of the parameter.
 	parse func(string) (any, error)
+
+	// document returns the parameter as the document lists it.
+	document func() paramDoc
 }
 
 // Root returns the root path, "/".
@@ -62,6 +65,9 @@ func (p Path) Param[T ParamValue](pp PathParameter[T]) Path {
 		check: pp.spec.check,
 		parse: func(s string) (any, error) {
 			return pp.parseValue(s)
+		},
+		document: func() paramDoc {
+			return pp.spec.document("path", true)
 		},
 	}})
 }

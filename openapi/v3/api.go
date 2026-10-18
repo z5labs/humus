@@ -66,7 +66,9 @@ type API struct {
 //   - a missing Title or Version;
 //   - a nil handler in unmatched;
 //   - a nil codec function, or one that returns nil, and an error from a
-//     codec's Schema;
+//     codec's Schema, or a schema that isn't a JSON object or boolean;
+//   - a Document whose path has a parameter, and a second Document;
+//   - two operations with one OperationID;
 //   - a zero Operation, a nil option, and a literal or a parameter name a
 //     path can't have, or a parameter given twice in one path;
 //   - a zero parameter, and a parameter given twice to one operation;
@@ -80,12 +82,21 @@ type API struct {
 //     the catch-all, or either of them and RequestErrors' 400, 413 or 415
 //     on an operation that can answer with it;
 //   - Status(http.StatusNoContent) with an encoder whose media type isn't
-//     "".
+//     "";
+//   - with a Document, a parameter's value that JSON can't encode, such as
+//     a float64 Default of +Inf.
+//
+// With a Document, it builds the API's document, and encodes it once.
 //
 // It logs through s.Telemetry's LoggerProvider, with the logger name
 // "github.com/z5labs/humus/openapi/v3".
 func NewAPI(s *humus.Setup, info Info, unmatched Unmatched, requestErrors RequestErrorAnswer, catchAll Fallback, ops []Operation, opts ...APIOption) (*API, error) {
-	b := builder{seenRoutes: make(map[string]bool), templates: make(map[string]string), checkedPaths: make(map[string]bool)}
+	b := builder{
+		seenRoutes:   make(map[string]bool),
+		templates:    make(map[string]string),
+		checkedPaths: make(map[string]bool),
+		operationIDs: make(map[string]string),
+	}
 	if info.Title == "" {
 		b.fail("Info.Title is empty")
 	}
@@ -134,8 +145,19 @@ func NewAPI(s *humus.Setup, info Info, unmatched Unmatched, requestErrors Reques
 			b.fail("ops[%d] is the zero Operation", i)
 			continue
 		}
+		if o.op.document {
+			b.document(o.op)
+			continue
+		}
 		if r := b.operation(o.op, api, logger); r != nil {
 			routes = append(routes, r)
+		}
+	}
+	var doc []byte
+	if len(b.errs) == 0 && b.docPath != nil {
+		var err error
+		if doc, err = encodeDocument(info, routes); err != nil {
+			b.fail("encoding the document: %w", err)
 		}
 	}
 	if err := errors.Join(b.errs...); err != nil {
@@ -145,6 +167,9 @@ func NewAPI(s *humus.Setup, info Info, unmatched Unmatched, requestErrors Reques
 	a := &API{mux: chi.NewRouter()}
 	for _, r := range routes {
 		a.mux.Method(r.method, r.path.String(), r)
+	}
+	if b.docPath != nil {
+		a.mux.Method(http.MethodGet, b.docPath.String(), documentHandler(doc))
 	}
 	a.mux.NotFound(unmatched.NotFound.ServeHTTP)
 	a.mux.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
@@ -222,6 +247,8 @@ type builder struct {
 	seenRoutes   map[string]bool   // "GET /carts/{cartId}"
 	templates    map[string]string // "/carts/{}" to the first path with it
 	checkedPaths map[string]bool
+	operationIDs map[string]string // an OperationID to its operation
+	docPath      *Path             // the first Document's
 }
 
 func (b *builder) fail(format string, args ...any) {
@@ -249,15 +276,9 @@ func (b *builder) bind(what string, a answerer) *answer {
 	return bound
 }
 
-// operation checks op and binds its codecs and its own parts. It returns
-// nil when op has a mistake.
-func (b *builder) operation(op *operation, api resolved, logger log.Logger) *route {
-	name := op.method + " " + op.path.String()
-	before := len(b.errs)
-	fail := func(format string, args ...any) {
-		b.fail("%s: "+format, append([]any{name}, args...)...)
-	}
-
+// route checks op's path, once for each path, and reports a second
+// operation at op's method and path.
+func (b *builder) route(op *operation) {
 	path := op.path.String()
 	if !b.checkedPaths[path] {
 		b.checkedPaths[path] = true
@@ -271,10 +292,38 @@ func (b *builder) operation(op *operation, api resolved, logger log.Logger) *rou
 			b.templates[tmpl] = path
 		}
 	}
+	name := op.method + " " + path
 	if b.seenRoutes[name] {
 		b.fail("two operations are at %s", name)
 	}
 	b.seenRoutes[name] = true
+}
+
+// document checks the operation Document returned: its path, which has no
+// parameter, and that it is the API's only Document.
+func (b *builder) document(op *operation) {
+	b.route(op)
+	path := op.path.String()
+	if op.path.hasParam() {
+		b.fail("Document's path %s has a parameter", path)
+	}
+	if b.docPath != nil {
+		b.fail("two Documents, at %s and %s", b.docPath, path)
+		return
+	}
+	b.docPath = &op.path
+}
+
+// operation checks op and binds its codecs and its own parts. It returns
+// nil when op has a mistake.
+func (b *builder) operation(op *operation, api resolved, logger log.Logger) *route {
+	name := op.method + " " + op.path.String()
+	before := len(b.errs)
+	fail := func(format string, args ...any) {
+		b.fail("%s: "+format, append([]any{name}, args...)...)
+	}
+
+	b.route(op)
 
 	c, err := op.bind()
 	if err != nil {
@@ -288,6 +337,13 @@ func (b *builder) operation(op *operation, api resolved, logger log.Logger) *rou
 			continue
 		}
 		opt.apply(&own)
+	}
+	if id := own.operationID; id != "" {
+		if first, ok := b.operationIDs[id]; ok {
+			fail("its OperationID %q is %s's too", id, first)
+		} else {
+			b.operationIDs[id] = name
+		}
 	}
 
 	seenParams := make(map[string]bool)
@@ -346,6 +402,7 @@ func (b *builder) operation(op *operation, api resolved, logger log.Logger) *rou
 		answers:  answers,
 		logger:   logger,
 		bodyType: parseMediaType(c.decMediaType),
+		meta:     own,
 	}
 }
 

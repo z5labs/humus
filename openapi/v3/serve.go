@@ -33,6 +33,7 @@ type route struct {
 	answers  resolved
 	logger   log.Logger
 	bodyType string // the decoder's media type, parsed and lowercased
+	meta     parts  // its own parts, for its metadata in the document
 }
 
 // parseMediaType returns mt's type and subtype, lowercased, without

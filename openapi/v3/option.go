@@ -6,6 +6,7 @@
 package openapi
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -47,6 +48,13 @@ type parts struct {
 	catchAll      answerer
 	requestErrors answerer
 	params        []operationParam
+
+	// The operation's metadata in the document.
+	summary     string
+	description string
+	operationID string
+	tags        []string
+	deprecated  bool
 }
 
 // answerer is an Error, a CatchAll or a RequestErrors, erased. bind calls
@@ -68,6 +76,7 @@ type answer struct {
 	name      string
 	status    int // 0 for RequestErrors, whose status is the RequestError's
 	mediaType string
+	schema    Schema // its encoder's
 
 	// encode returns the encoded answer to err, and false if the answer
 	// doesn't match err.
@@ -118,7 +127,7 @@ func (o errorOption[E]) bind() (*answer, error) {
 	if err := checkStatus(o.status); err != nil {
 		errs = append(errs, err)
 	}
-	enc, err := bindEncoder(o.enc)
+	enc, schema, err := bindEncoder(o.enc)
 	if err != nil {
 		errs = append(errs, err)
 	}
@@ -129,6 +138,7 @@ func (o errorOption[E]) bind() (*answer, error) {
 		name:      o.name(),
 		status:    o.status,
 		mediaType: enc.MediaType(),
+		schema:    schema,
 		encode: func(err error) (io.WriterTo, bool, error) {
 			var e E
 			if !errors.As(err, &e) {
@@ -173,7 +183,7 @@ func (o catchAllOption[E]) bind() (*answer, error) {
 	if o.wrap == nil {
 		errs = append(errs, errors.New("its wrap function is nil"))
 	}
-	enc, err := bindEncoder(o.enc)
+	enc, schema, err := bindEncoder(o.enc)
 	if err != nil {
 		errs = append(errs, err)
 	}
@@ -184,6 +194,7 @@ func (o catchAllOption[E]) bind() (*answer, error) {
 		name:      o.name(),
 		status:    o.status,
 		mediaType: enc.MediaType(),
+		schema:    schema,
 		encode: func(err error) (io.WriterTo, bool, error) {
 			var e E
 			if !errors.As(err, &e) {
@@ -255,7 +266,7 @@ func (o requestErrorsOption[E]) bind() (*answer, error) {
 	if o.wrap == nil {
 		errs = append(errs, errors.New("its wrap function is nil"))
 	}
-	enc, err := bindEncoder(o.enc)
+	enc, schema, err := bindEncoder(o.enc)
 	if err != nil {
 		errs = append(errs, err)
 	}
@@ -265,6 +276,7 @@ func (o requestErrorsOption[E]) bind() (*answer, error) {
 	return &answer{
 		name:      o.name(),
 		mediaType: enc.MediaType(),
+		schema:    schema,
 		encode: func(err error) (io.WriterTo, bool, error) {
 			var re *RequestError
 			if !errors.As(err, &re) {
@@ -284,32 +296,58 @@ func checkStatus(status int) error {
 	return nil
 }
 
-// bindDecoder calls f, and the decoder's Schema, once.
-func bindDecoder[T any](f func() Decoder[T]) (Decoder[T], error) {
+// bindDecoder calls f, and the decoder's Schema, once, and returns the
+// decoder and its schema.
+func bindDecoder[T any](f func() Decoder[T]) (Decoder[T], Schema, error) {
 	if f == nil {
-		return nil, errors.New("its decoder function is nil")
+		return nil, nil, errors.New("its decoder function is nil")
 	}
 	dec := f()
 	if dec == nil {
-		return nil, errors.New("its decoder function returned nil")
+		return nil, nil, errors.New("its decoder function returned nil")
 	}
-	if _, err := dec.Schema(); err != nil {
-		return nil, fmt.Errorf("its decoder's Schema failed: %w", err)
+	schema, err := checkSchema(dec.Schema())
+	if err != nil {
+		return nil, nil, fmt.Errorf("its decoder's Schema %w", err)
 	}
-	return dec, nil
+	return dec, schema, nil
 }
 
-// bindEncoder calls f, and the encoder's Schema, once.
-func bindEncoder[T any](f func() Encoder[T]) (Encoder[T], error) {
+// bindEncoder calls f, and the encoder's Schema, once, and returns the
+// encoder and its schema.
+func bindEncoder[T any](f func() Encoder[T]) (Encoder[T], Schema, error) {
 	if f == nil {
-		return nil, errors.New("its encoder function is nil")
+		return nil, nil, errors.New("its encoder function is nil")
 	}
 	enc := f()
 	if enc == nil {
-		return nil, errors.New("its encoder function returned nil")
+		return nil, nil, errors.New("its encoder function returned nil")
 	}
-	if _, err := enc.Schema(); err != nil {
-		return nil, fmt.Errorf("its encoder's Schema failed: %w", err)
+	schema, err := checkSchema(enc.Schema())
+	if err != nil {
+		return nil, nil, fmt.Errorf("its encoder's Schema %w", err)
 	}
-	return enc, nil
+	return enc, schema, nil
+}
+
+// checkSchema checks what a codec's Schema returned: its error, and a
+// schema that isn't a JSON object or boolean, as a JSON Schema is. An empty
+// schema is nil.
+func checkSchema(s Schema, err error) (Schema, error) {
+	if err != nil {
+		return nil, fmt.Errorf("failed: %w", err)
+	}
+	if len(s) == 0 {
+		return nil, nil
+	}
+	var v any
+	if json.Unmarshal(s, &v) != nil {
+		return nil, errors.New("isn't JSON")
+	}
+	switch v.(type) {
+	case map[string]any, bool:
+		return s, nil
+	default:
+		return nil, errors.New("isn't a JSON Schema: a JSON object or boolean")
+	}
 }

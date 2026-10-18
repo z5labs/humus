@@ -3,8 +3,8 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-// Package openapi serves an API of typed operations, following the latest
-// minor version of OpenAPI 3: 3.2.0.
+// Package openapi serves an API of typed operations, and its OpenAPI
+// document, following the latest minor version of OpenAPI 3: 3.2.0.
 //
 // The end user's Init builds the API with [NewAPI], from typed operations
 // on typed paths, and hands it to httpserver.NewService, which serves it:
@@ -16,8 +16,11 @@
 //		openapi.CatchAll(http.StatusInternalServerError, internalError, problemEncoder),
 //		[]openapi.Operation{
 //			openapi.Post(openapi.Root().Lit("carts").Param(cartID).Lit("items"), c.addCartItem, itemDecoder, itemEncoder,
+//				openapi.OperationID("addCartItem"),
+//				openapi.Summary("Add an item to a shopping cart"),
 //				openapi.Status(http.StatusCreated),
 //			),
+//			openapi.Document(openapi.Root().Lit("openapi.json")),
 //		},
 //		openapi.Error[NotFound](http.StatusNotFound, problemEncoder),
 //	)
@@ -142,6 +145,37 @@
 // path doesn't serve by MethodNotAllowed, after the API has set Allow to
 // the path's methods. The package writes nothing of its own for either,
 // and redirects nothing.
+//
+// # The document
+//
+// [Document] returns the operation that serves the API's OpenAPI document,
+// at its path, with GET, as application/json. An API whose operations
+// include no Document serves no document. NewAPI builds the document from
+// the same declarations that serve the API's requests, and encodes it once,
+// so every request for it gets the same bytes. Its openapi is 3.2.0, and
+// its info is [Info]'s.
+//
+// Each operation is listed at its path, under its method, with:
+//
+//   - its metadata: [Summary], [Description], [OperationID], [Tags] and
+//     [Deprecated];
+//   - its parameters, the path's and those it gives to Query and Header,
+//     with their constraints;
+//   - its request body, required, under the decoder's media type, with the
+//     decoder's Schema. A nil Schema lists the media type alone, and a
+//     decoder whose media type is "", such as EmptyDecoder, lists no
+//     request body;
+//   - its responses: the success status, under the encoder's media type
+//     with its Schema, or with no content when that is ""; each Error, the
+//     operation's own and the API's, with its encoder's; RequestErrors' E at
+//     400 when the operation reads a parameter or a body, and at 413 and 415
+//     when it reads a body; and the catch-all at its status.
+//
+// Schemas are inline, since one Go type can have a different schema under
+// each codec. A codec whose bodies are a Go type's fields writes its Schema
+// with [SchemaOf], named by its own struct tag. The document doesn't
+// describe itself, the requests Unmatched answers, or anything mounted next
+// to the API.
 //
 // # Telemetry
 //

@@ -8,6 +8,7 @@ package openapi_test
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -40,14 +41,14 @@ func problemEncoder[T any]() openapi.Encoder[T] {
 func (c jsonCodec[T]) MediaType() string { return c.mediaType }
 
 // Schema rejects a T that JSON can't encode, as a real codec would, so the
-// mistake is a NewAPI error.
+// mistake is a NewAPI error. It reflects any other T by its json tags.
 func (jsonCodec[T]) Schema() (openapi.Schema, error) {
 	t := reflect.TypeFor[T]()
 	switch t.Kind() {
 	case reflect.Chan, reflect.Func:
 		return nil, fmt.Errorf("JSON can't encode a %s", t)
 	}
-	return openapi.Schema(`{}`), nil
+	return openapi.SchemaOf[T]("json")
 }
 
 // Decode reads one JSON value, and nothing after it.
@@ -72,6 +73,59 @@ func (jsonCodec[T]) Encode(v T) (io.WriterTo, error) {
 	}
 	return bytes.NewReader(b), nil
 }
+
+// xmlCodec reads and writes T as XML, as application/xml: a second format,
+// whose schema SchemaOf reflects by T's xml tags.
+type xmlCodec[T any] struct{}
+
+// xmlDecoder is T's decoder as application/xml.
+func xmlDecoder[T any]() openapi.Decoder[T] { return xmlCodec[T]{} }
+
+// xmlEncoder is T's encoder as application/xml.
+func xmlEncoder[T any]() openapi.Encoder[T] { return xmlCodec[T]{} }
+
+func (xmlCodec[T]) MediaType() string { return "application/xml" }
+
+func (xmlCodec[T]) Schema() (openapi.Schema, error) { return openapi.SchemaOf[T]("xml") }
+
+func (xmlCodec[T]) Decode(r *http.Request) (T, error) {
+	var v T
+	err := xml.NewDecoder(r.Body).Decode(&v)
+	return v, err
+}
+
+func (xmlCodec[T]) Encode(v T) (io.WriterTo, error) {
+	b, err := xml.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return bytes.NewReader(b), nil
+}
+
+// rawCodec reads and writes raw bytes of one media type, with no schema.
+type rawCodec struct{}
+
+// rawDecoder is the raw bytes' decoder, as application/octet-stream.
+func rawDecoder() openapi.Decoder[[]byte] { return rawCodec{} }
+
+// rawEncoder is the raw bytes' encoder, as application/octet-stream.
+func rawEncoder() openapi.Encoder[[]byte] { return rawCodec{} }
+
+func (rawCodec) MediaType() string { return "application/octet-stream" }
+
+func (rawCodec) Schema() (openapi.Schema, error) { return nil, nil }
+
+func (rawCodec) Decode(r *http.Request) ([]byte, error) { return io.ReadAll(r.Body) }
+
+func (rawCodec) Encode(v []byte) (io.WriterTo, error) { return bytes.NewReader(v), nil }
+
+// schemaCodec is a JSON codec whose Schema returns schema, as it is.
+type schemaCodec[T any] struct {
+	jsonCodec[T]
+	schema string
+}
+
+func (c schemaCodec[T]) Schema() (openapi.Schema, error) { return openapi.Schema(c.schema), nil }
 
 // nilEncoder is an encoder function that returns nil.
 func nilEncoder[T any]() openapi.Encoder[T] { return nil }
