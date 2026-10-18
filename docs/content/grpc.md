@@ -271,6 +271,31 @@ option in `opts` lands depends on which it is:
   the App's grace period and the process's telemetry.
   `humustest.TestService` reports the handler's goroutine as a leak.
 
+### Spreading clients across pods
+
+A gRPC client keeps one HTTP/2 connection, and a Kubernetes ClusterIP
+Service picks a pod for each connection, not for each RPC. So each client
+stays on one pod until its connection ends, and a pod added by a scale-up
+gets no client that is already connected. A server spreads its clients by
+ending their connections now and then, with
+`keepalive.ServerParameters{MaxConnectionAge}` in `grpc.KeepaliveParams`,
+one of `NewService`'s options:
+
+```go
+// Every connection is closed with a GOAWAY once it is about a
+// minute old, so its clients dial again, through the
+// Kubernetes Service, and reach whichever pod it picks.
+grpc.KeepaliveParams(keepalive.ServerParameters{MaxConnectionAge: time.Minute}),
+```
+
+The server sends a GOAWAY once a connection reaches that age, give or take
+10%, and lets the RPCs on it finish. Its clients dial again, and reach
+whichever pod the Service picks, so a `grpcclient` Client sees no error.
+`MaxConnectionAgeGrace` bounds how long the RPCs on an old connection may
+take before it is closed under them, which a server with long streams sets.
+[Calling gRPC services]({{< relref "grpc-client#spreading-the-load-with-maxconnectionage" >}})
+describes what a client does with it.
+
 ## Registration
 
 The `*Service` is a `grpc.ServiceRegistrar`, so generated code registers

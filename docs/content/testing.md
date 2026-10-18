@@ -392,6 +392,89 @@ of its own does the same, as
 [gRPC services]({{< relref "grpc#the-dns-resolver-and-synctest" >}})
 describes.
 
+### A client next to a server
+
+An App that calls another service is tested with that service on the same
+Host. The dependency runs as a second App, started with `humustest.Start` on
+`h.Host()`, and the end user's App, on the same Host, dials it by the name
+it listens on. Both Apps run in the test's `synctest` bubble, so the calls
+between them take no real time, and stopping the dependency's App is an
+outage of it.
+
+Here the dependency is a `grpcserver` Service at `carts:9090`, with a
+certificate for `carts` from the test's CA:
+
+```go
+// startCarts runs the dependency on h, at carts:9090, over TLS with a
+// certificate for carts from ca. It returns a function that stops the
+// dependency and requires it to exit 0.
+func startCarts(t *testing.T, h *humustest.Host, ca *humustest.CA) (stop func()) {
+	t.Helper()
+	cert := ca.Issue(t, "carts")
+	p, exit := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		svc, err := grpcserver.NewService(s, grpcserver.Settings{
+			Addr: "carts:9090",
+			TLS:  &tls.Config{Certificates: []tls.Certificate{cert.TLS()}},
+		})
+		if err != nil {
+			return nil, err
+		}
+		testpb.RegisterTestServiceServer(svc, carts{})
+		return []humus.Service{svc}, nil
+	}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+	<-h.Listening("carts:9090")
+	return func() {
+		<-p.Notified(syscall.SIGTERM)
+		p.Signal(syscall.SIGTERM)
+		st := <-exit
+		require.Zero(t, st.Code(), "cause: %v", st.Cause())
+	}
+}
+```
+
+The end user's App builds a [`grpcclient`]({{< relref "grpc-client" >}})
+Client of `carts:9090` in its `Init`, from `CARTS_ADDR` and `CARTS_CA_FILE`,
+and serves its own gRPC service, whose handler calls `carts`. The test gives
+it the dependency's CA and its own certificate through the Host's
+filesystem, starts it next to the dependency, and calls it:
+
+```go
+ca := humustest.NewCA(t)
+orders := ca.Issue(t, "orders")
+h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+	"tls.pem":      pemFile(t, orders),
+	"carts-ca.pem": caPEM(orders),
+}))
+stop := startCarts(t, h, ca)
+defer stop()
+
+p, exit := grpcservertest.Start(t, Init,
+	humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+	humustest.WithEnv(map[string]string{
+		"GRPC_ADDR":         ":8443",
+		"GRPC_TLS_PEM_FILE": "tls.pem",
+		"CARTS_ADDR":        "carts:9090",
+		"CARTS_CA_FILE":     "carts-ca.pem",
+	}),
+)
+<-h.Listening("orders:8443")
+
+client := testpb.NewTestServiceClient(grpcservertest.NewClient(t, h, "orders:8443", ca.Pool()))
+for range 2 {
+	resp, err := client.UnaryCall(t.Context(), &testpb.SimpleRequest{})
+	require.NoError(t, err)
+	require.Equal(t, "orders, via carts", resp.GetUsername())
+}
+```
+
+The `Client` dials through its Setup's Host, which is the test's, so it
+reaches `carts:9090` on the Host's network, and the dependency's certificate
+verifies against the CA the test wrote. Each App waits for its own
+listener: the test waits for `carts:9090` before it starts the end user's
+App, and for `orders:8443` before it calls it. An
+[`httpclient`]({{< relref "http-client#testing" >}}) client is tested the
+same way, next to an `httpserver` App.
+
 ## Files
 
 The filesystem is real. `NewHost` takes a directory from `t.TempDir()`, which
