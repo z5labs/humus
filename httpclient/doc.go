@@ -118,15 +118,186 @@
 //
 // The client's Jar is nil, so it keeps no cookies. The end user may set one.
 //
-// # Timeout
+// # Timeout and AttemptTimeout
 //
-// Settings.Timeout bounds a whole call. It is the http.Client's Timeout,
+// Settings.Timeout bounds a whole call: every attempt, the waits between
+// them, and reading the response's body. It is the http.Client's Timeout,
 // which net/http puts on the request's context as a deadline, unless the
-// caller's context has an earlier one, which then wins. It covers reading
-// the response's body, so a client that streams large bodies raises it.
-// [CheckTimeout] rejects a Timeout that is not positive: a client with no
-// bound on a call holds a goroutine and a connection for as long as a
-// dependency hangs.
+// caller's context has an earlier one, which then wins. So the retries see
+// the deadline, and don't start a wait that would end after it. It covers
+// reading the response's body, so a client that streams large bodies
+// raises it. [CheckTimeout] rejects a Timeout that is not positive: a client
+// with no bound on a call holds a goroutine and a connection for as long as
+// a dependency hangs.
+//
+// Settings.AttemptTimeout bounds one attempt, from dialling until the
+// response's headers arrive. A layer just outside the http.Transport cancels
+// the attempt's context after it, with a cause that wraps
+// context.DeadlineExceeded, and the attempt fails with an error that wraps
+// it too. The call's context is still live, so the error reaches Classify,
+// and the default retries it, as any failed attempt. With the defaults, an
+// attempt to a dependency that hangs fails after 5s, which leaves time for a
+// second before Timeout's 10s. AttemptTimeout stops counting once the
+// headers arrive, so a slow body isn't cut off: that is Timeout's to bound.
+//
+// # Which requests are retried
+//
+// A call is retried only when sending it twice is both safe and possible:
+//
+//   - Safe: its method is GET, HEAD, OPTIONS, TRACE, PUT or DELETE, which
+//     RFC 9110 defines as idempotent, or it carries an Idempotency-Key or
+//     X-Idempotency-Key header, which net/http treats the same way.
+//   - Possible: it has no body, or its GetBody is set, which
+//     http.NewRequest does for a *bytes.Buffer, a *bytes.Reader and a
+//     *strings.Reader. The client rewinds the body with GetBody before each
+//     attempt after the first.
+//
+// Any other request makes one attempt, whatever Classify says of its
+// result. Whether a request is safe to send twice is about the request, not
+// about what the dependency answered, so a POST without an idempotency key
+// can't be charged twice. Its result still counts in the retry budget.
+//
+// net/http's own list of requests it replays on a stale connection leaves
+// out PUT and DELETE. RFC 9110 defines both as idempotent, and a service
+// that sends them relies on that already.
+//
+// Retries are bounded three ways. Settings.MaxAttempts bounds one call's
+// attempts, 3 by default, and 1 turns retries off. Settings.RetryBudget
+// bounds every call to the dependency together, as retry.Budget describes:
+// each attempt classified Retry takes a token, each Success adds a tenth of
+// one back, and retries stop while half the tokens or fewer are left. So
+// while the dependency fails, every call makes one attempt, rather than
+// three. And Timeout bounds the call. The wait before each retry is drawn
+// from retry.Exponential's schedule, with Settings.BackoffBase and
+// Settings.BackoffMax.
+//
+// # How an attempt's result counts
+//
+// Every attempt's result is classified twice: for retry, whether another
+// attempt follows, and for the dependency's circuit breaker, whether the
+// result counts against the dependency. [Settings].Classify returns both, in
+// a [Classification]. Some of that is about the call, and the client
+// decides it the same way for every dependency. The rest is about what the
+// dependency's answers mean, which differs from one API to another, and
+// Classify decides it.
+//
+// What the client decides: Classify isn't asked about an error once the
+// call's context is done, because the caller gave up or the call's deadline
+// passed. Another attempt can't help, so the call ends. And whatever
+// Classify returns:
+//
+//   - a request that isn't safe to send twice, or can't be replayed, makes
+//     one attempt;
+//   - a RetryAfter longer than BackoffMax ends the call, with the response
+//     as it came;
+//   - a response whose body doesn't fit in 64 KiB isn't retried.
+//
+// What [DefaultSettings]' Classify decides, of every response and every
+// error while the call's context is live:
+//
+//	| An attempt's result                                 | Retry                    | Breaker |
+//	|-----------------------------------------------------|--------------------------|---------|
+//	| a status below 500, other than 408 and 429          | Success                  | Success |
+//	| 408 Request Timeout                                 | Retry                    | Success |
+//	| 429 Too Many Requests                               | Retry, after Retry-After | Success |
+//	| 500 Internal Server Error                           | Stop                     | Failure |
+//	| 502 Bad Gateway, 504 Gateway Timeout                | Retry                    | Failure |
+//	| 503 Service Unavailable                             | Retry, after Retry-After | Failure |
+//	| any other 5xx, such as 501 Not Implemented          | Stop                     | Success |
+//	| a server certificate the client doesn't trust       | Stop                     | Failure |
+//	| any other error, such as refused, reset or          | Retry                    | Failure |
+//	| AttemptTimeout                                      |                          |         |
+//
+// A 4xx is the dependency working: it answered, and the request was wrong,
+// so another attempt won't fix it, and the dependency counts as healthy. 408
+// and 429 are retried, and don't count against it: a 408 says the server
+// gave up waiting for the request, which RFC 9110 says a client may repeat,
+// and a 429 is the server's own flow control, which says when to come
+// back. A 500 counts against the dependency but isn't retried: it is usually
+// the server's bug, which a second attempt meets again. 502, 503 and 504 say
+// the dependency, or what is in front of it, is unavailable, which is what
+// retries are for. A certificate the client doesn't trust is met again by
+// every attempt. The default reads only the status and the headers, and
+// never a body.
+//
+// An end user whose API means something else by an answer writes a
+// Classify of their own, which usually handles what differs and hands the
+// rest to the default. The ledger below answers 409 while another write to
+// the account is in flight, which is over by the next attempt:
+//
+//	d := httpclient.DefaultSettings()
+//	classify := d.Classify
+//
+//	settings.Classify = func(resp *http.Response, err error) httpclient.Classification {
+//		if resp != nil && resp.StatusCode == http.StatusConflict {
+//			return httpclient.Classification{Retry: retry.Retry, Breaker: circuit.Success}
+//		}
+//		return classify(resp, err)
+//	}
+//
+// The function is the end user's own, so one function can be set on every
+// client whose dependencies share a convention, such as a company's own
+// services.
+//
+// A Classify may read the body, for an API that answers 200 with an error in
+// its body. It closes the body it read, and leaves in resp.Body what service
+// code is to read, such as the bytes it read:
+//
+//	settings.Classify = func(resp *http.Response, err error) httpclient.Classification {
+//		if err != nil {
+//			return classify(resp, err)
+//		}
+//		b, err := io.ReadAll(resp.Body)
+//		_ = resp.Body.Close()
+//		resp.Body = io.NopCloser(bytes.NewReader(b))
+//		if err != nil {
+//			return httpclient.Classification{Retry: retry.Retry, Breaker: circuit.Failure}
+//		}
+//		if bytes.Contains(b, []byte(`"error"`)) {
+//			return httpclient.Classification{Retry: retry.Retry, Breaker: circuit.Success}
+//		}
+//		return classify(resp, nil)
+//	}
+//
+// Its read counts against Timeout, but not against AttemptTimeout, which
+// ends with the headers.
+//
+// Classify is called on the goroutine that made the call, once for each
+// attempt, so it must be safe for concurrent use. A Classification with a
+// zero Outcome, or with retry.Retry and a negative RetryAfter, panics, as
+// bedrock's classifiers do. The client recovers nothing: a panic in
+// Classify passes to the goroutine that made the call, once the attempt's
+// response is closed, so its connection isn't held.
+//
+// # Retry-After
+//
+// The default Classify reads the Retry-After header of the 429s and 503s it
+// retries, and returns it as the Classification's RetryAfter. Both of RFC
+// 9110's forms are read: a number of seconds, which is used as it is, and an
+// HTTP-date, which is measured from now and clamped at 0. A malformed header
+// is ignored. The wait before the next attempt is the longer of RetryAfter
+// and the backoff. An end user's Classify returns whatever its API says,
+// such as a header of its own.
+//
+// A RetryAfter longer than BackoffMax, from any Classify, isn't waited for:
+// the call ends, and service code gets the response as it came. A server
+// that asks for a minute is not one a call in flight should wait on. A wait
+// that would end after the call's deadline isn't started either: the call
+// returns the last response at once.
+//
+// # The response body
+//
+// Before another attempt follows, the client reads the body of the response
+// it replaces into memory, up to 64 KiB, and closes it, before the wait.
+// Closing it ends the attempt's span and frees its connection during the
+// backoff. If the wait is cut short, such as by the caller's context, the
+// buffered response is what the call returns. A body larger than 64 KiB
+// isn't retried: the call returns the response with its body intact. Error
+// bodies are small, so 64 KiB keeps every one the client retries, and
+// bounds what each call in flight holds.
+//
+// A Classify that reads the body leaves what service code reads in
+// resp.Body, and these rules apply to the body it leaves.
 //
 // # Redirects
 //
@@ -141,9 +312,9 @@
 // through otelhttp's Transport, which sits inside the origin check: a
 // request to another origin is refused before it is an attempt.
 //
-// Each request the transport sends, every redirect included, is one span of
-// kind CLIENT, a child of the span in the request's context, such as a
-// handler's request span or a job's run span. A slow or failing dependency
+// Each request the transport sends, every retry and redirect included, is
+// one span of kind CLIENT, a child of the span in the request's context,
+// such as a handler's request span or a job's run span. A slow or failing dependency
 // shows up in the caller's trace. The span is named after the method, such
 // as GET: the HTTP semantic conventions name a client span after its method
 // and URL template, and a client has no template, only whatever URL service
@@ -157,8 +328,9 @@
 // for an attempt that fails with no response, such as a refused connection.
 //
 // An attempt that is not a call's first carries http.request.resend_count,
-// which otelhttp doesn't set. A redirect counts, as the semantic conventions
-// count one, so the first redirect's span has 1.
+// which otelhttp doesn't set. A retry and a redirect each count, as the
+// semantic conventions count them, so a retry's span has 1, and so does a
+// call's first redirect, unless an attempt before it was retried.
 //
 // The Setup's propagator puts the attempt's trace context and the request
 // context's baggage in each attempt's headers, so a dependency served with

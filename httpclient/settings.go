@@ -9,8 +9,11 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/z5labs/bedrock/retry"
 )
 
 // Settings configures a client of one dependency. Every field is a plain
@@ -37,21 +40,83 @@ type Settings struct {
 	// Check: CheckTLS.
 	TLS *tls.Config
 
-	// Timeout bounds a whole call, reading the response's body included. A
-	// deadline the caller's context has already, if it is earlier, wins. It
-	// is the http.Client's Timeout.
+	// Timeout bounds a whole call: every attempt, the waits between them,
+	// and reading the response's body. A deadline the caller's context has
+	// already, if it is earlier, wins. It is the http.Client's Timeout.
 	//
 	// Default: 10s. Valid: positive. Check: CheckTimeout.
 	Timeout time.Duration
+
+	// AttemptTimeout bounds one attempt, from dialling to the response's
+	// headers. An attempt that runs past it fails with an error that wraps
+	// context.DeadlineExceeded, and is retried as any failed attempt is.
+	//
+	// Default: 5s. Valid: positive. Check: CheckAttemptTimeout.
+	AttemptTimeout time.Duration
+
+	// MaxAttempts bounds the attempts of one call, the first included. 1
+	// turns retries off.
+	//
+	// Default: 3. Valid: 1 or more. Check: CheckMaxAttempts.
+	MaxAttempts int
+
+	// BackoffBase and BackoffMax are retry.Exponential's arguments: the wait
+	// after attempt n is drawn from [0, min(BackoffMax, BackoffBase·2ⁿ⁻¹)).
+	// A Retry-After longer than BackoffMax isn't waited for.
+	//
+	// Default: 100ms and 5s. Valid: positive, and BackoffMax at least
+	// BackoffBase. Check: CheckBackoffBase, CheckBackoffMax.
+	BackoffBase time.Duration
+	BackoffMax  time.Duration
+
+	// RetryBudget limits the retries of every call to the dependency
+	// together, as retry.Budget describes.
+	//
+	// Default: {MaxTokens: 10, TokenRatio: 0.1}. Valid: MaxTokens from 3 to
+	// retry.TokenLimit; TokenRatio from 0.001 to retry.TokenLimit. Check:
+	// CheckRetryBudgetMaxTokens, CheckRetryBudgetTokenRatio.
+	RetryBudget retry.BudgetConfig
+
+	// Classify decides how each attempt's result counts: whether another
+	// attempt follows, and whether the result counts against the
+	// dependency. It is set in code, not sourced, and one function may be
+	// set on every client whose dependencies agree on what their answers
+	// mean.
+	//
+	// Classify gets the attempt's response, with its status and headers
+	// and its body unread, or the error the attempt failed with, never
+	// both. resp.Request is the request the attempt sent. It isn't asked
+	// about what the client decides itself: an error once the call's
+	// context has ended, and a body that fails once service code reads it.
+	//
+	// Classify may read resp.Body, to classify what the dependency sent,
+	// such as a 200 that carries an error. It then closes the body it read,
+	// and leaves in resp.Body what service code is to read, such as the
+	// bytes it read.
+	//
+	// It is called on the goroutine that made the call, once for each
+	// attempt, so it must be safe for concurrent use. A Classification
+	// with a zero Outcome, or with retry.Retry and a negative RetryAfter,
+	// panics, as bedrock's classifiers do.
+	//
+	// Default: the classification the package doc's "How an attempt's
+	// result counts" describes. Valid: set, which NewClient checks.
+	Classify func(resp *http.Response, err error) Classification
 }
 
 // DefaultSettings returns the client's defaults. BaseURL has none, so its
 // BaseURL is nil, which CheckBaseURL rejects: the end user always sources it.
 func DefaultSettings() Settings {
 	return Settings{
-		BaseURL: nil,
-		TLS:     nil,
-		Timeout: 10 * time.Second,
+		BaseURL:        nil,
+		TLS:            nil,
+		Timeout:        10 * time.Second,
+		AttemptTimeout: 5 * time.Second,
+		MaxAttempts:    3,
+		BackoffBase:    100 * time.Millisecond,
+		BackoffMax:     5 * time.Second,
+		RetryBudget:    retry.BudgetConfig{MaxTokens: 10, TokenRatio: 0.1},
+		Classify:       defaultClassify,
 	}
 }
 
@@ -110,6 +175,58 @@ func CheckTLS(c *tls.Config) error {
 // bound on a call holds a goroutine and a connection for as long as a
 // dependency hangs.
 func CheckTimeout(d time.Duration) error {
+	return positive(d)
+}
+
+// CheckAttemptTimeout rejects a duration that is not positive: an attempt
+// with no bound holds the call until Timeout, leaving no time to retry a
+// dependency that hangs.
+func CheckAttemptTimeout(d time.Duration) error {
+	return positive(d)
+}
+
+// CheckMaxAttempts rejects fewer than 1 attempt: every call makes at least
+// its first. 1 turns retries off.
+func CheckMaxAttempts(n int) error {
+	if n < 1 {
+		return fmt.Errorf("must be at least 1, got %d", n)
+	}
+	return nil
+}
+
+// CheckBackoffBase rejects a duration that is not positive, as
+// retry.Exponential does.
+func CheckBackoffBase(d time.Duration) error {
+	return positive(d)
+}
+
+// CheckBackoffMax rejects a duration that is not positive. NewClient also
+// rejects a BackoffMax below BackoffBase, which takes both fields to tell.
+func CheckBackoffMax(d time.Duration) error {
+	return positive(d)
+}
+
+// CheckRetryBudgetMaxTokens accepts 3 to retry.TokenLimit tokens, as
+// retry.NewBudget does: a budget allows no retry while it holds half of its
+// tokens or fewer, so one of 1 or 2 tokens would never allow one.
+func CheckRetryBudgetMaxTokens(n int) error {
+	if n < 3 || n > retry.TokenLimit {
+		return fmt.Errorf("must be from 3 to %d, got %d", retry.TokenLimit, n)
+	}
+	return nil
+}
+
+// CheckRetryBudgetTokenRatio accepts 0.001 to retry.TokenLimit tokens, as
+// retry.NewBudget does. NaN is rejected.
+func CheckRetryBudgetTokenRatio(r float64) error {
+	if !(r >= 0.001 && r <= retry.TokenLimit) {
+		return fmt.Errorf("must be from 0.001 to %d, got %v", retry.TokenLimit, r)
+	}
+	return nil
+}
+
+// positive rejects a duration that is not positive.
+func positive(d time.Duration) error {
 	if d <= 0 {
 		return errNotPositive
 	}
