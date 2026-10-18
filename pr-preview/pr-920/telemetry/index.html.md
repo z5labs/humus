@@ -365,12 +365,13 @@ the run's span in full.
 
 ## humus's own instruments
 
-humus's four outbound clients each record four instruments of humus's own,
-for their circuit breaker and their retries. Those clients are `httpclient`,
-`grpcclient`, the Kafka `Producer` and the RabbitMQ `Publisher`. Nothing else
-in humus records an instrument of its own: everything else is measured by
-OpenTelemetry's instrumentation, which humus hands the Setup's providers, or
-by the orchestrator. [What isn't measured](#what-isnt-measured) explains
+humus defines four instruments of its own, for the circuit breaker and the
+retries of its four outbound clients: `httpclient`, `grpcclient`, the Kafka
+`Producer` and the RabbitMQ `Publisher`. Each client records all four,
+except the Kafka `Producer`, which records no `humus.retry.decisions`.
+Nothing else in humus records an instrument of its own: everything else is
+measured by OpenTelemetry's instrumentation, which humus hands the Setup's
+providers, or by the orchestrator. [What isn't measured](#what-isnt-measured) explains
 why. The design is in
 [Proposal: humus's own metrics](https://github.com/z5labs/humus/discussions/871),
 with the names of its
@@ -462,8 +463,9 @@ service code reads its body to the end or closes it.
 - **`humus.circuit.transitions` counts the opens that happen between two
   collections.** A breaker can open, go half-open and close between two
   collections, which `telemetry.New` makes a minute apart, while `OpenFor`
-  is 10 seconds by default, and `humus.circuit.state` never shows it open. Each transition is counted once, beside the log record the
-  breaker writes for it, with the same states as attributes.
+  is 10 seconds by default, and `humus.circuit.state` never shows it open.
+  Each transition is counted once, beside the log record the breaker writes
+  for it, with the same states as attributes.
 - **`humus.circuit.calls` is where the end user's `Classify` shows,** for
   HTTP and gRPC: a 409 the classifier counts as a failure is a 4xx in
   `otelhttp`'s instruments, and a `failure` here. A rising share of
@@ -563,13 +565,19 @@ func ordersTelemetry(reader sdkmetric.Reader) telemetry.Builder {
 	return func(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
 		s := telemetry.DefaultSettings()
 		s.ServiceName = "orders"
+		// The resource telemetry.New builds for traces and logs:
+		// s.ResourceOptions, then service.name.
+		res, err := resource.New(ctx, append(slices.Clone(s.ResourceOptions), resource.WithAttributes(semconv.ServiceName(s.ServiceName)))...)
+		if err != nil {
+			return telemetry.SDK{}, err
+		}
 		sdk, err := telemetry.New(ctx, s, dial, p.Stdout)
 		if err != nil {
 			return telemetry.SDK{}, err
 		}
 
 		mp := sdkmetric.NewMeterProvider(
-			sdkmetric.WithResource(resource.NewSchemaless(semconv.ServiceName(s.ServiceName))),
+			sdkmetric.WithResource(res),
 			sdkmetric.WithReader(reader),
 			sdkmetric.WithView(
 				// Every client's humus.circuit.calls, dropped.
