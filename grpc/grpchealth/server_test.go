@@ -302,7 +302,10 @@ func TestNewServer_Check_logs_a_monitors_error(t *testing.T) {
 
 				// The record is in the RPC's context: it carries the trace
 				// of the span the Service's instrumentation started for
-				// the probe.
+				// the probe. The answer can reach the client before the
+				// server ends that span, so wait for the server to settle
+				// before reading it.
+				synctest.Wait()
 				spans := serverSpans(tel)
 				require.Len(t, spans, 1, "the probe is traced like any RPC of the Service")
 				require.Equal(t, "grpc.health.v1.Health/Check", spans[0].Name())
