@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -257,7 +258,10 @@ func TestInit_turns_ready_once_its_Client_has_connected(t *testing.T) {
 
 		require.False(t, ready(), "unready while carts isn't there")
 
-		stopCarts := startCarts(t, h, ca)
+		// stopCarts is safe to call twice, so it is deferred, and called
+		// again for the outage.
+		stopCarts := sync.OnceFunc(startCarts(t, h, ca))
+		defer stopCarts()
 		ok := false
 		// A probe a second, as a kubelet's are a period apart, while
 		// grpc-go's connection backoff passes.
@@ -285,7 +289,10 @@ func TestClient_a_monitor_of_the_dependencys_grpc_health_v1(t *testing.T) {
 		h := humustest.NewHost(t)
 		hs := grpcgohealth.NewServer()
 		hs.SetServingStatus("grpc.testing.TestService", healthpb.HealthCheckResponse_SERVING)
-		stopCarts := startServing(t, h, ca, "carts", "carts:9090", &backend{}, hs)
+		// stopCarts is safe to call twice, so it is deferred, and called
+		// again for the outage.
+		stopCarts := sync.OnceFunc(startServing(t, h, ca, "carts", "carts:9090", &backend{}, hs))
+		defer stopCarts()
 
 		checked, stopped := make(chan struct{}), make(chan struct{})
 		var before, after struct{ monitor, connected bool }
