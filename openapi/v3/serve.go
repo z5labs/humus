@@ -250,9 +250,10 @@ func (rt *route) write(w http.ResponseWriter, r *http.Request, status int, media
 
 // write writes status, then the WriterTo's body, with the Content-Type
 // mediaType, which isn't set when it is "". When the WriterTo has a Len,
-// it is the Content-Length. The WriterTo is handed a writer that flushes
-// each write, so a body that streams reaches the client as it is written.
-// It returns the WriterTo's error.
+// it is the Content-Length, so it must count the bytes WriteTo writes. The
+// WriterTo is handed a writer that flushes each write, so a body that
+// streams reaches the client as it is written. It returns the WriterTo's
+// error.
 func write(w http.ResponseWriter, status int, mediaType string, wt io.WriterTo) error {
 	if mediaType != "" {
 		w.Header().Set("Content-Type", mediaType)

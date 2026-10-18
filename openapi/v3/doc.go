@@ -139,7 +139,9 @@
 // has written the body, such as recording that a download completed, with
 // the context the handler captured in the value it returned. When the
 // WriterTo has a Len() int method, as a *bytes.Reader does, the API sets
-// Content-Length to it. Otherwise the response is chunked over HTTP/1.1.
+// Content-Length to it, so Len must be the number of bytes WriteTo writes:
+// a body longer than its Len fails, and one shorter is cut short.
+// Otherwise the response is chunked over HTTP/1.1.
 //
 // An error from the WriterTo cuts the response short. The status, and
 // whatever part of the body was written, have already gone out, so the API

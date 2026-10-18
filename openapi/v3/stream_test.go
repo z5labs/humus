@@ -7,6 +7,7 @@ package openapi_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -93,6 +94,20 @@ func (writerFuncCodec) MediaType() string { return "text/plain" }
 func (writerFuncCodec) Schema() (openapi.Schema, error) { return nil, nil }
 
 func (writerFuncCodec) Encode(v writerFunc) (io.WriterTo, error) { return v, nil }
+
+// emptyReaderCodec is an Encoder[openapi.EmptyBody] with no media type,
+// whose WriterTo is an empty *bytes.Reader, which has a Len.
+type emptyReaderCodec struct{}
+
+func emptyReaderEncoder() openapi.Encoder[openapi.EmptyBody] { return emptyReaderCodec{} }
+
+func (emptyReaderCodec) MediaType() string { return "" }
+
+func (emptyReaderCodec) Schema() (openapi.Schema, error) { return nil, nil }
+
+func (emptyReaderCodec) Encode(openapi.EmptyBody) (io.WriterTo, error) {
+	return bytes.NewReader(nil), nil
+}
 
 // result is a response's headers, or the error that came instead.
 type result struct {
@@ -230,20 +245,23 @@ func TestAPI_cuts_a_response_short_when_its_WriterTo_fails(t *testing.T) {
 	for _, p := range []struct {
 		name    string
 		client  func(*server) *http.Client
-		aborted func(t *testing.T, err error)
+		aborted func(t *testing.T, written, body string, err error)
 	}{
 		{
 			name:   "over HTTP/2",
 			client: func(s *server) *http.Client { return s.client },
-			aborted: func(t *testing.T, err error) {
+			aborted: func(t *testing.T, written, body string, err error) {
 				require.ErrorContains(t, err, "stream error", "want the stream reset")
+				// The reset may overtake the data the client hasn't read.
+				require.True(t, strings.HasPrefix(written, body), "body %q is not a prefix of %q", body, written)
 			},
 		},
 		{
 			name:   "over HTTP/1.1",
 			client: func(s *server) *http.Client { return s.http1 },
-			aborted: func(t *testing.T, err error) {
+			aborted: func(t *testing.T, written, body string, err error) {
 				require.ErrorIs(t, err, io.ErrUnexpectedEOF, "want the response cut short before its final chunk")
+				require.Equal(t, written, body, "each write was flushed before the failure")
 			},
 		},
 	} {
@@ -284,8 +302,7 @@ func TestAPI_cuts_a_response_short_when_its_WriterTo_fails(t *testing.T) {
 					require.Empty(t, r.resp.Header.Get("Content-Length"))
 					body, err := io.ReadAll(r.resp.Body)
 					_ = r.resp.Body.Close()
-					p.aborted(t, err)
-					require.True(t, strings.HasPrefix(tc.written, string(body)), "body %q is not a prefix of %q", body, tc.written)
+					p.aborted(t, tc.written, string(body), err)
 
 					s.stop()
 					spans := serverSpans(s.tel)
@@ -359,9 +376,10 @@ func TestAPI_sets_Content_Length_from_the_WriterTos_Len(t *testing.T) {
 	for _, p := range []struct {
 		name   string
 		client func(*server) *http.Client
+		proto  int
 	}{
-		{"over HTTP/2", func(s *server) *http.Client { return s.client }},
-		{"over HTTP/1.1", func(s *server) *http.Client { return s.http1 }},
+		{"over HTTP/2", func(s *server) *http.Client { return s.client }, 2},
+		{"over HTTP/1.1", func(s *server) *http.Client { return s.http1 }, 1},
 	} {
 		t.Run(p.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
@@ -378,19 +396,25 @@ func TestAPI_sets_Content_Length_from_the_WriterTos_Len(t *testing.T) {
 							return int64(n), err
 						}, nil
 					}, writerFuncEncoder),
+					// A *bytes.Reader for a 204, which has no body.
+					openapi.Delete(rows, func(context.Context, openapi.Request[openapi.EmptyBody]) (openapi.EmptyBody, error) {
+						return openapi.EmptyBody{}, nil
+					}, emptyReaderEncoder),
 				})
 				c := p.client(s)
 
-				get := func(path string) (*http.Response, string) {
-					req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://localhost:8443"+path, nil)
+				do := func(method, path string) (*http.Response, string) {
+					req, err := http.NewRequestWithContext(t.Context(), method, "https://localhost:8443"+path, nil)
 					require.NoError(t, err)
 					r := <-start(c, req)
 					require.NoError(t, r.err)
 					defer func() { _ = r.resp.Body.Close() }()
 					b, err := io.ReadAll(r.resp.Body)
 					require.NoError(t, err)
+					require.Equal(t, p.proto, r.resp.ProtoMajor)
 					return r.resp, string(b)
 				}
+				get := func(path string) (*http.Response, string) { return do(http.MethodGet, path) }
 
 				resp, body := get("/rows")
 				require.Equal(t, string(payload), body)
@@ -402,11 +426,67 @@ func TestAPI_sets_Content_Length_from_the_WriterTos_Len(t *testing.T) {
 				require.Equal(t, string(payload), body)
 				require.Empty(t, resp.Header.Get("Content-Length"))
 				require.Equal(t, int64(-1), resp.ContentLength)
-				if resp.ProtoMajor == 1 {
+				if p.proto == 1 {
 					require.Equal(t, []string{"chunked"}, resp.TransferEncoding)
 				}
 
+				resp, body = do(http.MethodDelete, "/rows")
+				require.Equal(t, http.StatusNoContent, resp.StatusCode)
+				require.Empty(t, body)
+				require.Empty(t, resp.Header.Get("Content-Length"), "a 204 has no body, and no Content-Length")
+
 				s.stop()
+			})
+		})
+	}
+}
+
+func TestAPI_records_a_failed_write_after_the_client_went_away_on_the_span_only(t *testing.T) {
+	for _, p := range []struct {
+		name   string
+		client func(*server) *http.Client
+	}{
+		{"over HTTP/2", func(s *server) *http.Client { return s.client }},
+		{"over HTTP/1.1", func(s *server) *http.Client { return s.http1 }},
+	} {
+		t.Run(p.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				s := serveAPI(t, []openapi.Operation{
+					// The WriterTo keeps writing until a write fails.
+					openapi.Get(rows, func(context.Context, openapi.Request[openapi.EmptyBody]) (writerFunc, error) {
+						return func(w io.Writer) (int64, error) {
+							var n int64
+							for i := 0; i < 1<<20; i++ {
+								m, err := fmt.Fprintf(w, "row %d\n", i)
+								n += int64(m)
+								if err != nil {
+									return n, err
+								}
+							}
+							return n, errors.New("the client never went away")
+						}, nil
+					}, writerFuncEncoder),
+				})
+
+				ctx, cancel := context.WithCancel(t.Context())
+				req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://localhost:8443/rows", nil)
+				require.NoError(t, err)
+				r := <-start(p.client(s), req)
+				require.NoError(t, r.err)
+				first, err := bufio.NewReader(r.resp.Body).ReadString('\n')
+				require.NoError(t, err)
+				require.Equal(t, "row 0\n", first)
+				cancel()
+				_ = r.resp.Body.Close()
+
+				s.stop()
+				spans := serverSpans(s.tel)
+				require.Len(t, spans, 1)
+				msgs := exceptionMessages(spans[0])
+				require.Len(t, msgs, 1)
+				require.NotEqual(t, "the client never went away", msgs[0])
+				require.Equal(t, codes.Error, spans[0].Status().Code)
+				require.Empty(t, records(s.tel), "a write that failed because the client went away isn't logged")
 			})
 		})
 	}
