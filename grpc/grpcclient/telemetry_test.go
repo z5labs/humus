@@ -165,10 +165,12 @@ func TestClient_sets_the_span_status_Error_for_every_code_but_OK(t *testing.T) {
 			require.Equal(t, codes.Unavailable, status.Code(err), "err = %v", err)
 
 			spans := otelgrpcSpans(tel, trace.SpanKindClient)
-			require.Len(t, spans, 1)
-			require.Equal(t, emptyCallSpan, spans[0].Name())
-			require.Equal(t, otelcodes.Error, spans[0].Status().Code)
-			require.Equal(t, "UNAVAILABLE", attrs(spans[0])["rpc.response.status_code"].AsString())
+			require.Len(t, spans, 3, "one span for each of the three attempts")
+			for _, span := range spans {
+				require.Equal(t, emptyCallSpan, span.Name())
+				require.Equal(t, otelcodes.Error, span.Status().Code)
+				require.Equal(t, "UNAVAILABLE", attrs(span)["rpc.response.status_code"].AsString())
+			}
 		})
 	})
 }
