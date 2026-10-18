@@ -16,6 +16,10 @@
 //
 //	client := testpb.NewTestServiceClient(grpcservertest.NewClient(t, h, "carts:9090", ca.Pool()))
 //
+// NewClient is for a test that calls a Service directly. Production code
+// that calls a gRPC dependency builds a client with grpcclient.NewClient,
+// which dials through the App's Host the same way.
+//
 // # Start and the defaults
 //
 // Start is humustest.Start with grpcserver.Defaults applied first, so a test
