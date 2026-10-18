@@ -322,7 +322,8 @@ func (c *Controller) worker(work context.Context, queue workqueue.TypedRateLimit
 // process reconciles the object of key, as the cache holds it, and settles
 // the key: an error retries it with backoff, a Result.After queues it again
 // after that long, and otherwise it is forgotten until the object changes or
-// the resync comes.
+// the resync comes. An object being deleted is finalized instead, when the
+// controller's finalizer holds it, and otherwise left alone.
 func (c *Controller) process(work context.Context, queue workqueue.TypedRateLimitingInterface[string], indexer cache.Indexer, key string) {
 	obj, exists, err := indexer.GetByKey(key)
 	u, ok := obj.(*unstructured.Unstructured)
@@ -332,8 +333,8 @@ func (c *Controller) process(work context.Context, queue workqueue.TypedRateLimi
 		queue.Forget(key)
 		return
 	}
-	if u.GetDeletionTimestamp() != nil {
-		// Being deleted, and no Finalize holds it.
+	if u.GetDeletionTimestamp() != nil && (c.finalize == nil || !hasFinalizer(u, c.finalizer)) {
+		// Being deleted, and no Finalize of the controller's holds it.
 		queue.Forget(key)
 		return
 	}
@@ -353,6 +354,11 @@ func (c *Controller) process(work context.Context, queue workqueue.TypedRateLimi
 // reconcileObject reconciles u, as a root span, and applies the status the
 // Reconciler returned, whether or not it returned an error. A failure sets
 // the span's status to Error, and is one WARN record in the span's context.
+//
+// With a Finalize, the span holds what the controller does in place of the
+// Reconciler: it adds the finalizer to an object that hasn't got it, and
+// calls f for an object being deleted, then removes the finalizer once f
+// returns nil.
 func (c *Controller) reconcileObject(work context.Context, u *unstructured.Unstructured) (time.Duration, error) {
 	attrs := make([]attribute.KeyValue, 0, 2)
 	if ns := u.GetNamespace(); ns != "" {
@@ -366,9 +372,26 @@ func (c *Controller) reconcileObject(work context.Context, u *unstructured.Unstr
 	)
 	defer span.End()
 
-	status, after, err := c.reconcile(ctx, u)
-	if status != nil {
-		err = errors.Join(err, c.applyStatus(ctx, u, status))
+	var (
+		after time.Duration
+		err   error
+	)
+	switch {
+	case u.GetDeletionTimestamp() != nil:
+		// process finalizes only an object its finalizer holds.
+		err = c.finalize(ctx, u)
+		if err == nil {
+			err = c.applyFinalizer(ctx, u, false)
+		}
+	case c.finalize != nil && !hasFinalizer(u, c.finalizer):
+		// The apply changes the object, which reconciles it again.
+		err = c.applyFinalizer(ctx, u, true)
+	default:
+		var status any
+		status, after, err = c.reconcile(ctx, u)
+		if status != nil {
+			err = errors.Join(err, c.applyStatus(ctx, u, status))
+		}
 	}
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())

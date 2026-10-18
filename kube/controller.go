@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync/atomic"
 	"time"
 
@@ -93,6 +94,11 @@ type Controller struct {
 	// owned are the resources each Owns names, in order.
 	owned []schema.GroupVersionResource
 
+	// finalizer is the name a Finalize gives, and finalize calls its f.
+	// finalize is nil without a Finalize.
+	finalizer string
+	finalize  finalizeFunc
+
 	dyn    dynamic.Interface
 	meta   metadata.Interface
 	leases coordinationv1.LeasesGetter
@@ -134,6 +140,8 @@ var notServed = &call{}
 //   - a Settings.Namespace that isn't "" for a Resource whose Scope is
 //     Cluster, whose objects are in no namespace;
 //   - an Owns whose GroupVersionResource has no Version or no Resource;
+//   - a Finalize whose name is empty, whose f is nil, or whose f takes
+//     something other than an Object[Spec, Status], and a second Finalize;
 //   - a nil Reconciler, a nil Part, a nil Setup or a nil Client.
 //
 // The Controller reports through s.Telemetry, and never through
@@ -160,7 +168,12 @@ func NewController[Spec, Status any](s *humus.Setup, c *Client, settings Setting
 	} else if f, ok := rec.(ReconcilerFunc[Spec, Status]); ok && f == nil {
 		errs = append(errs, errors.New("the Reconciler must not be a nil ReconcilerFunc"))
 	}
-	var owned []schema.GroupVersionResource
+	var (
+		owned     []schema.GroupVersionResource
+		finalizer string
+		finalizes finalizeFunc
+		finalized = -1
+	)
 	for i, p := range parts {
 		switch p := p.(type) {
 		case nil:
@@ -173,6 +186,24 @@ func NewController[Spec, Status any](s *humus.Setup, c *Client, settings Setting
 				errs = append(errs, fmt.Errorf("parts[%d], Owns(%s), has no Resource", i, p.gvr))
 			}
 			owned = append(owned, p.gvr)
+		case finalize:
+			if finalized >= 0 {
+				errs = append(errs, fmt.Errorf("parts[%d], Finalize(%q), is a second Finalize, after parts[%d]", i, p.name, finalized))
+			}
+			finalized = i
+			if p.name == "" {
+				errs = append(errs, fmt.Errorf("parts[%d], a Finalize, has an empty name", i))
+			}
+			if p.nilF {
+				errs = append(errs, fmt.Errorf("parts[%d], Finalize(%q), has a nil f", i, p.name))
+			}
+			f, ok := p.f.(func(context.Context, Object[Spec, Status]) error)
+			if !ok {
+				errs = append(errs, fmt.Errorf("parts[%d], Finalize(%q), takes a %s, but the Controller's objects are a %s",
+					i, p.name, p.typ, reflect.TypeFor[Object[Spec, Status]]()))
+			} else if !p.nilF {
+				finalizer, finalizes = p.name, finalizerOf(f)
+			}
 		}
 	}
 	if len(errs) > 0 {
@@ -204,6 +235,8 @@ func NewController[Spec, Status any](s *humus.Setup, c *Client, settings Setting
 		namespaced: r.Scope == Namespaced,
 		reconcile:  reconcilerOf(rec),
 		owned:      owned,
+		finalizer:  finalizer,
+		finalize:   finalizes,
 		dyn:        dyn,
 		meta:       meta,
 		leases:     leases,
@@ -263,13 +296,9 @@ func checkSettings(settings Settings) []error {
 // rec returns is applied only when its encoding differs.
 func reconcilerOf[Spec, Status any](rec Reconciler[Spec, Status]) reconcileFunc {
 	return func(ctx context.Context, u *unstructured.Unstructured) (any, time.Duration, error) {
-		b, err := u.MarshalJSON()
+		obj, err := decodeObject[Spec, Status](u)
 		if err != nil {
-			return nil, 0, fmt.Errorf("kube: encoding the object: %w", err)
-		}
-		var obj Object[Spec, Status]
-		if err := json.Unmarshal(b, &obj); err != nil {
-			return nil, 0, fmt.Errorf("kube: decoding the object: %w", err)
+			return nil, 0, err
 		}
 		before, err := json.Marshal(obj.Status)
 		if err != nil {
@@ -295,4 +324,18 @@ func reconcilerOf[Spec, Status any](rec Reconciler[Spec, Status]) reconcileFunc 
 		}
 		return status, res.After, err
 	}
+}
+
+// decodeObject returns a new Object decoded from u, as encoding/json decodes
+// its JSON encoding, so it shares nothing with u.
+func decodeObject[Spec, Status any](u *unstructured.Unstructured) (Object[Spec, Status], error) {
+	var obj Object[Spec, Status]
+	b, err := u.MarshalJSON()
+	if err != nil {
+		return obj, fmt.Errorf("kube: encoding the object: %w", err)
+	}
+	if err := json.Unmarshal(b, &obj); err != nil {
+		return obj, fmt.Errorf("kube: decoding the object: %w", err)
+	}
+	return obj, nil
 }

@@ -10,6 +10,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"net"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -98,7 +99,8 @@ type apply struct {
 // dynamic client of Memcacheds, a metadata client of the resources a
 // controller owns, and a clientset for the Lease. The dynamic
 // fake can't apply an unstructured object, so a reactor of the test's own
-// applies a status: it sets the object's status to the patch's.
+// applies a status, setting the object's status to the patch's, and the
+// object's metadata, as applyMetadata says.
 type fakeCluster struct {
 	dyn  *dynamicfake.FakeDynamicClient
 	meta *metadatafake.FakeMetadataClient
@@ -106,6 +108,9 @@ type fakeCluster struct {
 
 	mu      sync.Mutex
 	applies []apply
+	// finalizers are the finalizers each object's last apply of its
+	// metadata set, by namespace/name.
+	finalizers map[string][]string
 }
 
 func newFakeCluster(t *testing.T, objs ...runtime.Object) *fakeCluster {
@@ -139,12 +144,93 @@ func newFakeCluster(t *testing.T, objs ...runtime.Object) *fakeCluster {
 			return true, nil, err
 		}
 		u := got.(*unstructured.Unstructured).DeepCopy()
-		if p.Subresource == "status" {
+		switch p.Subresource {
+		case "status":
 			u.Object["status"] = runtime.DeepCopyJSONValue(patch["status"])
+		case "":
+			return fc.applyMetadata(u, patch)
 		}
 		return true, u, fc.dyn.Tracker().Update(gvr, u, p.Namespace)
 	})
 	return fc
+}
+
+// applyMetadata applies patch's metadata to u as the API server applies a
+// manager's finalizers: those its last apply set and this one doesn't are
+// removed, and those this one sets are added. An object being deleted is
+// deleted once it has no finalizer left. A patch that names another uid is
+// a conflict, as it is from the API server.
+func (fc *fakeCluster) applyMetadata(u *unstructured.Unstructured, patch map[string]any) (bool, runtime.Object, error) {
+	gvr := Memcached.GVR()
+	md, _ := patch["metadata"].(map[string]any)
+	if uid, ok := md["uid"].(string); ok && uid != string(u.GetUID()) {
+		return true, nil, apierrors.NewConflict(gvr.GroupResource(), u.GetName(), errors.New("uid mismatch"))
+	}
+	var applied []string
+	if fs, ok := md["finalizers"].([]any); ok {
+		for _, f := range fs {
+			applied = append(applied, f.(string))
+		}
+	}
+
+	fc.mu.Lock()
+	if fc.finalizers == nil {
+		fc.finalizers = map[string][]string{}
+	}
+	key := u.GetNamespace() + "/" + u.GetName()
+	before := fc.finalizers[key]
+	fc.finalizers[key] = applied
+	fc.mu.Unlock()
+
+	finalizers := []string{}
+	for _, f := range u.GetFinalizers() {
+		if !slices.Contains(before, f) || slices.Contains(applied, f) {
+			finalizers = append(finalizers, f)
+		}
+	}
+	for _, f := range applied {
+		if !slices.Contains(finalizers, f) {
+			finalizers = append(finalizers, f)
+		}
+	}
+	if slices.Equal(finalizers, u.GetFinalizers()) {
+		// An apply that changes nothing writes nothing, so it is no event.
+		return true, u, nil
+	}
+	u.SetFinalizers(finalizers)
+	if u.GetDeletionTimestamp() != nil && len(finalizers) == 0 {
+		return true, u, fc.dyn.Tracker().Delete(gvr, u.GetNamespace(), u.GetName())
+	}
+	return true, u, fc.dyn.Tracker().Update(gvr, u, u.GetNamespace())
+}
+
+// metadataApplies returns the applies of an object's metadata the fakes
+// were sent.
+func (fc *fakeCluster) metadataApplies() []apply {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+	var out []apply
+	for _, a := range fc.applies {
+		if a.subresource == "" {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// deleting marks the Memcached default/name as being deleted, as the API
+// server does while a finalizer holds it.
+func (fc *fakeCluster) deleting(t *testing.T, name string) {
+	t.Helper()
+	u := fc.object(t, name).DeepCopy()
+	u.SetDeletionTimestamp(kptr.To(metav1.NewTime(time.Now())))
+	require.NoError(t, fc.dyn.Tracker().Update(Memcached.GVR(), u, "default"))
+}
+
+// gone reports whether the Memcached default/name is gone from the fakes.
+func (fc *fakeCluster) gone(name string) bool {
+	_, err := fc.dyn.Tracker().Get(Memcached.GVR(), "default", name)
+	return apierrors.IsNotFound(err)
 }
 
 // statusApplies returns the applies of a status the fakes were sent.
@@ -328,6 +414,18 @@ func TestNewController_reports_every_mistake(t *testing.T) {
 			want: []string{"parts[1], Owns(/v1, Resource=), has no Resource"}},
 		{name: "an Owns with neither", parts: []kube.Part{kube.Owns(schema.GroupVersionResource{})},
 			want: []string{"parts[0], Owns(/, Resource=), has no Version", "parts[0], Owns(/, Resource=), has no Resource"}},
+		{name: "a Finalize with an empty name", parts: []kube.Part{kube.Finalize("", noCleanup)},
+			want: []string{"parts[0], a Finalize, has an empty name"}},
+		{name: "a Finalize with a nil f", parts: []kube.Part{kube.Owns(deployments), kube.Finalize[kube.Object[MemcachedSpec, MemcachedStatus]](finalizerName, nil)},
+			want: []string{`parts[1], Finalize("cache.example.com/finalizer"), has a nil f`}},
+		{name: "a Finalize of another type", parts: []kube.Part{kube.Finalize(finalizerName, func(context.Context, *unstructured.Unstructured) error { return nil })},
+			want: []string{`parts[0], Finalize("cache.example.com/finalizer"), takes a *unstructured.Unstructured, but the Controller's objects are a kube.Object[`}},
+		{name: "a Finalize of another Object", parts: []kube.Part{kube.Finalize(finalizerName, func(context.Context, kube.Object[MemcachedSpec, struct{}]) error { return nil })},
+			want: []string{`parts[0], Finalize("cache.example.com/finalizer"), takes a kube.Object[`}},
+		{name: "a Finalize with nothing right", parts: []kube.Part{kube.Finalize[string]("", nil)},
+			want: []string{"parts[0], a Finalize, has an empty name", `parts[0], Finalize(""), has a nil f`, `parts[0], Finalize(""), takes a string, but`}},
+		{name: "a second Finalize", parts: []kube.Part{kube.Finalize(finalizerName, noCleanup), kube.Owns(deployments), kube.Finalize("cache.example.com/other", noCleanup)},
+			want: []string{`parts[2], Finalize("cache.example.com/other"), is a second Finalize, after parts[0]`}},
 		{name: "several together",
 			settings: func(s *kube.Settings) {
 				s.Name = ""
@@ -381,7 +479,7 @@ func TestNewController_reports_every_mistake(t *testing.T) {
 
 	t.Run("none", func(t *testing.T) {
 		t.Parallel()
-		ctrl, err := kube.NewController(s, client, testSettings(), Memcached, rec, kube.Owns(deployments))
+		ctrl, err := kube.NewController(s, client, testSettings(), Memcached, rec, kube.Owns(deployments), kube.Finalize(finalizerName, noCleanup))
 		require.NoError(t, err)
 		require.NotNil(t, ctrl)
 	})

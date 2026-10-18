@@ -378,7 +378,9 @@
 // field of the Settings that fails its check, the bounds between them, each
 // mistake in the Resource, as [Resource.CRD] reports it, a Settings.Namespace
 // for a cluster-scoped Resource, an [Owns] with no Version or no Resource,
-// and a nil Reconciler.
+// a [Finalize] whose name is empty, whose f is nil or whose f takes another
+// type than the Controller's Object, a second Finalize, and a nil
+// Reconciler.
 //
 // A [Reconciler] is handed its object, and returns what the object's status
 // is now:
@@ -407,7 +409,8 @@
 // [Object], so it is the Reconciler's own copy, and there is no Get and no
 // not-found to handle: an object gone from the cache is never reconciled,
 // and what it owned is garbage collected through its owner references. An
-// object being deleted is left alone.
+// object being deleted is left alone, unless a [Finalize] holds it (see
+// Finalizers).
 //
 // When [Result.Status] isn't nil and its JSON encoding differs from the
 // object's status, the controller applies it to the status subresource
@@ -469,6 +472,45 @@
 // A resource the controller doesn't own isn't mapped to its objects. A
 // Reconciler that depends on one polls it, with [Result.After].
 //
+// # Finalizers
+//
+// [Finalize] keeps each object until the end user's code has cleaned up
+// after it, such as something outside the cluster that owner references
+// can't garbage collect:
+//
+//	ctrl, err := kube.NewController(s, client, settings, Memcached, Reconciler{Kube: kc},
+//		kube.Finalize("cache.example.com/finalizer", func(ctx context.Context, m kube.Object[MemcachedSpec, MemcachedStatus]) error {
+//			return deleteBackups(ctx, m.Namespace, m.Name)
+//		}),
+//	)
+//
+// The object's type is inferred from f, and NewController checks it is the
+// Controller's Object[Spec, Status].
+//
+// The controller adds the finalizer to an object's metadata.finalizers
+// before its first reconcile: the object's first pass adds it, and the
+// change that makes reconciles the object, with the finalizer on it. Once
+// the object is being deleted, and the finalizer still holds it, the
+// controller calls f, handed the object as the Reconciler is, and never the
+// Reconciler. An error from f retries the object with backoff, as a
+// reconcile's does, so f may be called again for an object it has already
+// cleaned up after. Once f returns nil, the controller removes the
+// finalizer, and the API server completes the deletion, unless another
+// finalizer still holds the object. An object being deleted that the
+// finalizer doesn't hold, as one deleted before its first reconcile, is left
+// alone.
+//
+// The finalizer is applied, not updated: both adding it and removing it are
+// server-side applies of the object's metadata, under the field manager
+// Settings.Name, which name its uid. So they never conflict with other
+// writers of the object's metadata, need no Get first, and never create an
+// object that has been deleted since the cache saw it. Removing it is an
+// apply of the metadata without it, which the API server removes since no
+// other field manager set it. So a Reconciler that applies its own object,
+// rather than its status, does so under a field manager other than
+// Settings.Name: the controller's applies of the metadata would remove the
+// fields it applied under Settings.Name.
+//
 // # Serving
 //
 // [Controller.Serve] first lists the resource, and each resource an Owns
@@ -524,9 +566,12 @@
 //   - every reconcile is a root span, "reconcile <Kind>", with
 //     k8s.namespace.name for a namespaced object, and
 //     humus.kube.object.name. Reconcile's context carries it. An error sets
-//     its status to Error;
-//   - a failed reconcile is one WARN record, "reconcile failed", in the
-//     span's context, with the object and the error;
+//     its status to Error. With a [Finalize], adding the finalizer, and
+//     calling f and removing the finalizer, are each a reconcile too, and f's
+//     context carries the span;
+//   - a failed reconcile, a failed f among them, is one WARN record,
+//     "reconcile failed", in the span's context, with the object and the
+//     error;
 //   - client-go's own records, from the reflector, the work queue and
 //     leader election, reach the LoggerProvider through a logger the
 //     controller puts in their context. Those klog writes by default arrive:
