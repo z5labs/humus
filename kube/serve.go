@@ -260,16 +260,24 @@ wait:
 // newQueue returns the work queue of object keys. Each key backs off from
 // RetryBaseDelay, doubling to RetryMaxDelay, under an overall limit of 10
 // retries a second, bursting to 100, as client-go's
-// DefaultTypedControllerRateLimiter limits them. It has no name, so it
-// registers no metrics with client-go's global provider.
+// DefaultTypedControllerRateLimiter limits them.
+//
+// The queue is named Settings.Name, and records into the controller's own
+// instruments through queueMetrics, set in its config, so it never reaches
+// client-go's global provider. While it runs, it updates the two gauges
+// every 500ms, from a goroutine of its own that stops when it is shut down.
 func (c *Controller) newQueue(logger logr.Logger) workqueue.TypedRateLimitingInterface[string] {
 	limiter := workqueue.NewTypedMaxOfRateLimiter(
 		workqueue.NewTypedItemExponentialFailureRateLimiter[string](c.settings.RetryBaseDelay, c.settings.RetryMaxDelay),
 		&workqueue.TypedBucketRateLimiter[string]{Limiter: rate.NewLimiter(rate.Limit(retriesPerSecond), retryBurst)},
 	)
+	// The rate-limiting queue's own Name and MetricsProvider reach only a
+	// delaying queue it builds itself, so they are set on this one.
 	return workqueue.NewTypedRateLimitingQueueWithConfig(limiter, workqueue.TypedRateLimitingQueueConfig[string]{
 		DelayingQueue: workqueue.NewTypedDelayingQueueWithConfig(workqueue.TypedDelayingQueueConfig[string]{
-			Logger: &logger,
+			Name:            c.settings.Name,
+			MetricsProvider: queueMetrics{m: c.metrics},
+			Logger:          &logger,
 		}),
 	})
 }
@@ -362,6 +370,7 @@ func (c *Controller) process(work context.Context, queue workqueue.TypedRateLimi
 // reconcileObject reconciles u, as a root span, and applies the status the
 // Reconciler returned, whether or not it returned an error. A failure sets
 // the span's status to Error, and is one WARN record in the span's context.
+// The span's time is recorded in reconcile.duration, with its outcome.
 //
 // A panic of the Reconciler, or of a Finalize's f, is recovered, recorded
 // by recordPanic, and reported as recovered. Nothing is applied after it: no
@@ -377,12 +386,27 @@ func (c *Controller) reconcileObject(work context.Context, u *unstructured.Unstr
 		attrs = append(attrs, semconv.K8SNamespaceName(ns))
 	}
 	attrs = append(attrs, objectNameKey.String(u.GetName()))
+	start := time.Now()
 	ctx, span := c.tracer.Start(work, "reconcile "+c.kind,
 		trace.WithNewRoot(),
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(attrs...),
+		trace.WithTimestamp(start),
 	)
-	defer span.End()
+	// reconcile.duration is recorded over the span's own time, by the
+	// outcome process settles the key with.
+	defer func() {
+		end := time.Now()
+		span.End(trace.WithTimestamp(end))
+		outcome := outcomeSuccess
+		switch {
+		case recovered:
+			outcome = outcomePanic
+		case err != nil:
+			outcome = outcomeError
+		}
+		c.metrics.reconciled(ctx, end.Sub(start).Seconds(), outcome)
+	}()
 
 	switch {
 	case u.GetDeletionTimestamp() != nil:

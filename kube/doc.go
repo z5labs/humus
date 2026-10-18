@@ -613,7 +613,60 @@
 //     an Info at verbosity 0, as an INFO record, and every Error, as an
 //     ERROR record. Nothing reaches the real stderr;
 //   - every API request is a client span from otelhttp, as the Client
-//     traces them.
+//     traces them, and is measured by otelhttp's client instruments;
+//   - the controller's own instruments measure its work queue and its
+//     reconciles, from the MeterProvider. They are below.
+//
+// The controller's instruments:
+//
+//	humus.kube.controller.queue.depth                            Int64UpDownCounter  {object}
+//	    Objects waiting in the work queue for a worker: +1 when a key is
+//	    added, and -1 when a worker takes it.
+//	humus.kube.controller.queue.adds                             Int64Counter        {object}
+//	    Objects added to the work queue, not counting one already waiting.
+//	humus.kube.controller.queue.duration                         Float64Histogram    s
+//	    How long an object waited in the work queue for a worker. The wait
+//	    of a Result.After or of a backoff comes before the key is added, so
+//	    it isn't counted.
+//	humus.kube.controller.reconcile.duration                     Float64Histogram    s
+//	    How long each reconcile took, by its outcome: one for each
+//	    "reconcile <Kind>" span, over the same time.
+//	humus.kube.controller.reconcile.unfinished_duration          Float64Gauge        s
+//	    How long the reconciles in flight have run, added together.
+//	humus.kube.controller.reconcile.longest_unfinished_duration  Float64Gauge        s
+//	    How long the longest reconcile in flight has run.
+//
+// Every data point carries humus.kube.controller.name, which is
+// Settings.Name. reconcile.duration's also carry
+// humus.kube.controller.reconcile.outcome:
+//   - error, for a reconcile whose key is retried with backoff;
+//   - panic, for a recovered panic;
+//   - success, for everything else, a [Result.After] included.
+//
+// No data point carries an object's namespace or name: an object's
+// reconciles are its spans. Both histograms take OpenTelemetry's advice for
+// a duration in seconds, the boundaries 0.005, 0.01, 0.025, 0.05, 0.075,
+// 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5 and 10. In Prometheus, they are
+// humus_kube_controller_queue_depth, humus_kube_controller_queue_adds_total,
+// humus_kube_controller_queue_duration_seconds,
+// humus_kube_controller_reconcile_duration_seconds,
+// humus_kube_controller_reconcile_unfinished_duration_seconds and
+// humus_kube_controller_reconcile_longest_unfinished_duration_seconds.
+//
+// Every instrument but reconcile.duration is recorded by client-go's work
+// queue, which is named Settings.Name, through a workqueue.MetricsProvider
+// of the controller's own, set in the queue's config. The queue updates the
+// two gauges every 500ms while it runs. Two of the queue's own metrics
+// aren't recorded: its work duration, which times what reconcile.duration
+// times without the outcome, and its retries, which count every AddAfter,
+// so every Result.After would count as a retry. The error outcome counts
+// the retries exactly.
+//
+// A standby records them too. It runs no workers, so nothing leaves its
+// queue, and its queue.depth holds a key for every object. Until it takes
+// the Lease, its reconcile.duration records nothing, and its two gauges
+// read 0. So read queue.depth per replica, by its resource's attributes: a
+// sum over the replicas counts the standbys' keys too.
 //
 // # What client-go still reaches
 //
@@ -627,8 +680,8 @@
 // client-go falls back to klog's global logger, which writes to the real
 // stderr, wherever it finds no logger in its context. The Controller puts
 // one in the context of everything of client-go's it runs. Its work queue
-// has no name, so it registers no metrics with client-go's global
-// provider.
+// records through the controller's own metrics provider, set in the queue's
+// config, so it never reaches client-go's global provider.
 //
 // The package sets no global of client-go's: no klog setting, no feature
 // gate, and no metrics provider. Lint denies each of them in every humus

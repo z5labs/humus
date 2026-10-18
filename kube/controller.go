@@ -29,7 +29,8 @@ import (
 )
 
 // scopeName is the instrumentation scope of the package's own telemetry: the
-// reconciles' spans, and every record, client-go's included.
+// reconciles' spans, the controller's instruments, and every record,
+// client-go's included.
 const scopeName = "github.com/z5labs/humus/kube"
 
 // Reconciler brings the cluster to what an object's spec declares.
@@ -103,8 +104,9 @@ type Controller struct {
 	meta   metadata.Interface
 	leases coordinationv1.LeasesGetter
 
-	tracer trace.Tracer
-	logger log.Logger
+	tracer  trace.Tracer
+	logger  log.Logger
+	metrics *instruments
 
 	// stopped is done once Shutdown is called.
 	stopped context.Context
@@ -142,7 +144,8 @@ var notServed = &call{}
 //   - an Owns whose GroupVersionResource has no Version or no Resource;
 //   - a Finalize whose name is empty, whose f is nil, or whose f takes
 //     something other than an Object[Spec, Status], and a second Finalize;
-//   - a nil Reconciler, a nil Part, a nil Setup or a nil Client.
+//   - a nil Reconciler, a nil Part, a nil Setup or a nil Client;
+//   - an error creating one of its instruments.
 //
 // The Controller reports through s.Telemetry, and never through
 // OpenTelemetry's globals, under the scope github.com/z5labs/humus/kube.
@@ -206,6 +209,14 @@ func NewController[Spec, Status any](s *humus.Setup, c *Client, settings Setting
 			}
 		}
 	}
+	var metrics *instruments
+	if s != nil {
+		var err error
+		metrics, err = newInstruments(s.Telemetry.MeterProvider.Meter(scopeName), settings.Name)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("creating its instruments: %w", err))
+		}
+	}
 	if len(errs) > 0 {
 		return nil, fmt.Errorf("kube: NewController: %w", errors.Join(errs...))
 	}
@@ -242,6 +253,7 @@ func NewController[Spec, Status any](s *humus.Setup, c *Client, settings Setting
 		leases:     leases,
 		tracer:     s.Telemetry.TracerProvider.Tracer(scopeName),
 		logger:     s.Telemetry.LoggerProvider.Logger(scopeName),
+		metrics:    metrics,
 		stopped:    stopped,
 		stop:       stop,
 	}, nil
