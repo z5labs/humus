@@ -17,9 +17,11 @@ import (
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/z5labs/bedrock/circuit"
 	"github.com/z5labs/bedrock/retry"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/propagation"
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"go.opentelemetry.io/otel/semconv/v1.43.0/messagingconv"
@@ -161,12 +163,14 @@ func lost(err error) error {
 //     confirmed;
 //   - an attempt that ended with ctx, its deadline or the caller
 //     cancelling: Retry, which retry turns into Expired, since ctx is done;
+//   - an attempt the breaker rejected, circuit.ErrRejected: Stop, since
+//     nothing was sent and the breaker stays open for a while yet;
 //   - the Publisher stopped, and anything else: Stop.
 func classify(ctx context.Context, err error) (retry.Outcome, time.Duration) {
 	switch {
 	case err == nil:
 		return retry.Success, 0
-	case errors.Is(err, ErrUnroutable), errors.Is(err, errStopped):
+	case errors.Is(err, ErrUnroutable), errors.Is(err, errStopped), errors.Is(err, circuit.ErrRejected):
 		return retry.Stop, 0
 	case errors.Is(err, errNacked):
 		return retry.Retry, 0
@@ -231,9 +235,14 @@ type Publisher struct {
 	propagator propagation.TextMapPropagator
 	sent       messagingconv.ClientSentMessages
 	duration   messagingconv.ClientOperationDuration
+	logger     log.Logger
 
 	// retrier makes the attempts of every Publish, within one Budget.
 	retrier *retry.Retrier
+
+	// breaker guards the broker. Each attempt of every Publish is one call
+	// through it.
+	breaker *circuit.Breaker
 
 	// serverAddr and serverPort are Connection.Addr's host and port.
 	serverAddr string
@@ -280,6 +289,12 @@ type confirmChannel struct {
 // retry.Retrier, with retry.Exponential(BackoffBase, BackoffMax) and
 // MaxAttempts, that every Publish shares.
 //
+// It builds one circuit breaker, with circuit.New, from Breaker and
+// BreakerPolicy, that every attempt of every Publish goes through, inside
+// the retries. A BreakerPolicy with a nil Trip or Probe is a bad field,
+// reported with the others. Each change of the breaker's state is one log
+// record, as Publish describes.
+//
 // The function NewPublisher registers with s.OnStop closes the connection,
 // if one is open, within the grace period. It runs once every Service has
 // stopped, so a Processor finishing its delivery during the drain can still
@@ -288,8 +303,9 @@ type confirmChannel struct {
 //
 // The Publisher reports through s.Telemetry, and never through
 // OpenTelemetry's globals, under the Service's scope,
-// github.com/z5labs/humus/queue/rabbitmq: a span for every Publish, and two
-// instruments for every attempt, as Publish describes.
+// github.com/z5labs/humus/queue/rabbitmq: a span for every Publish, two
+// instruments for every attempt, and a log record for every change of the
+// breaker's state, as Publish describes.
 func NewPublisher(s *humus.Setup, settings PublisherSettings) (*Publisher, error) {
 	if err := checkPublisherSettings(settings); err != nil {
 		return nil, fmt.Errorf("rabbitmq: NewPublisher: %w", err)
@@ -315,6 +331,7 @@ func NewPublisher(s *humus.Setup, settings PublisherSettings) (*Publisher, error
 		propagator: s.Telemetry.Propagator,
 		sent:       sent,
 		duration:   duration,
+		logger:     s.Telemetry.LoggerProvider.Logger(scopeName),
 		retrier:    retrier,
 		serverAddr: host,
 		serverPort: portNum,
@@ -323,6 +340,11 @@ func NewPublisher(s *humus.Setup, settings PublisherSettings) (*Publisher, error
 		stopped:    stopped,
 		stop:       stop,
 	}
+	breaker, err := circuit.New(settings.Breaker, settings.BreakerPolicy, classifyBreaker, p.observe)
+	if err != nil {
+		return nil, fmt.Errorf("rabbitmq: NewPublisher: building the circuit breaker: %w", err)
+	}
+	p.breaker = breaker
 	p.dial = func(ctx context.Context) (publishConn, error) {
 		c, err := connect(ctx, s.Host, settings.Connection)
 		if err != nil {
@@ -363,6 +385,24 @@ func checkPublisherSettings(settings PublisherSettings) error {
 	}
 	if err := CheckRetryBudgetTokenRatio(settings.RetryBudget.TokenRatio); err != nil {
 		errs = append(errs, fmt.Errorf("PublisherSettings.RetryBudget.TokenRatio %w", err))
+	}
+	if err := CheckBreakerWindow(settings.Breaker.Window); err != nil {
+		errs = append(errs, fmt.Errorf("PublisherSettings.Breaker.Window %w", err))
+	}
+	if err := CheckBreakerProbes(settings.Breaker.Probes); err != nil {
+		errs = append(errs, fmt.Errorf("PublisherSettings.Breaker.Probes %w", err))
+	}
+	if err := CheckBreakerOpenFor(settings.Breaker.OpenFor); err != nil {
+		errs = append(errs, fmt.Errorf("PublisherSettings.Breaker.OpenFor %w", err))
+	}
+	if err := CheckBreakerProbeTimeout(settings.Breaker.ProbeTimeout); err != nil {
+		errs = append(errs, fmt.Errorf("PublisherSettings.Breaker.ProbeTimeout %w", err))
+	}
+	if settings.BreakerPolicy.Trip == nil {
+		errs = append(errs, fmt.Errorf("PublisherSettings.BreakerPolicy.Trip %w", errNotSet))
+	}
+	if settings.BreakerPolicy.Probe == nil {
+		errs = append(errs, fmt.Errorf("PublisherSettings.BreakerPolicy.Probe %w", errNotSet))
 	}
 	return errors.Join(errs...)
 }
@@ -430,6 +470,38 @@ func (p *Publisher) close(ctx context.Context) error {
 // left, so a broker that keeps failing gets one attempt per Publish rather
 // than MaxAttempts. A first attempt is never refused.
 //
+// Every attempt of every Publish of p goes through one circuit breaker,
+// built from Breaker and BreakerPolicy, so a broker that keeps failing
+// fails each Publish at once rather than holding it for Timeout. While the
+// breaker is open, an attempt sends nothing and fails at once with an error
+// wrapping a *circuit.RejectedError, which matches circuit.ErrRejected and
+// says how much longer the breaker stays open, and Publish returns it
+// without another attempt. Whether to wait and try again is the caller's.
+// With the default BreakerPolicy, the breaker opens after 5 failed
+// attempts in a row, or once half of the last 20 or more failed; after
+// OpenFor it lets one attempt through at a time, and closes after 3 of
+// them are confirmed or reopens on one that fails. What each attempt's
+// result counts as:
+//
+//   - confirmed: a success;
+//   - returned unroutable, or a channel error such as 404 NOT_FOUND or 403
+//     ACCESS_REFUSED: a success, since the broker answered;
+//   - nacked by the broker, a dropped connection, a failed dial or a
+//     failed handshake: a failure;
+//   - ended by ctx's deadline, Timeout's or the caller's: a failure;
+//   - ended by the caller cancelling ctx: not counted, since it says
+//     nothing about the broker.
+//
+// Each change of the breaker's state is one log record, through the
+// Setup's LoggerProvider, in the context of the Publish that made it:
+// "circuit breaker open" at WARN, and "circuit breaker half-open" and
+// "circuit breaker closed" at INFO. Each has server.address and
+// server.port, from Connection.Addr, the state the breaker left as
+// circuit.previous_state, and the counts of that state, as
+// circuit.successes, circuit.failures, circuit.consecutive_successes,
+// circuit.consecutive_failures and circuit.timed_out. humus records no
+// instrument of its own for the breaker.
+//
 // Settings.Timeout bounds the whole Publish, every attempt and the waits
 // between them included, unless ctx has an earlier deadline, which then
 // wins. No attempt starts after it, and no wait is begun that would end
@@ -452,7 +524,8 @@ func (p *Publisher) close(ctx context.Context) error {
 // headers are written, and the Setup's propagator injects its trace context
 // into a copy of m.Headers, so the consumer's span is its child. m.Headers
 // itself is never changed. A failed Publish is recorded on its span, with
-// error.type and an error status. The body is never recorded.
+// error.type and an error status, a Publish the breaker rejected included.
+// The body is never recorded.
 //
 // Each attempt that publishes m records messaging.client.sent.messages, and
 // messaging.client.operation.duration, from the publish to the broker's
@@ -461,8 +534,8 @@ func (p *Publisher) close(ctx context.Context) error {
 // server.port, and error.type when the attempt failed: the broker's reply
 // code for a return or a channel error, nacked for a nack. An attempt that
 // fails before it publishes, waiting for a channel or connecting, publishes
-// nothing and records neither. Every attempt is within the Publish's one
-// span.
+// nothing and records neither, and so does an attempt the breaker
+// rejected. Every attempt is within the Publish's one span.
 func (p *Publisher) Publish(ctx context.Context, m Publishing) (err error) {
 	ctx, span := p.tracer.Start(ctx, spanName(m.Exchange),
 		trace.WithSpanKind(trace.SpanKindProducer),
@@ -498,9 +571,29 @@ func (p *Publisher) Publish(ctx context.Context, m Publishing) (err error) {
 	return err
 }
 
-// attempt is one attempt of a Publish: it takes a channel, publishes msg,
-// which is m with its trace context, on it, and gives the channel back.
+// attempt is one attempt of a Publish, and one call through the breaker.
+// Once the breaker admits it, it takes a channel, publishes msg, which is m
+// with its trace context, on it, and gives the channel back. While the
+// breaker is open, it returns an error wrapping the breaker's
+// *circuit.RejectedError at once, having sent nothing.
 func (p *Publisher) attempt(ctx context.Context, m Publishing, msg amqp.Publishing) error {
+	t, err := p.breaker.Allow(ctx)
+	if err != nil {
+		return fmt.Errorf("rabbitmq: publishing to %s: %w", destination(m), err)
+	}
+	defer t.Release()
+
+	// Wave 5's failure injection has its seam here: the attempt is inside
+	// the breaker, and nothing of it has been written to the broker.
+
+	err = p.send(ctx, m, msg)
+	t.Done(err)
+	return err
+}
+
+// send takes a channel, publishes msg, which is m with its trace context,
+// on it, and gives the channel back.
+func (p *Publisher) send(ctx context.Context, m Publishing, msg amqp.Publishing) error {
 	cc, err := p.take(ctx, m)
 	if err != nil {
 		return err

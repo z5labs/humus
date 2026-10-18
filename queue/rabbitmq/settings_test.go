@@ -6,15 +6,18 @@
 package rabbitmq_test
 
 import (
+	"context"
 	"crypto/rand"
 	"math"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/circuit"
 	"github.com/z5labs/bedrock/retry"
 
 	"github.com/z5labs/humus/queue"
@@ -26,7 +29,8 @@ import (
 // the variable.
 var fieldNames = regexp.MustCompile(`(?i)\b(?:settings|connection|addr|address|vhost|virtual ?host|tls|sasl|` +
 	`authentication|heartbeat|connect ?timeout|queue|delivery|prefetch|concurrency|channels|timeout|` +
-	`(?:max ?)?attempts|backoff ?(?:base|max)?|(?:retry ?)?budget|max ?tokens|token ?ratio)\b`)
+	`(?:max ?)?attempts|backoff ?(?:base|max)?|(?:retry ?)?budget|max ?tokens|token ?ratio|` +
+	`breaker|window|probes|open ?for|probe ?timeout|policy|trip)\b`)
 
 // requireUnnamed fails the test if err names a field of Settings,
 // PublisherSettings or Connection.
@@ -317,6 +321,13 @@ func TestCheckRetryBudget_accepts_exactly_what_retry_NewBudget_accepts(t *testin
 func TestDefaultPublisherSettings(t *testing.T) {
 	t.Parallel()
 
+	d := rabbitmq.DefaultPublisherSettings()
+	require.NotNil(t, d.BreakerPolicy.Trip)
+	require.NotNil(t, d.BreakerPolicy.Probe)
+	// A Policy is two functions, which require.Equal can't compare, so it
+	// is checked by what it decides, in
+	// TestDefaultPublisherSettings_BreakerPolicy.
+	d.BreakerPolicy = circuit.Policy{}
 	require.Equal(t, rabbitmq.PublisherSettings{
 		Connection:  rabbitmq.DefaultSettings().Connection,
 		Channels:    8,
@@ -325,7 +336,135 @@ func TestDefaultPublisherSettings(t *testing.T) {
 		BackoffBase: 100 * time.Millisecond,
 		BackoffMax:  5 * time.Second,
 		RetryBudget: retry.BudgetConfig{MaxTokens: 10, TokenRatio: 0.1},
-	}, rabbitmq.DefaultPublisherSettings())
+		Breaker: circuit.Config{
+			Window:       20,
+			Probes:       1,
+			OpenFor:      10 * time.Second,
+			ProbeTimeout: 10 * time.Second,
+		},
+	}, d)
+}
+
+func TestDefaultPublisherSettings_BreakerPolicy(t *testing.T) {
+	t.Parallel()
+
+	p := rabbitmq.DefaultPublisherSettings().BreakerPolicy
+
+	t.Run("Trip", func(t *testing.T) {
+		t.Parallel()
+
+		for _, tc := range []struct {
+			name   string
+			counts circuit.Counts
+			trips  bool
+		}{
+			{name: "no results", counts: circuit.Counts{}, trips: false},
+			{name: "4 failures in a row", counts: circuit.Counts{Failures: 4, ConsecutiveFailures: 4}, trips: false},
+			{name: "5 failures in a row", counts: circuit.Counts{Failures: 5, ConsecutiveFailures: 5}, trips: true},
+			{name: "half of 20 failed", counts: circuit.Counts{Successes: 10, Failures: 10, ConsecutiveFailures: 1}, trips: true},
+			{name: "9 of 20 failed", counts: circuit.Counts{Successes: 11, Failures: 9, ConsecutiveFailures: 1}, trips: false},
+			{name: "half of fewer than 20 failed", counts: circuit.Counts{Successes: 9, Failures: 9, ConsecutiveFailures: 1}, trips: false},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				require.Equal(t, tc.trips, p.Trip(tc.counts))
+			})
+		}
+	})
+
+	t.Run("Probe", func(t *testing.T) {
+		t.Parallel()
+
+		for _, tc := range []struct {
+			name   string
+			counts circuit.Counts
+			state  circuit.State
+		}{
+			{name: "a failed probe", counts: circuit.Counts{Successes: 2, Failures: 1, ConsecutiveFailures: 1}, state: circuit.Open},
+			{name: "2 successful probes", counts: circuit.Counts{Successes: 2, ConsecutiveSuccesses: 2}, state: circuit.HalfOpen},
+			{name: "3 successful probes", counts: circuit.Counts{Successes: 3, ConsecutiveSuccesses: 3}, state: circuit.Closed},
+			{name: "a probe timed out", counts: circuit.Counts{TimedOut: 1}, state: circuit.HalfOpen},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				require.Equal(t, tc.state, p.Probe(tc.counts))
+			})
+		}
+	})
+}
+
+func breakerCountCases() []checkCase[int] {
+	outOfRange := "must be from 1 to " + strconv.Itoa(circuit.MaxCount)
+	return []checkCase[int]{
+		{name: "one", value: 1, valid: true},
+		{name: "twenty", value: 20, valid: true},
+		{name: "circuit.MaxCount", value: circuit.MaxCount, valid: true},
+		{name: "zero", value: 0, cause: outOfRange},
+		{name: "negative", value: -1, cause: outOfRange},
+		{name: "above circuit.MaxCount", value: circuit.MaxCount + 1, cause: outOfRange},
+	}
+}
+
+func breakerDurationCases() []checkCase[time.Duration] {
+	return []checkCase[time.Duration]{
+		{name: "a nanosecond", value: time.Nanosecond, valid: true},
+		{name: "the default", value: 10 * time.Second, valid: true},
+		{name: "zero", value: 0, cause: "must be positive"},
+		{name: "negative", value: -time.Second, cause: "must be positive"},
+	}
+}
+
+func TestCheckBreakerWindow(t *testing.T) {
+	t.Parallel()
+
+	runCheck(t, rabbitmq.CheckBreakerWindow, breakerCountCases())
+}
+
+func TestCheckBreakerProbes(t *testing.T) {
+	t.Parallel()
+
+	runCheck(t, rabbitmq.CheckBreakerProbes, breakerCountCases())
+}
+
+func TestCheckBreakerOpenFor(t *testing.T) {
+	t.Parallel()
+
+	runCheck(t, rabbitmq.CheckBreakerOpenFor, breakerDurationCases())
+}
+
+func TestCheckBreakerProbeTimeout(t *testing.T) {
+	t.Parallel()
+
+	runCheck(t, rabbitmq.CheckBreakerProbeTimeout, breakerDurationCases())
+}
+
+// TestCheckBreaker_accepts_exactly_what_circuit_New_accepts runs the four
+// checks and circuit.New over the edges of each field's range.
+func TestCheckBreaker_accepts_exactly_what_circuit_New_accepts(t *testing.T) {
+	t.Parallel()
+
+	policy := rabbitmq.DefaultPublisherSettings().BreakerPolicy
+	classify := func(context.Context, error) circuit.Outcome { return circuit.Success }
+	observe := func(context.Context, circuit.Transition) {}
+	counts := []int{math.MinInt, -1, 0, 1, 20, circuit.MaxCount, circuit.MaxCount + 1}
+	durations := []time.Duration{math.MinInt64, -1, 0, 1, time.Second}
+	for _, n := range counts {
+		for _, d := range durations {
+			for _, cfg := range []circuit.Config{
+				{Window: n, Probes: 1, OpenFor: time.Second, ProbeTimeout: d},
+				{Window: 1, Probes: n, OpenFor: d, ProbeTimeout: time.Second},
+			} {
+				_, err := circuit.New(cfg, policy, classify, observe)
+				checked := rabbitmq.CheckBreakerWindow(cfg.Window) == nil &&
+					rabbitmq.CheckBreakerProbes(cfg.Probes) == nil &&
+					rabbitmq.CheckBreakerOpenFor(cfg.OpenFor) == nil &&
+					rabbitmq.CheckBreakerProbeTimeout(cfg.ProbeTimeout) == nil
+				require.Equal(t, err == nil, checked, "%+v: circuit.New says %v", cfg, err)
+			}
+		}
+	}
 }
 
 func TestDefaultPublisherSettings_with_the_required_fields_set_passes_every_check(t *testing.T) {
@@ -350,6 +489,10 @@ func TestDefaultPublisherSettings_with_the_required_fields_set_passes_every_chec
 	require.GreaterOrEqual(t, d.BackoffMax, d.BackoffBase)
 	require.NoError(t, rabbitmq.CheckRetryBudgetMaxTokens(d.RetryBudget.MaxTokens))
 	require.NoError(t, rabbitmq.CheckRetryBudgetTokenRatio(d.RetryBudget.TokenRatio))
+	require.NoError(t, rabbitmq.CheckBreakerWindow(d.Breaker.Window))
+	require.NoError(t, rabbitmq.CheckBreakerProbes(d.Breaker.Probes))
+	require.NoError(t, rabbitmq.CheckBreakerOpenFor(d.Breaker.OpenFor))
+	require.NoError(t, rabbitmq.CheckBreakerProbeTimeout(d.Breaker.ProbeTimeout))
 }
 
 func TestDefaultSettings(t *testing.T) {

@@ -17,6 +17,7 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/circuit"
 	"github.com/z5labs/bedrock/retry"
 
 	"github.com/z5labs/humus"
@@ -558,6 +559,8 @@ func TestNewPublisher_names_every_bad_field_together(t *testing.T) {
 	s.BackoffBase = 0
 	s.BackoffMax = -time.Second
 	s.RetryBudget = retry.BudgetConfig{MaxTokens: 2, TokenRatio: 0}
+	s.Breaker = circuit.Config{Window: 0, Probes: circuit.MaxCount + 1, OpenFor: 0, ProbeTimeout: -time.Second}
+	s.BreakerPolicy = circuit.Policy{}
 	pub, err := rabbitmq.NewPublisher(setup(t), s)
 	require.Nil(t, pub)
 	require.EqualError(t, err, "rabbitmq: NewPublisher: PublisherSettings.Connection.Addr is not host:port\n"+
@@ -569,7 +572,27 @@ func TestNewPublisher_names_every_bad_field_together(t *testing.T) {
 		"PublisherSettings.BackoffBase must be positive\n"+
 		"PublisherSettings.BackoffMax must be positive\n"+
 		"PublisherSettings.RetryBudget.MaxTokens must be from 3 to 65536\n"+
-		"PublisherSettings.RetryBudget.TokenRatio must be from 0.001 to 65536")
+		"PublisherSettings.RetryBudget.TokenRatio must be from 0.001 to 65536\n"+
+		"PublisherSettings.Breaker.Window must be from 1 to 65536\n"+
+		"PublisherSettings.Breaker.Probes must be from 1 to 65536\n"+
+		"PublisherSettings.Breaker.OpenFor must be positive\n"+
+		"PublisherSettings.Breaker.ProbeTimeout must be positive\n"+
+		"PublisherSettings.BreakerPolicy.Trip must be set\n"+
+		"PublisherSettings.BreakerPolicy.Probe must be set")
+}
+
+func TestNewPublisher_rejects_a_BreakerPolicy_with_only_one_function_set(t *testing.T) {
+	t.Parallel()
+
+	s := publisherSettings()
+	s.BreakerPolicy.Probe = nil
+	_, err := rabbitmq.NewPublisher(setup(t), s)
+	require.EqualError(t, err, "rabbitmq: NewPublisher: PublisherSettings.BreakerPolicy.Probe must be set")
+
+	s = publisherSettings()
+	s.BreakerPolicy.Trip = nil
+	_, err = rabbitmq.NewPublisher(setup(t), s)
+	require.EqualError(t, err, "rabbitmq: NewPublisher: PublisherSettings.BreakerPolicy.Trip must be set")
 }
 
 func TestNewPublisher_names_a_BackoffMax_below_BackoffBase_with_the_other_bad_fields(t *testing.T) {
@@ -616,6 +639,12 @@ func TestNewPublisher_checks_every_field(t *testing.T) {
 		{field: "PublisherSettings.BackoffMax", change: func(s *rabbitmq.PublisherSettings) { s.BackoffMax = 0 }},
 		{field: "PublisherSettings.RetryBudget.MaxTokens", change: func(s *rabbitmq.PublisherSettings) { s.RetryBudget.MaxTokens = 2 }},
 		{field: "PublisherSettings.RetryBudget.TokenRatio", change: func(s *rabbitmq.PublisherSettings) { s.RetryBudget.TokenRatio = 0.0001 }},
+		{field: "PublisherSettings.Breaker.Window", change: func(s *rabbitmq.PublisherSettings) { s.Breaker.Window = 0 }},
+		{field: "PublisherSettings.Breaker.Probes", change: func(s *rabbitmq.PublisherSettings) { s.Breaker.Probes = circuit.MaxCount + 1 }},
+		{field: "PublisherSettings.Breaker.OpenFor", change: func(s *rabbitmq.PublisherSettings) { s.Breaker.OpenFor = 0 }},
+		{field: "PublisherSettings.Breaker.ProbeTimeout", change: func(s *rabbitmq.PublisherSettings) { s.Breaker.ProbeTimeout = -time.Second }},
+		{field: "PublisherSettings.BreakerPolicy.Trip", change: func(s *rabbitmq.PublisherSettings) { s.BreakerPolicy.Trip = nil }},
+		{field: "PublisherSettings.BreakerPolicy.Probe", change: func(s *rabbitmq.PublisherSettings) { s.BreakerPolicy.Probe = nil }},
 	} {
 		t.Run(tc.field, func(t *testing.T) {
 			t.Parallel()
