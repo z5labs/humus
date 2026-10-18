@@ -130,14 +130,18 @@ func TestProduce_fails_at_once_once_the_breaker_opens(t *testing.T) {
 		open := records(tel.Logs(), breakerOpen)
 		require.Len(t, open, 1)
 		require.Equal(t, log.SeverityWarn, open[0].Severity())
+		host, port, err := net.SplitHostPort(c.ListenAddrs()[0])
+		require.NoError(t, err)
 		require.Equal(t, map[string]string{
-			"messaging.system":              "kafka",
-			"circuit.previous_state":        "closed",
-			"circuit.successes":             "0",
-			"circuit.failures":              "5",
-			"circuit.consecutive_successes": "0",
-			"circuit.consecutive_failures":  "5",
-			"circuit.timed_out":             "0",
+			"messaging.system":                    "kafka",
+			"server.address":                      host,
+			"server.port":                         port,
+			"humus.circuit.previous_state":        "closed",
+			"humus.circuit.successes":             "0",
+			"humus.circuit.failures":              "5",
+			"humus.circuit.consecutive_successes": "0",
+			"humus.circuit.consecutive_failures":  "5",
+			"humus.circuit.timed_out":             "0",
 		}, attrs(open[0]))
 		require.Equal(t, []string{breakerOpen}, breakerLogs(tel))
 	})
@@ -208,15 +212,15 @@ func TestProduce_the_breaker_closes_again(t *testing.T) {
 		halfOpen := records(tel.Logs(), breakerHalfOpen)
 		require.Len(t, halfOpen, 1)
 		require.Equal(t, log.SeverityInfo, halfOpen[0].Severity())
-		require.Equal(t, "open", attrs(halfOpen[0])["circuit.previous_state"])
+		require.Equal(t, "open", attrs(halfOpen[0])["humus.circuit.previous_state"])
 
 		closed := records(tel.Logs(), breakerClosed)
 		require.Len(t, closed, 1)
 		require.Equal(t, log.SeverityInfo, closed[0].Severity())
 		a := attrs(closed[0])
-		require.Equal(t, "half-open", a["circuit.previous_state"])
-		require.Equal(t, "3", a["circuit.successes"])
-		require.Equal(t, "3", a["circuit.consecutive_successes"])
+		require.Equal(t, "half-open", a["humus.circuit.previous_state"])
+		require.Equal(t, "3", a["humus.circuit.successes"])
+		require.Equal(t, "3", a["humus.circuit.consecutive_successes"])
 		require.Equal(t, "kafka", a["messaging.system"])
 		require.Len(t, readAll(t, h, c, topic), 4)
 	})

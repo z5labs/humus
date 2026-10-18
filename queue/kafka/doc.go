@@ -288,8 +288,9 @@
 // the breaker is open, Produce returns an error wrapping a
 // *circuit.RejectedError, which matches circuit.ErrRejected and says how
 // much longer the breaker stays open, at once and with nothing sent. Each
-// record's span records the rejection as a failure, and neither instrument
-// counts the record, which was never sent. Produce doesn't retry a
+// record's span records the rejection as a failure, and neither messaging
+// instrument counts the record, which was never sent; humus.circuit.calls
+// counts the call, once, as rejected. Produce doesn't retry a
 // rejected call: whether to wait and try again is the caller's, as queue's
 // contract leaves retries to the Processor. A call whose context is already
 // done, and a call after the cluster refused the credentials, return before
@@ -355,13 +356,49 @@
 // Each change of the breaker's state is one log record of the Producer's,
 // under the scope github.com/z5labs/humus/queue/kafka, in the context of
 // the call that made it: circuit breaker open at WARN, and circuit breaker
-// half-open and circuit breaker closed at INFO. Its attributes are
-// messaging.system, set to kafka, circuit.previous_state, and the counts
-// of the state the breaker left: circuit.successes, circuit.failures,
-// circuit.consecutive_successes, circuit.consecutive_failures and
-// circuit.timed_out. There are no instruments of humus's own for the
-// breaker: its transitions are in the logs, and a rejected call is an error
-// on its records' spans.
+// half-open and circuit breaker closed at INFO. Its attributes are the
+// cluster's: messaging.system, set to kafka, and server.address and
+// server.port of the first of ProducerSettings.Brokers, the seed the end
+// user named first rather than the broker that answered. Then come
+// humus.circuit.previous_state, the state the breaker left, and the counts
+// of that state: humus.circuit.successes, humus.circuit.failures,
+// humus.circuit.consecutive_successes, humus.circuit.consecutive_failures
+// and humus.circuit.timed_out. The bodies and the attributes are those of
+// humus's other clients, so one query finds every breaker.
+//
+// The breaker is measured too, with three instruments of humus's own, from
+// the Setup's MeterProvider, under the scope
+// github.com/z5labs/humus/queue/kafka. Every data point carries the
+// cluster's attributes, messaging.system, server.address and server.port,
+// the same as the breaker's log records, and nothing per call, such as
+// messaging.destination.name. Every other attribute's value is the String()
+// of bedrock's own type:
+//
+//   - humus.circuit.state, an asynchronous UpDownCounter in {breaker}, with
+//     humus.circuit.state: closed, open or half-open, a circuit.State. At
+//     each collection it reads the breaker's state once and observes 1 for
+//     it and 0 for the other two, so it reads half-open as soon as
+//     Breaker.OpenFor has passed, with no call made. Two Producers for two
+//     clusters are two series, told apart by their first brokers. It is
+//     still read by the App's last collection, after the OnStop functions,
+//     so the final export has the state the App stopped in.
+//   - humus.circuit.transitions, a Counter in {transition}, with
+//     humus.circuit.state, the state the breaker went to, and
+//     humus.circuit.previous_state, the state it left: one for each change
+//     of state, beside its log record. It catches a breaker that opens and
+//     closes between two collections.
+//   - humus.circuit.calls, a Counter in {call}, with humus.circuit.outcome:
+//     success, failure or ignored, a circuit.Outcome, as each call counted
+//     in the breaker; or rejected, for a call the breaker didn't admit. One
+//     call is one Produce, whatever its number of records, and it is counted
+//     once every record has its result, which may be after Produce returns.
+//     A call the breaker never saw, one whose context was already done or
+//     one after the cluster refused the credentials, counts nothing.
+//
+// The Producer records no humus.retry.decisions, as humus's HTTP and gRPC
+// clients do: franz-go retries inside a produce request, and exposes no
+// decision to count. A View in the end user's telemetry Builder drops or
+// renames any of the three. humus has no setting to turn them off.
 //
 // # Telemetry
 //

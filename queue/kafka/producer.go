@@ -66,6 +66,9 @@ type Producer struct {
 	// it.
 	breaker *circuit.Breaker
 
+	// metrics are humus's own instruments of the breaker.
+	metrics *instruments
+
 	// closed is set once the OnStop function has flushed the client and is
 	// about to close it.
 	closed atomic.Bool
@@ -90,8 +93,11 @@ type Producer struct {
 // s.Telemetry: its spans, the two messaging instruments and its own logs
 // under the scope github.com/z5labs/humus/queue/kafka, franz-go's logs under
 // github.com/twmb/franz-go/pkg/kgo, and franz-go's broker metrics, from
-// kotel's Meter, under github.com/twmb/franz-go/plugin/kotel. Each change
-// of the breaker's state is one of its own log records.
+// kotel's Meter, under github.com/twmb/franz-go/plugin/kotel. The
+// breaker's state, its changes of state and the calls it counted or
+// rejected are three instruments of humus's own, under the Producer's
+// scope, and each change of the breaker's state is one of its own log
+// records.
 //
 // A Producer can't stop the App, so when a broker refuses settings.SASL's
 // credentials, with SASL_AUTHENTICATION_FAILED, UNSUPPORTED_SASL_MECHANISM
@@ -107,7 +113,8 @@ func NewProducer(s *humus.Setup, settings ProducerSettings) (*Producer, error) {
 	meter := s.Telemetry.MeterProvider.Meter(scopeName)
 	sent, err1 := messagingconv.NewClientSentMessages(meter)
 	operations, err2 := messagingconv.NewClientOperationDuration(meter)
-	if err := errors.Join(err1, err2); err != nil {
+	metrics, err3 := newInstruments(meter, settings.Brokers[0])
+	if err := errors.Join(err1, err2, err3); err != nil {
 		return nil, fmt.Errorf("kafka: NewProducer: creating the instruments: %w", err)
 	}
 	p := &Producer{
@@ -115,9 +122,10 @@ func NewProducer(s *humus.Setup, settings ProducerSettings) (*Producer, error) {
 		tracer:          s.Telemetry.TracerProvider.Tracer(scopeName),
 		propagator:      s.Telemetry.Propagator,
 		logger:          s.Telemetry.LoggerProvider.Logger(scopeName),
+		metrics:         metrics,
 		refused:         make(chan struct{}),
 	}
-	breaker, err := circuit.New(settings.Breaker, settings.BreakerPolicy, classify, p.observe)
+	breaker, err := circuit.New(settings.Breaker, settings.BreakerPolicy, metrics.countCalls(classify), p.observe)
 	if err != nil {
 		return nil, fmt.Errorf("kafka: NewProducer: building the circuit breaker: %w", err)
 	}
@@ -140,6 +148,13 @@ func NewProducer(s *humus.Setup, settings ProducerSettings) (*Producer, error) {
 	cl, err := kgo.NewClient(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("kafka: NewProducer: building the client: %w", err)
+	}
+	// humus.circuit.state's callback is registered last, once nothing after
+	// it can fail, so a NewProducer that returns an error leaves none
+	// behind.
+	if err := metrics.observeState(meter, breaker); err != nil {
+		cl.Close()
+		return nil, fmt.Errorf("kafka: NewProducer: registering humus.circuit.state's callback: %w", err)
 	}
 	p.client = cl
 	s.OnStop(p.stop)
@@ -248,10 +263,14 @@ func (p *Producer) stop(ctx context.Context) error {
 // counts as a success, and one whose records failed because the cluster
 // didn't store them in time counts as a failure. A call whose records
 // failed only for their own reasons or their topics', such as
-// MESSAGE_TOO_LARGE, isn't counted. Produce doesn't retry a rejected call:
-// whether to wait and try again is the caller's. A call whose ctx is
-// already done, and a call after the cluster refused the credentials, never
-// reach the breaker, so it counts neither.
+// MESSAGE_TOO_LARGE, isn't counted by the breaker. humus.circuit.calls
+// counts each call once, with the outcome the breaker gave it: success,
+// failure or ignored. A call the breaker rejects is counted there too,
+// once whatever its number of records, as rejected. Produce doesn't retry
+// a rejected call: whether to wait and try again is the caller's. A call
+// whose ctx is already done, and a call after the cluster refused the
+// credentials, never reach the breaker, so it counts neither, and neither
+// does humus.circuit.calls.
 //
 // Each record it hands to the client is sent under a span of its own, a
 // child of the span in ctx. The record's headers whose keys the propagator
@@ -259,7 +278,7 @@ func (p *Producer) stop(ctx context.Context) error {
 // ctx's baggage in their place. The span ends, and the record is
 // measured, when its result arrives, which may be after Produce returns. A
 // record the breaker rejected was never sent: its span records the
-// rejection as a failure, and neither instrument counts it.
+// rejection as a failure, and neither messaging instrument counts it.
 func (p *Producer) Produce(ctx context.Context, records ...Record) error {
 	if len(records) == 0 {
 		return nil
@@ -297,6 +316,7 @@ func (p *Producer) Produce(ctx context.Context, records ...Record) error {
 
 	t, err := p.breaker.Allow(call)
 	if err != nil {
+		p.metrics.rejected(call)
 		cancel()
 		for _, kr := range krs {
 			s := kr.Context.Value(sendingKey{}).(*sending)

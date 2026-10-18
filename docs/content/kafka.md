@@ -946,9 +946,11 @@ franz-go moves unkeyed records away from backed-up partitions, and a keyed
 record has only one partition.
 
 Each change of the breaker's state is a log record, as
-[The logs](#the-logs) lists. There are no instruments of humus's own for the
-breaker: its transitions are in the logs, and a rejected call is an error on
-its records' spans.
+[The logs](#the-logs) lists. The `Producer` measures the breaker too, with
+three instruments of humus's own: its state, its changes of state, and the
+calls it counted or rejected, as
+[humus's own instruments](#humuss-own-instruments) lists. A rejected call is
+also an error on its records' spans.
 
 ### Refused credentials
 
@@ -1094,11 +1096,72 @@ breaker rejected, a record with no topic, and the records of a call whose
 context was already done were never sent, so neither instrument counts them:
 the conventions say a sent-messages count must not count messages that were
 created but haven't been sent. A rejected record's span records the
-rejection.
+rejection, and `humus.circuit.calls` counts its call.
 
 The messaging conventions are still in development, so humus pins the
 semconv version it uses, and a change to these names is a breaking change to
 `queue/kafka`.
+
+### humus's own instruments
+
+The `Producer` records three instruments of humus's own for its
+[breaker](#the-circuit-breaker), with the Setup's `MeterProvider`, in the
+scope `github.com/z5labs/humus/queue/kafka`, beside its messaging
+instruments:
+
+| Instrument | Kind | Unit | Attributes | Recorded |
+|---|---|---|---|---|
+| `humus.circuit.state` | asynchronous UpDownCounter | `{breaker}` | `humus.circuit.state`: `closed`, `open` or `half-open` | at each collection: 1 for the breaker's state, 0 for the other two |
+| `humus.circuit.transitions` | Counter | `{transition}` | `humus.circuit.state`, the state it went to, and `humus.circuit.previous_state`, the one it left | at each change of the breaker's state, beside its log record |
+| `humus.circuit.calls` | Counter | `{call}` | `humus.circuit.outcome`: `success`, `failure`, `ignored` or `rejected` | once a call's every record has its result, or as the breaker rejects it |
+
+Every data point also carries the cluster's attributes: `messaging.system`,
+set to `kafka`, and `server.address` and `server.port` of the first of
+`ProducerSettings.Brokers`, the seed the end user named first rather than
+the broker that answered. It carries nothing per call, such as
+`messaging.destination.name`: the messaging instruments break records down
+already. Each other attribute's value is the `String()` of bedrock's own
+type, `circuit.State` or `circuit.Outcome`.
+
+- **`humus.circuit.state` is read, not tracked.** At each collection it reads
+  the breaker's state once, so it shows `half-open` as soon as `OpenFor` has
+  passed, with no call made. Two `Producer`s for two clusters are two
+  series, told apart by their first brokers. The App's last collection,
+  after the `OnStop` functions, still reads it, so the final export has the
+  state the App stopped in.
+- **`humus.circuit.transitions` catches the short opens.** A breaker can
+  open, go half-open and close between two collections, a minute apart by
+  default, and `humus.circuit.state` never shows it open.
+- **`humus.circuit.calls` counts a call when the breaker does.** One call is
+  one `Produce`, whatever its number of records, counted once every record
+  has its result, which may be after `Produce` returns. A call whose records
+  failed for their own reasons or their topics' is `ignored`. A call the
+  breaker rejects is `rejected`, once: it sent nothing, so it is in neither
+  messaging instrument. A call whose `ctx` was already done, or one after a
+  broker refused the credentials, never reached the breaker and counts
+  nothing.
+
+There is no `humus.retry.decisions`, as humus's HTTP and gRPC clients
+record: franz-go retries inside a produce request, and exposes no decision
+to count.
+
+In Prometheus, they are `humus_circuit_state`,
+`humus_circuit_transitions_total` and `humus_circuit_calls_total`, and each
+attribute is a label such as `humus_circuit_state`. An alert on an open
+breaker reads the state, and one on breakers that open and close between
+scrapes reads the transitions:
+
+```promql
+# A breaker is open now.
+humus_circuit_state{humus_circuit_state="open"} > 0
+
+# A breaker opened in the last 5 minutes, however briefly.
+increase(humus_circuit_transitions_total{humus_circuit_state="open"}[5m]) > 0
+```
+
+A View in the end user's telemetry `Builder` drops or renames any of them.
+humus has no setting to turn them off. A test reads them as it reads any
+metric, with `humustest.Telemetry`'s `Metrics`, filtered to the scope.
 
 ### franz-go's broker metrics
 
@@ -1158,12 +1221,17 @@ The `Producer` logs under the same scope:
 | `a broker refused the credentials` | ERROR | the first time a broker [refused the credentials](#refused-credentials). It carries `messaging.system`, `server.address` and `server.port` naming the broker, and the refusal as `exception.message` and `error.type`. |
 
 A breaker record is emitted in the context of the call that changed the
-state, so it carries that call's trace ID. Its attributes are
-`messaging.system`, set to `kafka`, `circuit.previous_state`, and the counts
-of the state the breaker left: `circuit.successes`, `circuit.failures`,
-`circuit.consecutive_successes`, `circuit.consecutive_failures` and
-`circuit.timed_out`. So an alert on `circuit breaker open` says the cluster
-kept failing, and the counts say how.
+state, so it carries that call's trace ID. Its attributes are the cluster's,
+`messaging.system`, set to `kafka`, and `server.address` and `server.port`
+of the first of `ProducerSettings.Brokers`, then the state the breaker left
+as `humus.circuit.previous_state`, and the counts of that state:
+`humus.circuit.successes`, `humus.circuit.failures`,
+`humus.circuit.consecutive_successes`, `humus.circuit.consecutive_failures`
+and `humus.circuit.timed_out`. The bodies and the attributes are those of
+humus's other clients' breaker records, so one query finds every breaker.
+So an alert on `circuit breaker open` says the cluster kept failing, and the
+counts say how; an alert on a metric, `humus.circuit.state`, is in
+[humus's own instruments](#humuss-own-instruments).
 
 **franz-go's own logs** go through the same `LoggerProvider`, under the scope
 `github.com/twmb/franz-go/pkg/kgo`, and never to standard error or the `log`
