@@ -62,10 +62,11 @@ func newRetrier(settings Settings) (*retry.Retrier, error) {
 
 // attempt makes one attempt of a unary call to method with call, through
 // the breaker, in the order the package doc's "The circuit breaker" sets
-// out: Allow, with a deferred Release; the call, which is failure
-// injection's seam; the classification, once, with the trailer call wrote;
-// and Done, with the result carrying it. A rejected attempt makes no call,
-// and is the Client's to classify.
+// out: Allow, with a deferred Release; failure injection's seam, inject;
+// the call, unless a fault ended the attempt, with the context inject
+// returned; the classification, once, with the trailer call wrote; and
+// Done, with the result carrying it. A rejected attempt evaluates nothing
+// and makes no call, and is the Client's to classify.
 func (c *Client) attempt(ctx context.Context, method string, trailer *metadata.MD, call func(context.Context) error) *result {
 	t, err := c.breaker.Allow(ctx)
 	if err != nil {
@@ -74,7 +75,10 @@ func (c *Client) attempt(ctx context.Context, method string, trailer *metadata.M
 	}
 	defer t.Release()
 
-	err = call(ctx)
+	callCtx, err := c.inject(ctx, method)
+	if err == nil {
+		err = call(callCtx)
+	}
 	r := &result{err: err, class: c.classifyAttempt(ctx, method, err, *trailer)}
 	t.Done(r)
 	return r
@@ -86,7 +90,9 @@ func (c *Client) attempt(ctx context.Context, method string, trailer *metadata.M
 // stream that opens is the Client's to classify for retry, without asking
 // Classify, and takes the ticket, which it settles when it ends, after open
 // has returned: so the guard is a flag set once the ticket is handed off,
-// not a deferred Release.
+// not a deferred Release. Between Allow and grpc-go is failure
+// injection's seam, inject, as for a unary attempt: an open a fault ended
+// fails as one that grpc-go failed does.
 func (c *Client) open(ctx context.Context, desc *grpc.StreamDesc, method string, opts []grpc.CallOption) (grpc.ClientStream, *result) {
 	t, err := c.breaker.Allow(ctx)
 	if err != nil {
@@ -100,7 +106,11 @@ func (c *Client) open(ctx context.Context, desc *grpc.StreamDesc, method string,
 		}
 	}()
 
-	s, err := c.cc.NewStream(ctx, desc, method, opts...)
+	callCtx, err := c.inject(ctx, method)
+	var s grpc.ClientStream
+	if err == nil {
+		s, err = c.cc.NewStream(callCtx, desc, method, opts...)
+	}
 	if err != nil {
 		r := &result{err: err, class: c.classifyAttempt(ctx, method, err, nil)}
 		t.Done(r)

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/z5labs/bedrock/circuit"
 	"github.com/z5labs/bedrock/retry"
@@ -66,9 +67,7 @@ func (e *rejectedError) GRPCStatus() *status.Status {
 
 // reject is the result of a call to method that the breaker rejected with
 // err. The call never reached grpc-go, so otelgrpc made no span for it: the
-// Client starts one of its own, a child of the span in ctx, named and
-// attributed as otelgrpc names an attempt's span, with Addr as its server,
-// and ends it at once, with status Error and the rejection's message.
+// Client records one of its own, as ownSpan describes, ended at once.
 func (c *Client) reject(ctx context.Context, method string, err error) *result {
 	var rejected *circuit.RejectedError
 	if !errors.As(err, &rejected) {
@@ -77,7 +76,16 @@ func (c *Client) reject(ctx context.Context, method string, err error) *result {
 		panic(fmt.Sprintf("grpcclient: the breaker rejected a call with a %T", err))
 	}
 	rerr := &rejectedError{rejected: rejected}
+	c.ownSpan(ctx, method, time.Now(), codes.Unavailable, rerr)
+	return &result{err: rerr, class: rejection}
+}
 
+// ownSpan records the span of an attempt to method that never reached
+// grpc-go, and so has no span of otelgrpc's: a child of the span in ctx,
+// named and attributed as otelgrpc names an attempt's span, with Addr as
+// its server, code as its rpc.response.status_code and extra after the
+// rest, from start to now, with status Error and err's message.
+func (c *Client) ownSpan(ctx context.Context, method string, start time.Time, code codes.Code, err error, extra ...attribute.KeyValue) {
 	// As otelgrpc's ParseFullMethod: a method without its leading slash
 	// is the span's name, and rpc.method, and one with none is the name
 	// alone.
@@ -89,13 +97,37 @@ func (c *Client) reject(ctx context.Context, method string, err error) *result {
 		semconv.RPCSystemNameGRPC,
 		semconv.ServerAddress(c.host),
 		semconv.ServerPort(c.port),
-		semconv.RPCResponseStatusCode(strings.ToUpper(codes.Unavailable.String())),
+		semconv.RPCResponseStatusCode(codeName(code)),
 	)
-	_, span := c.tracer.Start(ctx, name, trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(attrs...))
-	span.SetStatus(otelcodes.Error, rerr.Error())
+	attrs = append(attrs, extra...)
+	_, span := c.tracer.Start(ctx, name,
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(attrs...),
+		trace.WithTimestamp(start),
+	)
+	span.SetStatus(otelcodes.Error, err.Error())
 	span.End()
+}
 
-	return &result{err: rerr, class: rejection}
+// codeName is code's name as otelgrpc writes it in
+// rpc.response.status_code: gRPC's canonical one, code's String in upper
+// snake case, such as DEADLINE_EXCEEDED, with Canceled spelt as gRPC
+// spells it, CANCELLED.
+func codeName(code codes.Code) string {
+	name := code.String()
+	if code == codes.Canceled {
+		name = "Cancelled"
+	}
+	var b strings.Builder
+	prev := ' '
+	for _, r := range name {
+		if unicode.IsUpper(r) && unicode.IsLower(prev) {
+			b.WriteByte('_')
+		}
+		b.WriteRune(unicode.ToUpper(r))
+		prev = r
+	}
+	return b.String()
 }
 
 // observe counts t, a transition of the breaker, in

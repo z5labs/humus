@@ -141,6 +141,14 @@ type Settings struct {
 	// close after 3 successful ones. Valid: Trip and Probe set, which
 	// NewClient checks. Check: none.
 	BreakerPolicy circuit.Policy
+
+	// ForwardScenario sends the failure scenario a call carries on to the
+	// dependency, for a dependency that takes part in failure injection
+	// with the same codec. When it is false, the scenario is stripped from
+	// what the client sends, and the rest of the call's baggage still goes.
+	//
+	// Default: false. Valid: either. Check: none.
+	ForwardScenario bool
 }
 
 // DefaultSettings returns the Client's defaults. Addr has none, so its Addr
@@ -165,6 +173,7 @@ func DefaultSettings() Settings {
 			Trip:  defaultTrip,
 			Probe: defaultProbe,
 		},
+		ForwardScenario: false,
 	}
 }
 
