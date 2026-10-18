@@ -21,3 +21,15 @@ type Channel = channel
 func SetOpen(svc *Service, open func(ctx context.Context) (Channel, io.Closer, error)) {
 	svc.open = open
 }
+
+// PublishChannel is what the Publisher uses of an AMQP channel.
+type PublishChannel = publishChannel
+
+// PublishConn is what the Publisher uses of an AMQP connection.
+type PublishConn = publishConn
+
+// SetDial replaces how p connects to the broker, so a unit test hands it a
+// stand-in for amqp091's connection, whose channels are stand-ins too.
+func SetDial(p *Publisher, dial func(ctx context.Context) (PublishConn, error)) {
+	p.dial = dial
+}

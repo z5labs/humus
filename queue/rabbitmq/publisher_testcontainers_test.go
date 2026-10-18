@@ -1,0 +1,134 @@
+//go:build testcontainers
+
+// Copyright (c) 2026 Z5Labs and Contributors
+//
+// This software is released under the MIT License.
+// https://opensource.org/licenses/MIT
+
+package rabbitmq_test
+
+// The tests in this file run Apps whose job publishes with a Publisher, on
+// humus.OSHost(), in real time, against the RabbitMQ in a container that
+// connect_testcontainers_test.go starts. They show against RabbitMQ itself
+// what the unit tests show on the stand-in: that a confirm, a return and a
+// channel error are what the broker sends.
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/stretchr/testify/require"
+
+	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/humustest"
+	"github.com/z5labs/humus/job"
+	"github.com/z5labs/humus/queue/rabbitmq"
+	"github.com/z5labs/humus/telemetry"
+)
+
+// publishErrs runs an App on humus.OSHost() whose Init builds a Publisher
+// over c, and whose job publishes each of ms with it, in order. It returns
+// each Publish's error, once the App has exited 0.
+func publishErrs(t *testing.T, c rabbitmq.Connection, ms ...rabbitmq.Publishing) []error {
+	t.Helper()
+	settings := rabbitmq.DefaultPublisherSettings()
+	settings.Connection = c
+	errs := make([]error, len(ms))
+	_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		pub, err := rabbitmq.NewPublisher(s, settings)
+		if err != nil {
+			return nil, err
+		}
+		return []humus.Service{job.NewService(s, func(ctx context.Context) error {
+			for i, m := range ms {
+				errs[i] = pub.Publish(ctx, m)
+			}
+			return nil
+		})}, nil
+	}, humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(telemetry.NoopBuilder)))
+	st := exit(t, status)
+	require.Zero(t, st.Code(), "cause: %v", st.Cause())
+	return errs
+}
+
+func TestPublisher_a_confirmed_publish_reaches_its_queue(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]func(*testing.T) rabbitmq.Connection{
+		"in plain text": plainText,
+		"over TLS":      overTLS,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			q := declareQueue(t)
+			at := time.Now().Truncate(time.Second).UTC()
+			m := rabbitmq.Publishing{
+				RoutingKey:      q,
+				Headers:         map[string]any{"tenant": "acme", "attempt": int32(1)},
+				ContentType:     "application/json",
+				ContentEncoding: "identity",
+				Priority:        3,
+				CorrelationID:   "corr-1",
+				ReplyTo:         "replies",
+				Expiration:      "600000",
+				MessageID:       "order-1",
+				Timestamp:       at,
+				Type:            "order.accepted",
+				AppID:           "orders-api",
+				Body:            []byte(`{"id":1}`),
+			}
+			errs := publishErrs(t, c(t), m)
+			require.NoError(t, errs[0])
+
+			got := takeReady(t, q)
+			require.Len(t, got, 1)
+			d := got[0]
+			require.Equal(t, amqp.Persistent, d.DeliveryMode, "published persistent")
+			require.Equal(t, amqp.Table{"tenant": "acme", "attempt": int32(1)}, d.Headers)
+			require.Equal(t, "application/json", d.ContentType)
+			require.Equal(t, "identity", d.ContentEncoding)
+			require.EqualValues(t, 3, d.Priority)
+			require.Equal(t, "corr-1", d.CorrelationId)
+			require.Equal(t, "replies", d.ReplyTo)
+			require.Equal(t, "600000", d.Expiration)
+			require.Equal(t, "order-1", d.MessageId)
+			require.True(t, at.Equal(d.Timestamp), "timestamp %v, want %v", d.Timestamp, at)
+			require.Equal(t, "order.accepted", d.Type)
+			require.Equal(t, "orders-api", d.AppId)
+			require.Equal(t, []byte(`{"id":1}`), d.Body)
+		})
+	}
+}
+
+func TestPublisher_an_unbound_routing_key_is_ErrUnroutable(t *testing.T) {
+	t.Parallel()
+
+	errs := publishErrs(t, plainText(t), rabbitmq.Publishing{
+		Exchange:   "amq.direct",
+		RoutingKey: unique("nobody-binds"),
+		Body:       []byte("lost"),
+	})
+	require.ErrorIs(t, errs[0], rabbitmq.ErrUnroutable)
+}
+
+func TestPublisher_a_missing_exchange_is_404_NOT_FOUND_and_the_next_publish_is_confirmed(t *testing.T) {
+	t.Parallel()
+
+	q := declareQueue(t)
+	errs := publishErrs(t, plainText(t),
+		rabbitmq.Publishing{Exchange: unique("missing"), RoutingKey: q, Body: []byte("lost")},
+		rabbitmq.Publishing{RoutingKey: q, MessageID: "kept", Body: []byte("kept")},
+	)
+	ae, ok := errors.AsType[*amqp.Error](errs[0])
+	require.True(t, ok, "err = %v", errs[0])
+	require.Equal(t, amqp.NotFound, ae.Code)
+
+	require.NoError(t, errs[1])
+	got := takeReady(t, q)
+	require.Len(t, got, 1)
+	require.Equal(t, "kept", got[0].MessageId)
+}

@@ -209,12 +209,7 @@ func checkSettings(settings Settings, p queue.Processor[Message]) error {
 		}
 		return true
 	}
-	c := settings.Connection
-	check("Settings.Connection.Addr", CheckAddr(c.Addr))
-	check("Settings.Connection.Vhost", CheckVhost(c.Vhost))
-	check("Settings.Connection.SASL", CheckSASL(c.SASL))
-	check("Settings.Connection.Heartbeat", CheckHeartbeat(c.Heartbeat))
-	check("Settings.Connection.ConnectTimeout", CheckConnectTimeout(c.ConnectTimeout))
+	errs = append(errs, checkConnection("Settings.Connection", settings.Connection)...)
 	check("Settings.Queue", CheckQueue(settings.Queue))
 	check("Settings.Delivery", queue.CheckDelivery(settings.Delivery))
 	prefetch := check("Settings.Prefetch", CheckPrefetch(settings.Prefetch))
@@ -227,6 +222,23 @@ func checkSettings(settings Settings, p queue.Processor[Message]) error {
 		errs = append(errs, errors.New("the Processor must not be nil"))
 	}
 	return errors.Join(errs...)
+}
+
+// checkConnection runs every check on c, and returns an error for each
+// field that fails its check, named under prefix.
+func checkConnection(prefix string, c Connection) []error {
+	var errs []error
+	check := func(field string, err error) {
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s%s %w", prefix, field, err))
+		}
+	}
+	check(".Addr", CheckAddr(c.Addr))
+	check(".Vhost", CheckVhost(c.Vhost))
+	check(".SASL", CheckSASL(c.SASL))
+	check(".Heartbeat", CheckHeartbeat(c.Heartbeat))
+	check(".ConnectTimeout", CheckConnectTimeout(c.ConnectTimeout))
+	return errs
 }
 
 // openChannel connects to the broker through host and opens a channel. The
