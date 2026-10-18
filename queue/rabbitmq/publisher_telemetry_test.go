@@ -304,10 +304,16 @@ func TestPublisher_never_records_the_body(t *testing.T) {
 		m := accepted
 		m.Body = []byte(body)
 
-		for _, outcome := range []func(*published){(*published).ack, (*published).nack, (*published).unroutable} {
+		for i, outcome := range []func(*published){(*published).ack, (*published).nack, (*published).unroutable} {
 			done := publishAsync(t.Context(), tp.pub, m)
 			outcome(<-tp.s.published)
-			<-done
+			err := <-done
+			if i == 0 {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				require.NotContains(t, err.Error(), body)
+			}
 		}
 
 		spans := tp.tel.Spans()
