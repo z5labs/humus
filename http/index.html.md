@@ -589,6 +589,17 @@ A handler that wants to abort a response without it being logged or
 recorded panics with `http.ErrAbortHandler` itself, which the Service passes
 through untouched.
 
+## Failure injection
+
+The Service strips the failure scenario a request carries, before the
+handler sees it, from every caller that `Settings.TrustScenario` doesn't
+trust, so a caller on the internet can't make the service fail on purpose.
+`TrustScenario` is given the `*http.Request`, such as to trust a caller whose
+client certificate the service mesh issued. When it is nil, the default, no
+caller is trusted. Without `humus.WithFaults`, nothing is stripped.
+[Failure injection](/humus/failure-injection/) explains the model,
+whom to trust and how, and how to test a scenario.
+
 ## Testing
 
 An HTTP service is tested whole, inside `testing/synctest`, as

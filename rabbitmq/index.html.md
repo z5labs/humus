@@ -1184,6 +1184,23 @@ their own records, above. An end user who wants amqp091's messages anyway
 sets the logger in `main`, once, knowing it reaches past the Setup's
 `LoggerProvider` to whatever the logger writes to.
 
+## Failure injection
+
+A Publisher is an injection point per destination,
+`rabbitmq:<exchange>:<routing key>`, such as `rabbitmq:orders:accepted`: a
+request or job whose baggage carries a failure scenario can make its
+publishes to one destination fail or slow down. An abort fails the attempt
+with nothing sent, marked as a lost connection's error is, so it is retried
+and the breaker counts it, as for a broker that is down. The Publisher
+strips the scenario from the message's headers, unless
+`PublisherSettings.ForwardScenario` is set. A Service strips the scenario a
+delivery carries, before `Process` sees it, unless `Settings.TrustScenario`
+trusts the delivery, such as by its `UserID`, which RabbitMQ validates
+against the publishing connection's user. When it is nil, the default, no
+delivery is trusted. Without `humus.WithFaults`, nothing is evaluated or
+stripped. [Failure injection](/humus/failure-injection/) explains
+the model, whom to trust and how, and how to test a scenario.
+
 ## Testing
 
 **humus ships no fake RabbitMQ broker, and no test package.** humus is

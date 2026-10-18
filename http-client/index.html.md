@@ -722,6 +722,20 @@ metric, with `humustest.Telemetry`'s `Metrics`, filtered to the scope.
 on the Telemetry page lists what each of humus's clients records, with the
 View and the test written out.
 
+## Failure injection
+
+Every client is an injection point, named after its dependency,
+`http:<host>:<port>`, such as `http:payments:8443`: a request whose baggage
+carries a failure scenario can make its attempts to that one dependency
+fail or slow down. An abort is a transport error, and a delay is waited
+inside `AttemptTimeout`. Either is a real failure to the client: `Classify`
+decides it, so it is retried, and the breaker counts it. The client strips
+the scenario from what it sends, unless `Settings.ForwardScenario` is set.
+Without `humus.WithFaults`, nothing is evaluated or stripped.
+[Failure injection](/humus/failure-injection/) explains the model,
+the points, a `Classify` that spares the breaker, and how to test a
+scenario.
+
 ## Testing
 
 A service that calls a dependency is tested whole, inside

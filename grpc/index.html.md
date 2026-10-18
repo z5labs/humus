@@ -704,6 +704,18 @@ when it panicked, for the RPCs that come after.
 Only RPCs are recovered. The lifecycle itself, the end user's `Init` and the
 Service's `Serve` and `Shutdown`, never recovers a panic.
 
+## Failure injection
+
+The Service strips the failure scenario an RPC carries, before any
+interceptor or handler of the end user's sees it, from every caller that
+`Settings.TrustScenario` doesn't trust, so a caller on the internet can't
+make the service fail on purpose. `TrustScenario` is given the RPC's
+context, with its peer and its incoming metadata, and its full method, such
+as to trust a caller whose client certificate the service mesh issued. When
+it is nil, the default, no caller is trusted. Without `humus.WithFaults`,
+nothing is stripped. [Failure injection](/humus/failure-injection/)
+explains the model, whom to trust and how, and how to test a scenario.
+
 ## Testing
 
 A gRPC service is tested whole, inside `testing/synctest`, as

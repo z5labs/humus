@@ -175,4 +175,10 @@ dials, and whose filesystem is confined to the test&amp;rsquo;s own temp directo
 &lt;/ul&gt;
 &lt;p&gt;The network opens no real socket and starts no goroutines, so the App runs in a
 &lt;a href="https://pkg.go.dev/testing/synctest"&gt;&lt;code&gt;testing/synctest&lt;/code&gt;&lt;/a&gt; bubble. It needs no
-real environment, no real time and no file outside the test&amp;rsquo;s temp directory.&lt;/p&gt;</description></item></channel></rss>
+real environment, no real time and no file outside the test&amp;rsquo;s temp directory.&lt;/p&gt;</description></item><item><title>Failure injection</title><link>https://z5labs.github.io/humus/failure-injection/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/failure-injection/</guid><description>&lt;p&gt;Failure injection lets one request fail on purpose, in production or in a
+test, without failing anyone else&amp;rsquo;s. A request carries a failure scenario in
+its OpenTelemetry baggage, and every injection point the request passes
+through, such as a call to a dependency, looks itself up in the scenario and
+learns whether to fail or slow down. The end user then sees how the whole
+service copes with a dependency that is down or slow: its retries, its
+breakers and its fallbacks.&lt;/p&gt;</description></item></channel></rss>

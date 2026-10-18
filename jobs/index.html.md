@@ -298,6 +298,18 @@ nothing logged, as for an HTTP request with a bad `traceparent` header.
 a new trace on every run, unless the pod spec sets `TRACEPARENT` itself or
 whatever creates the Job passes its own.
 
+## Failure injection
+
+A run's `BAGGAGE` is trusted: a failure scenario in it reaches the run's
+context unstripped, and the points of the clients the run calls with that
+context. Whoever starts the job, with its pod spec or otherwise, already
+sets every one of its settings, so a scenario there is set by the same
+hand. A job started by a service hands on that service's baggage, which
+that service's own server has already stripped of any scenario from a
+caller it doesn't trust. So `job` has no setting for failure injection.
+[Failure injection](/humus/failure-injection/) explains the model,
+and how a test sets a scenario in `BAGGAGE` with `humustest.WithEnv`.
+
 ## More than the job
 
 A process that runs a job next to other Services, such as a probes server
