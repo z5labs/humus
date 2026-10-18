@@ -985,8 +985,11 @@ func TestKafka_an_idempotent_Producer_with_acks_all_produces_what_the_Service_co
 
 	const n = 10
 	adm := admin(t)
-	// More partitions than one, so that one key keeping the records on one
-	// partition, in order, is the key's doing.
+	// More partitions than one, as a topic with a key would have. The order
+	// shown is the order Kafka keeps within one partition; that one key
+	// picks one partition is TestProduce_keeps_the_order_of_records_with_one_key's
+	// to show, since franz-go's sticky partitioner would put the records of
+	// one call on one partition without a key too.
 	topic, group := newTopic(t, adm, 3), unique("group")
 
 	ps := kafka.DefaultProducerSettings()
