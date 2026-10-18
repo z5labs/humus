@@ -845,17 +845,27 @@ The requests go through the API exactly as production's do: routing,
 parameters, codecs, answers and the document.
 
 The shoppingcart's `app_test.go` does it this way. Its `start` helper runs
-the service's `Init`, with every variable it reads, on a new Host:
+the service's `Init`, with every variable it reads, on a new Host, beside
+the test's identity provider, which serves a JSON Web Key Set from a handler
+of the test's own and signs the tokens the test sends:
 
 ```go
 // start runs initWith on open, with every setting it needs, on a new
-// humustest Host, and waits for it to listen. Call it inside the bubble that
-// uses it.
+// humustest Host, beside the test's identity provider, and waits for both
+// to listen. Call it inside the bubble that uses it.
 func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error), hostOpts ...humustest.HostOption) *service {
 	t.Helper()
 	ca := humustest.NewCA(t)
 	bundle, password := ca.Issue(t, "localhost").PKCS12(t)
-	h := humustest.NewHost(t, append(hostOpts, humustest.WithFiles(map[string][]byte{"tls.p12": bundle}))...)
+	idpCert := ca.Issue(t, "idp.internal")
+	h := humustest.NewHost(t, append(hostOpts, humustest.WithFiles(map[string][]byte{
+		"tls.p12":    bundle,
+		"idp-ca.pem": caPEM(idpCert),
+	}))...)
+
+	provider := newIdP(t)
+	stopIdP := provider.serve(t, h.Host(), idpHost, idpCert)
+	<-h.Listening(idpHost)
 
 	p, status := httpservertest.Start(t, init,
 		humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
@@ -867,10 +877,23 @@ func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Servi
 			// the real environment or ~/.pgpass. The password is new for
 			// each test.
 			"DATABASE_URL": "postgres://carts:" + rand.Text() + "@" + dbHost + "/carts?sslmode=disable",
+			// The key set is the test's, trusted through the test's CA.
+			"JWKS_URL":     "https://" + idpHost + jwksPath,
+			"JWKS_CA_FILE": "idp-ca.pem",
+			"JWT_ISSUER":   issuer,
+			"JWT_AUDIENCE": audience,
 		}),
 	)
 	<-h.Listening("localhost:8443")
-	return &service{h: h, client: httpservertest.NewClient(h, ca.Pool()), p: p, status: status}
+	return &service{
+		h:       h,
+		client:  httpservertest.NewClient(h, ca.Pool()),
+		p:       p,
+		status:  status,
+		idp:     provider,
+		stopIdP: stopIdP,
+		token:   provider.token(t, endpoint.ScopeWrite),
+	}
 }
 ```
 
@@ -943,10 +966,21 @@ and tested against the humus in the same commit. It has three packages:
   with `NewAPI`, and serves it with `httpserver.NewService`. Its package doc
   lists every variable the service reads.
 
+Every operation requires a JWT bearer token, which `auth/jwt`'s `Verifier`
+checks against the identity provider's key set, fetched by a
+`jwt.RemoteKeySet` with an `httpclient` client for the key set's origin.
+Changing a cart requires the scope `carts:write` too, which the token's
+claims, a type of the service's own, report through `auth.Scoped`. The
+document is public, served with `Document(path,
+openapi.Security(auth.Disabled()))`, and a `*jwt.KeySetError`, a key set
+that is down before any key was fetched, is answered with a 503 by an
+`openapi.Error`. The `app` package doc says how it authenticates, and how its
+tests get their tokens.
+
 Its tests run the whole service as [Testing](#testing) shows, its golden
 document is `app/testdata/openapi.json`, and a test behind the
 `testcontainers` build tag runs it once against Postgres in a container, on
-the OS Host, in a CI job of its own.
+the OS Host, beside the test's identity provider, in a CI job of its own.
 
 ### pgx's ambient leaks
 
