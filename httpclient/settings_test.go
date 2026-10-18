@@ -151,6 +151,41 @@ func TestDefaultSettings(t *testing.T) {
 	})
 }
 
+// newSetup returns a Setup on a new humustest Host, for a test that builds
+// a client and sends nothing.
+func newSetup(t *testing.T) *humus.Setup {
+	t.Helper()
+	return &humus.Setup{Host: humustest.NewHost(t).Host()}
+}
+
+func TestNewClient_the_Setup(t *testing.T) {
+	t.Parallel()
+
+	settings := httpclient.DefaultSettings()
+	settings.BaseURL = mustParse(t, "http://payments:8080")
+
+	t.Run("a nil Setup is rejected", func(t *testing.T) {
+		t.Parallel()
+		c, err := httpclient.NewClient(nil, settings)
+		require.Nil(t, c)
+		require.EqualError(t, err, "httpclient: NewClient: the Setup must not be nil")
+	})
+
+	t.Run("a Host with no Dial is rejected, rather than dialling the real network", func(t *testing.T) {
+		t.Parallel()
+		c, err := httpclient.NewClient(&humus.Setup{}, settings)
+		require.Nil(t, c)
+		require.EqualError(t, err, "httpclient: NewClient: the Setup's Host.Dial must not be nil")
+	})
+
+	t.Run("alongside the bad fields", func(t *testing.T) {
+		t.Parallel()
+		_, err := httpclient.NewClient(&humus.Setup{}, httpclient.DefaultSettings())
+		require.ErrorContains(t, err, "the Setup's Host.Dial must not be nil")
+		require.ErrorContains(t, err, "Settings.BaseURL must not be nil")
+	})
+}
+
 func TestNewClient_settings(t *testing.T) {
 	t.Parallel()
 
@@ -163,7 +198,7 @@ func TestNewClient_settings(t *testing.T) {
 
 	t.Run("DefaultSettings alone fails, naming BaseURL", func(t *testing.T) {
 		t.Parallel()
-		c, err := httpclient.NewClient(&humus.Setup{}, httpclient.DefaultSettings())
+		c, err := httpclient.NewClient(newSetup(t), httpclient.DefaultSettings())
 		require.Nil(t, c)
 		require.EqualError(t, err, "httpclient: NewClient: Settings.BaseURL must not be nil")
 	})
@@ -174,7 +209,7 @@ func TestNewClient_settings(t *testing.T) {
 		settings.TLS.InsecureSkipVerify = true
 		settings.Timeout = 0
 
-		_, err := httpclient.NewClient(&humus.Setup{}, settings)
+		_, err := httpclient.NewClient(newSetup(t), settings)
 		require.ErrorContains(t, err, "httpclient: NewClient: ")
 		require.ErrorContains(t, err, "Settings.TLS sets InsecureSkipVerify")
 		require.ErrorContains(t, err, "Settings.Timeout must be positive")
@@ -190,7 +225,7 @@ func TestNewClient_settings(t *testing.T) {
 		} {
 			settings := https(t)
 			change(&settings)
-			_, err := httpclient.NewClient(&humus.Setup{}, settings)
+			_, err := httpclient.NewClient(newSetup(t), settings)
 			require.ErrorContains(t, err, field)
 		}
 	})
@@ -199,7 +234,7 @@ func TestNewClient_settings(t *testing.T) {
 		t.Parallel()
 		settings := https(t)
 		settings.TLS = nil
-		c, err := httpclient.NewClient(&humus.Setup{}, settings)
+		c, err := httpclient.NewClient(newSetup(t), settings)
 		require.Nil(t, c)
 		require.EqualError(t, err, "httpclient: NewClient: Settings.TLS must be set for an https Settings.BaseURL")
 	})
@@ -208,7 +243,7 @@ func TestNewClient_settings(t *testing.T) {
 		t.Parallel()
 		settings := https(t)
 		settings.BaseURL = mustParse(t, "http://payments:8080")
-		c, err := httpclient.NewClient(&humus.Setup{}, settings)
+		c, err := httpclient.NewClient(newSetup(t), settings)
 		require.Nil(t, c)
 		require.EqualError(t, err, "httpclient: NewClient: Settings.TLS must be nil for an http Settings.BaseURL, which is plain text")
 	})
@@ -217,7 +252,7 @@ func TestNewClient_settings(t *testing.T) {
 		t.Parallel()
 		settings := httpclient.DefaultSettings()
 		settings.BaseURL = mustParse(t, "http://payments:8080")
-		c, err := httpclient.NewClient(&humus.Setup{}, settings)
+		c, err := httpclient.NewClient(newSetup(t), settings)
 		require.NoError(t, err)
 		require.NotNil(t, c)
 		require.Equal(t, 10*time.Second, c.Timeout)
@@ -226,7 +261,7 @@ func TestNewClient_settings(t *testing.T) {
 
 	t.Run("DefaultSettings with an https BaseURL and a TLS config passes", func(t *testing.T) {
 		t.Parallel()
-		c, err := httpclient.NewClient(&humus.Setup{}, https(t))
+		c, err := httpclient.NewClient(newSetup(t), https(t))
 		require.NoError(t, err)
 		require.NotNil(t, c)
 	})

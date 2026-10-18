@@ -450,6 +450,12 @@ func TestClient_a_call_fails_after_Timeout(t *testing.T) {
 	})
 }
 
+// TestClient_uses_no_proxy shows a call reaching the dependency directly
+// with the proxy variables set. net/http reads them once per process, for
+// http.ProxyFromEnvironment, so in a binary where something read them
+// earlier, setting them here would not catch a client that consulted them.
+// TestNewClient_the_client's check that the transport's Proxy is nil is
+// what guards that whatever the order the tests run in.
 func TestClient_uses_no_proxy(t *testing.T) {
 	t.Setenv("HTTPS_PROXY", "http://proxy:3128")
 	t.Setenv("HTTP_PROXY", "http://proxy:3128")

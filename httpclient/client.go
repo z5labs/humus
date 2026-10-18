@@ -35,13 +35,22 @@ const maxRedirects = 10
 // NewClient runs every check on settings, and rejects a TLS that doesn't
 // match BaseURL's scheme: an https BaseURL with a nil TLS, or an http one
 // with a config. It reports every bad field in one error that names each
-// one. It dials nothing, and registers a function with s.OnStop that closes
-// the client's idle connections.
+// one. It also rejects a nil s, and an s whose Host has no Dial, rather than
+// let net/http fall back to dialling the real network. It dials nothing, and
+// registers a function with s.OnStop that closes the client's idle
+// connections.
 //
 // The client dials through s.Host. A request to any origin other than
 // settings.BaseURL's fails without being sent.
 func NewClient(s *humus.Setup, settings Settings) (*http.Client, error) {
-	if err := checkSettings(settings); err != nil {
+	if s == nil {
+		return nil, errors.New("httpclient: NewClient: the Setup must not be nil")
+	}
+	err := checkSettings(settings)
+	if s.Host.Dial == nil {
+		err = errors.Join(errors.New("the Setup's Host.Dial must not be nil"), err)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("httpclient: NewClient: %w", err)
 	}
 
