@@ -7,6 +7,7 @@ package rabbitmq_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -279,7 +280,7 @@ func TestPublisher_a_failed_publish_is_on_its_span_and_both_instruments(t *testi
 	}
 }
 
-func TestPublisher_a_Publish_that_fails_before_it_publishes_is_on_its_span_but_no_instrument(t *testing.T) {
+func TestPublisher_a_Publish_that_fails_before_it_publishes_is_on_its_span_but_no_messaging_instrument(t *testing.T) {
 	t.Parallel()
 
 	synctest.Test(t, func(t *testing.T) {
@@ -298,7 +299,12 @@ func TestPublisher_a_Publish_that_fails_before_it_publishes_is_on_its_span_but_n
 		require.NoError(t, err)
 		for _, sm := range rm.ScopeMetrics {
 			for _, m := range sm.Metrics {
-				require.Empty(t, dataPointAttrs(m), "no attempt was made, but %s recorded one", m.Name)
+				if strings.HasPrefix(m.Name, "humus.") {
+					// humus's own instruments count the attempt the breaker
+					// admitted, which metrics_test.go shows.
+					continue
+				}
+				require.Empty(t, dataPointAttrs(m), "nothing was published, but %s recorded it", m.Name)
 			}
 		}
 	})

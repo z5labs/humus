@@ -886,11 +886,12 @@ turns the breaker off, as on the Kafka page's
 [circuit breaker]({{< relref "kafka#the-circuit-breaker" >}}).
 
 Each change of the breaker's state is a log record, as
-[The logs](#the-logs) lists. There are no instruments of humus's own for the
-breaker: its transitions are in the logs, and a rejected `Publish` is an
-error on its span. Whether humus records instruments of its own, such as
-gauges of the breaker's state and the budget's tokens, is
-**Proposal: humus's own metrics**, in wave 5.
+[The logs](#the-logs) lists. The `Publisher` measures the breaker and the
+retries too, with four instruments of humus's own: the breaker's state, its
+changes of state, the attempts it counted or rejected, and what `retry`
+decided after each attempt, as
+[humus's own instruments](#humuss-own-instruments) lists. A rejected
+`Publish` is also an error on its span.
 
 ### Shutdown and the grace period
 
@@ -1072,7 +1073,8 @@ as `312` for a return and `404` for an exchange that doesn't exist, and a
 nack has `nacked`. A nack followed by a confirm counts two messages sent, one
 with `error.type` `nacked`. An attempt that fails before it publishes,
 waiting for a channel or connecting, publishes nothing, so neither
-instrument records it, and neither does an attempt the breaker rejected.
+instrument records it, and neither does an attempt the breaker rejected;
+`humus.circuit.calls` counts that one as `rejected`.
 
 **A routing key that carries identifiers makes a series per key.** semconv's
 destination name includes the routing key, so each routing key a message
@@ -1080,6 +1082,68 @@ arrives or leaves with is a series of its own in the instruments. A
 publisher that puts identifiers, such as an order's ID, in its routing keys
 gives every consumer a series per key, which a metrics backend may struggle
 with; such identifiers belong in headers, or in the body, instead.
+
+### humus's own instruments
+
+The `Publisher` records four instruments of humus's own for its
+[breaker](#the-circuit-breaker) and its
+[retries](#timeout-retries-and-the-budget), with the Setup's
+`MeterProvider`, in the scope `github.com/z5labs/humus/queue/rabbitmq`,
+beside its messaging instruments:
+
+| Instrument | Kind | Unit | Attributes | Recorded |
+|---|---|---|---|---|
+| `humus.circuit.state` | asynchronous UpDownCounter | `{breaker}` | `humus.circuit.state`: `closed`, `open` or `half-open` | at each collection: 1 for the breaker's state, 0 for the other two |
+| `humus.circuit.transitions` | Counter | `{transition}` | `humus.circuit.state`, the state it went to, and `humus.circuit.previous_state`, the one it left | at each change of the breaker's state, beside its log record |
+| `humus.circuit.calls` | Counter | `{call}` | `humus.circuit.outcome`: `success`, `failure`, `ignored` or `rejected` | once an attempt has its result, or as the breaker rejects it |
+| `humus.retry.decisions` | Counter | `{decision}` | `humus.retry.decision`: `again`, `succeeded`, `stopped`, `exhausted`, `throttled` or `expired` | after each attempt, with what `retry` decided |
+
+Every data point also carries `server.address` and `server.port`, from
+`Connection.Addr`, the same as the breaker's log records, and nothing per
+`Publish`, such as an exchange or a routing key: the messaging instruments
+break publishes down already. Each other attribute's value is the `String()`
+of bedrock's own type, `circuit.State`, `circuit.Outcome` or
+`retry.Decision`.
+
+- **`humus.circuit.state` is read, not tracked.** At each collection it reads
+  the breaker's state once, so it shows `half-open` as soon as `OpenFor` has
+  passed, with no `Publish` made. Two `Publisher`s of one broker add up: one
+  breaker open and one closed read `closed` 1 and `open` 1. The App's last
+  collection, after the `OnStop` functions, still reads it, so the final
+  export has the state the App stopped in.
+- **`humus.circuit.transitions` catches the short opens.** A breaker can
+  open, go half-open and close between two collections, a minute apart by
+  default, and `humus.circuit.state` never shows it open.
+- **`humus.circuit.calls` counts an attempt when the breaker does.** One call
+  is one attempt, so a `Publish` retried twice is three calls. An attempt the
+  breaker rejects is `rejected`: it sent nothing, so it is in neither
+  messaging instrument.
+- **`humus.retry.decisions` says why a `Publish` stopped trying.** A
+  `throttled` decision is a retry the `RetryBudget` refused, and an
+  `exhausted` one is a `Publish` that used every one of `MaxAttempts`. An
+  attempt the breaker rejected is `stopped`, as `retry` decides for it.
+
+The Service's connection retries record none of them: they aren't on the
+request path, and each failed connect is already a `connecting failed`
+record.
+
+In Prometheus, they are `humus_circuit_state`,
+`humus_circuit_transitions_total`, `humus_circuit_calls_total` and
+`humus_retry_decisions_total`, and each attribute is a label such as
+`humus_circuit_state`. An alert on an open breaker reads the state, and one
+on retries the budget throttles reads the decisions:
+
+```promql
+# A breaker is open now.
+humus_circuit_state{humus_circuit_state="open"} > 0
+
+# The retry budget refused retries in the last 5 minutes.
+increase(humus_retry_decisions_total{humus_retry_decision="throttled"}[5m]) > 0
+```
+
+A View in the end user's telemetry `Builder` drops or renames any of them.
+humus has no setting to turn them off. A test reads them as it reads any
+metric, with `humustest.Telemetry`'s `Metrics`, filtered to the scope.
 
 ### The logs
 
@@ -1106,11 +1170,15 @@ that call's trace ID:
 | `circuit breaker half-open` | INFO | the breaker's `OpenFor` passed, and it lets probes through |
 | `circuit breaker closed` | INFO | enough probes were confirmed |
 
-Their attributes are `server.address` and `server.port`,
-`circuit.previous_state`, and the counts of the state the breaker left:
-`circuit.successes`, `circuit.failures`, `circuit.consecutive_successes`,
-`circuit.consecutive_failures` and `circuit.timed_out`. So an alert on
-`circuit breaker open` says the broker kept failing, and the counts say how.
+Their attributes are `server.address` and `server.port`, the state the
+breaker left as `humus.circuit.previous_state`, and the counts of that state:
+`humus.circuit.successes`, `humus.circuit.failures`,
+`humus.circuit.consecutive_successes`, `humus.circuit.consecutive_failures`
+and `humus.circuit.timed_out`. The bodies and the attributes are those of
+humus's other clients' breaker records, so one query finds every breaker.
+So an alert on `circuit breaker open` says the broker kept failing, and the
+counts say how; an alert on a metric, `humus.circuit.state`, is in
+[humus's own instruments](#humuss-own-instruments).
 
 ### amqp091's logger
 

@@ -124,14 +124,14 @@ func TestPublisher_fails_at_once_once_the_breaker_opens(t *testing.T) {
 		require.Len(t, open, 1)
 		require.Equal(t, log.SeverityWarn, open[0].Severity())
 		require.Equal(t, map[string]string{
-			"server.address":                "rabbit",
-			"server.port":                   "5672",
-			"circuit.previous_state":        "closed",
-			"circuit.successes":             "0",
-			"circuit.failures":              "5",
-			"circuit.consecutive_successes": "0",
-			"circuit.consecutive_failures":  "5",
-			"circuit.timed_out":             "0",
+			"server.address":                      "rabbit",
+			"server.port":                         "5672",
+			"humus.circuit.previous_state":        "closed",
+			"humus.circuit.successes":             "0",
+			"humus.circuit.failures":              "5",
+			"humus.circuit.consecutive_successes": "0",
+			"humus.circuit.consecutive_failures":  "5",
+			"humus.circuit.timed_out":             "0",
 		}, attrs(open[0]))
 		require.Equal(t, []string{breakerOpen}, breakerLogs(tel))
 	})
@@ -203,20 +203,20 @@ func TestPublisher_the_breaker_closes_again(t *testing.T) {
 		halfOpen := records(tp.tel.Logs(), breakerHalfOpen)
 		require.Len(t, halfOpen, 1)
 		require.Equal(t, log.SeverityInfo, halfOpen[0].Severity())
-		require.Equal(t, "open", attrs(halfOpen[0])["circuit.previous_state"])
+		require.Equal(t, "open", attrs(halfOpen[0])["humus.circuit.previous_state"])
 
 		closed := records(tp.tel.Logs(), breakerClosed)
 		require.Len(t, closed, 1)
 		require.Equal(t, log.SeverityInfo, closed[0].Severity())
 		require.Equal(t, map[string]string{
-			"server.address":                "rabbit",
-			"server.port":                   "5672",
-			"circuit.previous_state":        "half-open",
-			"circuit.successes":             "3",
-			"circuit.failures":              "0",
-			"circuit.consecutive_successes": "3",
-			"circuit.consecutive_failures":  "0",
-			"circuit.timed_out":             "0",
+			"server.address":                      "rabbit",
+			"server.port":                         "5672",
+			"humus.circuit.previous_state":        "half-open",
+			"humus.circuit.successes":             "3",
+			"humus.circuit.failures":              "0",
+			"humus.circuit.consecutive_successes": "3",
+			"humus.circuit.consecutive_failures":  "0",
+			"humus.circuit.timed_out":             "0",
 		}, attrs(closed[0]))
 	})
 }
