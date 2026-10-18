@@ -11,20 +11,24 @@ package rabbitmq_test
 // humus.OSHost(), in real time, against the RabbitMQ in a container that
 // connect_testcontainers_test.go starts. They show against RabbitMQ itself
 // what the unit tests show on the stand-in: that a confirm, a return and a
-// channel error are what the broker sends.
+// channel error are what the broker sends, and that the trace context the
+// Publisher injects reaches the Service that consumes the message.
 
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/job"
+	"github.com/z5labs/humus/queue"
 	"github.com/z5labs/humus/queue/rabbitmq"
 	"github.com/z5labs/humus/telemetry"
 )
@@ -131,4 +135,76 @@ func TestPublisher_a_missing_exchange_is_404_NOT_FOUND_and_the_next_publish_is_c
 	got := takeReady(t, q)
 	require.Len(t, got, 1)
 	require.Equal(t, "kept", got[0].MessageId)
+}
+
+func TestPublisher_carries_its_trace_to_the_Service_that_consumes_the_message(t *testing.T) {
+	t.Parallel()
+
+	q := declareQueue(t)
+	var (
+		got       recorder
+		processed = make(chan struct{})
+		once      sync.Once
+		mu        sync.Mutex
+		inSpan    trace.SpanContext
+		pubErr    error
+	)
+	tel := humustest.NewTelemetry()
+	_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		settings := rabbitmq.DefaultPublisherSettings()
+		settings.Connection = plainText(t)
+		pub, err := rabbitmq.NewPublisher(s, settings)
+		if err != nil {
+			return nil, err
+		}
+		svc, err := rabbitmq.NewService(s, consumerSettings(plainText(t), q), queue.ProcessorFunc[rabbitmq.Message](func(ctx context.Context, m rabbitmq.Message) error {
+			mu.Lock()
+			inSpan = trace.SpanContextFromContext(ctx)
+			mu.Unlock()
+			got.add(m)
+			once.Do(func() { close(processed) })
+			return nil
+		}))
+		if err != nil {
+			return nil, err
+		}
+		// The job publishes, and ends the App once the Service has
+		// processed what it published.
+		return []humus.Service{svc, job.NewService(s, func(ctx context.Context) error {
+			err := pub.Publish(ctx, rabbitmq.Publishing{RoutingKey: q, MessageID: "traced", Body: []byte("traced")})
+			mu.Lock()
+			pubErr = err
+			mu.Unlock()
+			if err != nil {
+				return nil
+			}
+			select {
+			case <-processed:
+			case <-ctx.Done():
+			}
+			return nil
+		})}, nil
+	}, humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(tel.Builder())))
+	st := exit(t, status)
+	require.Zero(t, st.Code(), "cause: %v", st.Cause())
+	mu.Lock()
+	require.NoError(t, pubErr)
+	mu.Unlock()
+	require.Equal(t, []string{"traced"}, got.ids())
+
+	sends := spansNamed(tel, "send amq.default")
+	require.Len(t, sends, 1)
+	send := sends[0]
+	require.Equal(t, trace.SpanKindProducer, send.SpanKind())
+	require.Equal(t, q, spanAttrs(send)["messaging.destination.name"].AsString())
+
+	processes := spansNamed(tel, "process "+q)
+	require.Len(t, processes, 1)
+	process := processes[0]
+	require.Equal(t, send.SpanContext().TraceID(), process.SpanContext().TraceID(), "the consumer continues the publisher's trace")
+	require.Equal(t, send.SpanContext().SpanID(), process.Parent().SpanID(), "the consumer's span is a child of the Publisher's send span")
+	require.True(t, process.Parent().IsRemote(), "the parent came through the message's headers")
+	mu.Lock()
+	require.Equal(t, process.SpanContext(), inSpan, "Process's context carries the process span")
+	mu.Unlock()
 }

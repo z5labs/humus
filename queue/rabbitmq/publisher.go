@@ -10,13 +10,29 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
+	"go.opentelemetry.io/otel/semconv/v1.43.0/messagingconv"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/z5labs/humus"
 )
+
+// sendOperation is the messaging.operation.name of publishing a message.
+const sendOperation = "send"
+
+// defaultExchange is the name a publish to the default exchange has in its
+// span's name, as semconv names it.
+const defaultExchange = "amq.default"
 
 // Publishing is a message to publish. Its zero value is persistent.
 type Publishing struct {
@@ -27,7 +43,8 @@ type Publishing struct {
 	// RoutingKey is the routing key to publish with.
 	RoutingKey string
 
-	// Headers are its headers. Publish never changes the map.
+	// Headers are its headers. Publish never changes the map: it publishes
+	// a copy, with the trace context injected.
 	Headers map[string]any
 
 	// ContentType is its MIME content type.
@@ -70,15 +87,17 @@ type Publishing struct {
 }
 
 // amqpPublishing returns m as amqp091's Publishing: persistent unless
-// Transient is set, with a copy of m.Headers, and every other field as it
-// is.
+// Transient is set, with a copy of m.Headers, a new map when m.Headers is
+// nil, and every other field as it is.
 func (m Publishing) amqpPublishing() amqp.Publishing {
 	mode := amqp.Persistent
 	if m.Transient {
 		mode = amqp.Transient
 	}
+	headers := make(amqp.Table, len(m.Headers))
+	maps.Copy(headers, m.Headers)
 	return amqp.Publishing{
-		Headers:         amqp.Table(maps.Clone(m.Headers)),
+		Headers:         headers,
 		ContentType:     m.ContentType,
 		ContentEncoding: m.ContentEncoding,
 		DeliveryMode:    mode,
@@ -101,6 +120,9 @@ var ErrUnroutable = errors.New("rabbitmq: message unroutable")
 // errStopped is the error of a Publish once the Publisher's OnStop function
 // has run.
 var errStopped = errors.New("rabbitmq: the Publisher is stopped")
+
+// errNacked is matched by the error of a publish the broker nacked.
+var errNacked = errors.New("the broker nacked the message")
 
 // publishChannel is what the Publisher uses of an AMQP channel.
 // *amqp.Channel satisfies it, and a unit test replaces it with a stand-in.
@@ -149,6 +171,15 @@ type Publisher struct {
 	settings PublisherSettings
 	dial     dialFunc
 
+	tracer     trace.Tracer
+	propagator propagation.TextMapPropagator
+	sent       messagingconv.ClientSentMessages
+	duration   messagingconv.ClientOperationDuration
+
+	// serverAddr and serverPort are Connection.Addr's host and port.
+	serverAddr string
+	serverPort int
+
 	// slots holds a token for each publish in flight, so there are at most
 	// Channels of them.
 	slots chan struct{}
@@ -190,17 +221,38 @@ type confirmChannel struct {
 // stopped, so a Processor finishing its delivery during the drain can still
 // publish, and it also runs when Init fails after NewPublisher. After it
 // has run, Publish fails at once.
+//
+// The Publisher reports through s.Telemetry, and never through
+// OpenTelemetry's globals, under the Service's scope,
+// github.com/z5labs/humus/queue/rabbitmq: a span for every Publish, and two
+// instruments for every attempt, as Publish describes.
 func NewPublisher(s *humus.Setup, settings PublisherSettings) (*Publisher, error) {
 	if err := checkPublisherSettings(settings); err != nil {
 		return nil, fmt.Errorf("rabbitmq: NewPublisher: %w", err)
 	}
+	meter := s.Telemetry.MeterProvider.Meter(scopeName)
+	sent, err1 := messagingconv.NewClientSentMessages(meter)
+	duration, err2 := messagingconv.NewClientOperationDuration(meter)
+	if err := errors.Join(err1, err2); err != nil {
+		return nil, fmt.Errorf("rabbitmq: NewPublisher: creating the instruments: %w", err)
+	}
+	// CheckAddr has accepted Addr, so it splits, and its port is a number.
+	host, port, _ := net.SplitHostPort(settings.Connection.Addr)
+	portNum, _ := strconv.Atoi(port)
+
 	stopped, stop := context.WithCancel(context.Background())
 	p := &Publisher{
-		settings: settings,
-		slots:    make(chan struct{}, settings.Channels),
-		connLock: make(chan struct{}, 1),
-		stopped:  stopped,
-		stop:     stop,
+		settings:   settings,
+		tracer:     s.Telemetry.TracerProvider.Tracer(scopeName),
+		propagator: s.Telemetry.Propagator,
+		sent:       sent,
+		duration:   duration,
+		serverAddr: host,
+		serverPort: portNum,
+		slots:      make(chan struct{}, settings.Channels),
+		connLock:   make(chan struct{}, 1),
+		stopped:    stopped,
+		stop:       stop,
 	}
 	p.dial = func(ctx context.Context) (publishConn, error) {
 		c, err := connect(ctx, s.Host, settings.Connection)
@@ -262,20 +314,149 @@ func (p *Publisher) close(ctx context.Context) error {
 // Settings.Timeout bounds the whole Publish, its confirm included, unless
 // ctx has an earlier deadline, which then wins. When ctx is done first,
 // Publish returns an error wrapping ctx's error.
-func (p *Publisher) Publish(ctx context.Context, m Publishing) error {
+//
+// Each Publish has a span, a child of ctx's, named "send <exchange>", or
+// "send amq.default" for the default exchange, of kind PRODUCER. Its
+// attributes are messaging.system (rabbitmq), messaging.operation.type and
+// messaging.operation.name (both send), messaging.destination.name
+// ({exchange}:{routing key}, leaving out what is empty),
+// messaging.rabbitmq.destination.routing_key when it isn't empty,
+// messaging.message.id and messaging.message.conversation_id when they are
+// set, server.address and server.port. The span is started before m's
+// headers are written, and the Setup's propagator injects its trace context
+// into a copy of m.Headers, so the consumer's span is its child. m.Headers
+// itself is never changed. A failed Publish is recorded on its span, with
+// error.type and an error status. The body is never recorded.
+//
+// Each attempt to publish m records messaging.client.sent.messages, and
+// messaging.client.operation.duration, from the publish to the broker's
+// confirm, in seconds. Each has messaging.system,
+// messaging.operation.name, messaging.destination.name, server.address and
+// server.port, and error.type when the attempt failed: the broker's reply
+// code for a return or a channel error, nacked for a nack. A Publish that
+// fails before it publishes, waiting for a channel or connecting, makes no
+// attempt and records neither.
+func (p *Publisher) Publish(ctx context.Context, m Publishing) (err error) {
+	ctx, span := p.tracer.Start(ctx, spanName(m.Exchange),
+		trace.WithSpanKind(trace.SpanKindProducer),
+		trace.WithAttributes(p.spanAttrs(m)...),
+	)
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			span.SetAttributes(errorType(err))
+		}
+		span.End()
+	}()
+
 	if p.stopped.Err() != nil {
 		return errStopped
 	}
 	ctx, cancel := context.WithTimeout(ctx, p.settings.Timeout)
 	defer cancel()
 
+	msg := m.amqpPublishing()
+	p.propagator.Inject(ctx, (*headerCarrier)(&msg.Headers))
+
 	cc, err := p.take(ctx, m)
 	if err != nil {
 		return err
 	}
-	reuse, err := cc.publish(ctx, m)
+	reuse, err := p.attempt(ctx, cc, m, msg)
 	p.give(cc, reuse)
 	return err
+}
+
+// attempt publishes msg, which is m with its trace context, on cc, and
+// records the attempt on both instruments. It returns what cc.publish
+// returns.
+func (p *Publisher) attempt(ctx context.Context, cc *confirmChannel, m Publishing, msg amqp.Publishing) (reuse bool, err error) {
+	start := time.Now()
+	reuse, err = cc.publish(ctx, m, msg)
+	elapsed := time.Since(start).Seconds()
+
+	attrs := p.instrumentAttrs(m)
+	if err != nil {
+		attrs = append(attrs, errorType(err))
+	}
+	p.sent.Add(ctx, 1, sendOperation, messagingconv.SystemRabbitMQ, attrs...)
+	p.duration.Record(ctx, elapsed, sendOperation, messagingconv.SystemRabbitMQ, attrs...)
+	return reuse, err
+}
+
+// spanName is the name of the span of a publish to exchange.
+func spanName(exchange string) string {
+	if exchange == "" {
+		exchange = defaultExchange
+	}
+	return sendOperation + " " + exchange
+}
+
+// spanAttrs returns the attributes of m's span.
+func (p *Publisher) spanAttrs(m Publishing) []attribute.KeyValue {
+	attrs := append(p.instrumentAttrs(m),
+		semconv.MessagingSystemRabbitMQ,
+		semconv.MessagingOperationTypeSend,
+		semconv.MessagingOperationName(sendOperation),
+	)
+	if m.RoutingKey != "" {
+		attrs = append(attrs, semconv.MessagingRabbitMQDestinationRoutingKey(m.RoutingKey))
+	}
+	if m.MessageID != "" {
+		attrs = append(attrs, semconv.MessagingMessageID(m.MessageID))
+	}
+	if m.CorrelationID != "" {
+		attrs = append(attrs, semconv.MessagingMessageConversationID(m.CorrelationID))
+	}
+	return attrs
+}
+
+// instrumentAttrs returns the attributes both instruments record for m,
+// beside messaging.system, messaging.operation.name and error.type:
+// messaging.destination.name, when it isn't empty, server.address and
+// server.port. Each call returns a new slice.
+func (p *Publisher) instrumentAttrs(m Publishing) []attribute.KeyValue {
+	attrs := make([]attribute.KeyValue, 0, 10)
+	if name := sendDestinationName(m.Exchange, m.RoutingKey); name != "" {
+		attrs = append(attrs, semconv.MessagingDestinationName(name))
+	}
+	return append(attrs,
+		semconv.ServerAddress(p.serverAddr),
+		semconv.ServerPort(p.serverPort),
+	)
+}
+
+// sendDestinationName is a publish's messaging.destination.name, as semconv
+// v1.43.0 defines it for RabbitMQ: {exchange}:{routing key}, leaving out
+// what is empty. A message published to the default exchange with the
+// routing key orders is orders.
+func sendDestinationName(exchange, routingKey string) string {
+	parts := make([]string, 0, 2)
+	if exchange != "" {
+		parts = append(parts, exchange)
+	}
+	if routingKey != "" {
+		parts = append(parts, routingKey)
+	}
+	return strings.Join(parts, ":")
+}
+
+// errorType is the error.type of a failed publish: the AMQP reply code of
+// a channel error, or of the return of an unroutable message, nacked for a
+// nack, and semconv's error.type of any other error.
+func errorType(err error) attribute.KeyValue {
+	if ae, ok := errors.AsType[*amqp.Error](err); ok {
+		return semconv.ErrorTypeKey.String(strconv.Itoa(ae.Code))
+	}
+	switch {
+	case errors.Is(err, ErrUnroutable):
+		return semconv.ErrorTypeKey.String(strconv.Itoa(amqp.NoRoute))
+	case errors.Is(err, errNacked):
+		return semconv.ErrorTypeKey.String("nacked")
+	default:
+		return semconv.ErrorType(err)
+	}
 }
 
 // destination names where m is published, for an error.
@@ -444,16 +625,16 @@ func (cc *confirmChannel) open() bool {
 	return !cc.conn.IsClosed() && !cc.ch.IsClosed()
 }
 
-// publish publishes m on cc with mandatory set, and waits for the broker's
-// confirm, or for ctx. It returns whether cc can carry another publish,
-// and the publish's error.
+// publish publishes msg, which is m as amqp091 publishes it, on cc with
+// mandatory set, and waits for the broker's confirm, or for ctx. It returns
+// whether cc can carry another publish, and the publish's error.
 //
 // amqp091 hands a basic.return to the channel's listener before it hands
 // over the confirm that follows it, so a return that is waiting once the
 // confirm arrives belongs to this publish.
-func (cc *confirmChannel) publish(ctx context.Context, m Publishing) (reuse bool, err error) {
+func (cc *confirmChannel) publish(ctx context.Context, m Publishing, msg amqp.Publishing) (reuse bool, err error) {
 	dest := destination(m)
-	if err := cc.ch.PublishWithContext(ctx, m.Exchange, m.RoutingKey, true, false, m.amqpPublishing()); err != nil {
+	if err := cc.ch.PublishWithContext(ctx, m.Exchange, m.RoutingKey, true, false, msg); err != nil {
 		if ctx.Err() != nil {
 			return false, fmt.Errorf("rabbitmq: publishing to %s: %w", dest, ctx.Err())
 		}
@@ -470,7 +651,7 @@ func (cc *confirmChannel) publish(ctx context.Context, m Publishing) (reuse bool
 		default:
 		}
 		if !c.Ack {
-			return true, fmt.Errorf("rabbitmq: publishing to %s: the broker nacked the message", dest)
+			return true, fmt.Errorf("rabbitmq: publishing to %s: %w", dest, errNacked)
 		}
 		return true, nil
 	case e, ok := <-cc.closes:

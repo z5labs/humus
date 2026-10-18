@@ -171,7 +171,8 @@
 // TracerProvider and MeterProvider, under the scope
 // github.com/z5labs/humus/queue/rabbitmq, and its propagator is the SDK's
 // Propagator. Their names and attributes are OpenTelemetry's semantic
-// conventions for RabbitMQ, as semconv v1.43.0 has them.
+// conventions for RabbitMQ, as semconv v1.43.0 has them. The Publisher
+// reports the same way, as Publishing describes.
 //
 // Each delivery is processed under a span of its own, named "process
 // <queue>", of kind CONSUMER, whose context Process is given. The span's
@@ -481,6 +482,49 @@
 // [Publishing].Transient makes it delivery mode 1. Every other field is
 // passed to the broker as it is, and the caller's Headers map is never
 // changed.
+//
+// The Publisher reports through the Setup's telemetry, as the Service does,
+// under the same scope. Each Publish has a span of its own, a child of the
+// span on the caller's context, named "send <exchange>", or "send
+// amq.default" for the default exchange, of kind PRODUCER. The span is
+// started before the message's headers are written, and the Setup's
+// propagator injects its trace context, and the caller's baggage, into a
+// copy of the headers, so the consumer's "process <queue>" span continues
+// the publisher's trace without the end user's code touching the headers.
+// A nil Headers map gets a new one. The span's attributes are:
+//
+//   - messaging.system (rabbitmq), and messaging.operation.type and
+//     messaging.operation.name, both send;
+//   - messaging.destination.name, as semconv defines it for a RabbitMQ
+//     publish: {exchange}:{routing key}, leaving out what is empty, so a
+//     message published to the default exchange with the routing key orders
+//     is orders, and one published to the exchange shop with the routing key
+//     order.created is shop:order.created;
+//   - messaging.rabbitmq.destination.routing_key, when the routing key isn't
+//     empty;
+//   - messaging.message.id, and messaging.message.conversation_id, from the
+//     correlation ID, when they are set;
+//   - server.address and server.port, from Connection.Addr.
+//
+// The message's body is never recorded. A failed Publish is recorded on
+// its span as an exception event, with error.type and an error status.
+//
+// Each attempt to publish records two instruments of OpenTelemetry's
+// messaging conventions:
+//
+//   - messaging.client.sent.messages counts the messages published;
+//   - messaging.client.operation.duration is how long the broker took to
+//     confirm each, from the publish to its confirm, in seconds.
+//
+// Each has messaging.system, messaging.operation.name (send),
+// messaging.destination.name, server.address and server.port, and
+// error.type when the attempt failed. A return and a channel error have the
+// broker's AMQP reply code as error.type, such as 312 for a return and 404
+// for an exchange that doesn't exist, and a nack has nacked. A Publish that
+// fails before it publishes, waiting for a channel or connecting, is on its
+// span but makes no attempt, so neither instrument records it. As with the
+// Service, a routing key that carries identifiers makes a series per key in
+// both instruments.
 //
 // # Topology
 //
