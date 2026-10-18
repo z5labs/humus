@@ -24,13 +24,17 @@ spec:
           spec:
             properties:
               image:
+                default: memcached:1.6.26-alpine3.19
+                pattern: '^memcached:'
                 type: string
               size:
+                description: How many memcached pods run.
                 format: int32
+                maximum: 3
+                minimum: 1
                 type: integer
             required:
             - size
-            - image
             type: object
           status:
             properties:
@@ -59,6 +63,9 @@ spec:
                   - message
                   type: object
                 type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
               readyReplicas:
                 format: int32
                 type: integer

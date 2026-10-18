@@ -22,6 +22,7 @@ spec:
           metadata:
             type: object
           spec:
+            description: A widget.
             properties:
               config:
                 type: object
@@ -58,8 +59,12 @@ spec:
                 - type: string
                 x-kubernetes-int-or-string: true
               name:
+                description: The widget's name.
+                maxLength: 63
+                minLength: 1
                 type: string
               paused:
+                default: false
                 type: boolean
               ports:
                 items:
@@ -68,12 +73,18 @@ spec:
                       type: string
                     port:
                       format: int32
+                      minimum: 1
                       type: integer
                   required:
                   - name
                   - port
                   type: object
+                maxItems: 8
+                minItems: 1
                 type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               replicas:
                 format: int32
                 type: integer
@@ -104,10 +115,19 @@ spec:
                     type: object
                 type: object
               shade:
+                enum:
+                - red
+                - green
+                - blue
                 type: string
               started:
                 format: date-time
                 type: string
+              tags:
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: set
               target:
                 anyOf:
                 - type: integer
@@ -122,7 +142,14 @@ spec:
                 required:
                 - image
                 type: object
+                x-kubernetes-validations:
+                - message: a template names its image
+                  rule: self.image != ''
               timeout:
+                type: string
+              version:
+                description: A version, such as 1.2.3.
+                pattern: ^[0-9]+\.[0-9]+\.[0-9]+$
                 type: string
               volumes:
                 additionalProperties:
@@ -132,6 +159,8 @@ spec:
                   type: object
                 type: object
               weight:
+                maximum: 1
+                minimum: 0
                 type: number
               windows:
                 additionalProperties:
@@ -142,13 +171,15 @@ spec:
                 type: object
             required:
             - name
-            - paused
             - ports
             - template
             - timeout
             - memory
             - extra
             type: object
+            x-kubernetes-validations:
+            - message: replicas must not be negative
+              rule: '!has(self.replicas) || self.replicas >= 0'
           status:
             properties:
               conditions:
@@ -176,6 +207,9 @@ spec:
                   - message
                   type: object
                 type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
               observedGeneration:
                 format: int64
                 type: integer

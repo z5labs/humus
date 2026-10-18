@@ -8,9 +8,11 @@ package kube_test
 import (
 	"encoding/json"
 	"flag"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -42,13 +44,27 @@ type MemcachedStatus struct {
 	Conditions    []metav1.Condition `json:"conditions,omitempty"`
 }
 
-var Memcached = kube.Resource[MemcachedSpec, MemcachedStatus]{
-	Group:   "cache.example.com",
-	Version: "v1alpha1",
-	Kind:    "Memcached",
-	Plural:  "memcacheds",
-	Scope:   kube.Namespaced,
-}
+var (
+	spec   MemcachedSpec
+	status MemcachedStatus
+
+	Memcached = kube.Resource[MemcachedSpec, MemcachedStatus]{
+		Group:   "cache.example.com",
+		Version: "v1alpha1",
+		Kind:    "Memcached",
+		Plural:  "memcacheds",
+		Scope:   kube.Namespaced,
+		Rules: []kube.TypeRules{
+			kube.Rules(&spec,
+				kube.Field(&spec.Size).Minimum(1).Maximum(3).Description("How many memcached pods run."),
+				kube.Field(&spec.Image).Pattern(regexp.MustCompile(`^memcached:`)).Default("memcached:1.6.26-alpine3.19"),
+			),
+			kube.Rules(&status,
+				kube.Field(&status.Conditions).ListMap("type"),
+			),
+		},
+	}
+)
 
 // resourceOf returns a valid Resource of Spec and Status.
 func resourceOf[Spec, Status any]() kube.Resource[Spec, Status] {
@@ -131,19 +147,31 @@ func TestResource_CRD(t *testing.T) {
 	require.Equal(t, apiextensionsv1.JSONSchemaProps{Type: "string"}, root.Properties["apiVersion"])
 	require.Equal(t, apiextensionsv1.JSONSchemaProps{Type: "string"}, root.Properties["kind"])
 	require.Equal(t, apiextensionsv1.JSONSchemaProps{Type: "object"}, root.Properties["metadata"])
+	one, three := 1.0, 3.0
 	require.Equal(t, apiextensionsv1.JSONSchemaProps{
 		Type: "object",
 		Properties: map[string]apiextensionsv1.JSONSchemaProps{
-			"size":  {Type: "integer", Format: "int32"},
-			"image": {Type: "string"},
+			"size": {
+				Type: "integer", Format: "int32",
+				Description: "How many memcached pods run.",
+				Minimum:     &one, Maximum: &three,
+			},
+			"image": {
+				Type:    "string",
+				Pattern: "^memcached:",
+				Default: &apiextensionsv1.JSON{Raw: []byte(`"memcached:1.6.26-alpine3.19"`)},
+			},
 		},
-		Required: []string{"size", "image"},
-	}, root.Properties["spec"])
+		Required: []string{"size"},
+	}, root.Properties["spec"], "a field with a Default is optional")
 	status := root.Properties["status"]
 	require.Equal(t, "object", status.Type)
 	require.Empty(t, status.Required)
 	require.Equal(t, apiextensionsv1.JSONSchemaProps{Type: "integer", Format: "int32"}, status.Properties["readyReplicas"])
-	require.Equal(t, "array", status.Properties["conditions"].Type)
+	conditions := status.Properties["conditions"]
+	require.Equal(t, "array", conditions.Type)
+	require.Equal(t, "map", *conditions.XListType)
+	require.Equal(t, []string{"type"}, conditions.XListMapKeys)
 }
 
 func TestResource_CRD_of_a_cluster_scoped_resource(t *testing.T) {
@@ -504,6 +532,16 @@ type GoldenSpec struct {
 	Windows  map[string][]metav1.MicroTime  `json:"windows,omitempty"`
 	Selector *metav1.LabelSelector          `json:"selector,omitempty"`
 	Volumes  map[string]map[string]*float32 `json:"volumes,omitempty"`
+	Tags     []string                       `json:"tags,omitempty"`
+	Version  Version                        `json:"version,omitzero"`
+}
+
+// Version is a version, such as 1.2.3, that encodes itself as a string, so
+// its schema is given whole with kube.Schema.
+type Version struct{ Major, Minor, Patch int }
+
+func (v Version) MarshalJSON() ([]byte, error) {
+	return json.Marshal(fmt.Sprintf("%d.%d.%d", v.Major, v.Minor, v.Patch))
 }
 
 // Port is a port of GoldenSpec's.
@@ -523,6 +561,43 @@ type GoldenStatus struct {
 	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
 	Conditions         []metav1.Condition `json:"conditions,omitempty"`
 }
+
+var (
+	widget       GoldenSpec
+	widgetPort   Port
+	widgetStatus GoldenStatus
+
+	// Widget is a resource with every mapped type, and a constraint of
+	// every kind.
+	Widget = kube.Resource[GoldenSpec, GoldenStatus]{
+		Group:   "test.humus.dev",
+		Version: "v1beta1",
+		Kind:    "Widget",
+		Plural:  "widgets",
+		Scope:   kube.Namespaced,
+		Rules: []kube.TypeRules{
+			kube.Rules(&widget,
+				kube.Field(&widget.Name).MinLength(1).MaxLength(63).Description("The widget's name."),
+				kube.Field(&widget.Shade).Enum("red", "green", "blue"),
+				kube.Field(&widget.Paused).Default(false),
+				kube.Field(&widget.Weight).Minimum(0).Maximum(1),
+				kube.Field(&widget.Ports).MinItems(1).MaxItems(8).ListMap("name"),
+				kube.Field(&widget.Tags).ListSet(),
+				kube.Field(&widget.Template).Validation("self.image != ''", "a template names its image"),
+			).Description("A widget.").Validation("!has(self.replicas) || self.replicas >= 0", "replicas must not be negative"),
+			kube.Rules(&widgetPort,
+				kube.Field(&widgetPort.Port).Minimum(1),
+			),
+			kube.Rules(&widgetStatus,
+				kube.Field(&widgetStatus.Conditions).ListMap("type"),
+			),
+			kube.Schema[Version](apiextensionsv1.JSONSchemaProps{
+				Type:    "string",
+				Pattern: `^[0-9]+\.[0-9]+\.[0-9]+$`,
+			}).Description("A version, such as 1.2.3."),
+		},
+	}
+)
 
 // golden compares got with the file testdata/name, or rewrites the file
 // with got when the tests run with -update.
@@ -546,13 +621,7 @@ func TestResource_CRD_golden(t *testing.T) {
 		crd  func() (*apiextensionsv1.CustomResourceDefinition, error)
 	}{
 		{"memcached.yaml", Memcached.CRD},
-		{"widget.yaml", kube.Resource[GoldenSpec, GoldenStatus]{
-			Group:   "test.humus.dev",
-			Version: "v1beta1",
-			Kind:    "Widget",
-			Plural:  "widgets",
-			Scope:   kube.Namespaced,
-		}.CRD},
+		{"widget.yaml", Widget.CRD},
 	}
 	for _, tc := range tests {
 		t.Run(tc.file, func(t *testing.T) {

@@ -75,18 +75,22 @@ func marshals(t reflect.Type) bool {
 	return false
 }
 
-// reflector reflects Go types into a structural schema, and records every
-// mistake it finds, each naming where in the object it is.
+// reflector reflects Go types into a structural schema, constrained by
+// their rules, and records every mistake it finds, each naming where in the
+// object it is.
 type reflector struct {
 	errs []error
+
+	// rules are the rules of each type that has them.
+	rules map[reflect.Type]*typeRules
 
 	// onPath holds the types that hold the one being reflected, so a type
 	// that contains itself is found rather than reflected forever.
 	onPath map[reflect.Type]bool
 }
 
-func newReflector() *reflector {
-	return &reflector{onPath: map[reflect.Type]bool{}}
+func newReflector(rules map[reflect.Type]*typeRules) *reflector {
+	return &reflector{rules: rules, onPath: map[reflect.Type]bool{}}
 }
 
 func (r *reflector) fail(path string, format string, args ...any) {
@@ -114,8 +118,24 @@ func (r *reflector) root(spec, status reflect.Type) *apiextensionsv1.JSONSchemaP
 	}
 }
 
-// schema returns t's schema, at path in the object.
+// schema returns t's schema, at path in the object, with its type's own
+// description and validations.
 func (r *reflector) schema(path string, t reflect.Type) apiextensionsv1.JSONSchemaProps {
+	rules := r.rules[t]
+	if rules != nil && rules.schema != nil {
+		s := *rules.schema.DeepCopy()
+		rules.decorate(&s)
+		return s
+	}
+	s := r.reflectType(path, t)
+	if rules != nil {
+		rules.decorate(&s)
+	}
+	return s
+}
+
+// reflectType returns the schema reflected from t, at path in the object.
+func (r *reflector) reflectType(path string, t reflect.Type) apiextensionsv1.JSONSchemaProps {
 	if s, ok := known[t]; ok {
 		return s()
 	}
@@ -200,15 +220,46 @@ func (r *reflector) object(path string, t reflect.Type) apiextensionsv1.JSONSche
 		if f.typ.Kind() == reflect.Pointer {
 			p.Nullable = !f.omit
 		}
+		defaulted := r.constrain(&p, t, f.index)
 		if s.Properties == nil {
 			s.Properties = map[string]apiextensionsv1.JSONSchemaProps{}
 		}
 		s.Properties[f.name] = p
-		if !f.omit && !f.viaPointer {
+		if !f.omit && !f.viaPointer && !defaulted {
 			s.Required = append(s.Required, f.name)
 		}
 	}
 	return s
+}
+
+// constrain gives p, the schema of the field of the struct t at index, the
+// field's constraints, and reports whether it has a Default. A field
+// promoted from an embedded struct has its constraints from that struct's
+// Rules, and then from t's, which win.
+func (r *reflector) constrain(p *apiextensionsv1.JSONSchemaProps, t reflect.Type, index []int) bool {
+	// owners[d] is the struct that holds index[d:].
+	owners := make([]reflect.Type, len(index))
+	owner := t
+	for d, i := range index {
+		owners[d] = owner
+		owner = owner.Field(i).Type
+		if owner.Kind() == reflect.Pointer {
+			owner = owner.Elem()
+		}
+	}
+
+	defaulted := false
+	for d := len(index) - 1; d >= 0; d-- {
+		rules := r.rules[owners[d]]
+		if rules == nil {
+			continue
+		}
+		if f, ok := rules.fields[indexKey(index[d:])]; ok {
+			f.apply(p)
+			defaulted = defaulted || f.defaulted
+		}
+	}
+	return defaulted
 }
 
 // field is one field of a struct as encoding/json writes it.
