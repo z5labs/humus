@@ -87,8 +87,14 @@
 // defaults, at least or at most once, and produces records with a Producer
 // whose calls return nil only once the cluster has stored their records,
 // documented at
-// https://z5labs.github.io/humus/kafka/. The other runtime packages come back
-// through their own proposals.
+// https://z5labs.github.io/humus/kafka/. A Kafka consumer turns ready once it
+// has joined its group, with Joined. The httphealth package and the grpc
+// module's grpchealth package have landed: they expose an App's health
+// probes, httphealth over HTTPS at /health/liveness and /health/readiness,
+// and grpchealth as gRPC health v1, each attached to a server the App
+// already runs or on a probes port of its own, documented at
+// https://z5labs.github.io/humus/health/. The other runtime packages come
+// back through their own proposals.
 //
 // The plan is in the charter, Proposal: humus on the bedrock process model:
 // https://github.com/z5labs/humus/discussions/629

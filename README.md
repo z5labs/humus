@@ -41,8 +41,14 @@ drain and a grace period for a server behind a Kubernetes Service, while
 `Processor` and any broker, and `queue/kafka`, with franz-go, consumes Kafka
 topics as a Service on `humus.Main`'s defaults, at least or at most once, and
 produces records with a `Producer` whose calls return nil only once the
-cluster has stored their records. See
-[Consuming and producing Kafka](https://z5labs.github.io/humus/kafka/). Earlier
+cluster has stored their records, and a consumer turns ready once it has
+joined its group, with `Joined`. See
+[Consuming and producing Kafka](https://z5labs.github.io/humus/kafka/). The
+`httphealth` package and the `grpc` module's `grpchealth` package have landed
+too: they expose an App's probes, `httphealth` at `/health/liveness` and
+`/health/readiness` over HTTPS, and `grpchealth` as gRPC health v1, each
+attached to a server the App already runs or on a probes port of its own.
+See [Health](https://z5labs.github.io/humus/health/). Earlier
 releases remain available on [pkg.go.dev](https://pkg.go.dev/github.com/z5labs/humus?tab=versions).
 
 The plan is in the charter,

@@ -310,21 +310,28 @@ whatever creates the Job passes its own.
 
 ## More than the job
 
-A process that runs a job next to other Services, such as the
-[health Service]({{< relref "health#the-health-service" >}}) or a metrics
-server, returns them all from the end user's `Init`, with the job's among
-them:
+A process that runs a job next to other Services, such as a probes server
+or a metrics server, returns them all from the end user's `Init`, with the
+job's among them. A Kubernetes Job's pod usually has no probes, but a
+long-running job that wants a liveness probe returns
+[`httphealth.NewService`](https://pkg.go.dev/github.com/z5labs/humus/httphealth#NewService)'s
+Service next to the job, which owns the App's readiness, so it needs no
+health Service:
 
 ```go
-run := func(context.Context) error { return nil }
+probes, err := httphealth.NewService(s, probeSettings)
+if err != nil {
+	return nil, err
+}
 return []humus.Service{
-	health.NewService(),
+	probes,
 	job.NewService(s, run),
 }, nil
 ```
 
 Any Service returning ends the App, so the job finishing ends the process,
-and the other Services with it.
+and the other Services with it. [Health]({{< relref "health#jobs" >}})
+describes a job's probes.
 
 Which `Main` the process uses depends on what a load balancer routes to, as
 [the lifecycle's runtime packages]({{< relref "lifecycle#runtime-packages" >}})
