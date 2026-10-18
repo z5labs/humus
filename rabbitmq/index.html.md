@@ -1130,6 +1130,9 @@ increase(humus_retry_decisions_total{humus_retry_decision="throttled"}[5m]) > 0
 A View in the end user's telemetry `Builder` drops or renames any of them.
 humus has no setting to turn them off. A test reads them as it reads any
 metric, with `humustest.Telemetry`'s `Metrics`, filtered to the scope.
+[humus's own instruments](/humus/telemetry/#humuss-own-instruments)
+on the Telemetry page lists what each of humus's clients records, with the
+View and the test written out.
 
 ### The logs
 
