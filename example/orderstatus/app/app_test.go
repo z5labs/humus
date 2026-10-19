@@ -442,6 +442,7 @@ func TestInit_with_a_bad_setting_exits_78(t *testing.T) {
 		"a maximum delay of 0":                     {name: "RETRY_MAX_DELAY", value: "0s"},
 		"a minimum delay above the default max":    {name: "RETRY_MIN_DELAY", value: "10m"},
 		"a maximum delay below the default min":    {name: "RETRY_MAX_DELAY", value: "500ms", names: "RETRY_MIN_DELAY"},
+		"a trusted topic that is empty":            {name: "FAULT_TRUSTED_TOPICS", value: eventsTopic + ","},
 	}
 	for desc, tc := range testCases {
 		t.Run(desc, func(t *testing.T) {
