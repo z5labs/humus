@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -271,20 +272,46 @@ func TestSampleProblems_no_pages(t *testing.T) {
 }
 
 func TestQuotedIn(t *testing.T) {
-	sources := [][]string{strings.Split("func f() {\n\tif ok {\n\t\treturn\n\t}\n}", "\n")}
+	files := [][]string{
+		strings.Split("func f() {\n\tif ok {\n\t\treturn\n\t}\n}", "\n"),
+		strings.Split("func g() {\n\tx := 1\n\n\ty := 2\n\tz := 3\n}\n", "\n"),
+		strings.Split("\ta()\n\t\tb()\n\tc()", "\n"),
+		strings.Split("\t\tp()\n\tq()", "\n"),
+		strings.Split("m()\n  \r\nn()", "\n"),
+	}
 
 	cases := []struct {
+		name   string
 		sample []string
 		want   bool
 	}{
-		{[]string{"if ok {", "\treturn", "}"}, true},
-		{[]string{"func f() {", "\tif ok {"}, true},
-		{[]string{"if ok {", "return"}, false},
-		{[]string{"if done {"}, false},
+		{"a nested block", []string{"if ok {", "\treturn", "}"}, true},
+		{"the first lines of a file", []string{"func f() {", "\tif ok {"}, true},
+		{"the last lines of a file", []string{"\t\treturn", "\t}", "}"}, true},
+		{"a single line", []string{"return"}, true},
+		{"at another relative indentation", []string{"if ok {", "return"}, false},
+		{"a line indented deeper relative to the one before it than in the file", []string{"if ok {", "\t\treturn"}, false},
+		{"a nested line at the same indentation as the line before it", []string{"a()", "b()", "c()"}, false},
+		{"at the file's relative indentation", []string{"a()", "\tb()", "c()"}, true},
+		{"a first line more indented than the second, as in the file", []string{"\tp()", "q()"}, true},
+		{"a first line less indented than the second, unlike the file", []string{"p()", "\tq()"}, false},
+		{"a line that is in no file", []string{"if done {"}, false},
+		{"lines in a file but not consecutively", []string{"x := 1", "z := 3"}, false},
+		{"lines in a file but out of order", []string{"y := 2", "x := 1"}, false},
+		{"lines from two files", []string{"}", "a()"}, false},
+		{"a blank line inside", []string{"x := 1", "", "y := 2"}, true},
+		{"a blank line the file does not have", []string{"y := 2", "", "z := 3"}, false},
+		{"no blank line where the file has one", []string{"x := 1", "y := 2"}, false},
+		{"a blank line holding other whitespace", []string{"m()", "", "n()"}, true},
+		{"a window that would start before its file", []string{"}", "func f() {"}, false},
+		{"a window that would run past its file", []string{"}", "", "x"}, false},
+		{"only a blank line", []string{""}, true},
+		{"more blank lines than any file has together", []string{"", ""}, false},
 	}
-	for _, c := range cases {
-		if got := quotedIn(sources, c.sample); got != c.want {
-			t.Errorf("quotedIn(%q) = %v, want %v", c.sample, got, c.want)
+	c := newCorpus(files)
+	for _, tc := range cases {
+		if got := quotedIn(c, tc.sample); got != tc.want {
+			t.Errorf("%s: quotedIn(%q) = %v, want %v", tc.name, tc.sample, got, tc.want)
 		}
 	}
 }
@@ -309,7 +336,7 @@ func sampleProblems(repo fs.FS) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	examples := map[string][][]string{}
+	examples := map[string]*corpus{}
 	var problems []string
 	pages := 0
 	err = fs.WalkDir(repo, docsContent, func(p string, d fs.DirEntry, err error) error {
@@ -404,9 +431,9 @@ func samples(page string) []sample {
 	return samples
 }
 
-// sources returns the lines of every file under root in repo whose path keep
+// sources returns a corpus of the lines of every file under root in repo whose path keep
 // accepts, leaving out hidden directories and node_modules.
-func sources(repo fs.FS, root string, keep func(path string) bool) ([][]string, error) {
+func sources(repo fs.FS, root string, keep func(path string) bool) (*corpus, error) {
 	var sources [][]string
 	err := fs.WalkDir(repo, root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -425,21 +452,89 @@ func sources(repo fs.FS, root string, keep func(path string) bool) ([][]string, 
 		sources = append(sources, strings.Split(string(b), "\n"))
 		return nil
 	})
-	return sources, err
+	if err != nil {
+		return nil, err
+	}
+	return newCorpus(sources), nil
 }
 
-// quotedIn reports whether lines appear, consecutively and with the same
-// relative indentation, in one of sources.
-func quotedIn(sources [][]string, lines []string) bool {
-	want := strings.Join(lines, "\n")
-	for _, src := range sources {
-		for i := 0; i+len(lines) <= len(src); i++ {
-			if strings.Join(dedent(src[i:i+len(lines)]), "\n") == want {
-				return true
+// corpus is the lines of a set of files, indexed by what each non-blank line
+// holds after its indentation, so a sample is only compared where it could be
+// quoted.
+type corpus struct {
+	files [][]string
+	at    map[string][]linePos
+}
+
+// linePos is a line of one of a corpus's files.
+type linePos struct {
+	file, line int
+}
+
+// newCorpus indexes the lines of files.
+func newCorpus(files [][]string) *corpus {
+	c := &corpus{files: files, at: map[string][]linePos{}}
+	for f, lines := range files {
+		for i, l := range lines {
+			if strings.TrimSpace(l) != "" {
+				k := content(l)
+				c.at[k] = append(c.at[k], linePos{f, i})
 			}
 		}
 	}
+	return c
+}
+
+// quotedIn reports whether lines appear, consecutively and with the same
+// relative indentation, in one of c's files.
+func quotedIn(c *corpus, lines []string) bool {
+	anchor := -1
+	for i, l := range lines {
+		if strings.TrimSpace(l) == "" {
+			continue
+		}
+		if anchor < 0 || len(c.at[content(l)]) < len(c.at[content(lines[anchor])]) {
+			anchor = i
+		}
+	}
+	if anchor < 0 {
+		for _, src := range c.files {
+			for i := 0; i+len(lines) <= len(src); i++ {
+				if windowQuotes(src[i:i+len(lines)], lines) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for _, p := range c.at[content(lines[anchor])] {
+		src := c.files[p.file]
+		i := p.line - anchor
+		if i >= 0 && i+len(lines) <= len(src) && windowQuotes(src[i:i+len(lines)], lines) {
+			return true
+		}
+	}
 	return false
+}
+
+// windowQuotes reports whether window, once dedented, is lines.
+func windowQuotes(window, lines []string) bool {
+	for i, l := range window {
+		windowBlank := strings.TrimSpace(l) == ""
+		sampleBlank := strings.TrimSpace(lines[i]) == ""
+		if windowBlank != sampleBlank {
+			return false
+		}
+		if !windowBlank && content(l) != content(lines[i]) {
+			return false
+		}
+	}
+	return slices.Equal(dedent(window), lines)
+}
+
+// content returns l without its indentation.
+func content(l string) string {
+	return strings.TrimLeft(l, " \t")
 }
 
 // dedent removes the leading whitespace every non-blank line of lines shares,
