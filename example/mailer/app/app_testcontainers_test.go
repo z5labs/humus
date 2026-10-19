@@ -11,6 +11,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -105,8 +106,18 @@ func (r *rabbitMQ) addUser(t *testing.T, configure, write, read string) login {
 }
 
 func (r *rabbitMQ) closeConnections(ctx context.Context) error {
-	_, _, err := r.container.Exec(ctx, []string{"rabbitmqctl", "close_all_connections", "closed by the shared cases"})
-	return err
+	code, out, err := r.container.Exec(ctx, []string{"rabbitmqctl", "close_all_connections", "closed by the shared cases"}, tcexec.Multiplexed())
+	if err != nil {
+		return err
+	}
+	b, err := io.ReadAll(out)
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		return fmt.Errorf("rabbitmqctl close_all_connections exited %d: %s", code, b)
+	}
+	return nil
 }
 
 func startWireMock(t *testing.T) *url.URL {
