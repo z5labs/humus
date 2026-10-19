@@ -1270,6 +1270,10 @@ records the exception.
 [Testing a humus App]({{< relref "testing#runtime-packages" >}}) says the
 same for every runtime package.
 
+The [mailer walkthrough]({{< relref "walkthroughs/mailer/testing" >}})
+tests its `Processor` both ways, and runs the same black-box cases against
+the App in process and against its deployment on kind.
+
 ### A Processor as a unit
 
 A `queue.Processor[rabbitmq.Message]` is a function of a plain struct, so
