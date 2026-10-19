@@ -274,6 +274,34 @@ func TestApp_Run_a_Drain_returning_ctx_Err_fails_the_App(t *testing.T) {
 	})
 }
 
+func TestApp_Run_a_SIGTERM_as_the_App_starts_serving_calls_the_Drain(t *testing.T) {
+	skipped := &tally{t: t}
+	for i := range tries {
+		var st bedrock.ExitStatus
+		var calls int
+		synctest.Test(t, func(t *testing.T) {
+			d := &countedDrain{}
+			p := bedrocktest.NewProcess(t)
+			logs := sigtermAsServing(p, nil)
+			// The lone Service stops on Serve's context, as a job does, so it
+			// has returned on the signal by the time Run waits.
+			app := drainApp(t, d.Drain, &fakeService{})
+			app.Telemetry = hookedTelemetry(logs, nil)
+
+			st = app.Run(t.Context(), p.Process())
+			calls = d.count()
+		})
+
+		if calls != 1 {
+			skipped.fail(i, "the Drain was called %d times, want once: the Service was serving as the shutdown started", calls)
+		}
+		if st.Code() != 0 {
+			t.Errorf("App %d: code = %d, want 0: %v", i+1, st.Code(), st.Cause())
+		}
+	}
+	skipped.report("the Drain was not called")
+}
+
 func TestApp_Run_the_grace_period_starts_after_the_Drain(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var deadline time.Time
