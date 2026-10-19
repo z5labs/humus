@@ -20,6 +20,7 @@ FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55
 COPY --from=build /out/mailer /mailer
 COPY --from=build /out/mailrequest /mailrequest
 USER 65532:65532
+ENTRYPOINT ["/mailer"]
 ```
 
 Build it from the repository's root, since the module replaces humus with
@@ -57,6 +58,7 @@ configMapGenerator:
       - OTEL_TRACES_EXPORTER=otlp
       - OTEL_METRICS_EXPORTER=otlp
       - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
 ```
 
 The ServiceAccount mounts no token, since the mailer calls no Kubernetes
@@ -67,6 +69,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: mailer
+automountServiceAccountToken: false
 ```
 
 ## The Deployment
@@ -198,6 +201,7 @@ spec:
   minAvailable: 1
   selector:
     matchLabels:
+      app.kubernetes.io/name: mailer
 ```
 
 ## The grace period
