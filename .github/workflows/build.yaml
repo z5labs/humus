@@ -509,8 +509,10 @@ jobs:
 
   # The billing walkthrough's image, built from its Dockerfile with the
   # repository as the context, since its module replaces humus with ../..,
-  # and its kustomization, rendered. The ruleset doesn't require this job,
-  # and Build doesn't wait on it.
+  # and its kustomization, rendered. up.sh then creates a kind cluster,
+  # loads the image and applies the kind overlay, and one Job made from the
+  # CronJob's template has to complete. The ruleset doesn't require this
+  # job, and Build doesn't wait on it.
   billing-kind:
     name: Billing walkthrough (kind)
     runs-on: ubuntu-latest
@@ -526,6 +528,25 @@ jobs:
 
         - name: Render the kustomization
           run: kubectl kustomize example/billing/deploy
+
+        - name: Bring the billing job up on kind
+          run: example/billing/deploy/kind/up.sh
+
+        - name: Run one Job from the CronJob's template
+          run: |
+            kubectl --namespace billing create job billing-kind --from=cronjob/billing
+            kubectl --namespace billing wait --for=condition=Complete --timeout=5m job/billing-kind
+            code=$(kubectl --namespace billing get pods --selector job-name=billing-kind \
+              --output jsonpath='{.items[*].status.containerStatuses[0].state.terminated.exitCode}')
+            echo "exit codes: $code"
+            test "$code" = 0
+
+        - name: Show the billing namespace
+          if: ${{ failure() }}
+          run: |
+            kubectl --namespace billing get all
+            kubectl --namespace billing describe pods
+            kubectl --namespace billing logs job/billing-kind || true
 
   # The order status walkthrough's tests behind the testcontainers build tag
   # run against PostgreSQL in a container. The ruleset doesn't require this

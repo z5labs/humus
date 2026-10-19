@@ -1,0 +1,45 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: billing
+resources:
+  - ../namespace.yaml
+  - ../serviceaccount.yaml
+  - ../cronjob.yaml
+  - postgres.yaml
+  - wiremock.yaml
+configMapGenerator:
+  - name: postgres-schema
+    files:
+      - ../../postgres/schema.sql
+  - name: wiremock-mappings
+    files:
+      - wiremock/charged.json
+      - wiremock/declined.json
+      - wiremock/unauthorized.json
+patches:
+  - target:
+      kind: CronJob
+      name: billing
+    patch: |-
+      apiVersion: batch/v1
+      kind: CronJob
+      metadata:
+        name: billing
+      spec:
+        suspend: true
+        jobTemplate:
+          spec:
+            template:
+              spec:
+                containers:
+                  - name: billing
+                    imagePullPolicy: Never
+                    env:
+                      - name: PAYMENTS_URL
+                        value: https://wiremock
+                      - name: OTEL_TRACES_EXPORTER
+                        value: console
+                      - name: OTEL_METRICS_EXPORTER
+                        value: console
+                      - name: OTEL_LOGS_EXPORTER
+                        value: console

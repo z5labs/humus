@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wiremock
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wiremock
+  template:
+    metadata:
+      labels:
+        app: wiremock
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: wiremock
+          image: docker.io/wiremock/wiremock:3.13.2
+          args:
+            - --disable-http
+            - --https-port
+            - "8443"
+            - --https-keystore
+            - /etc/wiremock/keystore.p12
+            - --keystore-type
+            - PKCS12
+            - --keystore-password
+            - $(KEYSTORE_PASSWORD)
+            - --key-manager-password
+            - $(KEYSTORE_PASSWORD)
+          env:
+            - name: KEYSTORE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: wiremock
+                  key: password
+          ports:
+            - name: https
+              containerPort: 8443
+          readinessProbe:
+            httpGet:
+              path: /__admin/health
+              port: https
+              scheme: HTTPS
+            periodSeconds: 2
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: mappings
+              mountPath: /home/wiremock/mappings
+              readOnly: true
+            - name: files
+              mountPath: /home/wiremock/__files
+            - name: keystore
+              mountPath: /etc/wiremock
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: mappings
+          configMap:
+            name: wiremock-mappings
+        - name: files
+          emptyDir: {}
+        - name: keystore
+          secret:
+            secretName: wiremock
+            items:
+              - key: keystore.p12
+                path: keystore.p12
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wiremock
+spec:
+  selector:
+    app: wiremock
+  ports:
+    - name: https
+      port: 443
+      targetPort: https
