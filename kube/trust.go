@@ -17,6 +17,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
 
 	"github.com/z5labs/humus/fault"
@@ -28,7 +29,9 @@ import (
 // App's Decoder, fault.Settings.Decoder, reads it, such as a member of
 // jsonscenario's. Only the Decoder's members join the reconcile's context.
 // The reconcile's Reconciler, a Finalize's f, the controller's own writes,
-// and every request and injection point they reach see the scenario.
+// and every request and injection point they reach see the scenario. The
+// Client carries it on to the reconciled object's children: it sets the
+// annotation on every child the reconcile applies.
 //
 // trust is asked only about an object whose annotation carries a scenario,
 // and only when the App has failure injection. It is set in code, not
@@ -87,10 +90,31 @@ func newScenarios(p *trustScenario, faults fault.Injector) scenarios {
 	return scenarios{annotation: p.annotation, trust: p.trust, faults: faults}
 }
 
+// reconciledKey is the context key of a reconcile's reconciled.
+type reconciledKey struct{}
+
+// reconciled marks the context of a reconcile by a Controller given a
+// TrustScenario, for the Client: the reconciled object's UID, which names
+// its children, and the annotation the Client sets on each child it
+// applies.
+type reconciled struct {
+	uid        types.UID
+	annotation string
+}
+
+// reconciledFrom returns the reconciled ctx is marked with, if it is a
+// reconcile's context or one made from it.
+func reconciledFrom(ctx context.Context) (reconciled, bool) {
+	r, ok := ctx.Value(reconciledKey{}).(reconciled)
+	return r, ok
+}
+
 // with returns ctx, a reconcile's context, whose span is the reconcile's,
 // with the scenario u's annotation carries joined to its baggage, when
-// trust trusts u. u is the object as the cache holds it. It is read as the
-// package doc's four cases say:
+// trust trusts u. u is the object as the cache holds it. Whatever it
+// carries, ctx is marked with u's reconciled, so the Client can carry a
+// scenario on to u's children. It is read as the package doc's four cases
+// say:
 //
 //   - no annotation, or none of the Decoder's members in it: ctx, and
 //     nothing is recorded;
@@ -107,6 +131,7 @@ func (sc scenarios) with(ctx context.Context, u *unstructured.Unstructured) (con
 	if sc.trust == nil {
 		return ctx, nil
 	}
+	ctx = context.WithValue(ctx, reconciledKey{}, reconciled{uid: u.GetUID(), annotation: sc.annotation})
 	value, ok := u.GetAnnotations()[sc.annotation]
 	if !ok {
 		return ctx, nil
