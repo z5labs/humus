@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,22 +18,30 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/config"
+	"github.com/z5labs/bedrock/fit"
+	"go.opentelemetry.io/otel/baggage"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
 	networkingv1ac "k8s.io/client-go/applyconfigurations/networking/v1"
+	policyv1ac "k8s.io/client-go/applyconfigurations/policy/v1"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	clienttesting "k8s.io/client-go/testing"
@@ -300,6 +309,103 @@ func defaultDeny(s *humus.Setup, client *kube.Client, settings kube.Settings, kc
 	return kube.NewKindController(s, client, settings, Namespaces, DefaultDeny{Kube: kc},
 		kube.Owns(networkingv1.SchemeGroupVersion.WithResource("networkpolicies")),
 	)
+}
+
+// underTest returns the Memcached controller under failure injection: a
+// Memcached in the staging namespace carries the scenario its annotation
+// holds into its reconciles.
+func underTest(s *humus.Setup, client *kube.Client, settings kube.Settings, reconciler kube.Reconciler[MemcachedSpec, MemcachedStatus]) (*kube.Controller, error) {
+	return kube.NewController(s, client, settings, Memcached, reconciler,
+		kube.Owns(appsv1.SchemeGroupVersion.WithResource("deployments")),
+		// Only the staging namespace runs experiments. An admission policy lets
+		// only the chaos harness's ServiceAccount set the annotation there.
+		kube.TrustScenario(scenarioAnnotation, func(obj metav1.Object) bool {
+			return obj.GetNamespace() == "staging"
+		}),
+	)
+}
+
+// annotationValue returns the value of an annotation that carries s,
+// written with codec, as the tool that runs an experiment writes it: the
+// W3C baggage that fit.ContextWithScenario leaves.
+func annotationValue(codec fit.Encoder, s fit.Scenario) (string, error) {
+	ctx, err := fit.ContextWithScenario(context.Background(), codec, s)
+	if err != nil {
+		return "", err
+	}
+	return baggage.FromContext(ctx).String(), nil
+}
+
+// setScenario starts or ends an experiment on the Memcached name: it sets
+// the annotation to value, a scenario, with a JSON merge patch, or removes
+// the annotation when value is nil. Either reconciles the Memcached at
+// once.
+func setScenario(ctx context.Context, memcacheds dynamic.ResourceInterface, name string, value any) error {
+	patch, err := json.Marshal(map[string]any{
+		"metadata": map[string]any{"annotations": map[string]any{scenarioAnnotation: value}},
+	})
+	if err != nil {
+		return err
+	}
+	_, err = memcacheds.Patch(ctx, name, types.MergePatchType, patch, metav1.PatchOptions{})
+	return err
+}
+
+// Deployments is Kubernetes' own Deployment kind.
+var Deployments = kube.Kind[appsv1.Deployment]{
+	GVR:   appsv1.SchemeGroupVersion.WithResource("deployments"),
+	Kind:  "Deployment",
+	Scope: kube.Namespaced,
+}
+
+// Budget is the end user's KindReconciler of the Deployments that
+// Memcacheds control, the second controller of their operator: it applies
+// a PodDisruptionBudget that the Deployment controls, so a drain evicts a
+// Memcached's pods one at a time.
+type Budget struct{ Kube kubernetes.Interface }
+
+func (r Budget) Reconcile(ctx context.Context, d appsv1.Deployment) (time.Duration, error) {
+	if !memcachedChild(&d) || d.Spec.Selector == nil {
+		return 0, nil
+	}
+	_, err := r.Kube.PolicyV1().PodDisruptionBudgets(d.Namespace).Apply(ctx,
+		policyv1ac.PodDisruptionBudget(d.Name, d.Namespace).
+			WithOwnerReferences(metav1ac.OwnerReference().
+				WithAPIVersion("apps/v1").WithKind("Deployment").WithName(d.Name).WithUID(d.UID).
+				WithController(true)).
+			WithSpec(policyv1ac.PodDisruptionBudgetSpec().
+				WithMaxUnavailable(intstr.FromInt32(1)).
+				WithSelector(metav1ac.LabelSelector().WithMatchLabels(d.Spec.Selector.MatchLabels))),
+		metav1.ApplyOptions{FieldManager: "memcached-budget", Force: true},
+	)
+	return 0, err
+}
+
+// memcachedChild reports whether a Memcached controls obj.
+func memcachedChild(obj metav1.Object) bool {
+	owner := metav1.GetControllerOf(obj)
+	return owner != nil && owner.Kind == Memcached.Kind && strings.HasPrefix(owner.APIVersion, Memcached.Group+"/")
+}
+
+// operator returns the Controllers of an operator of two: the Memcached
+// controller under test, and Budget's, which carries the scenario that a
+// Memcached's reconcile sets on its Deployment into the Deployment's
+// reconciles. Each has Settings of its own, with a Name of its own.
+func operator(s *humus.Setup, client *kube.Client, settings, budgetSettings kube.Settings, kc kubernetes.Interface) ([]humus.Service, error) {
+	memcacheds, err := underTest(s, client, settings, Reconciler{Kube: kc})
+	if err != nil {
+		return nil, err
+	}
+	budgets, err := kube.NewKindController(s, client, budgetSettings, Deployments, Budget{Kube: kc},
+		kube.Owns(policyv1.SchemeGroupVersion.WithResource("poddisruptionbudgets")),
+		// An admission policy lets only the operator's ServiceAccount set the
+		// annotation on Deployments.
+		kube.TrustScenario(scenarioAnnotation, memcachedChild),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return []humus.Service{memcacheds, budgets}, nil
 }
 
 // withProbes returns the Services of a controller's pod, which has no server

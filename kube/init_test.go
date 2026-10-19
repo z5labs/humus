@@ -22,6 +22,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
+	"github.com/z5labs/bedrock/fit"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -31,6 +33,7 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/fault/jsonscenario"
 	"github.com/z5labs/humus/httphealth"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/kube"
@@ -386,4 +389,155 @@ func probe(t *testing.T, h *humustest.Host, ca *humustest.CA, url string) int {
 	_, _ = io.Copy(io.Discard, resp.Body)
 	require.NoError(t, resp.Body.Close())
 	return resp.StatusCode
+}
+
+// abortsDeployments records, for each reconcile of a Memcached, whether
+// the point of an apply of a Deployment aborts with the scenario its
+// context carries.
+type abortsDeployments struct {
+	mu      sync.Mutex
+	aborted map[string][]bool
+}
+
+// reconciler returns a Reconciler that evaluates the point with s.Faults
+// in each reconcile, records whether it aborts, and settles.
+func (a *abortsDeployments) reconciler(s *humus.Setup) kube.ReconcilerFunc[MemcachedSpec, MemcachedStatus] {
+	return func(ctx context.Context, m kube.Object[MemcachedSpec, MemcachedStatus]) (kube.Result[MemcachedStatus], error) {
+		f := s.Faults.Eval(ctx, "kube:deployments.apps:patch")
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if a.aborted == nil {
+			a.aborted = map[string][]bool{}
+		}
+		a.aborted[m.Namespace+"/"+m.Name] = append(a.aborted[m.Namespace+"/"+m.Name], f.Abort)
+		return kube.Result[MemcachedStatus]{}, nil
+	}
+}
+
+// of returns whether each reconcile of the Memcached namespace/name
+// aborted the point, in order.
+func (a *abortsDeployments) of(object string) []bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]bool(nil), a.aborted[object]...)
+}
+
+func TestUnderTest_a_staging_Memcached_carries_the_scenario_until_the_experiment_ends(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		staged := memcachedObject("cache", 2)
+		staged.SetNamespace("staging")
+		fc := newFakeCluster(t, staged, memcachedObject("cache", 2))
+		tel := humustest.NewTelemetry()
+		s := faultsSetup(t, humus.Host{Dial: noDial}, tel)
+		rec := &abortsDeployments{}
+		ctrl, err := underTest(s, testClient(t, s), testSettings(), rec.reconciler(s))
+		require.NoError(t, err)
+		kube.SetClients(ctrl, fc.dyn, fc.meta, fc.kube.CoordinationV1())
+		sv := serve(t, ctrl)
+		time.Sleep(settle)
+
+		codec, err := jsonscenario.New("acme.fault")
+		require.NoError(t, err)
+		value, err := annotationValue(codec, fit.Scenario{Rules: []fit.Rule{
+			{Point: "kube:deployments.apps:patch", Fault: fit.Fault{Abort: true}},
+		}})
+		require.NoError(t, err)
+
+		staging := fc.dyn.Resource(Memcached.GVR()).Namespace("staging")
+		elsewhere := fc.dyn.Resource(Memcached.GVR()).Namespace("default")
+		require.NoError(t, setScenario(t.Context(), staging, "cache", value))
+		require.NoError(t, setScenario(t.Context(), elsewhere, "cache", value))
+		time.Sleep(settle)
+
+		require.Equal(t, []bool{false, true}, rec.of("staging/cache"), "the annotation starts the experiment at once")
+		require.Equal(t, []bool{false, false}, rec.of("default/cache"), "only the staging namespace runs experiments")
+		strips := allEvents(tel, stripEvent)
+		require.Len(t, strips, 1, "the scenario outside staging is stripped")
+		require.Empty(t, strips[0].Attributes)
+
+		require.NoError(t, setScenario(t.Context(), staging, "cache", nil))
+		time.Sleep(settle)
+		require.Equal(t, []bool{false, true, false}, rec.of("staging/cache"), "removing the annotation ends the experiment at once")
+		_, ok := fc.object(t, "cache").GetAnnotations()[scenarioAnnotation]
+		require.True(t, ok, "default/cache keeps its annotation")
+
+		sv.cancel()
+		require.NoError(t, sv.wait(t))
+	})
+}
+
+// memcachedDeployment returns the Deployment staging/cache, which the
+// Memcached of controller, when it is set, controls.
+func memcachedDeployment(controller *metav1.OwnerReference) *appsv1.Deployment {
+	d := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "cache", Namespace: "staging", UID: "deployment-uid"},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "memcached", "memcached": "cache"}},
+		},
+	}
+	if controller != nil {
+		d.OwnerReferences = []metav1.OwnerReference{*controller}
+	}
+	return d
+}
+
+// memcachedController is the controller owner reference of a Memcached.
+func memcachedController() *metav1.OwnerReference {
+	return &metav1.OwnerReference{
+		APIVersion: "cache.example.com/v1alpha1", Kind: "Memcached", Name: "cache", UID: "cache-uid",
+		Controller: ptr(true),
+	}
+}
+
+func TestBudget_applies_a_PodDisruptionBudget_the_Deployment_controls(t *testing.T) {
+	t.Parallel()
+	kc := kubefake.NewClientset()
+	d := memcachedDeployment(memcachedController())
+
+	after, err := Budget{Kube: kc}.Reconcile(t.Context(), *d)
+	require.NoError(t, err)
+	require.Zero(t, after)
+
+	pdb, err := kc.PolicyV1().PodDisruptionBudgets("staging").Get(t.Context(), "cache", metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Equal(t, 1, pdb.Spec.MaxUnavailable.IntValue())
+	require.Equal(t, d.Spec.Selector.MatchLabels, pdb.Spec.Selector.MatchLabels)
+	owner := metav1.GetControllerOf(pdb)
+	require.NotNil(t, owner)
+	require.Equal(t, d.UID, owner.UID, "the Deployment controls the budget")
+}
+
+func TestBudget_leaves_a_Deployment_no_Memcached_controls_alone(t *testing.T) {
+	t.Parallel()
+	other := memcachedController()
+	other.APIVersion = "cache.other.example.com/v1"
+	notController := memcachedController()
+	notController.Controller = nil
+
+	for name, owner := range map[string]*metav1.OwnerReference{
+		"no owner":                  nil,
+		"another group's Memcached": other,
+		"an owner, not controller":  notController,
+	} {
+		kc := kubefake.NewClientset()
+		_, err := Budget{Kube: kc}.Reconcile(t.Context(), *memcachedDeployment(owner))
+		require.NoError(t, err, name)
+		pdbs, err := kc.PolicyV1().PodDisruptionBudgets("staging").List(t.Context(), metav1.ListOptions{})
+		require.NoError(t, err, name)
+		require.Empty(t, pdbs.Items, name)
+		require.False(t, memcachedChild(memcachedDeployment(owner)), name)
+	}
+	require.True(t, memcachedChild(memcachedDeployment(memcachedController())))
+}
+
+func TestOperator_returns_a_Controller_of_Memcacheds_and_one_of_their_Deployments(t *testing.T) {
+	t.Parallel()
+	s := faultsSetup(t, humus.Host{Dial: noDial}, humustest.NewTelemetry())
+	budgetSettings := testSettings()
+	budgetSettings.Name = "memcached-budget"
+
+	services, err := operator(s, testClient(t, s), testSettings(), budgetSettings, kubefake.NewClientset())
+	require.NoError(t, err)
+	require.Len(t, services, 2)
 }
