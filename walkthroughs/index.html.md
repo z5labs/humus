@@ -5,6 +5,12 @@ that build it step by step. Its code is a module of its own, at
 `example/<name>` in the repository, and every sample on its pages is quoted
 from that code.
 
+## The walkthroughs
+
+- [Billing job](/humus/walkthroughs/billing/): a job, run daily by
+  a CronJob, that bills a month of subscriptions in PostgreSQL through a
+  payments API, once, however often it runs.
+
 ## The bar
 
 Each walkthrough's pages close with this checklist, and the application meets

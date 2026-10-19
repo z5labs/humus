@@ -363,6 +363,11 @@ explains for mixed processes:
   counts as a failure and retries under `backoffLimit`. A run that wants a
   panic reported differently recovers it itself.
 
+The [billing job walkthrough](/humus/walkthroughs/billing/)
+builds a job that handles the first two: `httpclient` retries each charge
+inside the run, and each invoice's ID is its charge's idempotency key, so a
+run that Kubernetes retries charges nothing twice.
+
 ## Testing
 
 A job is tested whole, with
