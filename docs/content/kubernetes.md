@@ -9,8 +9,9 @@ description: >
   true to the types by a golden test, a Reconciler handed its object that
   returns its status, owned resources, finalizers, Kubernetes' own kinds,
   panics, the settings, leader election and shutdown, readiness, the RBAC a
-  controller needs, what it records, how to test it, and how kubebuilder's
-  pieces map to the module's.
+  controller needs, what it records, failure injection from an object's
+  annotation down through an operator's controllers, how to test it, and
+  how kubebuilder's pieces map to the module's.
 type: docs
 weight: 25
 ---
@@ -1272,6 +1273,456 @@ The package sets no global of client-go's: no klog setting, no feature gate,
 and no metrics provider. Lint denies klog's `SetLogger`,
 `SetLoggerWithOptions`, `SetOutput` and `InitFlags` in every humus module.
 
+## Failure injection
+
+A controller takes part in
+[failure injection]({{< relref "failure-injection" >}}) as every humus
+server and client does. Its reconciles answer no request, so a scenario
+reaches them through their object: **an object's annotation carries a
+scenario into that object's reconciles,** and **every request through the
+Client is an injection point.** Both need an App with failure injection,
+turned on with `humus.WithFaults`, as
+[Turning it on]({{< relref "failure-injection#turning-it-on" >}})
+describes. The design is in
+[Proposal: failure injection for Kubernetes controllers](https://github.com/z5labs/humus/discussions/922),
+with its revisions
+[1](https://github.com/z5labs/humus/discussions/922#discussioncomment-19029029)
+and [2](https://github.com/z5labs/humus/discussions/922#discussioncomment-19029220).
+
+### Trusting an object's annotation: `TrustScenario`
+
+`kube.TrustScenario` is a `Part`, for `NewController` and
+`NewKindController` alike. It names the annotation that carries a scenario,
+and a `trust` func, handed the object, that decides whether to take it.
+This controller runs experiments only in the staging namespace:
+
+```go
+// underTest returns the Memcached controller under failure injection: a
+// Memcached in the staging namespace carries the scenario its annotation
+// holds into its reconciles.
+func underTest(s *humus.Setup, client *kube.Client, settings kube.Settings, reconciler kube.Reconciler[MemcachedSpec, MemcachedStatus]) (*kube.Controller, error) {
+	return kube.NewController(s, client, settings, Memcached, reconciler,
+		kube.Owns(appsv1.SchemeGroupVersion.WithResource("deployments")),
+		// Only the staging namespace runs experiments. An admission policy lets
+		// only the chaos harness's ServiceAccount set the annotation there.
+		kube.TrustScenario(scenarioAnnotation, func(obj metav1.Object) bool {
+			return obj.GetNamespace() == "staging"
+		}),
+	)
+}
+```
+
+The end user names the annotation, as they name the baggage member of
+`jsonscenario`:
+
+```go
+const scenarioAnnotation = "acme.example.com/failure-scenario"
+```
+
+- **Without `TrustScenario`, nothing is read,** and no reconcile carries a
+  scenario, as a server's nil `TrustScenario` trusts no caller. A
+  controller that never adds it can't be put under test by anyone who can
+  annotate its objects.
+- **`trust` is asked only about an object whose annotation carries a
+  scenario,** and only when the App has failure injection. It is handed its
+  own copy of the object, and is set in code, not sourced.
+- **A panic in `trust` is recovered and recorded** as a panic in the
+  Reconciler is, under [Panics](#panics): the reconcile's outcome is
+  `panic`, its key is forgotten, and nothing else runs, so no finalizer and
+  no status is applied.
+- **`NewController` and `NewKindController` report three mistakes:** an
+  annotation that isn't a valid annotation key, a nil `trust`, and a second
+  `TrustScenario`.
+
+**Who may set the annotation is decided outside the process,** by RBAC and
+admission, and `trust` reads what those decisions leave visible: the
+object's namespace, a label an admission policy guards, or the object's
+owner. Here a ValidatingAdmissionPolicy lets only the chaos harness's
+ServiceAccount set or change the annotation on a Memcached in staging, so
+trusting every Memcached in staging trusts the harness alone:
+
+```yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: memcached-failure-scenario
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["cache.example.com"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["memcacheds"]
+  variables:
+    - name: key
+      expression: "'acme.example.com/failure-scenario'"
+    - name: scenario
+      expression: >-
+        has(object.metadata.annotations) && variables.key in object.metadata.annotations
+        ? object.metadata.annotations[variables.key] : ''
+    - name: oldScenario
+      expression: >-
+        oldObject != null && has(oldObject.metadata.annotations) && variables.key in oldObject.metadata.annotations
+        ? oldObject.metadata.annotations[variables.key] : ''
+  validations:
+    - expression: >-
+        variables.scenario == variables.oldScenario ||
+        request.userInfo.username == 'system:serviceaccount:chaos:harness'
+      message: only the chaos harness sets acme.example.com/failure-scenario
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: memcached-failure-scenario
+spec:
+  policyName: memcached-failure-scenario
+  validationActions: ["Deny"]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: staging
+```
+
+**When a reconcile's span starts, the controller reads the annotation** from
+the object as the cache holds it. That is before it adds or removes its
+finalizer, calls a `Finalize`'s function, or calls the Reconciler, so each
+of them, the controller's own applies, and every request and injection
+point they reach see the scenario. The annotation is read one of four ways:
+
+- **no annotation, or none of the `Decoder`'s members in it:** the reconcile
+  carries no scenario, and nothing is recorded;
+- **a value that isn't W3C baggage:** the reconcile carries no scenario, and
+  its span gets a `humus.fit.strip` event with `error.type` and
+  `error.message`. The reconcile goes on;
+- **an object `trust` doesn't trust:** the reconcile carries no scenario, and
+  its span gets a `humus.fit.strip` event with no attributes, as a server's
+  request does;
+- **a trusted object:** the `Decoder`'s members join the reconcile's
+  context, and no other member of the annotation does, so an annotation
+  can't put arbitrary baggage on every request a reconcile makes.
+
+**The scenario belongs to the object.** A reconcile that a change to an
+[owned resource](#owned-resources) triggered carries the owner's scenario,
+since it is the owner that is reconciled, and the owned resource's
+annotations aren't read.
+
+### Writing a scenario into an annotation
+
+The annotation's value is W3C baggage that carries a scenario as the App's
+`Decoder` reads it, such as `jsonscenario`'s member. So a scenario written
+for an HTTP request's `baggage` header goes on an object unchanged, and one
+tool writes both: `fit.ContextWithScenario` and a codec that is also a
+`fit.Encoder`, as
+[Writing a scenario]({{< relref "failure-injection#writing-a-scenario" >}})
+describes. The tool that runs the experiment then takes the baggage it
+leaves:
+
+```go
+// annotationValue returns the value of an annotation that carries s,
+// written with codec, as the tool that runs an experiment writes it: the
+// W3C baggage that fit.ContextWithScenario leaves.
+func annotationValue(codec fit.Encoder, s fit.Scenario) (string, error) {
+	ctx, err := fit.ContextWithScenario(context.Background(), codec, s)
+	if err != nil {
+		return "", err
+	}
+	return baggage.FromContext(ctx).String(), nil
+}
+```
+
+This scenario aborts every apply of a Deployment, with `jsonscenario`'s
+codec of the member `acme.fault`:
+
+```go
+value, err := annotationValue(codec, fit.Scenario{Rules: []fit.Rule{
+	{Point: "kube:deployments.apps:patch", Fault: fit.Fault{Abort: true}},
+}})
+```
+
+Its value is one `acme.fault` member, percent-encoded as W3C Baggage
+requires:
+
+```text
+acme.fault={%22rules%22:[{%22point%22:%22kube:deployments.apps:patch%22%2C%22abort%22:true}]}
+```
+
+### Injection points
+
+**Every request through the Client's transport is an injection point** of
+`s.Faults`, the end user's clientsets' included, as every humus client is.
+The point names what the request does to which resource, as the API
+server's authorizer and audit log name it:
+
+```text
+kube:<resource>[.<group>][/<subresource>]:<verb>
+```
+
+- `<resource>` is the plural, and `<group>` is left out for the core group,
+  as kubectl writes a resource: `deployments.apps`, `secrets`,
+  `memcacheds.cache.example.com`;
+- `<verb>` is the API server's: `get`, `list`, `watch`, `create`, `update`,
+  `patch`, `delete` or `deletecollection`. A server-side apply is a
+  `patch`;
+- a request for a path that isn't a resource, such as discovery's `/apis`,
+  is `kube:<path>:<verb>`, such as `kube:/apis:get`.
+
+A point carries no namespace and no object's name: the scenario is already
+scoped to one object's reconciles. `fit` matches a point exactly, or by a
+prefix ending in `*`, so a rule can fail everything about one resource:
+
+| A rule | Fails |
+|---|---|
+| `kube:*` | every request to the API server |
+| `kube:deployments.apps:*` | every request about Deployments, but not their subresources |
+| `kube:deployments.apps:patch` | every apply of a Deployment |
+| `kube:memcacheds.cache.example.com/status:patch` | the controller's apply of a Memcached's status. A Kind's controller applies no status, so only a Resource's controller makes this request |
+| `kube:memcacheds.cache.example.com:patch` | the controller's applies of a Memcached's finalizer |
+
+A request whose context carries no scenario is evaluated, stripped and
+recorded not at all. The informers, leader election, the Lease's release
+and the check that a resource is served run on `Serve`'s context, which
+never carries a scenario, so they always run without one.
+
+**The injection layer sits between `otelhttp` and the token.** So a delay is
+inside the request's span and in `http.client.request.duration`, an abort
+fails before `Connection.Token` is called, and the `humus.fit.evaluation`
+event lands on the request's span. A watch has no span, so its event lands
+on the span in its context, such as the reconcile's.
+
+### A fault is a real failure
+
+A fault emulates a failure of the API server, and everything that meets it
+reacts as it would to that failure:
+
+| | An abort | A delay |
+|---|---|---|
+| The request | fails with nothing sent, and with no call to `Connection.Token`, as an unreachable API server's does. client-go returns an error that wraps the `*fault.InjectedError`, which `errors.As` finds | waits before the request is sent, inside the request's context, and then goes on. Cut short, it fails with an `*fault.InjectedError` that wraps the context's cause, except when a `rest.Config`'s `Timeout` cuts it short (below) |
+| client-go | returns it at once, not even retrying a GET: it retries only a connection that was reset, ended early or lost, and a response with `Retry-After` | sends the request once the delay is over |
+| The reconcile | whatever the Reconciler does with the error. Returned, it retries the object with backoff, and `humus.kube.controller.reconcile.outcome` is `error` | slower, as `humus.kube.controller.reconcile.duration` shows |
+
+**The controller's own writes are requests like any other.** An abort at
+`…/status:patch` fails the status apply, which retries the object as any
+failed reconcile does, and an abort at the resource's own `patch` fails
+adding or removing a finalizer.
+
+**A delay that a `rest.Config`'s `Timeout` cuts short** is the one
+exception. `Client.Config()` sets no `Timeout`, so the controller's own
+requests always fail as the table says. An end user who sets one on their
+copy gets two timers from client-go: a deadline on each request's context,
+and the `http.Client`'s own `Timeout`. They go off together, and when
+net/http's has gone off by the time the transport returns, net/http replaces
+the transport's error with a timeout error of its own, which matches
+`context.DeadlineExceeded` and holds no `*fault.InjectedError`. Either way,
+the request timed out, and its span has the `error.type`
+`github.com/z5labs/humus/fault.InjectedError`.
+
+**The API server takes no part in failure injection,** so the Client strips
+the scenario from every request it sends, after the point has read it: its
+members leave the request's `baggage` header, every other member and the
+trace context stay, and the request's span gets a `humus.fit.strip` event.
+There is no `ForwardScenario`. A scenario goes on to the reconciled object's
+children instead, as
+[An operator of two controllers](#an-operator-of-two-controllers) shows.
+
+### Starting and ending an experiment
+
+**Adding the annotation starts an experiment, and removing it ends one, at
+once:** either changes the object, which reconciles it straight away. The
+harness's `setScenario` does both, with a JSON merge patch:
+
+```go
+// setScenario starts or ends an experiment on the Memcached name: it sets
+// the annotation to value, a scenario, with a JSON merge patch, or removes
+// the annotation when value is nil. Either reconciles the Memcached at
+// once.
+func setScenario(ctx context.Context, memcacheds dynamic.ResourceInterface, name string, value any) error {
+	patch, err := json.Marshal(map[string]any{
+		"metadata": map[string]any{"annotations": map[string]any{scenarioAnnotation: value}},
+	})
+	if err != nil {
+		return err
+	}
+	_, err = memcacheds.Patch(ctx, name, types.MergePatchType, patch, metav1.PatchOptions{})
+	return err
+}
+```
+
+`dynamic` is client-go's `k8s.io/client-go/dynamic`, and `types` is
+apimachinery's `k8s.io/apimachinery/pkg/types`.
+
+- **A scenario stays as long as its annotation.** Every retry meets it
+  again, so the scenario above, which aborts the Reconciler's apply of the
+  Deployment, keeps the Memcached backing off to `RetryMaxDelay`, as an
+  outage would. The status apply isn't aborted, so the Memcached's status
+  shows the Reconciler's `ApplyFailed` condition all the while.
+- **The reconcile after the annotation is removed carries no scenario,** so
+  the next apply of the Deployment succeeds. A `Decoder` that knows expiry
+  can end an experiment sooner.
+
+### An operator of two controllers
+
+An operator is often several controllers, each reconciling the objects the
+one above it applies. **In a reconcile that carries a scenario, the Client
+sets the `TrustScenario`'s annotation on each child the reconcile
+applies,** so one experiment on the top object reaches every controller
+below it. This operator's second controller, `Budget`, reconciles the
+Deployments that Memcacheds control, and applies a PodDisruptionBudget for
+each:
+
+```go
+// Deployments is Kubernetes' own Deployment kind.
+var Deployments = kube.Kind[appsv1.Deployment]{
+	GVR:   appsv1.SchemeGroupVersion.WithResource("deployments"),
+	Kind:  "Deployment",
+	Scope: kube.Namespaced,
+}
+```
+
+```go
+// Budget is the end user's KindReconciler of the Deployments that
+// Memcacheds control, the second controller of their operator: it applies
+// a PodDisruptionBudget that the Deployment controls, so a drain evicts a
+// Memcached's pods one at a time.
+type Budget struct{ Kube kubernetes.Interface }
+
+func (r Budget) Reconcile(ctx context.Context, d appsv1.Deployment) (time.Duration, error) {
+	if !memcachedChild(&d) || d.Spec.Selector == nil {
+		return 0, nil
+	}
+	_, err := r.Kube.PolicyV1().PodDisruptionBudgets(d.Namespace).Apply(ctx,
+		policyv1ac.PodDisruptionBudget(d.Name, d.Namespace).
+			WithOwnerReferences(metav1ac.OwnerReference().
+				WithAPIVersion("apps/v1").WithKind("Deployment").WithName(d.Name).WithUID(d.UID).
+				WithController(true)).
+			WithSpec(policyv1ac.PodDisruptionBudgetSpec().
+				WithMaxUnavailable(intstr.FromInt32(1)).
+				WithSelector(metav1ac.LabelSelector().WithMatchLabels(d.Spec.Selector.MatchLabels))),
+		metav1.ApplyOptions{FieldManager: "memcached-budget", Force: true},
+	)
+	return 0, err
+}
+
+// memcachedChild reports whether a Memcached controls obj.
+func memcachedChild(obj metav1.Object) bool {
+	owner := metav1.GetControllerOf(obj)
+	return owner != nil && owner.Kind == Memcached.Kind && strings.HasPrefix(owner.APIVersion, Memcached.Group+"/")
+}
+```
+
+The App runs both controllers, each with `Settings` of its own, whose
+`Name` is its Lease's and its field manager's. `Budget`'s controller trusts
+the scenario on a Deployment a Memcached controls:
+
+```go
+// operator returns the Controllers of an operator of two: the Memcached
+// controller under test, and Budget's, which carries the scenario that a
+// Memcached's reconcile sets on its Deployment into the Deployment's
+// reconciles. Each has Settings of its own, with a Name of its own.
+func operator(s *humus.Setup, client *kube.Client, settings, budgetSettings kube.Settings, kc kubernetes.Interface) ([]humus.Service, error) {
+	memcacheds, err := underTest(s, client, settings, Reconciler{Kube: kc})
+	if err != nil {
+		return nil, err
+	}
+	budgets, err := kube.NewKindController(s, client, budgetSettings, Deployments, Budget{Kube: kc},
+		kube.Owns(policyv1.SchemeGroupVersion.WithResource("poddisruptionbudgets")),
+		// An admission policy lets only the operator's ServiceAccount set the
+		// annotation on Deployments.
+		kube.TrustScenario(scenarioAnnotation, memcachedChild),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return []humus.Service{memcacheds, budgets}, nil
+}
+```
+
+`policyv1ac` is client-go's `k8s.io/client-go/applyconfigurations/policy/v1`,
+and `intstr` is apimachinery's `k8s.io/apimachinery/pkg/util/intstr`. A
+scenario on a staging Memcached that aborts
+`kube:poddisruptionbudgets.policy:patch` spares the Memcached's own
+reconciles, whose apply of the Deployment carries the scenario on, and
+fails `Budget`'s apply of the budget, which retries the Deployment with
+backoff.
+
+The Client changes a request that is all of these:
+
+- a server-side apply, a `PATCH` whose content type is
+  `application/apply-patch+yaml`, to an object, not to one of its
+  subresources;
+- made with the reconcile's context, or a context made from it;
+- of an object whose `metadata.ownerReferences` has a controller reference
+  whose `uid` is the reconciled object's, as Kubernetes' garbage collector
+  names a child. The body declares the reference, so the child's resource
+  needs no `Owns`.
+
+It sets `metadata.annotations[<annotation>]` in the request's body to the
+scenario's members as W3C baggage, without any other member of the
+reconcile's baggage, replacing any value the body gave it, and sends the
+body on as JSON, which is YAML too. That happens after the point is
+evaluated, so an aborted apply sends nothing, and after the request's
+baggage is stripped, so the API server still gets no scenario. The
+`Reconciler` applies its Deployment as it always does, with nothing added.
+
+- **The child's controller decides.** `Budget`'s controller carries the
+  Deployment's scenario into the Deployment's reconciles when its `trust`
+  trusts the Deployment, and its own apply of the budget carries the
+  scenario on to the grandchild. What makes a child's annotation worth
+  trusting is an admission policy that lets only the operator's
+  ServiceAccount set it on the children's resources, here Deployments.
+- **Ending the experiment on the top object ends it all the way down.**
+  Removing the Memcached's annotation reconciles it at once, without a
+  scenario. Its apply of the Deployment no longer declares the annotation,
+  and a server-side apply removes what its field manager stops declaring, so
+  the API server removes the annotation, unless another field manager also
+  set it. That changes the Deployment, whose controller reconciles it at
+  once, without a scenario, and so on down.
+- **A child that no controller reads keeps an inert annotation** for as long
+  as the experiment runs, such as the budget here, or the Deployment of a
+  Memcached controller with no second controller. Kubernetes' own
+  controllers ignore it, and a Deployment's annotations aren't its pods'
+  template, so it starts no rollout.
+
+What is left alone:
+
+- a request in a reconcile with no scenario, or outside a reconcile;
+- a create, an update, and a patch that isn't an apply. Only an apply takes
+  the annotation off again: a child created or updated with it would keep it
+  after the experiment ends, and keep failing;
+- a body that isn't JSON or YAML. client-go sends JSON unless the end user
+  sets the `rest.Config`'s `ContentType` to protobuf, or turns on its
+  `ClientsAllowCBOR` and `ClientsPreferCBOR` feature gates for CBOR. Such an
+  apply is sent as it is;
+- the controller's applies of the reconciled object's own status and
+  finalizer, which are of the object, and it isn't its own child;
+- an object that isn't the reconciled object's child: one whose controller
+  owner reference names another object, or that has only owner references
+  that aren't a controller's.
+
+### What it records
+
+Nothing of its own: the events are `fault`'s, as
+[Telemetry]({{< relref "failure-injection#telemetry" >}}) on the failure
+injection page lists them.
+
+- `humus.fit.evaluation` is on each request's span, on the span in a watch's
+  context, and wherever the end user evaluates a point of their own.
+- `humus.fit.strip` is on a request's span, and on a reconcile's span for an
+  annotation that is dropped. A strip has no attributes, with one exception:
+  a reconcile's strip of an annotation that isn't W3C baggage has
+  `error.type` and `error.message`. The controller parses the annotation
+  itself, so only it can tell an annotation it can't read from an object it
+  doesn't trust.
+- Setting a child's annotation adds no event: the apply's span has its
+  evaluation and its strip, and the child's reconciles show the scenario
+  they carry.
+
+An aborted request's span has the `error.type`
+`github.com/z5labs/humus/fault.InjectedError`, as every client's has,
+`otelhttp`'s `http.client.request.duration` counts it, and
+`humus.kube.controller.reconcile.duration` counts the reconcile it fails
+with the outcome `error`.
+
 ## Testing
 
 **humus ships no fake API server, and no test package.** humus is neither
@@ -1368,6 +1819,15 @@ written with `clientcmd.Write`. `Init` runs inside `synctest` as far as it
 goes without a cluster: with its variables unset it exits 78, naming each
 one.
 
+A controller under [failure injection](#failure-injection) runs inside
+`synctest` on the fakes too, with a Setup whose `Faults` comes from
+`fault.New`. Its test hands `underTest` a Reconciler of its own, which
+evaluates `kube:deployments.apps:patch` with `s.Faults.Eval`, and starts
+and ends the experiment with `setScenario` on the fake dynamic client.
+client-go's fakes never see a request's context, so the points of the
+Client's own requests, and the annotation carried on to children, need the
+real API server below.
+
 ### The whole App, against k3s
 
 **The whole App runs against k3s in a container.** Its test runs the App
@@ -1435,7 +1895,13 @@ require.Empty(t, lease.Spec.HolderIdentity, "the Lease is left without a holder"
 `kube`'s own tests against k3s also undo a hand-made scale of a Deployment
 the Memcached owns, run its finalizer when it is deleted, exit 1 when the
 CRD isn't installed, and give every Namespace a ConfigMap with a Kind
-controller. A Deployment's pods never run without a kubelet, which is why
+controller. Under [failure injection](#failure-injection), they annotate a
+Memcached with a scenario that aborts its Deployment's apply, or its
+finalizer's, and see it retried until the annotation is removed. They see
+the annotation carried on to the Deployment and taken off it again, and an
+operator of two controllers carry a scenario down: only a real API server
+sees a request's context, and removes what an apply stops declaring. A
+Deployment's pods never run without a kubelet, which is why
 `kube`'s own test Reconciler reports its condition from the apply alone.
 
 ### Behind a build tag, in a CI job of its own

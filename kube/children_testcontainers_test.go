@@ -40,13 +40,6 @@ import (
 // operator of two controllers, its Lease's and its field manager's.
 const deploymentWatcherName = "deployment-watcher"
 
-// Deployments is the Kind of the operator's second controller.
-var Deployments = kube.Kind[appsv1.Deployment]{
-	GVR:   appsv1.SchemeGroupVersion.WithResource("deployments"),
-	Kind:  "Deployment",
-	Scope: kube.Namespaced,
-}
-
 // createAnnotatedMemcached creates the Memcached default/name of r's
 // group, annotated with a scenario of sc, and returns its client.
 func createAnnotatedMemcached(t *testing.T, client *kube.Client, r kube.Resource[MemcachedSpec, MemcachedStatus], name string, sc *fit.Scenario) dynamic.ResourceInterface {
