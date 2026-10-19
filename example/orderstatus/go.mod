@@ -12,6 +12,10 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
+	github.com/twmb/franz-go v1.22.2
+	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261018232743-f49d7ddc2cb4
+	github.com/twmb/franz-go/pkg/kmsg v1.15.0
+	github.com/z5labs/bedrock v0.25.0
 	github.com/z5labs/bedrock/retry v0.25.0
 	github.com/z5labs/humus v0.0.0-00010101000000-000000000000
 	github.com/z5labs/humus/queue/kafka v0.0.0-00010101000000-000000000000
@@ -62,11 +66,8 @@ require (
 	github.com/sirupsen/logrus v1.10.2 // indirect
 	github.com/tklauser/go-sysconf v0.4.0 // indirect
 	github.com/tklauser/numcpus v0.12.0 // indirect
-	github.com/twmb/franz-go v1.22.2 // indirect
-	github.com/twmb/franz-go/pkg/kmsg v1.15.0 // indirect
 	github.com/twmb/franz-go/plugin/kotel v1.7.1 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
-	github.com/z5labs/bedrock v0.25.0 // indirect
 	github.com/z5labs/bedrock/circuit v0.25.0 // indirect
 	github.com/z5labs/bedrock/fit v0.25.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
