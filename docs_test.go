@@ -290,11 +290,11 @@ func TestQuotedIn(t *testing.T) {
 		{"the last lines of a file", []string{"\t\treturn", "\t}", "}"}, true},
 		{"a single line", []string{"return"}, true},
 		{"at another relative indentation", []string{"if ok {", "return"}, false},
-		{"indented deeper than the file", []string{"if ok {", "\t\treturn"}, false},
-		{"indented less than the file", []string{"a()", "b()", "c()"}, false},
+		{"a line indented deeper relative to the one before it than in the file", []string{"if ok {", "\t\treturn"}, false},
+		{"a nested line at the same indentation as the line before it", []string{"a()", "b()", "c()"}, false},
 		{"at the file's relative indentation", []string{"a()", "\tb()", "c()"}, true},
-		{"more indented first than the file", []string{"\tp()", "q()"}, true},
-		{"less indented first than the file", []string{"p()", "\tq()"}, false},
+		{"a first line more indented than the second, as in the file", []string{"\tp()", "q()"}, true},
+		{"a first line less indented than the second, unlike the file", []string{"p()", "\tq()"}, false},
 		{"a line that is in no file", []string{"if done {"}, false},
 		{"lines in a file but not consecutively", []string{"x := 1", "z := 3"}, false},
 		{"lines in a file but out of order", []string{"y := 2", "x := 1"}, false},
@@ -520,8 +520,12 @@ func quotedIn(c *corpus, lines []string) bool {
 // windowQuotes reports whether window, once dedented, is lines.
 func windowQuotes(window, lines []string) bool {
 	for i, l := range window {
-		blank := strings.TrimSpace(l) == ""
-		if blank != (strings.TrimSpace(lines[i]) == "") || !blank && content(l) != content(lines[i]) {
+		windowBlank := strings.TrimSpace(l) == ""
+		sampleBlank := strings.TrimSpace(lines[i]) == ""
+		if windowBlank != sampleBlank {
+			return false
+		}
+		if !windowBlank && content(l) != content(lines[i]) {
 			return false
 		}
 	}
