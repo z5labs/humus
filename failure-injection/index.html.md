@@ -360,8 +360,39 @@ settings.TrustScenario = func(m rabbitmq.Message) bool {
 }
 ```
 
-A message published without a `user-id` has an empty `UserID`, which that
-func doesn't trust.
+The `user-id` comes only from the publisher. RabbitMQ adds none to a
+message published without one, so nothing the consumer sees tells it who
+published that message, and its empty `UserID` isn't trusted by that func.
+A humus service's messages carry one when each `Publish` sets
+`Publishing.UserID` to the user its `Publisher`'s `Connection` logs in as:
+the login it sources for `Connection.SASL`, or the user its client
+certificate maps to. This `Processor` of `orders-api` publishes each order
+on to the next service, with a `Publisher` whose `ForwardScenario` is set:
+
+```go
+// relay is a Processor that publishes each order on to the next of the end
+// user's services. Each message names the user its Publisher logs in as,
+// which RabbitMQ validates, so the next service's TrustScenario can trust
+// the scenario the Publisher forwards.
+type relay struct {
+	pub  *rabbitmq.Publisher // built with ForwardScenario set
+	user string              // the user pub logs in as, such as orders-api
+}
+
+// Process publishes the order m carries on, with the user-id r.user.
+func (r relay) Process(ctx context.Context, m rabbitmq.Message) error {
+	return r.pub.Publish(ctx, rabbitmq.Publishing{
+		Exchange:   "orders",
+		RoutingKey: "accepted",
+		MessageID:  m.MessageID,
+		UserID:     r.user,
+		Body:       m.Body,
+	})
+}
+```
+
+A `UserID` that isn't that user is refused by the broker with
+`406 PRECONDITION_FAILED`, which `Publish` returns at once, with no retry.
 
 ### A job trusts its `BAGGAGE`
 
@@ -405,6 +436,12 @@ the points are in the service's own clients, which evaluate it before they
 strip it. Only its server's trust is needed. For a Kafka `Producer` or a
 RabbitMQ `Publisher`, the dependency is every consumer of the topic or the
 destination, and so is the trust boundary.
+
+Forwarding puts the scenario on what is sent, and the next service still
+decides whether to trust it. A RabbitMQ consumer that trusts by `UserID`
+keeps a forwarded scenario only from a `Publish` that sets
+`Publishing.UserID` to the user its `Publisher` logs in as, as
+[RabbitMQ: `UserID`](#rabbitmq-userid) shows.
 
 ## A fault is a real failure
 
