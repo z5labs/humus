@@ -227,8 +227,8 @@ func (e *GracePeriodError) Unwrap() error {
 //  8. waits for a signal, or for the first Service to return. A Service
 //     whose Serve returns once a signal has come, or once ctx is cancelled,
 //     returned on it, even when Run receives its result first, so the
-//     shutdown is the signal's; it is a Service's own only when Serve
-//     returned before either;
+//     shutdown is the signal's, or ctx's; it is a Service's own only when
+//     Serve returned before either;
 //  9. stops listening for signals, so a second one takes its default
 //     action, cancels the context passed to Serve, and logs "shutting
 //     down";
