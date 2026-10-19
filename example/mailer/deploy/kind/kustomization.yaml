@@ -1,0 +1,57 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: mailer
+resources:
+  - namespace.yaml
+  - ../base
+  - rabbitmq.yaml
+  - wiremock.yaml
+configMapGenerator:
+  - name: mailer
+    behavior: merge
+    literals:
+      - PROVIDER_URL=https://wiremock
+      - PROVIDER_CA_FILE=/etc/mailer/provider-ca/ca.crt
+      - MAIL_TRUSTED_PUBLISHERS=cases
+      - OTEL_TRACES_EXPORTER=console
+      - OTEL_METRICS_EXPORTER=console
+      - OTEL_LOGS_EXPORTER=console
+  - name: rabbitmq-config
+    files:
+      - rabbitmq/rabbitmq.conf
+      - rabbitmq/enabled_plugins
+  - name: rabbitmq-definitions
+    files:
+      - ../rabbitmq/definitions.json
+      - rabbitmq/policies.json
+  - name: wiremock-mappings
+    files:
+      - wiremock/accepted.json
+      - wiremock/refused.json
+      - wiremock/unauthorized.json
+patches:
+  - target:
+      kind: Deployment
+      name: mailer
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: mailer
+      spec:
+        template:
+          spec:
+            containers:
+              - name: mailer
+                imagePullPolicy: Never
+                volumeMounts:
+                  - name: provider-ca
+                    mountPath: /etc/mailer/provider-ca
+                    readOnly: true
+            volumes:
+              - name: provider-ca
+                configMap:
+                  name: mailer-provider-ca
+                  items:
+                    - key: ca.crt
+                      path: ca.crt

@@ -1,0 +1,31 @@
+{
+  "policies": [
+    {
+      "name": "kind.mail.send",
+      "vhost": "/",
+      "pattern": "^mail\\.send$",
+      "apply-to": "queues",
+      "priority": 1,
+      "definition": {
+        "delivery-limit": 2,
+        "dead-letter-exchange": "mail.dead",
+        "dead-letter-strategy": "at-least-once",
+        "overflow": "reject-publish"
+      }
+    },
+    {
+      "name": "kind.mail.send.retry",
+      "vhost": "/",
+      "pattern": "^mail\\.send\\.retry$",
+      "apply-to": "queues",
+      "priority": 1,
+      "definition": {
+        "message-ttl": 1000,
+        "dead-letter-exchange": "mail",
+        "dead-letter-routing-key": "mail.send",
+        "dead-letter-strategy": "at-least-once",
+        "overflow": "reject-publish"
+      }
+    }
+  ]
+}

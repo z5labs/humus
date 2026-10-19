@@ -621,8 +621,9 @@ jobs:
   # The mailer walkthrough's image, built from its Dockerfile with the
   # repository as the context, since its module replaces humus and
   # queue/rabbitmq with paths under ../.., and its base kustomization,
-  # rendered. The ruleset doesn't require this job, and Build doesn't wait
-  # on it.
+  # rendered. up.sh then creates a kind cluster, loads the image and applies
+  # the kind overlay, and the mailer's Deployment has to become ready. The
+  # ruleset doesn't require this job, and Build doesn't wait on it.
   mailer-kind:
     name: Mailer walkthrough (kind)
     runs-on: ubuntu-latest
@@ -638,3 +639,17 @@ jobs:
 
         - name: Render the kustomization
           run: kubectl kustomize example/mailer/deploy/base
+
+        - name: Bring the mailer up on kind
+          run: example/mailer/deploy/kind/up.sh
+
+        - name: Wait for the mailer's Deployment
+          run: kubectl --namespace mailer rollout status deployment/mailer --timeout 5m
+
+        - name: Show the mailer namespace
+          if: ${{ failure() }}
+          run: |
+            kubectl --namespace mailer get all
+            kubectl --namespace mailer describe pods
+            kubectl --namespace mailer logs deployment/rabbitmq --tail 200 || true
+            kubectl --namespace mailer logs deployment/mailer --all-containers --tail 200 || true
