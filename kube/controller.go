@@ -101,6 +101,11 @@ type Controller struct {
 	finalizer string
 	finalize  finalizeFunc
 
+	// scenarios reads the scenario an object's annotation carries into its
+	// reconciles. It is the zero scenarios, which reads nothing, without a
+	// TrustScenario or in an App without failure injection.
+	scenarios scenarios
+
 	dyn    dynamic.Interface
 	meta   metadata.Interface
 	leases coordinationv1.LeasesGetter
@@ -145,6 +150,8 @@ var notServed = &call{}
 //   - an Owns whose GroupVersionResource has no Version or no Resource;
 //   - a Finalize whose name is empty, whose f is nil, or whose f takes
 //     something other than an Object[Spec, Status], and a second Finalize;
+//   - a TrustScenario whose annotation isn't a valid annotation key, or
+//     whose trust is nil, and a second TrustScenario;
 //   - a nil Reconciler, a nil Part, a nil Setup or a nil Client;
 //   - an error creating one of its instruments.
 //
@@ -217,6 +224,8 @@ func newController[T any](s *humus.Setup, c *Client, settings Settings, t target
 		finalizer string
 		finalizes finalizeFunc
 		finalized = -1
+		trusts    *trustScenario
+		trusted   = -1
 	)
 	for i, p := range parts {
 		switch p := p.(type) {
@@ -247,6 +256,16 @@ func newController[T any](s *humus.Setup, c *Client, settings Settings, t target
 					i, p.name, p.typ, reflect.TypeFor[T]()))
 			} else if !p.nilF {
 				finalizer, finalizes = p.name, finalizerOf(f)
+			}
+		case trustScenario:
+			if trusted >= 0 {
+				errs = append(errs, fmt.Errorf("parts[%d], TrustScenario(%q), is a second TrustScenario, after parts[%d]", i, p.annotation, trusted))
+			}
+			trusted = i
+			if pErrs := checkTrustScenario(i, p); len(pErrs) > 0 {
+				errs = append(errs, pErrs...)
+			} else if trusts == nil {
+				trusts = &p
 			}
 		}
 	}
@@ -289,6 +308,7 @@ func newController[T any](s *humus.Setup, c *Client, settings Settings, t target
 		owned:      owned,
 		finalizer:  finalizer,
 		finalize:   finalizes,
+		scenarios:  newScenarios(trusts, s.Faults),
 		dyn:        dyn,
 		meta:       meta,
 		leases:     leases,

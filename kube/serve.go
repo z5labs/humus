@@ -73,8 +73,9 @@ const objectNameKey = attribute.Key("humus.kube.object.name")
 // once they have returned.
 //
 // A reconcile error never ends Serve: the object is retried with backoff.
-// Nor does a panic of the Reconciler or of a Finalize's f, which is
-// recovered and recorded, and never retried.
+// Nor does a panic of the Reconciler, of a Finalize's f or of a
+// TrustScenario's trust, which is recovered and recorded, and never
+// retried.
 //
 // A Controller is served once. A Serve called after Shutdown, or after an
 // earlier Serve, returns nil at once.
@@ -372,9 +373,13 @@ func (c *Controller) process(work context.Context, queue workqueue.TypedRateLimi
 // the span's status to Error, and is one WARN record in the span's context.
 // The span's time is recorded in reconcile.duration, with its outcome.
 //
-// A panic of the Reconciler, or of a Finalize's f, is recovered, recorded
-// by recordPanic, and reported as recovered. Nothing is applied after it: no
-// status, since there is no Result, and no removal of the finalizer.
+// With a TrustScenario, the span's context first gets the scenario u's
+// annotation carries, when its trust trusts u, as scenarios.with says.
+//
+// A panic of the Reconciler, of a Finalize's f, or of a TrustScenario's
+// trust, is recovered, recorded by recordPanic, and reported as recovered.
+// Nothing is applied after it: no status, since there is no Result, no
+// finalizer added, and none removed.
 //
 // With a Finalize, the span holds what the controller does in place of the
 // Reconciler: it adds the finalizer to an object that hasn't got it, and
@@ -407,6 +412,14 @@ func (c *Controller) reconcileObject(work context.Context, u *unstructured.Unstr
 		}
 		c.metrics.reconciled(ctx, end.Sub(start).Seconds(), outcome)
 	}()
+
+	// The scenario is read before anything else runs, so the finalizer's
+	// apply, f, the Reconciler and the status's apply all see it.
+	ctx, p := c.scenarios.with(ctx, u)
+	if p != nil {
+		c.recordPanic(ctx, attrs, p)
+		return 0, true, nil
+	}
 
 	switch {
 	case u.GetDeletionTimestamp() != nil:

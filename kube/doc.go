@@ -384,8 +384,9 @@
 // mistake in the Resource, as [Resource.CRD] reports it, a Settings.Namespace
 // for a cluster-scoped Resource, an [Owns] with no Version or no Resource,
 // a [Finalize] whose name is empty, whose f is nil or whose f takes another
-// type than the Controller's Object, a second Finalize, and a nil
-// Reconciler.
+// type than the Controller's Object, a second Finalize, a [TrustScenario]
+// whose annotation isn't a valid annotation key or whose trust is nil, a
+// second TrustScenario, and a nil Reconciler.
 //
 // A [Reconciler] is handed its object, and returns what the object's status
 // is now:
@@ -446,8 +447,8 @@
 //
 // # Panics
 //
-// A panic in Reconcile, or in a [Finalize]'s f, is recovered and recorded
-// (see Telemetry), but never retried. A panic is a mistake in the
+// A panic in Reconcile, in a [Finalize]'s f, or in a [TrustScenario]'s
+// trust, is recovered and recorded (see Telemetry), but never retried. A panic is a mistake in the
 // controller, such as a nil pointer, an index out of range or a division by
 // zero: it shows the code's assumptions about the cluster are wrong, so a
 // retry would only panic again, and fill the logs and traces with the same
@@ -659,7 +660,8 @@
 //   - a failed reconcile, a failed f among them, is one WARN record,
 //     "reconcile failed", in the span's context, with the object and the
 //     error;
-//   - a panic of Reconcile, or of f, is an exception event on the span,
+//   - a panic of Reconcile, of f, or of a TrustScenario's trust, is an
+//     exception event on the span,
 //     with exception.type, exception.message and exception.stacktrace, the
 //     stack of the panic, and sets the span's status to Error. It is one
 //     ERROR record, "reconcile panicked", in the span's context, with the
@@ -674,7 +676,9 @@
 //   - on a request that carries a failure scenario, the injection point's
 //     humus.fit.evaluation event and the strip's humus.fit.strip event are
 //     on the request's span, or a watch's on the span in its context, as
-//     Failure injection, below, says;
+//     Failure injection, below, says. An object's annotation whose scenario
+//     a [TrustScenario] drops is a humus.fit.strip event on the reconcile's
+//     span;
 //   - the controller's own instruments measure its work queue and its
 //     reconciles, from the MeterProvider. They are below.
 //
@@ -730,6 +734,81 @@
 // sum over the replicas counts the standbys' keys too.
 //
 // # Failure injection
+//
+// A reconcile carries the failure scenario its object's annotation holds,
+// when the controller is given a [TrustScenario] and its trust trusts the
+// object. The end user names the annotation, and decides trust with a func
+// of the object:
+//
+//	const scenarioAnnotation = "acme.example.com/failure-scenario"
+//
+//	ctrl, err := kube.NewController(s, client, settings, Memcached, Reconciler{Kube: kc},
+//		kube.Owns(appsv1.SchemeGroupVersion.WithResource("deployments")),
+//		// Only the staging namespace runs experiments. An admission policy lets
+//		// only the chaos harness's ServiceAccount set the annotation there.
+//		kube.TrustScenario(scenarioAnnotation, func(obj metav1.Object) bool {
+//			return obj.GetNamespace() == "staging"
+//		}),
+//	)
+//
+// The annotation's value is W3C baggage that carries a scenario as the
+// App's Decoder, fault.Settings.Decoder, reads it, such as jsonscenario's
+// member, so a scenario written for an HTTP request's baggage header can be
+// put on an object unchanged. The tool that runs the experiment writes it:
+//
+//	codec, _ := jsonscenario.New("acme.fault")
+//	ctx, _ := fit.ContextWithScenario(ctx, codec, fit.Scenario{Rules: []fit.Rule{
+//		{Point: "kube:deployments.apps:patch", Fault: fit.Fault{Abort: true}},
+//	}})
+//	value := baggage.FromContext(ctx).String()
+//
+// When a reconcile's span starts, the controller reads the annotation from
+// the object as the cache holds it. That is before it adds or removes its
+// finalizer, calls a Finalize's f, or calls the Reconciler, so each of them,
+// the controller's own applies, and every request and injection point they
+// reach see the scenario. The scenario belongs to the object: a reconcile
+// that a change to an owned resource triggered carries the owner's
+// scenario, and the owned resource's annotations aren't read.
+//
+// The annotation is read one of four ways:
+//   - no annotation, or none of the Decoder's members in it: the reconcile
+//     carries no scenario, and nothing is recorded;
+//   - a value that isn't W3C baggage: the reconcile carries no scenario, and
+//     its span gets a humus.fit.strip event with error.type and
+//     error.message. It is the one strip with attributes: the controller
+//     parses the annotation itself, so only it can tell an annotation it
+//     can't read from an object it doesn't trust. The reconcile goes on;
+//   - an object trust doesn't trust: the reconcile carries no scenario, and
+//     its span gets a humus.fit.strip event with no attributes, as a
+//     server's request does;
+//   - a trusted object: the Decoder's members join the reconcile's context,
+//     and no other member of the annotation does, so an annotation can't put
+//     arbitrary baggage on every request a reconcile makes.
+//
+// trust is asked only about an object whose annotation carries a scenario,
+// and only when the App has failure injection, and is handed its own copy
+// of the object. A panic in trust is recovered and recorded as a panic in
+// the Reconciler is (see Panics): the reconcile's outcome is panic, its key
+// is forgotten, and nothing else runs, so no finalizer and no status is
+// applied. Without TrustScenario, nothing is read, and no reconcile carries
+// a scenario: a controller that never adds it can't be put under test by
+// anyone who can annotate its objects.
+//
+// Adding the annotation starts an experiment, and removing it ends one, at
+// once: either changes the object, which reconciles it straight away. A
+// scenario stays as long as its annotation, so every retry meets it again,
+// and one that aborts a write keeps the object backing off to
+// RetryMaxDelay, as an outage would. The reconcile after the annotation is
+// removed carries no scenario. A Decoder that knows expiry can end an
+// experiment sooner.
+//
+// Who may set the annotation is decided outside the process, by RBAC and
+// admission, and trust reads what those decisions leave visible: the
+// object's namespace, a label an admission policy guards, or the object's
+// owner. In the example above, a ValidatingAdmissionPolicy lets only the
+// chaos harness's ServiceAccount set the annotation on objects in the
+// staging namespace, so trusting every object in staging trusts the
+// harness alone, and an object anywhere else is never put under test.
 //
 // Every request through the Client's transport, the end user's clientsets'
 // included, is an injection point of s.Faults, the Injector of the Setup
