@@ -23,9 +23,11 @@ import (
 	"github.com/z5labs/bedrock/config"
 
 	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/log/embedded"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/humustest"
+	humusjob "github.com/z5labs/humus/job"
 	"github.com/z5labs/humus/telemetry"
 )
 
@@ -811,4 +813,219 @@ func TestGracePeriodError(t *testing.T) {
 			t.Errorf("Unwrap() = %v, want nil", err.Unwrap())
 		}
 	})
+}
+
+// The tests below run whole Apps that a signal, or the cancellation of
+// Run's context, stops before Run waits for a signal or for the first
+// Service to return. Most deliver SIGTERM, or cancel Run's context, while
+// the App logs "serving", after Run has started every Serve, and then wait
+// with synctest.Wait until a Service that stops on Serve's context, as a
+// job, a queue consumer or the health Service does, has returned. When Run
+// starts to wait, the signal and that Serve result are both there. A select
+// would pick one of them at random, so each test runs tries Apps.
+
+// tries is how many Apps each test runs.
+const tries = 20
+
+// hookLogger is the logger of the lifecycle. It records every record's
+// body, at its time, and calls onServing when the App logs "serving", on
+// Run's goroutine.
+type hookLogger struct {
+	embedded.Logger
+	onServing func()
+
+	mu      sync.Mutex
+	records []string
+}
+
+func (l *hookLogger) Emit(_ context.Context, r log.Record) {
+	body := r.Body().AsString()
+	l.mu.Lock()
+	l.records = append(l.records, time.Now().UTC().Format("15:04:05.000")+" "+body)
+	l.mu.Unlock()
+	if body == "serving" && l.onServing != nil {
+		l.onServing()
+	}
+}
+
+func (l *hookLogger) Enabled(context.Context, log.EnabledParameters) bool {
+	return true
+}
+
+// emitted returns the records l recorded, in order.
+func (l *hookLogger) emitted() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.records...)
+}
+
+// hookProvider is a LoggerProvider whose every Logger is logger.
+type hookProvider struct {
+	embedded.LoggerProvider
+	logger *hookLogger
+}
+
+func (p hookProvider) Logger(string, ...log.LoggerOption) log.Logger {
+	return p.logger
+}
+
+// hookedTelemetry returns a Builder of no-op telemetry that logs through l
+// and whose Shutdown returns shutdownErr.
+func hookedTelemetry(l *hookLogger, shutdownErr error) telemetry.Builder {
+	return func(context.Context, bedrock.Process, telemetry.Dialer) (telemetry.SDK, error) {
+		sdk := telemetry.Noop()
+		sdk.LoggerProvider = hookProvider{logger: l}
+		sdk.Shutdown = func(context.Context) error { return shutdownErr }
+		return sdk, nil
+	}
+}
+
+// sigtermAsServing returns a hookLogger that delivers SIGTERM to p as the
+// App logs "serving", calls also, if it is not nil, and waits until every
+// other goroutine in the bubble is blocked, so a Serve that stops on its
+// context has returned.
+func sigtermAsServing(p *bedrocktest.Process, also func()) *hookLogger {
+	return &hookLogger{onServing: func() {
+		if also != nil {
+			also()
+		}
+		p.Signal(syscall.SIGTERM)
+		synctest.Wait() // a Serve that stops on its context has returned
+	}}
+}
+
+// sigtermAfterReturned returns a hookLogger that, as the App logs
+// "serving", waits until a Service that returns on its own has returned,
+// then delivers SIGTERM to p and waits until the signal has come. Run then
+// finds the Serve result and the signal both there, the Serve result first.
+func sigtermAfterReturned(p *bedrocktest.Process) *hookLogger {
+	return &hookLogger{onServing: func() {
+		synctest.Wait() // a Serve that returns on its own has returned
+		p.Signal(syscall.SIGTERM)
+		synctest.Wait() // the signal has come
+	}}
+}
+
+// Each test checks every App outside its bubble, because synctest.Test
+// stops the test at the first App that fails inside it.
+
+// tally counts how many of tries Apps failed a check, and logs it.
+type tally struct {
+	t      *testing.T
+	failed int
+}
+
+// fail fails t with the message, for App i.
+func (c *tally) fail(i int, format string, args ...any) {
+	c.t.Helper()
+	c.failed++
+	c.t.Errorf("App %d: "+format, append([]any{i + 1}, args...)...)
+}
+
+// report logs how many Apps failed, with what.
+func (c *tally) report(what string) {
+	c.t.Helper()
+	c.t.Logf("%s in %d of %d Apps", what, c.failed, tries)
+}
+
+func TestApp_Run_a_SIGTERM_as_the_App_starts_serving_is_the_cause(t *testing.T) {
+	lost := &tally{t: t}
+	for i := range tries {
+		var st bedrock.ExitStatus
+		var records []string
+		synctest.Test(t, func(t *testing.T) {
+			p := bedrocktest.NewProcess(t)
+			logs := sigtermAsServing(p, nil)
+			app := appWith(servicesOf(&fakeService{}))
+			app.Telemetry = hookedTelemetry(logs, nil)
+
+			st = app.Run(t.Context(), p.Process())
+			records = logs.emitted()
+		})
+
+		t.Logf("App %d: code %d, cause %v, records %q", i+1, st.Code(), st.Cause(), records)
+		if st.Code() != 0 {
+			t.Errorf("App %d: code = %d, want 0", i+1, st.Code())
+		}
+		if cause := st.Cause(); cause == nil || cause.Error() != "terminated signal received" {
+			lost.fail(i, "cause = %v, want terminated signal received", cause)
+		}
+	}
+	lost.report("the signal was not the cause")
+}
+
+func TestApp_Run_a_job_that_returns_nil_after_a_SIGTERM_as_the_App_starts_serving_has_the_signal_as_its_cause(t *testing.T) {
+	lost := &tally{t: t}
+	for i := range tries {
+		var st bedrock.ExitStatus
+		synctest.Test(t, func(t *testing.T) {
+			p := bedrocktest.NewProcess(t)
+			logs := sigtermAsServing(p, nil)
+			init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+				run := func(ctx context.Context) error {
+					<-ctx.Done()
+					return nil // treats stopping early as done
+				}
+				return []humus.Service{humusjob.NewService(s, run)}, nil
+			}
+			app := appWith(init)
+			app.Telemetry = hookedTelemetry(logs, nil)
+
+			st = app.Run(t.Context(), p.Process())
+		})
+
+		t.Logf("App %d: code %d, cause %v", i+1, st.Code(), st.Cause())
+		if st.Code() != 0 {
+			t.Errorf("App %d: code = %d, want 0", i+1, st.Code())
+		}
+		if cause := st.Cause(); cause == nil || cause.Error() != "terminated signal received" {
+			lost.fail(i, "cause = %v, want terminated signal received", cause)
+		}
+	}
+	lost.report("the signal was not the cause")
+}
+
+// TestApp_Run_a_SIGTERM_while_the_App_waits_is_the_cause is the variation
+// that passes: SIGTERM comes once Run waits for a signal or for the first
+// Service to return, as it does in TestShutdownCause.
+func TestApp_Run_a_SIGTERM_while_the_App_waits_is_the_cause(t *testing.T) {
+	lost := &tally{t: t}
+	for i := range tries {
+		var st bedrock.ExitStatus
+		synctest.Test(t, func(t *testing.T) {
+			p := bedrocktest.NewProcess(t)
+			status := start(t, appWith(servicesOf(&fakeService{})), p)
+			<-p.Notified(syscall.SIGTERM)
+			synctest.Wait() // Run waits for a signal or for the first Service to return
+			p.Signal(syscall.SIGTERM)
+			st = <-status
+		})
+
+		t.Logf("App %d: code %d, cause %v", i+1, st.Code(), st.Cause())
+		if cause := st.Cause(); cause == nil || cause.Error() != "terminated signal received" {
+			lost.fail(i, "cause = %v, want terminated signal received", cause)
+		}
+	}
+	lost.report("the signal was not the cause")
+}
+
+func TestApp_Run_a_Service_that_returns_nil_on_its_own_before_a_SIGTERM_as_the_App_starts_serving_has_no_cause(t *testing.T) {
+	signalled := &tally{t: t}
+	for i := range tries {
+		var st bedrock.ExitStatus
+		synctest.Test(t, func(t *testing.T) {
+			p := bedrocktest.NewProcess(t)
+			logs := sigtermAfterReturned(p)
+			job := &fakeService{serve: func(context.Context) error { return nil }}
+			app := appWith(servicesOf(job))
+			app.Telemetry = hookedTelemetry(logs, nil)
+
+			st = app.Run(t.Context(), p.Process())
+		})
+
+		if st.Code() != 0 || st.Cause() != nil {
+			signalled.fail(i, "status = (%d, %v), want (0, nil): the Service returned before the signal", st.Code(), st.Cause())
+		}
+	}
+	signalled.report("the signal was the cause")
 }

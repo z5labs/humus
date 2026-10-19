@@ -224,7 +224,11 @@ func (e *GracePeriodError) Unwrap() error {
 //     far and exits ExitConfig when a *config.Error is in Init's error
 //     chain, or ExitFailure otherwise;
 //  7. calls Serve on every Service concurrently, and logs "serving";
-//  8. waits for a signal, or for the first Service to return;
+//  8. waits for a signal, or for the first Service to return. A Service
+//     whose Serve returns once a signal has come, or once ctx is cancelled,
+//     returned on it, even when Run receives its result first, so the
+//     shutdown is the signal's; it is a Service's own only when Serve
+//     returned before either;
 //  9. stops listening for signals, so a second one takes its default
 //     action, cancels the context passed to Serve, and logs "shutting
 //     down";
@@ -234,8 +238,9 @@ func (e *GracePeriodError) Unwrap() error {
 //     returned, and gives ShutdownCause the shutdown's cause: the signal's
 //     cause after a signal, ctx's cause when ctx was cancelled, and an
 //     error wrapping ErrServiceReturned, and the error Serve returned if it
-//     failed, when a Service returned first. It collects the Serve results
-//     that arrive while the drain runs, and waits for the drain to return;
+//     failed, when a Service returned before any signal. It collects the
+//     Serve results that arrive while the drain runs, and waits for the
+//     drain to return;
 //  11. calls Shutdown on every Service concurrently, waits for every Serve
 //     to return, and then runs the OnStop functions in reverse order of
 //     registration, all within one grace period, which starts after the
@@ -253,9 +258,9 @@ func (e *GracePeriodError) Unwrap() error {
 // reaches them through the context they are given, which they must honour.
 //
 // The status is 0, with the signal as its cause, after a signal; 0 with no
-// cause when a Service returned nil on its own; ExitFailure with a
-// *GracePeriodError as its cause when the grace period ran out; and
-// ExitFailure with every error joined as its cause otherwise.
+// cause when a Service returned nil on its own, before any signal;
+// ExitFailure with a *GracePeriodError as its cause when the grace period
+// ran out; and ExitFailure with every error joined as its cause otherwise.
 //
 // The lifecycle logs through the LoggerProvider of the SDK, with the
 // OpenTelemetry Logs API and the logger name "github.com/z5labs/humus":
@@ -388,24 +393,47 @@ func (a App) run(ctx, sigCtx context.Context, stop context.CancelFunc, p bedrock
 
 	serveCtx, cancelServe := context.WithCancel(sigCtx)
 	defer cancelServe()
-	served := make(chan error, len(services))
+	served := make(chan serveResult, len(services))
 	for _, svc := range services {
-		go func() { served <- svc.Serve(serveCtx) }()
+		go func() {
+			err := svc.Serve(serveCtx)
+			served <- serveResult{err: err, signalled: sigCtx.Err() != nil}
+		}()
 	}
 	l.info("serving")
 
+	// serveCtx is cancelled with sigCtx, so a signal that comes before Run
+	// waits here lets a Service that stops on Serve's context return before
+	// the wait starts. The signal and that Serve result are then both ready,
+	// and a select picks one of them at random. So the order in which they
+	// reach Run doesn't decide the cause: each Serve result says whether
+	// sigCtx was done when Serve returned, and the shutdown is a Service's
+	// own only when the first Serve result came before the signal.
 	var errs []error
 	pending := len(services)
 	signalled := false
 	var returned error
 	if pending > 0 {
+		var first serveResult
+		received := false
 		select {
 		case <-sigCtx.Done():
-			signalled = true
-		case err := <-served:
+			// A Service may have returned on its own before the signal came.
+			select {
+			case first = <-served:
+				received = true
+			default:
+			}
+		case first = <-served:
+			received = true
+		}
+		if received {
 			pending--
-			errs = appendServeErr(errs, err)
-			returned = serviceReturned(err)
+			errs = appendServeErr(errs, first.err)
+		}
+		signalled = !received || first.signalled
+		if !signalled {
+			returned = serviceReturned(first.err)
 		}
 	}
 	cause := context.Cause(sigCtx)
@@ -428,7 +456,7 @@ func (a App) run(ctx, sigCtx context.Context, stop context.CancelFunc, p bedrock
 	stopServices := func(graceCtx context.Context) []error {
 		errs := shutdownServices(graceCtx, services)
 		for range pending {
-			errs = appendServeErr(errs, <-served)
+			errs = appendServeErr(errs, (<-served).err)
 		}
 		return errs
 	}
@@ -445,6 +473,13 @@ func (a App) run(ctx, sigCtx context.Context, stop context.CancelFunc, p bedrock
 		return 0, cause
 	}
 	return 0, nil
+}
+
+// serveResult is what a Service's Serve returned, and whether a signal, or
+// the cancellation of Run's context, had come by then.
+type serveResult struct {
+	err       error
+	signalled bool
 }
 
 // buildFaults calls f with ctx and setup, and builds the Injector of the

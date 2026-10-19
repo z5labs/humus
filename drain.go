@@ -26,8 +26,8 @@ import (
 //
 // ShutdownCause(ctx) says why the shutdown started. A Drain that waits on
 // something outside the App, such as a load balancer deregistering the
-// pod, returns nil when the cause wraps ErrServiceReturned: no signal came,
-// so nothing outside is draining the App.
+// pod, returns nil when the cause wraps ErrServiceReturned: no signal had
+// come when a Service returned, so nothing outside is draining the App.
 //
 // Run waits for the Drain to return, and the grace period starts after it.
 // An error it returns is joined into the App's cause and the App exits
@@ -46,9 +46,12 @@ type shutdownCauseKey struct{}
 // ShutdownCause returns why the App started shutting down, when ctx is the
 // context Run gives a Drain or one derived from it, and nil for any other
 // context. After a signal, it is the cause the signal gave the Process's
-// NotifyContext. When a Service's Serve returned first, it wraps
-// ErrServiceReturned and what Serve returned, if that was an error. When
-// the context passed to Run was cancelled, it is that context's cause.
+// NotifyContext. When a Service's Serve returned before any signal came,
+// it wraps ErrServiceReturned and what Serve returned, if that was an
+// error. When the context passed to Run was cancelled, it is that context's
+// cause. A Serve that returns once a signal has come, or once Run's context
+// is cancelled, returned on it, so the cause is then the signal's, or the
+// context's, even when Run receives that Serve's result before the signal.
 func ShutdownCause(ctx context.Context) error {
 	err, _ := ctx.Value(shutdownCauseKey{}).(error)
 	return err
@@ -90,7 +93,7 @@ func DrainDelay(d time.Duration) Drain {
 // served, and gives ShutdownCause cause. While d runs, drain receives those
 // results. It returns the errors they carried, how many results are still
 // pending, and d's error.
-func drain(ctx context.Context, d Drain, setup *Setup, served <-chan error, pending int, cause error) ([]error, int, error) {
+func drain(ctx context.Context, d Drain, setup *Setup, served <-chan serveResult, pending int, cause error) ([]error, int, error) {
 	valued := context.WithValue(context.WithoutCancel(ctx), shutdownCauseKey{}, cause)
 	drainCtx, cancel := context.WithCancel(valued)
 	defer cancel()
@@ -105,9 +108,9 @@ func drain(ctx context.Context, d Drain, setup *Setup, served <-chan error, pend
 		var errs []error
 		for pending > 0 {
 			select {
-			case err := <-served:
+			case r := <-served:
 				pending--
-				errs = appendServeErr(errs, err)
+				errs = appendServeErr(errs, r.err)
 			case <-stop:
 				result <- received{errs: errs, pending: pending}
 				return
