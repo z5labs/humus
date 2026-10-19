@@ -25,6 +25,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/circuit"
 
 	"github.com/z5labs/humus"
@@ -59,12 +60,16 @@ type store struct {
 	mu            sync.Mutex
 	subscriptions []subscription
 	invoices      []*invoice
+	issueErr      error
 	settleErr     error
 }
 
 func (s *store) Issue(_ context.Context, period time.Time) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.issueErr != nil {
+		return 0, s.issueErr
+	}
 	var issued int64
 	for _, sub := range s.subscriptions {
 		if !sub.active || s.find(sub.accountID, period) != nil {
@@ -218,6 +223,8 @@ type env struct {
 	ca    *humustest.CA
 	store *store
 	api   *api
+	tel   *humustest.Telemetry
+	key   string
 }
 
 func newEnv(t *testing.T, answer func(*http.Request, string, http.ResponseWriter)) *env {
@@ -227,6 +234,8 @@ func newEnv(t *testing.T, answer func(*http.Request, string, http.ResponseWriter
 		ca:    humustest.NewCA(t),
 		store: &store{},
 		api:   &api{answer: answer},
+		tel:   humustest.NewTelemetry(),
+		key:   rand.Text(),
 	}
 	l, err := e.host.Listen("tcp", ":8443")
 	require.NoError(t, err)
@@ -261,9 +270,17 @@ func (e *env) run(t *testing.T, period time.Time, concurrency int) billing.Run {
 	settings := httpclient.DefaultSettings()
 	settings.BaseURL = u
 	settings.TLS = &tls.Config{RootCAs: e.ca.Pool()}
-	client, err := payments.NewClient(&humus.Setup{Host: e.host.Host(), Telemetry: telemetry.Noop()}, settings, rand.Text())
+	sdk := e.sdk(t)
+	client, err := payments.NewClient(&humus.Setup{Host: e.host.Host(), Telemetry: sdk}, settings, e.key)
 	require.NoError(t, err)
-	return billing.Run{Invoices: e.store, Payments: client, Period: period, Concurrency: concurrency}
+	return billing.Run{Invoices: e.store, Payments: client, Period: period, Concurrency: concurrency, Telemetry: sdk}
+}
+
+func (e *env) sdk(t *testing.T) telemetry.SDK {
+	t.Helper()
+	sdk, err := e.tel.Builder()(t.Context(), bedrock.Process{}, nil)
+	require.NoError(t, err)
+	return sdk
 }
 
 func month(year int, m time.Month) time.Time {
