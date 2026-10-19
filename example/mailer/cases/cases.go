@@ -22,20 +22,37 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/fit"
+	"go.opentelemetry.io/otel/baggage"
+
+	"github.com/z5labs/humus/fault/jsonscenario"
 )
 
 const (
 	requestExchange = "mail"
 	eventsExchange  = "mail.events"
 	deadExchange    = "mail.dead"
+	retryExchange   = "mail.retry"
 
 	sendKey    = "mail.send"
 	sentKey    = "mail.sent"
 	refusedKey = "mail.refused"
 
-	deadReasonHeader = "x-mail-dead-reason"
+	deadReasonHeader   = "x-mail-dead-reason"
+	deadAttemptsHeader = "x-mail-dead-attempts"
+	attemptHeader      = "x-mail-attempt"
+	baggageHeader      = "baggage"
 
 	malformed = "malformed"
+	gaveUp    = "gave-up"
+
+	eventsPoint = "rabbitmq:" + eventsExchange + ":" + sentKey
+)
+
+const (
+	slowProvider = 2 * time.Second
+	slowInFlight = 3 * time.Second
+	inFlight     = time.Second
 )
 
 type Target struct {
@@ -64,9 +81,15 @@ var Parallel = []Case{
 	{Name: "SentOnce", Run: SentOnce},
 	{Name: "Refused", Run: Refused},
 	{Name: "Malformed", Run: Malformed},
+	{Name: "SlowProvider", Run: SlowProvider},
+	{Name: "UntrustedScenario", Run: UntrustedScenario},
 }
 
-var Alone = []Case{}
+var Alone = []Case{
+	{Name: "LostConnection", Run: LostConnection},
+	{Name: "ResultNotPublished", Run: ResultNotPublished},
+	{Name: "ProviderDown", Run: ProviderDown},
+}
 
 func Sent(t testing.TB, target Target) {
 	ctx := bounded(t, target)
@@ -148,6 +171,118 @@ func Malformed(t testing.TB, target Target) {
 	require.Empty(t, journal(ctx, t, target, r.to))
 }
 
+func SlowProvider(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	b := watch(ctx, t, target)
+	r := rehearsal(t, target, delay(providerPoint(t, target), slowProvider))
+
+	b.publish(ctx, t, r)
+	event := b.outcome(ctx, t, r.messageID)
+
+	require.Equal(t, sentKey, event.RoutingKey)
+	require.False(t, carriesScenario(t, target, event), "the event carries the scenario")
+	require.Empty(t, b.parked(r.messageID))
+
+	require.Len(t, journal(ctx, t, target, r.to), 1)
+}
+
+func UntrustedScenario(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	b := watch(ctx, t, target)
+	r := rehearsal(t, target, abort(providerPoint(t, target)))
+	r.userID = ""
+
+	b.publish(ctx, t, r)
+	event := b.outcome(ctx, t, r.messageID)
+
+	require.Equal(t, sentKey, event.RoutingKey)
+	require.False(t, carriesScenario(t, target, event), "the event carries the scenario")
+	require.Empty(t, b.parked(r.messageID))
+
+	require.Len(t, journal(ctx, t, target, r.to), 1)
+}
+
+func ProviderDown(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	b := watch(ctx, t, target)
+	r := rehearsal(t, target, abort(providerPoint(t, target)))
+
+	b.publish(ctx, t, r)
+	dead := b.outcome(ctx, t, r.messageID)
+
+	attempts := b.gaveUp(ctx, t, target, r, dead)
+	require.Empty(t, b.sent(r.messageID))
+	require.Len(t, b.parked(r.messageID), attempts-1)
+
+	require.Empty(t, journal(ctx, t, target, r.to))
+}
+
+func LostConnection(t testing.TB, target Target) {
+	if target.CloseConnections == nil {
+		t.Skip("Target.CloseConnections is nil")
+	}
+	ctx := bounded(t, target)
+	b := watch(ctx, t, target)
+	r := rehearsal(t, target, delay(providerPoint(t, target), slowInFlight))
+
+	b.publish(ctx, t, r)
+	pause(ctx, t, inFlight)
+	require.NoError(t, target.CloseConnections(ctx))
+	b = watch(ctx, t, target)
+	event := b.outcome(ctx, t, r.messageID)
+
+	require.Equal(t, sentKey, event.RoutingKey)
+	require.Equal(t, r.messageID, event.MessageId)
+	require.Equal(t, acceptedID(r.messageID), providerID(t, event))
+
+	after := newRequest("example.com")
+	b.publish(ctx, t, after)
+	require.Equal(t, sentKey, b.outcome(ctx, t, after.messageID).RoutingKey)
+
+	sent := journal(ctx, t, target, r.to)
+	require.NotEmpty(t, sent)
+	for _, s := range sent {
+		require.Equal(t, r.messageID, s.header("Idempotency-Key"))
+	}
+}
+
+func ResultNotPublished(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	b := watch(ctx, t, target)
+	r := rehearsal(t, target, abort(eventsPoint))
+
+	b.publish(ctx, t, r)
+	dead := b.outcome(ctx, t, r.messageID)
+
+	attempts := b.gaveUp(ctx, t, target, r, dead)
+	require.Empty(t, b.sent(r.messageID))
+	require.Len(t, b.parked(r.messageID), attempts-1)
+
+	sent := journal(ctx, t, target, r.to)
+	require.Len(t, sent, attempts)
+	for _, s := range sent {
+		require.Equal(t, r.messageID, s.header("Idempotency-Key"))
+	}
+}
+
+func (b *broker) gaveUp(ctx context.Context, t testing.TB, target Target, r request, dead amqp.Delivery) int {
+	t.Helper()
+	require.Equal(t, deadExchange, dead.Exchange)
+	require.Equal(t, r.messageID, dead.MessageId)
+	require.Equal(t, gaveUp, dead.Headers[deadReasonHeader])
+	require.False(t, carriesScenario(t, target, dead), "the dead letter carries the scenario")
+	attempts, ok := dead.Headers[deadAttemptsHeader].(int64)
+	require.True(t, ok, "the dead letter's %s is %v", deadAttemptsHeader, dead.Headers[deadAttemptsHeader])
+	require.Positive(t, attempts)
+
+	b.await(ctx, t, func() bool { return len(b.parked(r.messageID)) >= int(attempts)-1 }, "%d parked copies of %s", attempts-1, r.messageID)
+	for i, p := range b.parked(r.messageID) {
+		require.True(t, carriesScenario(t, target, p), "parked copy %d has no scenario", i)
+		require.EqualValues(t, i+2, p.Headers[attemptHeader])
+	}
+	return int(attempts)
+}
+
 func bounded(t testing.TB, target Target) context.Context {
 	require.Positive(t, target.Timeout, "Target.Timeout")
 	ctx, cancel := context.WithTimeout(t.Context(), target.Timeout)
@@ -155,11 +290,67 @@ func bounded(t testing.TB, target Target) context.Context {
 	return ctx
 }
 
+func pause(ctx context.Context, t testing.TB, d time.Duration) {
+	t.Helper()
+	select {
+	case <-time.After(d):
+	case <-ctx.Done():
+		require.FailNowf(t, "timed out", "pausing for %s: %v", d, context.Cause(ctx))
+	}
+}
+
+func providerPoint(t testing.TB, target Target) string {
+	t.Helper()
+	require.NotEmpty(t, target.ProviderPoint, "Target.ProviderPoint")
+	return target.ProviderPoint
+}
+
+func abort(point string) fit.Rule {
+	return fit.Rule{Point: point, Fault: fit.Fault{Abort: true}}
+}
+
+func delay(point string, d time.Duration) fit.Rule {
+	return fit.Rule{Point: point, Fault: fit.Fault{Delay: d}}
+}
+
+func acceptedID(idempotencyKey string) string {
+	return "msg_" + idempotencyKey
+}
+
+func codec(t testing.TB, target Target) jsonscenario.Codec {
+	t.Helper()
+	c, err := jsonscenario.New(target.ScenarioKey)
+	require.NoError(t, err, "Target.ScenarioKey")
+	return c
+}
+
+func carriesScenario(t testing.TB, target Target, d amqp.Delivery) bool {
+	t.Helper()
+	header, _ := d.Headers[baggageHeader].(string)
+	b, err := baggage.Parse(header)
+	require.NoError(t, err)
+	_, carried, err := codec(t, target).Decode(b)
+	require.NoError(t, err)
+	return carried
+}
+
 type request struct {
 	messageID     string
 	correlationID string
+	userID        string
+	baggage       string
 	to            string
 	body          map[string]string
+}
+
+func rehearsal(t testing.TB, target Target, rules ...fit.Rule) request {
+	t.Helper()
+	b, err := codec(t, target).Encode(baggage.Baggage{}, fit.Scenario{Rules: rules})
+	require.NoError(t, err)
+	r := newRequest("example.com")
+	r.userID = target.Username
+	r.baggage = b.String()
+	return r
 }
 
 func newRequest(domain string) request {
@@ -181,6 +372,7 @@ type broker struct {
 	returns    <-chan amqp.Return
 	eventsIn   <-chan amqp.Delivery
 	deadIn     <-chan amqp.Delivery
+	retryIn    <-chan amqp.Delivery
 	seen       []amqp.Delivery
 }
 
@@ -192,13 +384,14 @@ func watch(ctx context.Context, t testing.TB, target Target) *broker {
 	require.NoError(t, err)
 	events := bind(ctx, t, ch, eventsExchange, "#")
 	dead := bind(ctx, t, ch, deadExchange, "")
+	retry := bind(ctx, t, ch, retryExchange, sendKey)
 
 	publishing, err := conn.Channel()
 	require.NoError(t, err)
 	require.NoError(t, publishing.Confirm(false))
 	returns := publishing.NotifyReturn(make(chan amqp.Return, 1))
 
-	return &broker{publishing: publishing, returns: returns, eventsIn: events, deadIn: dead}
+	return &broker{publishing: publishing, returns: returns, eventsIn: events, deadIn: dead, retryIn: retry}
 }
 
 func dial(t testing.TB, target Target) *amqp.Connection {
@@ -231,11 +424,17 @@ func (b *broker) publish(ctx context.Context, t testing.TB, r request) {
 	t.Helper()
 	body, err := json.Marshal(r.body)
 	require.NoError(t, err)
+	var headers amqp.Table
+	if r.baggage != "" {
+		headers = amqp.Table{baggageHeader: r.baggage}
+	}
 	confirm, err := b.publishing.PublishWithDeferredConfirmWithContext(ctx, requestExchange, sendKey, true, false, amqp.Publishing{
+		Headers:       headers,
 		ContentType:   "application/json",
 		DeliveryMode:  amqp.Persistent,
 		MessageId:     r.messageID,
 		CorrelationId: r.correlationID,
+		UserId:        r.userID,
 		Body:          body,
 	})
 	require.NoError(t, err)
@@ -251,8 +450,8 @@ func (b *broker) publish(ctx context.Context, t testing.TB, r request) {
 
 func (b *broker) outcome(ctx context.Context, t testing.TB, messageID string) amqp.Delivery {
 	t.Helper()
-	b.await(ctx, t, func() bool { return len(b.of(messageID)) > 0 }, "the outcome of %s", messageID)
-	return b.of(messageID)[0]
+	b.await(ctx, t, func() bool { return len(b.outcomes(messageID)) > 0 }, "the outcome of %s", messageID)
+	return b.outcomes(messageID)[0]
 }
 
 func (b *broker) events(ctx context.Context, t testing.TB, messageID string, n int) []amqp.Delivery {
@@ -271,6 +470,9 @@ func (b *broker) await(ctx context.Context, t testing.TB, done func() bool, form
 		case d, ok := <-b.deadIn:
 			require.True(t, ok, "the consumer of %s was cancelled", deadExchange)
 			b.seen = append(b.seen, d)
+		case d, ok := <-b.retryIn:
+			require.True(t, ok, "the consumer of %s was cancelled", retryExchange)
+			b.seen = append(b.seen, d)
 		case <-ctx.Done():
 			require.FailNowf(t, "timed out", "waiting for "+format+": %v", append(args, context.Cause(ctx))...)
 		}
@@ -287,20 +489,32 @@ func (b *broker) of(messageID string) []amqp.Delivery {
 	return out
 }
 
-func (b *broker) sent(messageID string) []amqp.Delivery {
+func (b *broker) outcomes(messageID string) []amqp.Delivery {
 	var out []amqp.Delivery
 	for _, d := range b.of(messageID) {
-		if d.Exchange == eventsExchange {
+		if d.Exchange != retryExchange {
 			out = append(out, d)
 		}
 	}
 	return out
 }
 
+func (b *broker) sent(messageID string) []amqp.Delivery {
+	return b.from(messageID, eventsExchange)
+}
+
 func (b *broker) deadLetters(messageID string) []amqp.Delivery {
+	return b.from(messageID, deadExchange)
+}
+
+func (b *broker) parked(messageID string) []amqp.Delivery {
+	return b.from(messageID, retryExchange)
+}
+
+func (b *broker) from(messageID, exchange string) []amqp.Delivery {
 	var out []amqp.Delivery
 	for _, d := range b.of(messageID) {
-		if d.Exchange == deadExchange {
+		if d.Exchange == exchange {
 			out = append(out, d)
 		}
 	}

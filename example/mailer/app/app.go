@@ -105,6 +105,10 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	deadLetters, err := rabbitmq.NewPublisher(s, settings.Publisher)
+	if err != nil {
+		return nil, err
+	}
 	client, err := provider.New(s, settings.Provider)
 	if err != nil {
 		return nil, err
@@ -113,6 +117,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		Provider:    client,
 		Retries:     retries,
 		Results:     results,
+		DeadLetters: deadLetters,
 		MaxAttempts: settings.MaxAttempts,
 		User:        settings.Login,
 		Telemetry:   s.Telemetry,
