@@ -1,0 +1,60 @@
+name: Restore the Go cache
+description: >-
+  Restores Go's build and module caches, and any other paths given, from the
+  cache that the job named by `name` most recently saved on main. Pair it with
+  save-go-cache at the end of the job.
+
+# Every job names its own cache, so a job never restores what another job
+# compiled, and no two jobs race to save under one key. The key ends in the
+# run, so each run on main saves a cache of its own and nothing ever hits the
+# key exactly: a job always restores the newest cache under its prefix, even
+# after a go.sum changed. save-go-cache deletes all but that newest one.
+#
+# A key is go-cache/<name>/<os>-<arch>/<go version>/<run id>-<attempt>.
+# save-go-cache finds a job's caches by what comes before the last three
+# parts, so a name may hold / but no two jobs may share a name.
+
+inputs:
+  name:
+    description: The job's name in its cache key, such as test(kube). No other job may use it.
+    required: true
+  path:
+    description: Paths to cache besides Go's build and module caches, one per line.
+    required: false
+    default: ''
+
+outputs:
+  key:
+    description: The key save-go-cache saves this job's cache under.
+    value: ${{ steps.key.outputs.key }}
+  path:
+    description: The paths save-go-cache saves.
+    value: ${{ steps.key.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - id: key
+      shell: bash
+      env:
+        NAME: ${{ inputs.name }}
+        EXTRA_PATH: ${{ inputs.path }}
+      run: |
+        prefix="go-cache/$NAME/$RUNNER_OS-$RUNNER_ARCH/$(go env GOVERSION)/"
+        {
+          echo "prefix=$prefix"
+          echo "key=$prefix$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          echo "path<<GO_CACHE_PATHS"
+          go env GOCACHE
+          go env GOMODCACHE
+          if [[ -n $EXTRA_PATH ]]; then
+            printf '%s\n' "$EXTRA_PATH"
+          fi
+          echo "GO_CACHE_PATHS"
+        } >> "$GITHUB_OUTPUT"
+
+    - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: ${{ steps.key.outputs.path }}
+        key: ${{ steps.key.outputs.key }}
+        restore-keys: ${{ steps.key.outputs.prefix }}
