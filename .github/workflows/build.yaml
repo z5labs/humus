@@ -17,17 +17,51 @@ on:
   merge_group:
 
 jobs:
-  # The default branch requires a status check named exactly Build, so every
-  # module is checked by this one job rather than by a matrix, which would
-  # rename the check. `./...` does not descend into a nested module, so each
-  # step runs once per module that go-modules.sh lists. Each step after the
-  # first runs even when an earlier one failed, so one run reports every
-  # failure, and the job fails if any step failed.
-  build:
-    name: Build
+  # The default branch's ruleset requires five checks: Build, Kafka
+  # (testcontainers), RabbitMQ (testcontainers), Kubernetes (testcontainers)
+  # and Shoppingcart (testcontainers). Build is the job at the end of this
+  # file, which passes only when every job before it passed, so the jobs it
+  # waits on can be added, split or renamed without changing the ruleset.
+  #
+  # `./...` does not descend into a nested module, so lint, compile and test
+  # each run once per module that go-modules.sh lists, in a matrix, and every
+  # module's run at the same time. A module added to the repository is in the
+  # list, and so in every matrix, with no change here. No matrix fails fast,
+  # so one run reports every failure.
+  modules:
+    name: Modules
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    outputs:
+      modules: ${{ steps.list.outputs.modules }}
+    steps:
+        - name: Checkout
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+          with:
+            go-version: '1.27.2'
+            cache-dependency-path: '**/go.sum'
+
+        - name: List modules
+          id: list
+          run: |
+            modules=$(.github/scripts/go-modules.sh)
+            test -n "$modules"
+            echo "$modules"
+            echo "modules=$(jq -cnR '[inputs]' <<<"$modules")" >> "$GITHUB_OUTPUT"
+
+  lint:
+    name: Lint (${{ matrix.module }})
+    needs: modules
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJSON(needs.modules.outputs.modules) }}
     steps:
         - name: Checkout
           uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -43,60 +77,93 @@ jobs:
             version: v2.15.0
             install-only: true
 
-        - name: List modules
-          run: .github/scripts/go-modules.sh | tee "$RUNNER_TEMP/modules.txt"
-
         - name: Lint
-          if: ${{ !cancelled() }}
-          run: |
-            failed=0
-            for module in $(cat "$RUNNER_TEMP/modules.txt"); do
-              echo "::group::golangci-lint ($module)"
-              (cd "$module" && golangci-lint run) || failed=1
-              echo "::endgroup::"
-            done
-            exit "$failed"
+          working-directory: ${{ matrix.module }}
+          run: golangci-lint run
+
+  compile:
+    name: Compile (${{ matrix.module }})
+    needs: modules
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJSON(needs.modules.outputs.modules) }}
+    steps:
+        - name: Checkout
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+          with:
+            go-version: '1.27.2'
+            cache-dependency-path: '**/go.sum'
 
         - name: Build
-          if: ${{ !cancelled() }}
-          run: |
-            failed=0
-            for module in $(cat "$RUNNER_TEMP/modules.txt"); do
-              echo "::group::go build ($module)"
-              go -C "$module" build ./... || failed=1
-              echo "::endgroup::"
-            done
-            exit "$failed"
+          run: go -C "$MODULE" build ./...
+          env:
+            MODULE: ${{ matrix.module }}
 
-        # Every module's profile is merged into one, so that one gate covers
-        # them all, and every package outside example/ is listed for the gate.
+  # A package's coverage comes only from its own module's tests, so each
+  # module's job gates its own packages, and between them the gate still
+  # covers every package outside example/.
+  test:
+    name: Test (${{ matrix.module }})
+    needs: modules
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJSON(needs.modules.outputs.modules) }}
+    env:
+      MODULE: ${{ matrix.module }}
+    steps:
+        - name: Checkout
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+          with:
+            go-version: '1.27.2'
+            cache-dependency-path: '**/go.sum'
+
         - name: Test
+          run: |
+            go -C "$MODULE" test -race -cover \
+              -coverprofile="$RUNNER_TEMP/coverage.out" ./...
+
+        - name: List the packages the coverage gate covers
           if: ${{ !cancelled() }}
           run: |
-            failed=0
             examples="$(go list -m)/example"
-            : > "$RUNNER_TEMP/coverage.out"
-            : > "$RUNNER_TEMP/packages.txt"
-            for module in $(cat "$RUNNER_TEMP/modules.txt"); do
-              echo "::group::go test ($module)"
-              rm -f "$RUNNER_TEMP/module-coverage.out"
-              go -C "$module" test -race -cover \
-                -coverprofile="$RUNNER_TEMP/module-coverage.out" ./... || failed=1
-              cat "$RUNNER_TEMP/module-coverage.out" >> "$RUNNER_TEMP/coverage.out" || failed=1
-              go -C "$module" list ./... > "$RUNNER_TEMP/module-packages.txt" || failed=1
-              awk -v examples="$examples" '$0 != examples && index($0, examples "/") != 1' \
-                "$RUNNER_TEMP/module-packages.txt" >> "$RUNNER_TEMP/packages.txt" || failed=1
-              echo "::endgroup::"
-            done
-            exit "$failed"
+            go -C "$MODULE" list ./... > "$RUNNER_TEMP/module-packages.txt"
+            awk -v examples="$examples" '$0 != examples && index($0, examples "/") != 1' \
+              "$RUNNER_TEMP/module-packages.txt" > "$RUNNER_TEMP/packages.txt"
 
-        # The tests behind the testcontainers tag run only in the Kafka
-        # (testcontainers), RabbitMQ (testcontainers), Kubernetes
-        # (testcontainers) and Shoppingcart (testcontainers) jobs, which are
-        # not required, so they are compiled and vetted here, without
-        # starting a container.
-        - name: Vet the testcontainers tests
+        - name: Require 80% statement coverage of every library package
           if: ${{ !cancelled() }}
+          run: .github/scripts/coverage-gate.sh 80 "$RUNNER_TEMP/packages.txt" "$RUNNER_TEMP/coverage.out"
+
+  # The tests behind the testcontainers tag run in the four testcontainers
+  # jobs below, so here they are only compiled and vetted, without starting
+  # a container, alongside the unit tests.
+  vet-testcontainers:
+    name: Vet the testcontainers tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+        - name: Checkout
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+          with:
+            go-version: '1.27.2'
+            cache-dependency-path: '**/go.sum'
+
+        - name: Vet
           run: |
             failed=0
             go -C queue/kafka vet -tags testcontainers ./... || failed=1
@@ -105,31 +172,78 @@ jobs:
             go -C example vet -tags testcontainers ./... || failed=1
             exit "$failed"
 
-        # The loopback half of humustest's conformance test opens real
-        # sockets on 127.0.0.1 and 127.0.0.2, and telemetry's sets OTEL_*
-        # variables in the real environment, so both are behind the
-        # conformance build tag and run here rather than with the unit
-        # tests.
+  # The loopback half of humustest's conformance test opens real sockets on
+  # 127.0.0.1 and 127.0.0.2, and telemetry's sets OTEL_* variables in the
+  # real environment, so both are behind the conformance build tag and run
+  # here rather than with the unit tests.
+  conformance:
+    name: Conformance
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+        - name: Checkout
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+          with:
+            go-version: '1.27.2'
+            cache-dependency-path: '**/go.sum'
+
         - name: Conformance
-          if: ${{ !cancelled() }}
           run: go test -race -tags conformance -run '^TestConformance_' ./humustest/ ./telemetry/
 
-        - name: Require 80% statement coverage of every library package
-          if: ${{ !cancelled() }}
-          run: .github/scripts/coverage-gate.sh 80 "$RUNNER_TEMP/packages.txt" "$RUNNER_TEMP/coverage.out"
+  scripts:
+    name: Scripts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+        - name: Checkout
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+        # The release script runs go mod edit.
+        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+          with:
+            go-version: '1.27.2'
+            cache-dependency-path: '**/go.sum'
 
         - name: Test the coverage gate
-          if: ${{ !cancelled() }}
           run: .github/scripts/coverage-gate_test.sh
 
         - name: Test the release script
           if: ${{ !cancelled() }}
           run: .github/scripts/release-modules_test.sh
 
+  # The check the ruleset requires. It runs whatever happened to the jobs it
+  # needs, and passes only when every one of them succeeded: a job that
+  # failed, was cancelled or was skipped fails it. A skipped required check
+  # counts as passing, so this job never skips itself.
+  build:
+    name: Build
+    needs:
+      - modules
+      - lint
+      - compile
+      - test
+      - vet-testcontainers
+      - conformance
+      - scripts
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+        - name: Require every job to have passed
+          env:
+            NEEDS: ${{ toJSON(needs) }}
+          run: |
+            jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$NEEDS"
+            jq -e 'all(.[]; .result == "success")' <<<"$NEEDS" >/dev/null
+
   # The tests behind the testcontainers build tag run Kafka in a container
-  # and open real sockets, so they run here rather than in Build: they don't
+  # and open real sockets, so they run here rather than in Test: they don't
   # slow the unit tests, they don't count toward the coverage gate, and this
-  # job is not a required check.
+  # job is a required check of its own.
   kafka-testcontainers:
     name: Kafka (testcontainers)
     runs-on: ubuntu-latest
@@ -149,10 +263,10 @@ jobs:
           run: go -C queue/kafka test -race -tags testcontainers ./...
 
   # The tests behind the testcontainers build tag run RabbitMQ in a container
-  # and open real sockets, so they run here rather than in Build: they don't
+  # and open real sockets, so they run here rather than in Test: they don't
   # slow the unit tests, they don't count toward the coverage gate, and this
-  # job is not a required check. humus keeps no fake broker, so these are the
-  # only tests of queue/rabbitmq that reach one.
+  # job is a required check of its own. humus keeps no fake broker, so these
+  # are the only tests of queue/rabbitmq that reach one.
   rabbitmq-testcontainers:
     name: RabbitMQ (testcontainers)
     runs-on: ubuntu-latest
@@ -173,9 +287,9 @@ jobs:
 
   # The tests behind the testcontainers build tag run k3s's Kubernetes API
   # server in a container and open real sockets, so they run here rather than
-  # in Build: they don't slow the unit tests, they don't count toward the
-  # coverage gate, and this job is not a required check. humus keeps no fake
-  # API server, so these are the only tests of kube that reach one.
+  # in Test: they don't slow the unit tests, they don't count toward the
+  # coverage gate, and this job is a required check of its own. humus keeps
+  # no fake API server, so these are the only tests of kube that reach one.
   kube-testcontainers:
     name: Kubernetes (testcontainers)
     runs-on: ubuntu-latest
@@ -196,9 +310,9 @@ jobs:
 
   # The tests behind the testcontainers build tag run the shoppingcart's
   # Store, and the whole service on humus.OSHost(), against Postgres in a
-  # container, so they run here rather than in Build: they don't slow the
+  # container, so they run here rather than in Test: they don't slow the
   # unit tests, example/ is outside the coverage gate anyway, and this job is
-  # not a required check.
+  # a required check of its own.
   shoppingcart-testcontainers:
     name: Shoppingcart (testcontainers)
     runs-on: ubuntu-latest

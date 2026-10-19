@@ -10,9 +10,10 @@
 # less than MIN percent statement coverage in PROFILE, a Go cover profile
 # that may merge the profiles of several modules.
 #
-# A package with no statements passes. A package with statements but no
-# tests is in the profile with every block unexecuted, so it counts as
-# uncovered rather than being skipped. Statements are compared exactly, so
+# An empty PACKAGES gates nothing and passes, saying nothing. A package with
+# no statements passes. A package with statements but no tests is in the
+# profile with every block unexecuted, so it counts as uncovered rather than
+# being skipped. Statements are compared exactly, so
 # 79.96% does not pass by rounding to 80.0%.
 #
 # Exit status: 0 when every package passes, 1 when one does not, and 2 on a
@@ -41,7 +42,9 @@ for f in "$packages" "$profile"; do
 done
 
 awk -v min="$min" '
-  NR == FNR { if ($0 != "") gated[$0] = 1; next }
+  # FILENAME rather than NR == FNR, which an empty PACKAGES would make hold
+  # for every line of PROFILE too.
+  FILENAME == ARGV[1] { if ($0 != "") gated[$0] = 1; next }
   /^mode:/ { next }
   {
     # A block can be listed more than once, by more than one test binary;

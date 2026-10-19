@@ -48,6 +48,21 @@ expect "a package with no statements passes" 0 \
   $'example.com/m/doc\n' \
   $'mode: atomic\n'
 
+expect "an empty package list gates nothing" 0 \
+  '' \
+  $'mode: atomic\nexample.com/m/example/x/x.go:1.1,2.1 9 0\n'
+
+# The example module gates no package, so its list is empty; the gate must
+# not read the profile's lines as packages to gate.
+out=$("$gate" 80 "$dir/packages.txt" "$dir/coverage.out" 2>&1)
+if [[ -n $out ]]; then
+  echo "FAIL an empty package list reports no package"
+  echo "$out" | sed 's/^/    /'
+  failures=$((failures + 1))
+else
+  echo "ok   an empty package list reports no package"
+fi
+
 expect "a package with statements and no tests fails" 1 \
   $'example.com/m/a\n' \
   $'mode: atomic\nexample.com/m/a/a.go:1.1,2.1 3 0\n'
