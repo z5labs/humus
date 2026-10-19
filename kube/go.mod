@@ -117,7 +117,7 @@ require (
 	k8s.io/kube-openapi v0.0.0-20261014044854-ca3452a79603 // indirect
 	sigs.k8s.io/json v0.0.0-20260909141634-11ed52e25bc5 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
-	sigs.k8s.io/structured-merge-diff/v6 v6.4.2 // indirect
+	sigs.k8s.io/structured-merge-diff/v7 v7.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v7 v7.0.0 // indirect
 	software.sslmate.com/src/go-pkcs12 v0.7.4 // indirect
 )
