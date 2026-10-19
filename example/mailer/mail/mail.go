@@ -67,7 +67,7 @@ func Decode(m rabbitmq.Message) (Request, error) {
 	}
 	var b body
 	if err := json.Unmarshal(m.Body, &b); err != nil {
-		return Request{}, fmt.Errorf("%w: its body is not a JSON object of strings: %w", ErrMalformed, err)
+		return Request{}, fmt.Errorf("%w: its body is not a JSON object with to, subject and text as strings: %w", ErrMalformed, err)
 	}
 	for _, f := range []struct{ name, value string }{
 		{"to", b.To},

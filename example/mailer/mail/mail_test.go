@@ -51,6 +51,15 @@ func TestDecode_a_request_without_a_CorrelationId(t *testing.T) {
 	require.Empty(t, r.CorrelationID)
 }
 
+func TestDecode_a_request_with_fields_it_does_not_know(t *testing.T) {
+	r, err := mail.Decode(delivery(`{"to":"ada@example.com","subject":"Your order","text":"It shipped.","order":42,"tags":["shipping"]}`))
+
+	require.NoError(t, err)
+	require.Equal(t, "ada@example.com", r.To)
+	require.Equal(t, "Your order", r.Subject)
+	require.Equal(t, "It shipped.", r.Text)
+}
+
 func TestDecode_a_body_of_256_KiB(t *testing.T) {
 	m := delivery(`{"to":"ada@example.com","subject":"Your order","text":""}`)
 	text := strings.Repeat("a", mail.MaxBodySize-len(m.Body))
@@ -87,7 +96,7 @@ func TestDecode_a_malformed_request(t *testing.T) {
 		},
 		"a field that is not a string": {
 			message: delivery(`{"to":"ada@example.com","subject":42,"text":"It shipped."}`),
-			says:    "not a JSON object of strings",
+			says:    "subject and text as strings",
 		},
 		"JSON followed by more": {
 			message: delivery(valid + `{}`),
