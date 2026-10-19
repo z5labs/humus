@@ -53,6 +53,7 @@ type received struct {
 	hasAuth     bool
 	userAgent   string
 	traceparent string
+	baggage     string
 	proto       int
 	serverName  string
 }
@@ -74,6 +75,7 @@ func (a *apiServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		hasAuth:     hasAuth,
 		userAgent:   r.Header.Get("User-Agent"),
 		traceparent: r.Header.Get("Traceparent"),
+		baggage:     r.Header.Get("Baggage"),
 		proto:       r.ProtoMajor,
 	}
 	if r.TLS != nil {

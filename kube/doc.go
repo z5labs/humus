@@ -46,6 +46,9 @@
 //   - traces and measures every request with otelhttp, on s.Telemetry's
 //     providers and propagator, except a watch, which lasts as long as an
 //     informer runs and has no span;
+//   - makes every request an injection point of s.Faults, and strips the
+//     failure scenario from every request, as Failure injection, below,
+//     says;
 //   - doesn't limit the client's rate. client-go's default is 5 requests a
 //     second, and the API server's priority and fairness limits each client
 //     itself.
@@ -668,6 +671,10 @@
 //     ERROR record. Nothing reaches the real stderr;
 //   - every API request is a client span from otelhttp, as the Client
 //     traces them, and is measured by otelhttp's client instruments;
+//   - on a request that carries a failure scenario, the injection point's
+//     humus.fit.evaluation event and the strip's humus.fit.strip event are
+//     on the request's span, or a watch's on the span in its context, as
+//     Failure injection, below, says;
 //   - the controller's own instruments measure its work queue and its
 //     reconciles, from the MeterProvider. They are below.
 //
@@ -721,6 +728,89 @@
 // the Lease, its reconcile.duration records nothing, and its two gauges
 // read 0. So read queue.depth per replica, by its resource's attributes: a
 // sum over the replicas counts the standbys' keys too.
+//
+// # Failure injection
+//
+// Every request through the Client's transport, the end user's clientsets'
+// included, is an injection point of s.Faults, the Injector of the Setup
+// the Client is built with, as every humus client is. A request is
+// evaluated with the failure scenario its context carries. One that
+// carries none, or a request in an App without failure injection, is
+// evaluated, stripped and recorded not at all. The informers, leader
+// election, the Lease's release and the check that a resource is served
+// run on Serve's context, which carries no scenario, so they always run
+// without one.
+//
+// The point names what the request does to which resource, as the API
+// server's authorizer and audit log name it:
+//
+//	kube:<resource>[.<group>][/<subresource>]:<verb>
+//
+// Its parts are these:
+//   - the resource is the plural, and the group is left out for the core
+//     group, as kubectl writes a resource: deployments.apps, secrets,
+//     memcacheds.cache.example.com;
+//   - the verb is the API server's: get, list, watch, create, update,
+//     patch, delete or deletecollection. A server-side apply is a patch;
+//   - a request for a path that isn't a resource, such as discovery's
+//     /apis, is kube:<path>:<verb>, such as kube:/apis:get, whose verb is
+//     the request's method in lower case.
+//
+// A point carries no namespace and no object's name. fit matches a point
+// exactly, or by a prefix ending in *, so a rule can fail everything about
+// one resource:
+//
+//	kube:*                                          every request to the API server
+//	kube:deployments.apps:*                         every request about Deployments, but not their subresources
+//	kube:deployments.apps:patch                     every apply of a Deployment
+//	kube:memcacheds.cache.example.com/status:patch  the controller's apply of a Memcached's status
+//	kube:memcacheds.cache.example.com:patch         the controller's applies of a Memcached's finalizer
+//
+// A Kind's controller applies no status, so only a Resource's controller
+// makes the status apply.
+//
+// The point is evaluated in the injection layer, which sits between
+// otelhttp and the token. So its humus.fit.evaluation event lands on the
+// request's span, and a delay is inside the span and in
+// http.client.request.duration. A watch has no span, so its event lands on
+// the span in its context, such as a reconcile's.
+//
+// A fault is a real failure, as it is to every humus client:
+//
+//   - An abort fails the request as an unreachable API server would: with
+//     nothing sent, and with no call to Connection.Token. The error a
+//     client-go caller gets wraps a *fault.InjectedError naming the point,
+//     which errors.As finds, and which matches fit.ErrInjected. client-go
+//     doesn't retry it, not even a GET's: it retries only a connection that
+//     was reset, ended early or lost, and a response with Retry-After. The
+//     request's span has the error.type
+//     github.com/z5labs/humus/fault.InjectedError.
+//   - A delay is waited before the request is sent, inside the request's
+//     context, and then the request goes on as usual. A delay that the
+//     context cuts short fails the request with a *fault.InjectedError whose
+//     Err is the context's cause, such as context.DeadlineExceeded, and that
+//     doesn't match fit.ErrInjected. Nothing is sent.
+//   - A delay that a Timeout the end user set on a rest.Config cuts short
+//     is the one exception. client-go then runs two timers, a deadline on
+//     the request's context and the http.Client's own Timeout, which go off
+//     together. When net/http's has gone off by the time the transport
+//     returns, net/http replaces the transport's error with a timeout error
+//     of its own, which matches context.DeadlineExceeded and holds no
+//     *fault.InjectedError. Either way, the request timed out, and its span
+//     has InjectedError's error.type. [Client.Config] sets no Timeout, so
+//     the controller's own requests always fail with the
+//     *fault.InjectedError.
+//
+// The API server takes no part in failure injection, so the Client strips
+// the scenario from every request it sends: the scenario's members are
+// removed from the request's baggage header, and every other member, and
+// the request's trace context, are kept. A strip adds a humus.fit.strip
+// event, with no attributes, to the request's span. It happens after the
+// point is evaluated, since the point reads the scenario, so an aborted
+// request has nothing to strip. A watch sends no baggage, since otelhttp
+// doesn't trace it, so it has nothing to strip either. There is no
+// ForwardScenario, as there is for other humus clients: a field that
+// should never be set would be an API for nothing.
 //
 // # What client-go still reaches
 //
