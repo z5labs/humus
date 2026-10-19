@@ -11,10 +11,13 @@ import (
 	"encoding/pem"
 	"net"
 	"os"
+	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/example/orderstatus/internal/certfile"
 	"github.com/z5labs/humus/humustest"
 )
@@ -195,4 +198,47 @@ func TestConfig(t *testing.T) {
 		_, err := certfile.Config(h.FS(), h.Path(certFile), h.Path(keyFile))
 		require.ErrorContains(t, err, h.Path(certFile))
 	})
+}
+
+type renewingFS struct {
+	humus.FS
+	t     *testing.T
+	name  string
+	renew atomic.Pointer[[]byte]
+}
+
+func (r *renewingFS) Open(name string) (*os.File, error) {
+	f, err := r.FS.Open(name)
+	if err != nil || name != r.name {
+		return f, err
+	}
+	if data := r.renew.Swap(nil); data != nil {
+		tmp, err := r.CreateTemp(filepath.Dir(name), "renewed-*")
+		require.NoError(r.t, err)
+		_, err = tmp.Write(*data)
+		require.NoError(r.t, err)
+		require.NoError(r.t, tmp.Close())
+		require.NoError(r.t, r.Rename(tmp.Name(), name))
+	}
+	return f, nil
+}
+
+func TestConfig_reads_a_certificate_and_its_key_from_one_file_once_per_handshake(t *testing.T) {
+	const pemFile = "tls/tls.pem"
+	ca := humustest.NewCA(t)
+	old := ca.Issue(t, serverName)
+	oldCert, oldKey := encode(t, old)
+	h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{pemFile: append(oldCert, oldKey...)}))
+	fsys := &renewingFS{FS: h.FS(), t: t, name: h.Path(pemFile)}
+
+	cfg, err := certfile.Config(fsys, h.Path(pemFile), h.Path(pemFile))
+	require.NoError(t, err)
+
+	renewedCert, renewedKey := encode(t, ca.Issue(t, serverName))
+	renewed := append(renewedCert, renewedKey...)
+	fsys.renew.Store(&renewed)
+
+	got, err := serverCertificate(t, cfg, ca)
+	require.NoError(t, err)
+	require.True(t, got.Equal(old.TLS().Leaf))
 }

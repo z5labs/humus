@@ -47,9 +47,12 @@ func (f *files) certificate() (*tls.Certificate, error) {
 	if err != nil {
 		return nil, err
 	}
-	keyPEM, err := readFile(f.fs, f.keyFile)
-	if err != nil {
-		return nil, err
+	keyPEM := certPEM
+	if f.keyFile != f.certFile {
+		keyPEM, err = readFile(f.fs, f.keyFile)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if cert := f.cached(certPEM, keyPEM); cert != nil {
 		return cert, nil
