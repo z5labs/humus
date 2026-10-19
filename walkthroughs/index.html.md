@@ -10,6 +10,9 @@ from that code.
 - [Billing job](/humus/walkthroughs/billing/): a job, run daily by
   a CronJob, that bills a month of subscriptions in PostgreSQL through a
   payments API, once, however often it runs.
+- [Mailer](/humus/walkthroughs/mailer/): a RabbitMQ worker that
+  sends the emails other services ask for through a provider's API, retries
+  what fails for now after a delay, and dead-letters what never will.
 
 ## The bar
 
