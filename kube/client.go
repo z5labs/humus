@@ -138,8 +138,9 @@ type Client struct {
 //
 // Every request is an injection point of s.Faults, named after what it does
 // to which resource, such as kube:deployments.apps:patch, and the Client
-// strips the failure scenario from every request it sends. The package doc
-// says how.
+// strips the failure scenario from every request it sends. In a reconcile
+// that carries a scenario, it sets the scenario's annotation on each child
+// the reconcile applies. The package doc says how.
 func NewClient(s *humus.Setup, c Connection) (*Client, error) {
 	if s == nil {
 		return nil, errors.New("kube: NewClient: the Setup must not be nil")

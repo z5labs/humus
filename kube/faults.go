@@ -34,6 +34,10 @@ const stripEvent = "humus.fit.strip"
 // stripped context: the request keeps its span context and every other
 // baggage member. otelhttp writes no header on a watch, so a watch sends no
 // baggage, and has nothing to strip.
+//
+// Last, a stripped request that applies a child of the reconcile its
+// context is made from carries the scenario on, in the child's annotation,
+// as carryOn says.
 type injectFaults struct {
 	faults     fault.Injector
 	propagator propagation.TextMapPropagator
@@ -62,6 +66,10 @@ func (t injectFaults) RoundTrip(r *http.Request) (*http.Response, error) {
 				r.Header.Del(field)
 			}
 			t.propagator.Inject(stripped, propagation.HeaderCarrier(r.Header))
+			var err error
+			if r, err = carryOn(ctx, stripped, r, point); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return t.next.RoundTrip(r)

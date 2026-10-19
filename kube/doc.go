@@ -46,8 +46,9 @@
 //   - traces and measures every request with otelhttp, on s.Telemetry's
 //     providers and propagator, except a watch, which lasts as long as an
 //     informer runs and has no span;
-//   - makes every request an injection point of s.Faults, and strips the
-//     failure scenario from every request, as Failure injection, below,
+//   - makes every request an injection point of s.Faults, strips the
+//     failure scenario from every request, and carries a reconcile's
+//     scenario on to the children it applies, as Failure injection, below,
 //     says;
 //   - doesn't limit the client's rate. client-go's default is 5 requests a
 //     second, and the API server's priority and fairness limits each client
@@ -678,7 +679,7 @@
 //     on the request's span, or a watch's on the span in its context, as
 //     Failure injection, below, says. An object's annotation whose scenario
 //     a [TrustScenario] drops is a humus.fit.strip event on the reconcile's
-//     span;
+//     span. Setting a child's annotation adds no event;
 //   - the controller's own instruments measure its work queue and its
 //     reconciles, from the MeterProvider. They are below.
 //
@@ -889,7 +890,81 @@
 // request has nothing to strip. A watch sends no baggage, since otelhttp
 // doesn't trace it, so it has nothing to strip either. There is no
 // ForwardScenario, as there is for other humus clients: a field that
-// should never be set would be an API for nothing.
+// should never be set would be an API for nothing. A scenario goes on to
+// the reconciled object's children instead, in their annotation.
+//
+// # Carrying a scenario on to children
+//
+// An operator is often several controllers, each reconciling the objects
+// the one above it applies. So in a reconcile that carries a scenario, the
+// Client sets the TrustScenario's annotation on each child the reconcile
+// applies, and one experiment on the top object reaches every controller
+// below it. The Client changes a request that is all of these:
+//   - a server-side apply, a PATCH whose content type is
+//     application/apply-patch+yaml, to an object, not to one of its
+//     subresources;
+//   - made with the reconcile's context, or a context made from it;
+//   - of an object whose metadata.ownerReferences has a controller
+//     reference whose uid is the reconciled object's, as Kubernetes'
+//     garbage collector names a child. The body declares the reference, so
+//     the child's resource needs no [Owns].
+//
+// It sets metadata.annotations[<annotation>] in the request's body to the
+// scenario's members as W3C baggage, without any other member of the
+// reconcile's baggage, and replaces any value the body gave it. The body
+// is sent on as JSON, which is YAML too. That happens after the point is
+// evaluated, so an aborted apply sends nothing, and after the request's
+// baggage is stripped, so the API server still gets no scenario. Setting
+// the annotation adds no event: the apply's span has its
+// humus.fit.evaluation and humus.fit.strip events, and the child's
+// reconciles show the scenario they carry.
+//
+// The Reconciler applies its children as it always does:
+//
+//	_, err := r.Kube.AppsV1().Deployments(m.Namespace).Apply(ctx,
+//		appsv1ac.Deployment(m.Name, m.Namespace).
+//			WithOwnerReferences(metav1ac.OwnerReference().
+//				WithAPIVersion(m.APIVersion).WithKind(m.Kind).WithName(m.Name).WithUID(m.UID).
+//				WithController(true).WithBlockOwnerDeletion(true)).
+//			WithSpec(spec),
+//		metav1.ApplyOptions{FieldManager: "memcached-operator", Force: true},
+//	)
+//
+// What is left as it is:
+//   - a request in a reconcile with no scenario, or outside a reconcile;
+//   - a create, an update, and a patch that isn't an apply. Only an apply
+//     takes the annotation off again: a child created or updated with it
+//     would keep it after the experiment ends, and keep failing;
+//   - a body that isn't JSON or YAML. client-go sends JSON unless the end
+//     user sets the rest.Config's ContentType to protobuf, or turns on its
+//     ClientsAllowCBOR and ClientsPreferCBOR feature gates for CBOR. Such an
+//     apply is sent as it is;
+//   - the controller's applies of the reconciled object's own status and
+//     finalizer. They are of the object, which isn't its own child;
+//   - an object that isn't the reconciled object's child: one whose
+//     controller owner reference names another object, or that has only
+//     owner references that aren't a controller's.
+//
+// The child's controller decides whether the child's reconciles carry the
+// scenario. A controller of the child's resource, with a TrustScenario of
+// its own on the same annotation, carries the child's scenario into the
+// child's reconciles when its trust trusts the child, and its own applies
+// carry the scenario on to the grandchildren. What makes a child's
+// annotation worth trusting is an admission policy that lets only the
+// operator's ServiceAccount set it on the children's resources.
+//
+// Ending the experiment on the top object ends it all the way down.
+// Removing the annotation reconciles the top object at once, without a
+// scenario. Its apply of each child no longer declares the annotation, and
+// a server-side apply removes what its field manager stops declaring, so
+// the API server removes the annotation, unless another field manager also
+// set it. That changes the child, whose controller reconciles it at once,
+// without a scenario, and so on down.
+//
+// A child that no controller reads keeps an inert annotation for as long
+// as the experiment runs, such as a Deployment. Kubernetes' own
+// controllers ignore it, and a Deployment's annotations aren't its pods'
+// template, so it starts no rollout.
 //
 // # What client-go still reaches
 //
