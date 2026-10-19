@@ -1,0 +1,124 @@
+{
+  "exchanges": [
+    {
+      "name": "mail",
+      "vhost": "/",
+      "type": "direct",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "mail.retry",
+      "vhost": "/",
+      "type": "direct",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "mail.dead",
+      "vhost": "/",
+      "type": "fanout",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "mail.events",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    }
+  ],
+  "queues": [
+    {
+      "name": "mail.send",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "quorum"
+      }
+    },
+    {
+      "name": "mail.send.retry",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "quorum"
+      }
+    },
+    {
+      "name": "mail.send.dead",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "quorum"
+      }
+    }
+  ],
+  "bindings": [
+    {
+      "source": "mail",
+      "vhost": "/",
+      "destination": "mail.send",
+      "destination_type": "queue",
+      "routing_key": "mail.send",
+      "arguments": {}
+    },
+    {
+      "source": "mail.retry",
+      "vhost": "/",
+      "destination": "mail.send.retry",
+      "destination_type": "queue",
+      "routing_key": "mail.send",
+      "arguments": {}
+    },
+    {
+      "source": "mail.dead",
+      "vhost": "/",
+      "destination": "mail.send.dead",
+      "destination_type": "queue",
+      "routing_key": "",
+      "arguments": {}
+    }
+  ],
+  "policies": [
+    {
+      "name": "mail.send",
+      "vhost": "/",
+      "pattern": "^mail\\.send$",
+      "apply-to": "queues",
+      "priority": 0,
+      "definition": {
+        "delivery-limit": 5,
+        "dead-letter-exchange": "mail.dead",
+        "dead-letter-strategy": "at-least-once",
+        "overflow": "reject-publish"
+      }
+    },
+    {
+      "name": "mail.send.retry",
+      "vhost": "/",
+      "pattern": "^mail\\.send\\.retry$",
+      "apply-to": "queues",
+      "priority": 0,
+      "definition": {
+        "message-ttl": 300000,
+        "dead-letter-exchange": "mail",
+        "dead-letter-routing-key": "mail.send",
+        "dead-letter-strategy": "at-least-once",
+        "overflow": "reject-publish"
+      }
+    }
+  ]
+}
