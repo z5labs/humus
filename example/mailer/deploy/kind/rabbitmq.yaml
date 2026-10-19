@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rabbitmq
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: rabbitmq
+  template:
+    metadata:
+      labels:
+        app: rabbitmq
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: rabbitmq
+          image: docker.io/library/rabbitmq:4.3.6
+          env:
+            - name: RABBITMQ_CONFIG_FILES
+              value: /etc/rabbitmq-config/conf.d
+            - name: RABBITMQ_ENABLED_PLUGINS_FILE
+              value: /etc/rabbitmq-config/enabled_plugins
+          ports:
+            - name: amqps
+              containerPort: 5671
+            - name: management
+              containerPort: 15672
+          readinessProbe:
+            tcpSocket:
+              port: amqps
+            periodSeconds: 2
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/rabbitmq
+            - name: log
+              mountPath: /var/log/rabbitmq
+            - name: tmp
+              mountPath: /tmp
+            - name: config
+              mountPath: /etc/rabbitmq-config
+              readOnly: true
+            - name: definitions
+              mountPath: /etc/rabbitmq-definitions
+              readOnly: true
+            - name: tls
+              mountPath: /etc/rabbitmq-tls
+              readOnly: true
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: log
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: rabbitmq-config
+            items:
+              - key: rabbitmq.conf
+                path: conf.d/rabbitmq.conf
+              - key: enabled_plugins
+                path: enabled_plugins
+        - name: definitions
+          configMap:
+            name: rabbitmq-definitions
+        - name: tls
+          secret:
+            secretName: rabbitmq-tls
+            defaultMode: 0440
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+spec:
+  selector:
+    app: rabbitmq
+  ports:
+    - name: amqps
+      port: 5671
+      targetPort: amqps
+    - name: management
+      port: 15672
+      targetPort: management
