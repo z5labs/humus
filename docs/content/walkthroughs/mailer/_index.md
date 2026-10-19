@@ -99,4 +99,5 @@ example/mailer/
 ```
 
 These pages set up the topology, then build `provider`, `mail` and `worker`,
-then `app` and `main`, then test it and deploy it.
+then `app` and `main`, then test it, deploy it and observe it, and end with
+the production-ready checklist.
