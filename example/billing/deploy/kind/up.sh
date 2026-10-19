@@ -14,6 +14,7 @@ fi
 
 password=$(openssl rand -hex 24)
 api_key=$(openssl rand -hex 32)
+grafana_password=$(openssl rand -hex 24)
 export KEYSTORE_PASSWORD
 KEYSTORE_PASSWORD=$(openssl rand -hex 24)
 
@@ -44,6 +45,7 @@ printf '%s' "$password" >"$tmp/password"
 printf 'postgres://billing:%s@postgres:5432/billing?sslmode=disable' "$password" >"$tmp/url"
 printf '%s' "$api_key" >"$tmp/api-key"
 printf '%s' "$KEYSTORE_PASSWORD" >"$tmp/keystore-password"
+printf '%s' "$grafana_password" >"$tmp/grafana-password"
 
 k() {
   kubectl --context "kind-$cluster" "$@"
@@ -64,6 +66,8 @@ secret() {
   echo ---
   secret billing-payments --from-file=api-key="$tmp/api-key"
   echo ---
+  secret grafana --from-file=password="$tmp/grafana-password"
+  echo ---
   kubectl create configmap billing-payments-ca --namespace "$namespace" --dry-run=client -o yaml \
     --from-file=ca.crt="$tmp/ca.crt"
 } >"$tmp/billing.yaml"
@@ -71,6 +75,7 @@ secret() {
 kind load docker-image billing --name "$cluster"
 k apply -f "$tmp/billing.yaml"
 
-k rollout restart deployment/postgres deployment/wiremock --namespace "$namespace"
-k rollout status deployment/postgres --namespace "$namespace" --timeout 5m
-k rollout status deployment/wiremock --namespace "$namespace" --timeout 5m
+k rollout restart deployment/postgres deployment/wiremock deployment/grafana --namespace "$namespace"
+for d in postgres wiremock otel-collector loki tempo mimir grafana; do
+  k rollout status "deployment/$d" --namespace "$namespace" --timeout 5m
+done

@@ -41,14 +41,28 @@ port() {
 
 forward postgres 5432
 forward wiremock 443
+forward tempo 3200
+forward loki 3100
+forward mimir 9009
+forward grafana 3000
 postgres_port=$(port postgres)
 wiremock_port=$(port wiremock)
+tempo_port=$(port tempo)
+loki_port=$(port loki)
+mimir_port=$(port mimir)
+grafana_port=$(port grafana)
 
 password=$(k get secret postgres --output jsonpath='{.data.password}' | base64 --decode)
+grafana_password=$(k get secret grafana --output jsonpath='{.data.password}' | base64 --decode)
 
 go -C "$dir/../.." test -count=1 -race -tags functional "$@" ./functional/ -args \
   -kube-context "$context" \
   -namespace "$namespace" \
   -postgres "postgres://billing:$password@127.0.0.1:$postgres_port/billing?sslmode=disable" \
   -postgres-address postgres:5432 \
-  -wiremock "https://127.0.0.1:$wiremock_port"
+  -wiremock "https://127.0.0.1:$wiremock_port" \
+  -tempo "http://127.0.0.1:$tempo_port" \
+  -loki "http://127.0.0.1:$loki_port" \
+  -mimir "http://127.0.0.1:$mimir_port" \
+  -grafana "http://127.0.0.1:$grafana_port" \
+  -grafana-password "$grafana_password"

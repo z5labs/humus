@@ -554,12 +554,14 @@ jobs:
   # The billing walkthrough's image, built from its Dockerfile with the
   # repository as the context, since its module replaces humus with ../..,
   # and its kustomization, rendered. up.sh then creates a kind cluster,
-  # loads the image and applies the kind overlay, and one Job made from the
-  # CronJob's template has to complete. test.sh then runs the tests behind
-  # the functional tag against it: the shared cases, each as Jobs made from
-  # the CronJob's template, and the template as it is, failing a bad setting
-  # by its pod failure policy. The ruleset doesn't require this job, and
-  # Build doesn't wait on it; Vet the functional tests vets them.
+  # loads the image and applies the kind overlay, with the LGTM stack the
+  # job's telemetry goes to, and one Job made from the CronJob's template has
+  # to complete. test.sh then runs the tests behind the functional tag
+  # against it: the shared cases, each as Jobs made from the CronJob's
+  # template, the template as it is, failing a bad setting by its pod failure
+  # policy, and a run whose trace, records and metrics have to reach Tempo,
+  # Loki and Mimir. The ruleset doesn't require this job, and Build doesn't
+  # wait on it; Vet the functional tests vets them.
   billing-kind:
     name: Billing walkthrough (kind)
     runs-on: ubuntu-latest
@@ -611,6 +613,7 @@ jobs:
             kubectl --namespace billing get all
             kubectl --namespace billing describe pods
             kubectl --namespace billing logs job/billing-kind || true
+            kubectl --namespace billing logs deployment/otel-collector || true
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache
