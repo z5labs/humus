@@ -126,6 +126,6 @@ login collector '^$' '^$' '^$'
 rabbitmqctl set_user_tags collector monitoring
 
 k rollout restart deployment/otel-collector deployment/grafana deployment/mailer
-for d in loki tempo mimir otel-collector grafana; do
+for d in loki tempo mimir otel-collector grafana mailer; do
   k rollout status "deployment/$d" --timeout 5m
 done
