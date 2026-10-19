@@ -43,9 +43,6 @@ type files struct {
 }
 
 func (f *files) certificate() (*tls.Certificate, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
 	certPEM, err := readFile(f.fs, f.certFile)
 	if err != nil {
 		return nil, err
@@ -54,16 +51,28 @@ func (f *files) certificate() (*tls.Certificate, error) {
 	if err != nil {
 		return nil, err
 	}
-	if f.cert != nil && bytes.Equal(certPEM, f.certPEM) && bytes.Equal(keyPEM, f.keyPEM) {
-		return f.cert, nil
+	if cert := f.cached(certPEM, keyPEM); cert != nil {
+		return cert, nil
 	}
 
 	cert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
 		return nil, fmt.Errorf("certificate %s and key %s: %w", f.certFile, f.keyFile, err)
 	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.certPEM, f.keyPEM, f.cert = certPEM, keyPEM, &cert
-	return f.cert, nil
+	return &cert, nil
+}
+
+func (f *files) cached(certPEM, keyPEM []byte) *tls.Certificate {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.cert != nil && bytes.Equal(certPEM, f.certPEM) && bytes.Equal(keyPEM, f.keyPEM) {
+		return f.cert
+	}
+	return nil
 }
 
 func readFile(fsys humus.FS, name string) ([]byte, error) {
