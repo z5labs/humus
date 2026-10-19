@@ -89,4 +89,4 @@ example/mailer/
 ```
 
 These pages set up the topology, then build `provider`, `mail` and `worker`,
-then `app` and `main`.
+then `app` and `main`, then test it and deploy it.
