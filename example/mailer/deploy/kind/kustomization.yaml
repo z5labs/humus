@@ -6,6 +6,11 @@ resources:
   - ../base
   - rabbitmq.yaml
   - wiremock.yaml
+  - otel-collector.yaml
+  - loki.yaml
+  - tempo.yaml
+  - mimir.yaml
+  - grafana.yaml
 configMapGenerator:
   - name: mailer
     behavior: merge
@@ -13,9 +18,6 @@ configMapGenerator:
       - PROVIDER_URL=https://wiremock
       - PROVIDER_CA_FILE=/etc/mailer/provider-ca/ca.crt
       - MAIL_TRUSTED_PUBLISHERS=cases
-      - OTEL_TRACES_EXPORTER=console
-      - OTEL_METRICS_EXPORTER=console
-      - OTEL_LOGS_EXPORTER=console
   - name: rabbitmq-config
     files:
       - rabbitmq/rabbitmq.conf
@@ -29,6 +31,21 @@ configMapGenerator:
       - wiremock/accepted.json
       - wiremock/refused.json
       - wiremock/unauthorized.json
+  - name: otel-collector-config
+    files:
+      - otel-collector/config.yaml
+  - name: loki-config
+    files:
+      - loki/config.yaml
+  - name: tempo-config
+    files:
+      - tempo/config.yaml
+  - name: mimir-config
+    files:
+      - mimir/config.yaml
+  - name: grafana-datasources
+    files:
+      - grafana/datasources.yaml
 patches:
   - target:
       kind: Deployment

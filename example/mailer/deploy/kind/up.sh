@@ -15,6 +15,8 @@ fi
 mailer_password=$(openssl rand -hex 24)
 cases_password=$(openssl rand -hex 24)
 mailrequest_password=$(openssl rand -hex 24)
+collector_password=$(openssl rand -hex 24)
+grafana_password=$(openssl rand -hex 24)
 api_key=$(openssl rand -hex 32)
 export KEYSTORE_PASSWORD
 KEYSTORE_PASSWORD=$(openssl rand -hex 24)
@@ -52,6 +54,8 @@ cat "$tmp/mailer.crt" "$tmp/mailer.key" >"$tmp/probes.pem"
 printf '%s' "$mailer_password" >"$tmp/mailer-password"
 printf '%s' "$cases_password" >"$tmp/cases-password"
 printf '%s' "$mailrequest_password" >"$tmp/mailrequest-password"
+printf '%s' "$collector_password" >"$tmp/collector-password"
+printf '%s' "$grafana_password" >"$tmp/grafana-password"
 printf '%s' "$api_key" >"$tmp/api-key"
 printf '%s' "$KEYSTORE_PASSWORD" >"$tmp/keystore-password"
 
@@ -85,6 +89,10 @@ configmap() {
   echo ---
   secret mailrequest-rabbitmq --from-literal=username=mailrequest --from-file=password="$tmp/mailrequest-password"
   echo ---
+  secret otel-collector-rabbitmq --from-file=password="$tmp/collector-password"
+  echo ---
+  secret grafana-admin --from-literal=username=admin --from-file=password="$tmp/grafana-password"
+  echo ---
   configmap mailer-rabbitmq-ca --from-file=ca.crt="$tmp/ca.crt"
   echo ---
   configmap mailer-provider-ca --from-file=ca.crt="$tmp/ca.crt"
@@ -114,5 +122,10 @@ rabbitmqctl import_definitions /etc/rabbitmq-definitions/policies.json
 login mailer '^$' '^mail\.(retry|dead|events)$' '^mail\.send$'
 login cases '^amq\.gen-.*$' '^(mail|amq\.gen-.*)$' '^(mail\.(events|dead|retry)|amq\.gen-.*)$'
 login mailrequest '^$' '^mail$' '^$'
+login collector '^$' '^$' '^$'
+rabbitmqctl set_user_tags collector monitoring
 
-k rollout restart deployment/mailer
+k rollout restart deployment/otel-collector deployment/grafana deployment/mailer
+for d in loki tempo mimir otel-collector grafana mailer; do
+  k rollout status "deployment/$d" --timeout 5m
+done
