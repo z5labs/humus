@@ -8,6 +8,7 @@ package humus_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"slices"
 	"strings"
@@ -591,4 +592,32 @@ func TestApp_Run_telemetry_an_export_error_is_written_to_stderr(t *testing.T) {
 	require.True(t, slices.ContainsFunc(lines, func(l string) bool {
 		return strings.HasPrefix(l, "telemetry: ")
 	}), "stderr = %q, want a line starting with \"telemetry: \"", p.Stderr())
+}
+
+func TestApp_Run_telemetry_a_failed_shutdown_after_a_SIGTERM_as_the_App_starts_serving_is_joined_into_the_cause(t *testing.T) {
+	errShutdown := errors.New("flush logs: collector unavailable")
+	lost := &tally{t: t}
+	for i := range tries {
+		var st bedrock.ExitStatus
+		synctest.Test(t, func(t *testing.T) {
+			p := bedrocktest.NewProcess(t)
+			logs := sigtermAsServing(p, nil)
+			app := appWith(servicesOf(&fakeService{}))
+			app.Telemetry = hookedTelemetry(logs, errShutdown)
+
+			st = app.Run(t.Context(), p.Process())
+		})
+
+		t.Logf("App %d: code %d, cause %q", i+1, st.Code(), fmt.Sprint(st.Cause()))
+		if st.Code() != humus.ExitFailure {
+			t.Errorf("App %d: code = %d, want %d", i+1, st.Code(), humus.ExitFailure)
+		}
+		if !errors.Is(st.Cause(), errShutdown) {
+			t.Errorf("App %d: cause = %v, want the telemetry's shutdown error in it", i+1, st.Cause())
+		}
+		if !errors.Is(st.Cause(), context.Canceled) {
+			lost.fail(i, "cause = %v, want the signal still in it", st.Cause())
+		}
+	}
+	lost.report("the signal was not in the cause")
 }

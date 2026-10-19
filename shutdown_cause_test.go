@@ -368,3 +368,134 @@ func TestDrainDelay_waits_its_whole_delay_after_a_Service_returned_on_its_own(t 
 		}
 	})
 }
+
+func TestShutdownCause_after_a_SIGTERM_as_the_App_starts_serving_is_the_signals_cause(t *testing.T) {
+	lost := &tally{t: t}
+	for i := range tries {
+		var st bedrock.ExitStatus
+		var got error
+		synctest.Test(t, func(t *testing.T) {
+			d := &causeDrain{}
+			p := bedrocktest.NewProcess(t)
+			logs := sigtermAsServing(p, nil)
+			// The first Service stops on Serve's context, as the health
+			// Service does, and the second serves until Shutdown, as an
+			// HTTP server does, so the Drain is called.
+			app := drainApp(t, d.Drain, &fakeService{}, serving(nil))
+			app.Telemetry = hookedTelemetry(logs, nil)
+
+			st = app.Run(t.Context(), p.Process())
+			got = d.recordedCause(t)
+		})
+
+		t.Logf("App %d: ShutdownCause %v, code %d, cause %v", i+1, got, st.Code(), st.Cause())
+		if got == nil || got.Error() != "terminated signal received" || errors.Is(got, humus.ErrServiceReturned) {
+			lost.fail(i, "ShutdownCause = %v, want terminated signal received", got)
+		}
+		if got != st.Cause() {
+			t.Errorf("App %d: ShutdownCause = %v, want the App's cause, %v", i+1, got, st.Cause())
+		}
+	}
+	lost.report("ShutdownCause was not the signal")
+}
+
+func TestApp_Run_a_Drain_that_waits_on_a_load_balancer_after_a_SIGTERM_as_the_App_starts_serving_waits_until_the_target_is_draining(t *testing.T) {
+	cut := &tally{t: t}
+	for i := range tries {
+		var st bedrock.ExitStatus
+		var shutdownAfter time.Duration
+		var polls int
+		synctest.Test(t, func(t *testing.T) {
+			h := humustest.NewHost(t)
+			lb := &fakeLB{}
+			serveLB(t, h, lb)
+			var shutdownAt time.Time
+			api := serving(func(context.Context) error {
+				shutdownAt = time.Now()
+				return nil
+			})
+			health := &fakeService{} // stops on Serve's context, as the health Service does
+			p := bedrocktest.NewProcess(t)
+			var sigterm time.Time
+			logs := sigtermAsServing(p, func() {
+				sigterm = time.Now()
+				lb.deregister(3 * time.Second) // Kubernetes deregisters the pod as it sends SIGTERM
+			})
+			app := drainApp(t, deregisteringDrain, health, api)
+			app.Host = h.Host()
+			app.Telemetry = hookedTelemetry(logs, nil)
+
+			st = app.Run(t.Context(), p.Process())
+			shutdownAfter = shutdownAt.Sub(sigterm)
+			polls = lb.pollCount()
+		})
+
+		t.Logf("App %d: Shutdown %s after SIGTERM, %d polls, code %d, cause %v", i+1, shutdownAfter, polls, st.Code(), st.Cause())
+		if st.Code() != 0 {
+			t.Errorf("App %d: code = %d, want 0: %v", i+1, st.Code(), st.Cause())
+		}
+		if shutdownAfter != 3*time.Second {
+			cut.fail(i, "Shutdown called %s after SIGTERM, want 3s, once the load balancer reported the target draining", shutdownAfter)
+		}
+		if polls != 4 {
+			t.Errorf("App %d: the Drain polled the load balancer %d times, want 4: at 0s, 1s, 2s and 3s", i+1, polls)
+		}
+	}
+	cut.report("Shutdown was called before the load balancer reported the target draining")
+}
+
+func TestShutdownCause_after_Runs_context_was_cancelled_as_the_App_starts_serving_is_its_cause(t *testing.T) {
+	errStop := errors.New("the test harness stopped the App")
+	lost := &tally{t: t}
+	for i := range tries {
+		var st bedrock.ExitStatus
+		var got error
+		synctest.Test(t, func(t *testing.T) {
+			ctx, cancel := context.WithCancelCause(t.Context())
+			d := &causeDrain{}
+			logs := &hookLogger{onServing: func() {
+				cancel(errStop)
+				synctest.Wait() // a Serve that stops on its context has returned
+			}}
+			app := drainApp(t, d.Drain, &fakeService{}, serving(nil))
+			app.Telemetry = hookedTelemetry(logs, nil)
+			p := bedrocktest.NewProcess(t)
+
+			st = app.Run(ctx, p.Process())
+			got = d.recordedCause(t)
+		})
+
+		t.Logf("App %d: ShutdownCause %v, code %d, cause %v", i+1, got, st.Code(), st.Cause())
+		if got != errStop {
+			lost.fail(i, "ShutdownCause = %v, want Run's context's cause, %v", got, errStop)
+		}
+	}
+	lost.report("ShutdownCause was not Run's context's cause")
+}
+
+func TestShutdownCause_after_a_Service_returned_on_its_own_before_a_SIGTERM_as_the_App_starts_serving_wraps_ErrServiceReturned(t *testing.T) {
+	signalled := &tally{t: t}
+	for i := range tries {
+		var st bedrock.ExitStatus
+		var got error
+		synctest.Test(t, func(t *testing.T) {
+			d := &causeDrain{}
+			p := bedrocktest.NewProcess(t)
+			logs := sigtermAfterReturned(p)
+			job := &fakeService{serve: func(context.Context) error { return nil }}
+			app := drainApp(t, d.Drain, job, serving(nil))
+			app.Telemetry = hookedTelemetry(logs, nil)
+
+			st = app.Run(t.Context(), p.Process())
+			got = d.recordedCause(t)
+		})
+
+		if !errors.Is(got, humus.ErrServiceReturned) {
+			signalled.fail(i, "ShutdownCause = %v, want it to wrap ErrServiceReturned: the Service returned before the signal", got)
+		}
+		if st.Code() != 0 || st.Cause() != nil {
+			t.Errorf("App %d: status = (%d, %v), want (0, nil)", i+1, st.Code(), st.Cause())
+		}
+	}
+	signalled.report("ShutdownCause did not wrap ErrServiceReturned")
+}

@@ -343,10 +343,11 @@ Service.
 **A Drain of the end user's own checks `ShutdownCause` before it waits on a
 load balancer.** [`humus.ShutdownCause(ctx)`](https://pkg.go.dev/github.com/z5labs/humus#ShutdownCause)
 says why the shutdown started: after a signal, it is the signal's cause, and
-Kubernetes is terminating the pod and removing it from load balancers. When a
-Service returned on its own first, such as a job next to an API, it wraps
-`humus.ErrServiceReturned`, and nothing outside is draining the App. A Drain
-that waited for deregistration then would wait for something nothing
+Kubernetes is terminating the pod and removing it from load balancers, also
+when a Service returned on the signal before Run waited for one. When a
+Service returned on its own before any signal, such as a job next to an API,
+it wraps `humus.ErrServiceReturned`, and nothing outside is draining the App.
+A Drain that waited for deregistration then would wait for something nothing
 triggers. This Drain polls a load balancer through `s.Host.Dial`, so that it
 runs on a test Host too, and only after a signal:
 
@@ -487,7 +488,13 @@ the context each is given is done when the grace period runs out.
    within the grace period, and exits 78 when a `*config.Error` is in `Init`'s
    error chain, or 1 otherwise.
 7. Calls `Serve` on every Service concurrently, and logs `serving`.
-8. Waits for a signal, or for the first Service to return.
+8. Waits for a signal, or for the first Service to return. A Service whose
+   `Serve` returns once a signal has come, or once Run's context is
+   cancelled, returned on it, as the health Service, a job or a queue
+   consumer does, so the shutdown is the signal's, or the context's, even
+   when Run receives that `Serve`'s result first. The shutdown is a Service's
+   own only when its `Serve` returned before any signal and before Run's
+   context was cancelled.
 9. Stops listening for signals, so that a second interrupt or SIGTERM takes
    its default action and ends the process at once, cancels the context
    passed to `Serve`, and logs `shutting down`.
@@ -589,7 +596,7 @@ values are bad, both are reported, one line each.
 | Code | When | Cause |
 |---|---|---|
 | 0 | a signal stopped the App and it shut down in time | the signal |
-| 0 | a Service returned `nil` on its own, and the App shut down in time | none |
+| 0 | a Service returned `nil` on its own, before any signal, and the App shut down in time | none |
 | 1 (`humus.ExitFailure`) | the telemetry could not be built, or its SDK has a nil field | the error |
 | 1 (`humus.ExitFailure`) | the failure injection could not be built, or `Init`, a Service, a Service's `Shutdown`, an OnStop function or the telemetry's shutdown failed | every error, joined |
 | 1 (`humus.ExitFailure`) | the shutdown ran past the grace period | a `*humus.GracePeriodError` |

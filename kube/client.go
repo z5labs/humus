@@ -135,6 +135,11 @@ type Client struct {
 // c.Token's bearer token, and every request but a watch is a client span
 // from otelhttp, with s.Telemetry's providers and propagator. A watch lasts
 // as long as an informer runs, so it has no span.
+//
+// Every request is an injection point of s.Faults, named after what it does
+// to which resource, such as kube:deployments.apps:patch, and the Client
+// strips the failure scenario from every request it sends. The package doc
+// says how.
 func NewClient(s *humus.Setup, c Connection) (*Client, error) {
 	if s == nil {
 		return nil, errors.New("kube: NewClient: the Setup must not be nil")
@@ -170,14 +175,18 @@ func NewClient(s *humus.Setup, c Connection) (*Client, error) {
 		},
 	}
 
-	// The layers, outermost first: otelhttp, then the token, then the
-	// http.Transport. The token is added inside the span, so a Token call
-	// that fails is the span's error. Every provider and the propagator are
-	// passed, so otelhttp never falls back to OpenTelemetry's globals.
+	// The layers, outermost first: otelhttp, then failure injection, then
+	// the token, then the http.Transport. The token is added inside the
+	// span, so a Token call that fails is the span's error. Failure
+	// injection is inside the span too, so a delay is in it and its
+	// evaluation is an event on it, and it is before the token, so an abort
+	// calls no Token. Every provider and the propagator are passed, so
+	// otelhttp never falls back to OpenTelemetry's globals.
 	var next http.RoundTripper = tr
 	if c.Token != nil {
 		next = &tokenTransport{token: c.Token, next: tr}
 	}
+	next = injectFaults{faults: s.Faults, propagator: s.Telemetry.Propagator, next: next}
 	instrumented := otelhttp.NewTransport(next,
 		otelhttp.WithTracerProvider(s.Telemetry.TracerProvider),
 		otelhttp.WithMeterProvider(s.Telemetry.MeterProvider),
@@ -230,6 +239,5 @@ func spanName(_ string, r *http.Request) string {
 // as a GET with the query parameter watch=true. otelhttp traces and
 // measures only the requests it reports true for.
 func notWatch(r *http.Request) bool {
-	watch, err := strconv.ParseBool(r.URL.Query().Get("watch"))
-	return err != nil || !watch
+	return !isWatch(r)
 }
