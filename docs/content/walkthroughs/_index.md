@@ -16,7 +16,7 @@ from that code.
 
 ## The walkthroughs
 
-- [Billing job]({{< relref "/walkthroughs/billing" >}}): a job, run daily by
+- [Billing job]({{< relref "walkthroughs/billing" >}}): a job, run daily by
   a CronJob, that bills a month of subscriptions in PostgreSQL through a
   payments API, once, however often it runs.
 
