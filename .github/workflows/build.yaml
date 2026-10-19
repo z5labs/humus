@@ -208,9 +208,10 @@ jobs:
             path: ${{ steps.go-cache.outputs.path }}
 
   # The tests behind the testcontainers tag run in the testcontainers
-  # jobs below, so here they are only compiled and vetted, without starting
-  # a container, alongside the unit tests. Every module under example/ that
-  # go-modules.sh lists is vetted, so a new example needs no change here.
+  # jobs below, and the tests behind the functional tag in the kind jobs, so
+  # here they are only compiled and vetted, without starting a container,
+  # alongside the unit tests. Every module under example/ that go-modules.sh
+  # lists is vetted with both tags, so a new example needs no change here.
   vet-testcontainers:
     name: Vet the testcontainers tests
     needs: modules
@@ -243,6 +244,9 @@ jobs:
             for module in $(jq -r '.[] | select(startswith("example/"))' <<<"$MODULES"); do
               echo "::group::go vet -tags testcontainers ($module)"
               go -C "$module" vet -tags testcontainers ./... || failed=1
+              echo "::endgroup::"
+              echo "::group::go vet -tags functional ($module)"
+              go -C "$module" vet -tags functional ./... || failed=1
               echo "::endgroup::"
             done
             exit "$failed"
@@ -623,16 +627,29 @@ jobs:
   # queue/rabbitmq with paths under ../.., and its base kustomization,
   # rendered. up.sh then creates a kind cluster, loads the image and applies
   # the kind overlay, and the mailer's Deployment has to become ready. The
-  # ruleset doesn't require this job, and Build doesn't wait on it.
+  # tests behind the functional tag then run the shared cases against it. The
+  # ruleset doesn't require this job, and Build doesn't wait on it; Vet the
+  # testcontainers tests vets them.
   mailer-kind:
     name: Mailer walkthrough (kind)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
+      actions: write
       contents: read
     steps:
         - name: Checkout
           uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+          with:
+            go-version: '1.27.2'
+            cache: false
+
+        - id: go-cache
+          uses: ./.github/actions/restore-go-cache
+          with:
+            name: mailer-kind
 
         - name: Build the image
           run: docker build --file example/mailer/Dockerfile --tag mailer .
@@ -646,6 +663,9 @@ jobs:
         - name: Wait for the mailer's Deployment
           run: kubectl --namespace mailer rollout status deployment/mailer --timeout 5m
 
+        - name: Run the shared cases against kind
+          run: go -C example/mailer test -count=1 -race -tags functional ./functional/
+
         - name: Show the mailer namespace
           if: ${{ failure() }}
           run: |
@@ -653,3 +673,9 @@ jobs:
             kubectl --namespace mailer describe pods
             kubectl --namespace mailer logs deployment/rabbitmq --tail 200 || true
             kubectl --namespace mailer logs deployment/mailer --all-containers --tail 200 || true
+
+        - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
+          uses: ./.github/actions/save-go-cache
+          with:
+            key: ${{ steps.go-cache.outputs.key }}
+            path: ${{ steps.go-cache.outputs.path }}
