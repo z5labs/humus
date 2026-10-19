@@ -386,7 +386,6 @@ func TestBilling_passes_the_shared_cases_as_deployed(t *testing.T) {
 			}},
 		},
 		Key:     strings.TrimSpace(string(key)),
-		Run:     d.run,
 		Timeout: *caseTimeout,
 	}
 
@@ -394,7 +393,10 @@ func TestBilling_passes_the_shared_cases_as_deployed(t *testing.T) {
 		for _, c := range cases.All {
 			t.Run(c.Name, func(t *testing.T) {
 				t.Parallel()
-				c.Run(t, target)
+				own, ownTarget := d, target
+				own.t = t
+				ownTarget.Run = own.run
+				c.Run(t, ownTarget)
 			})
 		}
 	})
