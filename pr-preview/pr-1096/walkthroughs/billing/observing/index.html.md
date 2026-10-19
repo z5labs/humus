@@ -68,7 +68,7 @@ series with `job="billing"`:
 
 ```text
 billing_invoices_issued
-billing_invoices_settled{billing_invoice_state="charged|declined|failed"}
+billing_invoices_settled{billing_invoice_state=~"charged|declined|failed"}
 billing_invoices_pending
 humus_circuit_state
 humus_circuit_transitions
