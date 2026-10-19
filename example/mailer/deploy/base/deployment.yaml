@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mailer
+  labels:
+    app.kubernetes.io/name: mailer
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mailer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mailer
+    spec:
+      serviceAccountName: mailer
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 35
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mailer
+          image: mailer
+          envFrom:
+            - configMapRef:
+                name: mailer
+          ports:
+            - name: probes
+              containerPort: 8443
+          livenessProbe:
+            httpGet:
+              path: /health/liveness
+              port: probes
+              scheme: HTTPS
+          readinessProbe:
+            httpGet:
+              path: /health/readiness
+              port: probes
+              scheme: HTTPS
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: rabbitmq
+              mountPath: /etc/mailer/rabbitmq
+              readOnly: true
+            - name: rabbitmq-ca
+              mountPath: /etc/mailer/rabbitmq-ca
+              readOnly: true
+            - name: provider
+              mountPath: /etc/mailer/provider
+              readOnly: true
+            - name: probes
+              mountPath: /etc/mailer/probes
+              readOnly: true
+      volumes:
+        - name: rabbitmq
+          secret:
+            secretName: mailer-rabbitmq
+            defaultMode: 0440
+            items:
+              - key: password
+                path: password
+        - name: rabbitmq-ca
+          configMap:
+            name: mailer-rabbitmq-ca
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: provider
+          secret:
+            secretName: mailer-provider
+            defaultMode: 0440
+            items:
+              - key: api-key
+                path: api-key
+        - name: probes
+          secret:
+            secretName: mailer-probes
+            defaultMode: 0440
+            items:
+              - key: tls.pem
+                path: tls.pem

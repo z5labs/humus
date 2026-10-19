@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - serviceaccount.yaml
+  - deployment.yaml
+  - poddisruptionbudget.yaml
+configMapGenerator:
+  - name: mailer
+    literals:
+      - RABBITMQ_ADDR=rabbitmq:5671
+      - RABBITMQ_USERNAME=mailer
+      - RABBITMQ_PASSWORD_FILE=/etc/mailer/rabbitmq/password
+      - RABBITMQ_CA_FILE=/etc/mailer/rabbitmq-ca/ca.crt
+      - MAIL_FROM=mailer@example.com
+      - PROVIDER_URL=https://mail-provider.example.com
+      - PROVIDER_API_KEY_FILE=/etc/mailer/provider/api-key
+      - PROBES_ADDR=:8443
+      - PROBES_TLS_PEM_FILE=/etc/mailer/probes/tls.pem
+      - OTEL_SERVICE_NAME=mailer
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
