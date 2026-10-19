@@ -365,17 +365,22 @@ the run's span in full.
 
 ## humus's own instruments
 
-humus defines four instruments of its own, for the circuit breaker and the
+humus defines four instruments of its own for the circuit breaker and the
 retries of its four outbound clients: `httpclient`, `grpcclient`, the Kafka
 `Producer` and the RabbitMQ `Publisher`. Each client records all four,
-except the Kafka `Producer`, which records no `humus.retry.decisions`.
+except the Kafka `Producer`, which records no `humus.retry.decisions`. The
+`kube` module's `Controller` records six more, for its work queue and its
+reconciles, under `humus.kube.controller.`.
 Nothing else in humus records an instrument of its own: everything else is
 measured by OpenTelemetry's instrumentation, which humus hands the Setup's
 providers, or by the orchestrator. [What isn't measured](#what-isnt-measured) explains
 why. The design is in
 [Proposal: humus's own metrics](https://github.com/z5labs/humus/discussions/871),
 with the names of its
-[revision 1](https://github.com/z5labs/humus/discussions/871#discussioncomment-19019494).
+[revision 1](https://github.com/z5labs/humus/discussions/871#discussioncomment-19019494),
+and the controller's in
+[Proposal: Kubernetes controllers](https://github.com/z5labs/humus/discussions/851),
+with its [revision 4](https://github.com/z5labs/humus/discussions/851#discussioncomment-19021637).
 
 The instruments are part of humus's API. Their names, kinds, units,
 descriptions and attributes are what dashboards and alerts depend on, and
@@ -400,6 +405,32 @@ in the code and in a query read the same:
 | `humus.circuit.previous_state` | `closed`, `open`, `half-open` | `circuit.State`: the state a transition left, as on the breaker's log records |
 | `humus.circuit.outcome` | `success`, `failure`, `ignored`, `rejected` | `circuit.Outcome` for a call the breaker counted, and `rejected` for one it didn't admit |
 | `humus.retry.decision` | `again`, `succeeded`, `stopped`, `exhausted`, `throttled`, `expired` | `retry.Decision` |
+
+A Kubernetes controller, a `kube.Controller`, records six instruments of
+its own, in the scope `github.com/z5labs/humus/kube`, for its work queue and
+its reconciles. OpenTelemetry has no conventions for controllers, so they
+are humus's:
+
+| Instrument | Kind | Unit | Description | Attributes | Recorded |
+|---|---|---|---|---|---|
+| `humus.kube.controller.queue.depth` | UpDownCounter (`Int64UpDownCounter`) | `{object}` | Objects waiting in the work queue for a worker. | `humus.kube.controller.name` | +1 when a key is added, and -1 when a worker takes it |
+| `humus.kube.controller.queue.adds` | Counter (`Int64Counter`) | `{object}` | Objects added to the work queue. | `humus.kube.controller.name` | when a key is added, not counting one already waiting |
+| `humus.kube.controller.queue.duration` | Histogram (`Float64Histogram`) | `s` | How long an object waited in the work queue for a worker. | `humus.kube.controller.name` | when a worker takes a key; a `Result.After`'s or a backoff's wait comes before the key is added, so it isn't counted |
+| `humus.kube.controller.reconcile.duration` | Histogram (`Float64Histogram`) | `s` | How long each reconcile took. | `humus.kube.controller.name`, `humus.kube.controller.reconcile.outcome` | once each reconcile is done: one for each `reconcile <Kind>` span |
+| `humus.kube.controller.reconcile.unfinished_duration` | Gauge (`Float64Gauge`) | `s` | How long the reconciles in flight have run, added together. | `humus.kube.controller.name` | every 500ms while the queue runs |
+| `humus.kube.controller.reconcile.longest_unfinished_duration` | Gauge (`Float64Gauge`) | `s` | How long the longest reconcile in flight has run. | `humus.kube.controller.name` | every 500ms while the queue runs |
+
+`humus.kube.controller.name` is the controller's `Settings.Name`, and
+`humus.kube.controller.reconcile.outcome` is `error`, for a reconcile whose
+object is retried with backoff, `panic`, for a recovered panic, or
+`success`, for everything else. No data point carries an object's namespace
+or name: an object's reconciles are its spans. Both histograms take
+OpenTelemetry's advice for a duration in seconds. A standby replica records
+them too, with every object waiting in its `queue.depth`, since it runs no
+workers, so `queue.depth` is read per replica.
+[Writing a Kubernetes controller](/humus/kubernetes/#the-controllers-instruments)
+says what each counts, and what the work queue's own metrics it doesn't
+record would have.
 
 ### Which client records which
 
@@ -499,11 +530,18 @@ In Prometheus, the instruments are:
 | `humus.circuit.transitions` | `humus_circuit_transitions_total` |
 | `humus.circuit.calls` | `humus_circuit_calls_total` |
 | `humus.retry.decisions` | `humus_retry_decisions_total` |
+| `humus.kube.controller.queue.depth` | `humus_kube_controller_queue_depth` |
+| `humus.kube.controller.queue.adds` | `humus_kube_controller_queue_adds_total` |
+| `humus.kube.controller.queue.duration` | `humus_kube_controller_queue_duration_seconds` |
+| `humus.kube.controller.reconcile.duration` | `humus_kube_controller_reconcile_duration_seconds` |
+| `humus.kube.controller.reconcile.unfinished_duration` | `humus_kube_controller_reconcile_unfinished_duration_seconds` |
+| `humus.kube.controller.reconcile.longest_unfinished_duration` | `humus_kube_controller_reconcile_longest_unfinished_duration_seconds` |
 
 and the attributes are the labels `humus_circuit_state`,
 `humus_circuit_previous_state`, `humus_circuit_outcome`,
 `humus_retry_decision`, `server_address`, `server_port` and
-`messaging_system`. An alert on an open breaker reads the state, one on
+`messaging_system`, and the controller's `humus_kube_controller_name` and
+`humus_kube_controller_reconcile_outcome`. An alert on an open breaker reads the state, one on
 breakers that open and close between scrapes reads the transitions, and one
 on a budget that refuses retries reads the decisions:
 
@@ -523,7 +561,8 @@ increase(humus_retry_decisions_total{humus_retry_decision="throttled"}[5m]) > 0
 An instrument of humus's own measures state that humus decides, that no
 OpenTelemetry instrumentation or the orchestrator measures already, and that
 changes many times over a process's life. Only the four clients' breakers
-and retries pass that rule. Everything else was decided against it:
+and retries, and a Kubernetes controller's work queue and reconciles, pass
+that rule. Everything else was decided against it:
 
 - **The retry budget's tokens.** `throttled` counts the budget refusing a
   retry, exactly, while a gauge sampled every minute misses a budget that

@@ -60,7 +60,13 @@ delivery acks and counts toward a quorum queue's delivery limit, how the
 consumer rides out a broker's rolling upgrade and turns ready with
 `Consuming`, how it publishes with confirms through a `rabbitmq.Publisher`,
 and how to test an App that uses RabbitMQ, which humus ships no fake broker
-for. The `health` package has landed too, with
+for. The `kube` module has landed too:
+[Writing a Kubernetes controller](/humus/kubernetes/) explains how a
+controller reaches the API server, declares a custom resource as Go values
+and keeps its CRD true to the types, reconciles its objects, or those of
+Kubernetes' own kinds, with owned resources and finalizers, elects a leader,
+what RBAC it needs and what it records, and how to test it against k3s. The
+`health` package has landed too, with
 `httphealth` and the `grpc` module's `grpchealth`, which expose its probes:
 [Health](/humus/health/) explains monitors, liveness and readiness,
 the health Service that owns an App's readiness, and how a pod's probes reach
