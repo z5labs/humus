@@ -133,6 +133,26 @@ repo=$(newrepo -.=$root d=$root/d)
 out=$(cd "$repo" && "$script" --list v0.16.0 2>&1) || fail "short name: exit $?"
 [[ $out == "skip go.mod: it holds no Go packages"$'\n'"$root/d" ]] || fail "short name: got"$'\n'"$out"
 
+# No module under example/ is released, whatever it requires, and saying so
+# for each one; an example's Go files are still its own, not its parent's.
+repo=$(newrepo -.=$root grpc=$root/grpc example=$root/example \
+  example/shoppingcart=$root/example/shoppingcart example/billing=$root/example/billing)
+printf '\nrequire github.com/z5labs/humus/grpc v0.15.0\n' >>"$repo/example/shoppingcart/go.mod"
+commit "$repo" examples
+run "$repo" --dry-run v0.16.0
+expect_status 0 "examples"
+expect_output "skip example/go.mod: under example/, whose modules are never released" "examples"
+expect_output "skip example/shoppingcart/go.mod: under example/, whose modules are never released" "examples"
+expect_output "skip example/billing/go.mod: under example/, whose modules are never released" "examples"
+expect_output "skip go.mod: it holds no Go packages" "examples"
+expect_output "would create grpc/v0.16.0" "examples"
+grep -v '^skip example/' <<<"$out" | grep -q example && fail "examples: names an example outside its skip:"$'\n'"$out"
+out=$(cd "$repo" && "$script" --list v0.16.0 2>/dev/null) || fail "examples list: exit $?"
+[[ $out == "$root/grpc" ]] || fail "examples list: got"$'\n'"$out"
+run "$repo" v0.16.0
+expect_status 0 "examples tag"
+[[ $(remote_tags "$repo") == "refs/tags/grpc/v0.16.0 " ]] || fail "examples tag: remote tags are $(remote_tags "$repo")"
+
 # Tagging pushes the root tag and every nested tag at the release commit.
 repo=$(newrepo .=$root grpc=$root/grpc queue/kafka=$root/queue/kafka -docs=$root)
 run "$repo" v0.16.0
@@ -177,7 +197,7 @@ expect_output "v0.16.0 already exists at $release, not at the release commit" "c
 [[ $(remote_tags "$repo") == "$want" ]] || fail "conflict: pushed $(remote_tags "$repo")"
 
 # A nested tag at a different commit fails the run, and nothing is pushed.
-repo=$(newrepo .=$root grpc=$root/grpc example=$root/example)
+repo=$(newrepo .=$root grpc=$root/grpc job=$root/job)
 git -C "$repo" commit -q --allow-empty -m other
 git -C "$repo" push -q origin HEAD:refs/tags/grpc/v0.16.0
 git -C "$repo" reset -q --hard HEAD~1
@@ -199,7 +219,7 @@ expect_output "created v0.16.0" "annotated"
 # release, listing each such requirement; a dry run shows what --bump would
 # set; --bump sets them, leaving every other requirement alone; and the
 # release then goes ahead.
-repo=$(newrepo .=$root grpc=$root/grpc queue/kafka=$root/queue/kafka example=$root/example)
+repo=$(newrepo .=$root grpc=$root/grpc queue/kafka=$root/queue/kafka job=$root/job)
 cat >>"$repo/grpc/go.mod" <<EOF
 
 require github.com/z5labs/humus $pseudo
@@ -215,7 +235,7 @@ require (
 
 replace github.com/z5labs/humus => ../..
 EOF
-cat >>"$repo/example/go.mod" <<EOF
+cat >>"$repo/job/go.mod" <<EOF
 
 require (
 	github.com/z5labs/humus v0.16.0
@@ -229,16 +249,16 @@ run "$repo" v0.16.0
 expect_status 1 "stale"
 expect_output "grpc/go.mod requires $root $pseudo, want v0.16.0" "stale"
 expect_output "queue/kafka/go.mod requires $root $pseudo, want v0.16.0" "stale"
-expect_output "example/go.mod requires $root/grpc v0.15.0, want v0.16.0" "stale"
+expect_output "job/go.mod requires $root/grpc v0.15.0, want v0.16.0" "stale"
 expect_output "release-modules.sh --bump v0.16.0" "stale"
-reject_output "example/go.mod requires $root v0.16.0" "stale"
+reject_output "job/go.mod requires $root v0.16.0" "stale"
 reject_output "example.com/other" "stale"
 [[ $(remote_tags "$repo") == "" ]] || fail "stale: pushed $(remote_tags "$repo")"
 
 run "$repo" --dry-run v0.16.0
 expect_status 0 "stale dry run"
 expect_output "would set grpc/go.mod: require $root v0.16.0 (now $pseudo)" "stale dry run"
-expect_output "would set example/go.mod: require $root/grpc v0.16.0 (now v0.15.0)" "stale dry run"
+expect_output "would set job/go.mod: require $root/grpc v0.16.0 (now v0.15.0)" "stale dry run"
 expect_output "release v0.16.0 at the commit that sets these requirements on top of $before" "stale dry run"
 expect_output "would create grpc/v0.16.0" "stale dry run"
 [[ $(git -C "$repo" status --porcelain) == "" ]] || fail "stale dry run: changed the working tree"
@@ -247,7 +267,7 @@ run "$repo" --bump v0.16.0
 expect_status 0 "bump"
 expect_output "set grpc/go.mod: require $root v0.16.0 (was $pseudo)" "bump"
 expect_output "set queue/kafka/go.mod: require $root v0.16.0 (was $pseudo)" "bump"
-expect_output "set example/go.mod: require $root/grpc v0.16.0 (was v0.15.0)" "bump"
+expect_output "set job/go.mod: require $root/grpc v0.16.0 (was v0.15.0)" "bump"
 grep -qF "github.com/z5labs/humus v0.16.0 // indirect" "$repo/queue/kafka/go.mod" ||
   fail "bump: lost the // indirect comment:"$'\n'"$(cat "$repo/queue/kafka/go.mod")"
 grep -qF "example.com/other v1.2.3" "$repo/queue/kafka/go.mod" ||
@@ -263,7 +283,7 @@ commit "$repo" bump
 run "$repo" v0.16.0
 expect_status 0 "after bump"
 expect_output "created v0.16.0" "after bump"
-expect_output "created example/v0.16.0" "after bump"
+expect_output "created job/v0.16.0" "after bump"
 
 # A dry run before the bump cannot know the commit the tags will go on, so any
 # tag that already exists is a conflict.

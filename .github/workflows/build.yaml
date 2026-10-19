@@ -207,9 +207,11 @@ jobs:
 
   # The tests behind the testcontainers tag run in the four testcontainers
   # jobs below, so here they are only compiled and vetted, without starting
-  # a container, alongside the unit tests.
+  # a container, alongside the unit tests. Every module under example/ that
+  # go-modules.sh lists is vetted, so a new example needs no change here.
   vet-testcontainers:
     name: Vet the testcontainers tests
+    needs: modules
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -229,12 +231,18 @@ jobs:
             name: vet-testcontainers
 
         - name: Vet
+          env:
+            MODULES: ${{ needs.modules.outputs.modules }}
           run: |
             failed=0
             go -C queue/kafka vet -tags testcontainers ./... || failed=1
             go -C queue/rabbitmq vet -tags testcontainers ./... || failed=1
             go -C kube vet -tags testcontainers ./... || failed=1
-            go -C example vet -tags testcontainers ./... || failed=1
+            for module in $(jq -r '.[] | select(startswith("example/"))' <<<"$MODULES"); do
+              echo "::group::go vet -tags testcontainers ($module)"
+              go -C "$module" vet -tags testcontainers ./... || failed=1
+              echo "::endgroup::"
+            done
             exit "$failed"
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
@@ -454,7 +462,7 @@ jobs:
             name: shoppingcart-testcontainers
 
         - name: Test
-          run: go -C example test -count=1 -race -tags testcontainers ./...
+          run: go -C example/shoppingcart test -count=1 -race -tags testcontainers ./...
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache

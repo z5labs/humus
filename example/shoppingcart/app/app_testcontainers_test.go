@@ -15,7 +15,7 @@ package app
 // real sockets, so it sits behind the testcontainers build tag and runs in
 // a CI job of its own, outside the coverage gate:
 //
-//	go -C example test -race -tags testcontainers ./...
+//	go -C example/shoppingcart test -race -tags testcontainers ./...
 
 import (
 	"context"
