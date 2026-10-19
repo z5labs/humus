@@ -8,6 +8,7 @@ package kube_test
 import (
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -15,15 +16,38 @@ import (
 
 // buildMistake builds testdata/mistakes/common.go with file, behind the
 // mistakes build tag, and returns the compiler's output and its error.
+//
+// It builds with -race when the test binary was, so the packages the
+// mistakes import are the ones go test already compiled for the binary.
+// Built without it, on a cold Go cache, they are all compiled again, which
+// took minutes of the Kubernetes (testcontainers) job.
 func buildMistake(t *testing.T, file string) (string, error) {
 	t.Helper()
 	gobin, err := exec.LookPath("go")
 	require.NoError(t, err, "the go command builds the mistakes")
+	args := []string{"build", "-tags", "mistakes"}
+	if raceEnabled() {
+		args = append(args, "-race")
+	}
 	dir := filepath.Join("testdata", "mistakes")
-	cmd := exec.CommandContext(t.Context(), gobin, "build", "-tags", "mistakes",
-		filepath.Join(dir, "common.go"), filepath.Join(dir, file))
+	args = append(args, filepath.Join(dir, "common.go"), filepath.Join(dir, file))
+	cmd := exec.CommandContext(t.Context(), gobin, args...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// raceEnabled reports whether the test binary was built with -race.
+func raceEnabled() bool {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return false
+	}
+	for _, s := range info.Settings {
+		if s.Key == "-race" {
+			return s.Value == "true"
+		}
+	}
+	return false
 }
 
 // TestMistakes_dont_compile checks that each mistake the types of Field and

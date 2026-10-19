@@ -418,7 +418,7 @@ jobs:
         - id: go-cache
           uses: ./.github/actions/restore-go-cache
           with:
-            name: kube-testcontainers-cold-measurement
+            name: kube-testcontainers-cold-measurement-2
 
         - name: Test
           run: go -C kube test -count=1 -race -v -tags testcontainers ./...
