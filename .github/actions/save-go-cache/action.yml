@@ -1,0 +1,53 @@
+name: Save the Go cache
+description: >-
+  Saves what restore-go-cache restored, under the key it computed, and then
+  deletes the job's older caches, but only on a push to main. Pull request
+  and merge queue runs restore main's caches and save none. The job needs
+  the actions: write permission to delete caches.
+
+# Each run on main saves a new cache for every job, so each job deletes its
+# own older ones as soon as its new one is saved. That keeps one cache per
+# job on main, inside GitHub's 10 GB per-repository limit alongside CodeQL's,
+# even while a run is saving: deleting them all at the end of the run would
+# hold two caches per job until then. A job's caches are those whose key is
+# its own without the last three parts; see restore-go-cache.
+
+inputs:
+  key:
+    description: The key output of restore-go-cache.
+    required: true
+  path:
+    description: The path output of restore-go-cache.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: ${{ inputs.path }}
+        key: ${{ inputs.key }}
+
+    - name: Delete the job's older caches
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        KEY: ${{ inputs.key }}
+      run: |
+        caches=$(gh cache list --repo "$GITHUB_REPOSITORY" --ref refs/heads/main \
+          --key "${KEY%/*/*/*}/" --limit 1000 --json id,key)
+        # A save that failed only warns, so the older caches stay until a
+        # new one is really there.
+        if ! jq -e --arg key "$KEY" 'any(.[]; .key == $key)' <<<"$caches" >/dev/null; then
+          echo "::warning::$KEY was not saved, so the older caches are kept"
+          exit 0
+        fi
+        jq -r --arg key "$KEY" '.[] | select(.key != $key) | "\(.id) \(.key)"' <<<"$caches" |
+          while read -r id key; do
+            echo "Deleting $key"
+            # Another run on main may have deleted it first.
+            gh cache delete --repo "$GITHUB_REPOSITORY" "$id" ||
+              echo "::warning::could not delete $key"
+          done
