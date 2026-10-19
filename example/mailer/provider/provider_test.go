@@ -97,7 +97,11 @@ func startProvider(t *testing.T, h *humustest.Host, ca *humustest.CA, handler ht
 		}
 		return []humus.Service{svc}, nil
 	}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
-	<-h.Listening("provider:8443")
+	select {
+	case <-h.Listening("provider:8443"):
+	case st := <-status:
+		t.Fatalf("the provider exited before it listened: %v", st.Cause())
+	}
 	return func() {
 		p.Signal(syscall.SIGTERM)
 		st := <-status
