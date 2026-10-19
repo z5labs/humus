@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,8 @@ import (
 	"github.com/z5labs/humus/example/orderstatus/internal/certfile"
 	"github.com/z5labs/humus/example/orderstatus/projector"
 	"github.com/z5labs/humus/example/orderstatus/store"
+	"github.com/z5labs/humus/fault"
+	"github.com/z5labs/humus/fault/jsonscenario"
 	"github.com/z5labs/humus/health"
 	"github.com/z5labs/humus/httphealth"
 	"github.com/z5labs/humus/queue"
@@ -38,6 +41,20 @@ const (
 	defaultRetryMinDelay = time.Second
 	defaultRetryMaxDelay = 5 * time.Minute
 )
+
+func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
+	codec, err := jsonscenario.New("acme.fault")
+	if err != nil {
+		return fault.Settings{}, err
+	}
+	d := fault.DefaultSettings()
+	return config.Struct(func(r *config.Resolver) fault.Settings {
+		f := d
+		f.Decoder = codec
+		f.MaxDelay = r.Get(config.Env(s.Process.Environment, "FAULT_MAX_DELAY").Parse(time.ParseDuration).Default(d.MaxDelay).Validate(fault.CheckMaxDelay))
+		return f
+	}).Read(ctx)
+}
 
 func BuildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
 	d := telemetry.DefaultSettings()
@@ -77,12 +94,15 @@ func initWith(ctx context.Context, s *humus.Setup, open openStore) ([]humus.Serv
 		return nil, err
 	}
 
-	st, err := open(ctx, s, set.Database)
+	opened, err := open(ctx, s, set.Database)
 	if err != nil {
 		return nil, err
 	}
+	st := faultyStore{store: opened, faults: s.Faults}
 
-	retries, err := kafka.NewProducer(s, set.Producer)
+	forwarding := set.Producer
+	forwarding.ForwardScenario = true
+	retries, err := kafka.NewProducer(s, forwarding)
 	if err != nil {
 		return nil, err
 	}
@@ -122,9 +142,10 @@ type postgres struct {
 
 type sourced struct {
 	settings
-	KafkaCA  *x509.CertPool
-	KafkaTLS *tls.Config
-	Postgres postgres
+	KafkaCA       *x509.CertPool
+	KafkaTLS      *tls.Config
+	Postgres      postgres
+	TrustedTopics []string
 }
 
 func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
@@ -168,6 +189,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 				Password: r.Get(file("POSTGRES_PASSWORD_FILE").Parse(secret)),
 				CA:       r.Get(file("POSTGRES_TLS_CA_FILE").Parse(certPool)),
 			},
+			TrustedTopics: r.Get(env("FAULT_TRUSTED_TOPICS").Parse(topicList).Default(nil)),
 		}
 	}).Read(ctx)
 	if err != nil {
@@ -185,6 +207,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 
 	set := got.settings
 	set.Consumer.Topics = []string{set.Projector.EventsTopic, set.Projector.RetryTopic}
+	set.Consumer.TrustScenario = trustTopics(got.TrustedTopics)
 	kafkaTLS := got.KafkaTLS
 	kafkaTLS.RootCAs = got.KafkaCA
 	kafkaTLS.MinVersion = tls.VersionTLS12
@@ -215,6 +238,27 @@ func checkTopics(p projector.Settings) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func topicList(s string) ([]string, error) {
+	if s == "" {
+		return nil, nil
+	}
+	topics := strings.Split(s, ",")
+	if slices.Contains(topics, "") {
+		return nil, errors.New("must not name an empty topic")
+	}
+	return topics, nil
+}
+
+func trustTopics(topics []string) func(m kafka.Message) bool {
+	trusted := make(map[string]bool, len(topics))
+	for _, t := range topics {
+		trusted[t] = true
+	}
+	return func(m kafka.Message) bool {
+		return trusted[m.Topic]
+	}
 }
 
 var postgresParams = []string{"password", "passfile", "service", "servicefile", "sslmode", "sslrootcert", "sslcert", "sslkey", "sslpassword"}
