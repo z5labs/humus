@@ -848,7 +848,7 @@ require.Equal(t, http.StatusForbidden, r.status)
 require.Equal(t, []string{`Bearer error="insufficient_scope", scope="carts:write"`}, r.challenges())
 ```
 
-The shoppingcart in the `example` module does the same, on the humustest
+The shoppingcart at `example/shoppingcart` does the same, on the humustest
 Host in its unit tests and on the OS Host beside its Postgres container in
 its container test; [Serving an API with OpenAPI]({{< relref "openapi#the-shoppingcart" >}})
 describes it. A test of an `auth.NewHandler` or a `grpcauth` Service needs no
