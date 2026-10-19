@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"net"
@@ -35,6 +36,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/kmsg"
 	"github.com/z5labs/bedrock"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/example/orderstatus/projector"
@@ -594,46 +596,175 @@ func TestInit_projects_an_order_and_turns_ready_once_it_has_joined_its_group(t *
 	})
 }
 
+var graceEnv = map[string]string{
+	"HUMUS_SHUTDOWN_GRACE_PERIOD": "20s",
+	"RETRY_MIN_DELAY":             "5m",
+	"RETRY_MAX_DELAY":             "5m",
+}
+
+// produceRetried produces order-1's Placed event to the retry topic, as a
+// first attempt at it would have, so the projector waits out
+// RETRY_MIN_DELAY before it projects it.
+func produceRetried(t *testing.T, p *processor, c *kfake.Cluster) {
+	t.Helper()
+	retried := event("order-1", projector.Placed, time.Now().UTC())
+	retried.Topic = retryTopic
+	retried.Headers = []kgo.RecordHeader{
+		{Key: "retry.attempt", Value: []byte("1")},
+		{Key: "retry.reason", Value: []byte("unavailable")},
+		{Key: "retry.partition", Value: []byte("0")},
+		{Key: "retry.offset", Value: []byte("0")},
+	}
+	p.produce(t, c, retried)
+}
+
+// consumed is how many records of topic the App's Service has handed its
+// projector, by the Service's messaging.client.consumed.messages.
+func consumed(t *testing.T, tel *humustest.Telemetry, topic string) int64 {
+	t.Helper()
+	rm, err := tel.Metrics(context.Background())
+	require.NoError(t, err)
+	m, ok := scopeMetric(rm, "github.com/z5labs/humus/queue/kafka", "messaging.client.consumed.messages")
+	if !ok {
+		return 0
+	}
+	sum, ok := m.Data.(metricdata.Sum[int64])
+	require.True(t, ok, "%s is a %T", m.Name, m.Data)
+	var n int64
+	for _, dp := range sum.DataPoints {
+		if v, _ := dp.Attributes.Value("messaging.destination.name"); v.AsString() == topic {
+			n += dp.Value
+		}
+	}
+	return n
+}
+
+// signalWhileWaiting sends the App SIGTERM once its projector has been
+// handed order-1's retried record and is waiting out its delay.
+//
+// Readiness is no sign of that. The App turns ready once it has joined its
+// group, before franz-go has loaded an offset or fetched a record, and
+// synctest.Wait returns once every goroutine is durably blocked, which one
+// waiting on a timer is: franz-go backing off after a failed Fetch, say.
+// So signalWhileWaiting waits, as long as that takes, for the Service to
+// count the record as consumed, which it does just before it hands the
+// record to the projector. The projector starts its delay's timer without
+// blocking on anything else first, so once synctest.Wait returns, the
+// record is waiting out its delay.
+func signalWhileWaiting(t *testing.T, p *processor, tel *humustest.Telemetry, signal func(os.Signal)) {
+	t.Helper()
+	waitFor(t, "the projector is handed order-1's retried record", func() bool { return consumed(t, tel, retryTopic) == 1 })
+	synctest.Wait()
+	for _, s := range tel.Spans() {
+		require.NotEqual(t, "process "+retryTopic, s.Name(), "order-1's retried record was processed before the SIGTERM")
+	}
+	<-p.h.Listening(probesAddr)
+	require.Equal(t, http.StatusOK, p.probe(t, "/health/readiness"))
+	signal(syscall.SIGTERM)
+}
+
+// requireCutShort requires that the grace period ran out with order-1's
+// retried record still waiting: the App exits 1 with a GracePeriodError,
+// order-1 is unprojected and nothing is committed on the retry topic.
+func requireCutShort(t *testing.T, p *processor, c *kfake.Cluster, st bedrock.ExitStatus) {
+	t.Helper()
+	require.Equal(t, 1, st.Code(), "cause: %v", st.Cause())
+	gerr, ok := errors.AsType[*humus.GracePeriodError](st.Cause())
+	require.True(t, ok, "cause = %v, want a *humus.GracePeriodError", st.Cause())
+	require.Equal(t, 20*time.Second, gerr.GracePeriod)
+	require.Empty(t, p.store.status("order-1"))
+	require.Less(t, committed(c, retryTopic), int64(1))
+}
+
+// holdFetches holds every Fetch the cluster gets until release is closed.
+// The returned channel is closed when the first Fetch arrives.
+func holdFetches(c *kfake.Cluster, release <-chan struct{}) <-chan struct{} {
+	arrived := make(chan struct{})
+	var once sync.Once
+	c.ControlKey(kmsg.Fetch.Int16(), func(kmsg.Request) (kmsg.Response, error, bool) {
+		c.KeepControl()
+		once.Do(func() { close(arrived) })
+		c.SleepControl(func() { <-release })
+		return nil, nil, false
+	})
+	return arrived
+}
+
+// failOnce closes the connection of the first request of key the cluster
+// gets, so franz-go backs off on a timer before it sends it again.
+func failOnce(c *kfake.Cluster, key kmsg.Key) {
+	c.ControlKey(key.Int16(), func(kmsg.Request) (kmsg.Response, error, bool) {
+		return nil, fmt.Errorf("closing the first %s's connection", key.Name()), true
+	})
+}
+
 func TestInit_cuts_short_a_retried_record_still_waiting_when_the_grace_period_runs_out(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		p := newProcessor(t, nil)
 		c := p.cluster(t)
-		retried := event("order-1", projector.Placed, time.Now().UTC())
-		retried.Topic = retryTopic
-		retried.Headers = []kgo.RecordHeader{
-			{Key: "retry.attempt", Value: []byte("1")},
-			{Key: "retry.reason", Value: []byte("unavailable")},
-			{Key: "retry.partition", Value: []byte("0")},
-			{Key: "retry.offset", Value: []byte("0")},
-		}
-		p.produce(t, c, retried)
+		produceRetried(t, p, c)
 
-		env := map[string]string{
-			"HUMUS_SHUTDOWN_GRACE_PERIOD": "20s",
-			"RETRY_MIN_DELAY":             "5m",
-			"RETRY_MAX_DELAY":             "5m",
-		}
-		signal, status := p.start(t, env)
-		<-p.h.Listening(probesAddr)
-		synctest.Wait()
-		require.Equal(t, http.StatusOK, p.probe(t, "/health/readiness"))
+		tel := humustest.NewTelemetry()
+		signal, status := p.start(t, graceEnv, humus.WithTelemetry(tel.Builder()))
+		signalWhileWaiting(t, p, tel, signal)
+		requireCutShort(t, p, c, <-status)
 
-		signal(syscall.SIGTERM)
-		st := <-status
-		require.Equal(t, 1, st.Code(), "cause: %v", st.Cause())
-		gerr, ok := errors.AsType[*humus.GracePeriodError](st.Cause())
-		require.True(t, ok, "cause = %v, want a *humus.GracePeriodError", st.Cause())
-		require.Equal(t, 20*time.Second, gerr.GracePeriod)
-		require.Empty(t, p.store.status("order-1"))
-		require.Less(t, committed(c, retryTopic), int64(1))
-
-		signal, status = p.start(t, env)
+		signal, status = p.start(t, graceEnv)
 		waitFor(t, "order-1 is projected by the second App", func() bool { return p.store.status("order-1") == projector.Placed })
 		signal(syscall.SIGTERM)
-		st = <-status
+		st := <-status
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
 		require.Len(t, p.readAll(t, c, statusTopic), 1)
 		require.Equal(t, int64(1), committed(c, retryTopic))
+	})
+}
+
+func TestInit_cuts_short_a_retried_record_whose_first_fetch_is_held_until_after_readiness(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		p := newProcessor(t, nil)
+		c := p.cluster(t)
+		produceRetried(t, p, c)
+		release := make(chan struct{})
+		held := holdFetches(c, release)
+
+		tel := humustest.NewTelemetry()
+		signal, status := p.start(t, graceEnv, humus.WithTelemetry(tel.Builder()))
+		<-p.h.Listening(probesAddr)
+		<-held
+		synctest.Wait()
+		require.Equal(t, http.StatusOK, p.probe(t, "/health/readiness"))
+
+		time.AfterFunc(time.Second, func() { close(release) })
+		signalWhileWaiting(t, p, tel, signal)
+		requireCutShort(t, p, c, <-status)
+	})
+}
+
+func TestInit_cuts_short_a_retried_record_whose_first_fetch_fails_once(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		p := newProcessor(t, nil)
+		c := p.cluster(t)
+		produceRetried(t, p, c)
+		failOnce(c, kmsg.Fetch)
+
+		tel := humustest.NewTelemetry()
+		signal, status := p.start(t, graceEnv, humus.WithTelemetry(tel.Builder()))
+		signalWhileWaiting(t, p, tel, signal)
+		requireCutShort(t, p, c, <-status)
+	})
+}
+
+func TestInit_cuts_short_a_retried_record_whose_offset_load_fails_once(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		p := newProcessor(t, nil)
+		c := p.cluster(t)
+		produceRetried(t, p, c)
+		failOnce(c, kmsg.OffsetFetch)
+
+		tel := humustest.NewTelemetry()
+		signal, status := p.start(t, graceEnv, humus.WithTelemetry(tel.Builder()))
+		signalWhileWaiting(t, p, tel, signal)
+		requireCutShort(t, p, c, <-status)
 	})
 }
 
