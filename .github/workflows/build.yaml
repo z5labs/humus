@@ -694,7 +694,8 @@ jobs:
   # queue/rabbitmq with paths under ../.., and its base kustomization,
   # rendered. up.sh then creates a kind cluster, loads the image and applies
   # the kind overlay, and the mailer's Deployment has to become ready. The
-  # tests behind the functional tag then run the shared cases against it. The
+  # tests behind the functional tag then run the shared cases against it, and
+  # find a request's trace, logs and metrics in the overlay's LGTM stack. The
   # ruleset doesn't require this job, and Build doesn't wait on it; Vet the
   # testcontainers tests vets them.
   mailer-kind:
@@ -740,6 +741,7 @@ jobs:
             kubectl --namespace mailer describe pods
             kubectl --namespace mailer logs deployment/rabbitmq --tail 200 || true
             kubectl --namespace mailer logs deployment/mailer --all-containers --tail 200 || true
+            kubectl --namespace mailer logs deployment/otel-collector --tail 200 || true
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache
