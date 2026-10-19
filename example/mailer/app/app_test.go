@@ -271,3 +271,43 @@ func failedConnects(tel *humustest.Telemetry) int {
 	}
 	return n
 }
+
+func TestBuildTelemetry_with_a_bad_variable_exits_78(t *testing.T) {
+	for name, value := range map[string]string{
+		"OTEL_SDK_DISABLED":           "maybe",
+		"OTEL_SERVICE_NAME":           "",
+		"OTEL_TRACES_EXPORTER":        "zipkin",
+		"OTEL_METRICS_EXPORTER":       "prometheus",
+		"OTEL_LOGS_EXPORTER":          "syslog",
+		"OTEL_EXPORTER_OTLP_ENDPOINT": "collector.internal",
+	} {
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				m := newMailer(t, nil)
+				_, status := m.start(t, map[string]string{name: value}, humus.WithTelemetry(app.BuildTelemetry))
+
+				st := <-status
+				require.Equal(t, humus.ExitConfig, st.Code(), "cause: %v", st.Cause())
+				require.ErrorContains(t, st.Cause(), "config "+name+":")
+			})
+		})
+	}
+}
+
+func TestBuildTelemetry_writes_the_logs_to_stdout_by_default(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		m := newMailer(t, nil)
+		p, status := humustest.Start(t, app.Init,
+			humustest.WithApp(humus.WithHost(m.h.Host()), humus.WithTelemetry(app.BuildTelemetry)),
+			humustest.WithEnv(m.env),
+		)
+		<-m.h.Listening(probesAddr)
+		time.Sleep(time.Minute)
+		synctest.Wait()
+
+		p.Signal(syscall.SIGTERM)
+		st := <-status
+		require.Zero(t, st.Code(), "cause: %v", st.Cause())
+		require.Contains(t, string(p.Stdout()), `"body":"connecting failed"`)
+	})
+}

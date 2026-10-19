@@ -15,11 +15,14 @@ import (
 	"testing/synctest"
 
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock"
 
 	"github.com/z5labs/humus/example/mailer/mail"
 	"github.com/z5labs/humus/example/mailer/provider"
 	"github.com/z5labs/humus/example/mailer/worker"
+	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/queue/rabbitmq"
+	"github.com/z5labs/humus/telemetry"
 )
 
 type fakeProvider struct {
@@ -77,15 +80,22 @@ type harness struct {
 	provider *fakeProvider
 	retries  *fakePublisher
 	results  *fakePublisher
+	tel      *humustest.Telemetry
+	sdk      telemetry.SDK
 	worker   *worker.Worker
 }
 
 func newHarness(t *testing.T, maxAttempts int) *harness {
 	t.Helper()
+	tel := humustest.NewTelemetry()
+	sdk, err := tel.Builder()(t.Context(), bedrock.Process{}, nil)
+	require.NoError(t, err)
 	h := &harness{
 		provider: &fakeProvider{result: provider.Result{ID: "msg_1"}},
 		retries:  &fakePublisher{},
 		results:  &fakePublisher{},
+		tel:      tel,
+		sdk:      sdk,
 	}
 	w, err := worker.New(worker.Settings{
 		Provider:    h.provider,
@@ -93,6 +103,7 @@ func newHarness(t *testing.T, maxAttempts int) *harness {
 		Results:     h.results,
 		MaxAttempts: maxAttempts,
 		User:        mailerUser,
+		Telemetry:   sdk,
 	})
 	require.NoError(t, err)
 	h.worker = w
@@ -165,28 +176,36 @@ func TestNew_rejects_settings_it_cannot_work_with(t *testing.T) {
 		says     string
 	}{
 		"no provider": {
-			settings: worker.Settings{Retries: &fakePublisher{}, Results: &fakePublisher{}, MaxAttempts: 5, User: mailerUser},
+			settings: worker.Settings{Retries: &fakePublisher{}, Results: &fakePublisher{}, MaxAttempts: 5, User: mailerUser, Telemetry: telemetry.Noop()},
 			says:     "Settings.Provider must not be nil",
 		},
 		"no retries publisher": {
-			settings: worker.Settings{Provider: &fakeProvider{}, Results: &fakePublisher{}, MaxAttempts: 5, User: mailerUser},
+			settings: worker.Settings{Provider: &fakeProvider{}, Results: &fakePublisher{}, MaxAttempts: 5, User: mailerUser, Telemetry: telemetry.Noop()},
 			says:     "Settings.Retries must not be nil",
 		},
 		"no results publisher": {
-			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, MaxAttempts: 5, User: mailerUser},
+			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, MaxAttempts: 5, User: mailerUser, Telemetry: telemetry.Noop()},
 			says:     "Settings.Results must not be nil",
 		},
 		"no attempts": {
-			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, Results: &fakePublisher{}, User: mailerUser},
+			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, Results: &fakePublisher{}, User: mailerUser, Telemetry: telemetry.Noop()},
 			says:     "Settings.MaxAttempts must be positive, not 0",
 		},
 		"negative attempts": {
-			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, Results: &fakePublisher{}, MaxAttempts: -1, User: mailerUser},
+			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, Results: &fakePublisher{}, MaxAttempts: -1, User: mailerUser, Telemetry: telemetry.Noop()},
 			says:     "Settings.MaxAttempts must be positive, not -1",
 		},
 		"no user": {
-			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, Results: &fakePublisher{}, MaxAttempts: 5},
+			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, Results: &fakePublisher{}, MaxAttempts: 5, Telemetry: telemetry.Noop()},
 			says:     "Settings.User must not be empty",
+		},
+		"no meter provider": {
+			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, Results: &fakePublisher{}, MaxAttempts: 5, User: mailerUser, Telemetry: func() telemetry.SDK { s := telemetry.Noop(); s.MeterProvider = nil; return s }()},
+			says:     "Settings.Telemetry.MeterProvider must not be nil",
+		},
+		"no logger provider": {
+			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, Results: &fakePublisher{}, MaxAttempts: 5, User: mailerUser, Telemetry: func() telemetry.SDK { s := telemetry.Noop(); s.LoggerProvider = nil; return s }()},
+			says:     "Settings.Telemetry.LoggerProvider must not be nil",
 		},
 	}
 	for name, tc := range cases {
