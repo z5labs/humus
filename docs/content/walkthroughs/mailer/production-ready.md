@@ -10,7 +10,7 @@ weight: 100
 
 The mailer meets each item. Check your own worker against them:
 
-| | How | Where |
+| Item | How | Where |
 |---|---|---|
 | Every setting sourced and checked; a bad one exits 78, naming its variable | `config.Struct` and the packages' checks | [The settings]({{< relref "walkthroughs/mailer/init#the-settings" >}}) |
 | No secret in the environment, the logs or the spans | the RabbitMQ password, the provider's key and the probes' certificate are files read through `s.Host.FS` | [The secrets, as files]({{< relref "walkthroughs/mailer/init#the-secrets-as-files" >}}) |
