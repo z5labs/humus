@@ -178,6 +178,12 @@ func TestNewKindController_reports_every_mistake(t *testing.T) {
 			want: []string{`parts[1], Finalize("cache.example.com/other"), is a second Finalize, after parts[0]`}},
 		{name: "a Finalize with an empty name and a nil f", parts: []kube.Part{kube.Finalize[corev1.ConfigMap]("", nil)},
 			want: []string{"parts[0], a Finalize, has an empty name", `parts[0], Finalize(""), has a nil f`}},
+		{name: "a TrustScenario of an annotation that isn't a key", parts: []kube.Part{kube.TrustScenario("failure scenario", trustAll)},
+			want: []string{`parts[0], TrustScenario("failure scenario"), names an annotation that isn't a valid annotation key: `}},
+		{name: "a TrustScenario with a nil trust", parts: []kube.Part{kube.TrustScenario(scenarioAnnotation, nil)},
+			want: []string{`parts[0], TrustScenario("acme.example.com/failure-scenario"), has a nil trust`}},
+		{name: "a second TrustScenario", parts: []kube.Part{kube.TrustScenario(scenarioAnnotation, trustAll), kube.TrustScenario(scenarioAnnotation, trustAll)},
+			want: []string{`parts[1], TrustScenario("acme.example.com/failure-scenario"), is a second TrustScenario, after parts[0]`}},
 		{name: "several together",
 			settings: func(s *kube.Settings) {
 				s.Name = ""
@@ -189,8 +195,10 @@ func TestNewKindController_reports_every_mistake(t *testing.T) {
 				k.Scope = ""
 			},
 			noRec: true,
-			parts: []kube.Part{kube.Owns(schema.GroupVersionResource{Version: "v1"})},
+			parts: []kube.Part{kube.Owns(schema.GroupVersionResource{Version: "v1"}), kube.TrustScenario("", nil)},
 			want: []string{
+				`parts[1], TrustScenario(""), names an annotation that isn't a valid annotation key`,
+				`parts[1], TrustScenario(""), has a nil trust`,
 				"Settings.Name must not be empty",
 				"Settings.LeaderElection.Identity must not be empty",
 				"has no Version",
@@ -249,7 +257,8 @@ func TestNewKindController_reports_every_mistake(t *testing.T) {
 
 	t.Run("none", func(t *testing.T) {
 		t.Parallel()
-		ctrl, err := kube.NewKindController(s, client, testSettings(), ConfigMaps, rec, kube.Owns(deployments), kube.Finalize(finalizerName, noCleanupOf))
+		ctrl, err := kube.NewKindController(s, client, testSettings(), ConfigMaps, rec, kube.Owns(deployments), kube.Finalize(finalizerName, noCleanupOf),
+			kube.TrustScenario(scenarioAnnotation, trustAll))
 		require.NoError(t, err)
 		require.NotNil(t, ctrl)
 

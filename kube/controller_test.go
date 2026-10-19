@@ -453,6 +453,25 @@ func TestNewController_reports_every_mistake(t *testing.T) {
 			want: []string{"parts[0], a Finalize, has an empty name", `parts[0], Finalize(""), has a nil f`, `parts[0], Finalize(""), takes a string, but`}},
 		{name: "a second Finalize", parts: []kube.Part{kube.Finalize(finalizerName, noCleanup), kube.Owns(deployments), kube.Finalize("cache.example.com/other", noCleanup)},
 			want: []string{`parts[2], Finalize("cache.example.com/other"), is a second Finalize, after parts[0]`}},
+		{name: "a TrustScenario of an empty annotation", parts: []kube.Part{kube.TrustScenario("", trustAll)},
+			want: []string{`parts[0], TrustScenario(""), names an annotation that isn't a valid annotation key: `}},
+		{name: "a TrustScenario of an annotation that isn't a key", parts: []kube.Part{kube.Owns(deployments), kube.TrustScenario("acme.example.com/failure scenario", trustAll)},
+			want: []string{`parts[1], TrustScenario("acme.example.com/failure scenario"), names an annotation that isn't a valid annotation key: `}},
+		{name: "a TrustScenario of an annotation with a bad prefix", parts: []kube.Part{kube.TrustScenario("acme_example/failure-scenario", trustAll)},
+			want: []string{`parts[0], TrustScenario("acme_example/failure-scenario"), names an annotation that isn't a valid annotation key: prefix part a lowercase RFC 1123 subdomain`}},
+		{name: "a TrustScenario with a nil trust", parts: []kube.Part{kube.TrustScenario(scenarioAnnotation, nil)},
+			want: []string{`parts[0], TrustScenario("acme.example.com/failure-scenario"), has a nil trust`}},
+		{name: "a second TrustScenario", parts: []kube.Part{kube.TrustScenario(scenarioAnnotation, trustAll), kube.Owns(deployments), kube.TrustScenario("acme.example.com/other", trustAll)},
+			want: []string{`parts[2], TrustScenario("acme.example.com/other"), is a second TrustScenario, after parts[0]`}},
+		{name: "a TrustScenario with nothing right, twice",
+			parts: []kube.Part{kube.TrustScenario("", nil), kube.TrustScenario("/", nil)},
+			want: []string{
+				`parts[0], TrustScenario(""), names an annotation that isn't a valid annotation key`,
+				`parts[0], TrustScenario(""), has a nil trust`,
+				`parts[1], TrustScenario("/"), is a second TrustScenario, after parts[0]`,
+				`parts[1], TrustScenario("/"), names an annotation that isn't a valid annotation key`,
+				`parts[1], TrustScenario("/"), has a nil trust`,
+			}},
 		{name: "several together",
 			settings: func(s *kube.Settings) {
 				s.Name = ""
@@ -467,6 +486,15 @@ func TestNewController_reports_every_mistake(t *testing.T) {
 				"Settings.LeaderElection.Identity must not be empty",
 				"Resource.Group must not be empty",
 				"the Reconciler must not be nil",
+			}},
+		{name: "several together, a TrustScenario's among them",
+			settings: func(s *kube.Settings) { s.Workers = 0 },
+			parts:    []kube.Part{kube.Finalize("", noCleanup), kube.TrustScenario("not a key", nil)},
+			want: []string{
+				"Settings.Workers must be at least 1",
+				"parts[0], a Finalize, has an empty name",
+				`parts[1], TrustScenario("not a key"), names an annotation that isn't a valid annotation key`,
+				`parts[1], TrustScenario("not a key"), has a nil trust`,
 			}},
 	}
 	for _, tc := range cases {
@@ -506,7 +534,8 @@ func TestNewController_reports_every_mistake(t *testing.T) {
 
 	t.Run("none", func(t *testing.T) {
 		t.Parallel()
-		ctrl, err := kube.NewController(s, client, testSettings(), Memcached, rec, kube.Owns(deployments), kube.Finalize(finalizerName, noCleanup))
+		ctrl, err := kube.NewController(s, client, testSettings(), Memcached, rec, kube.Owns(deployments), kube.Finalize(finalizerName, noCleanup),
+			kube.TrustScenario(scenarioAnnotation, trustAll))
 		require.NoError(t, err)
 		require.NotNil(t, ctrl)
 	})
