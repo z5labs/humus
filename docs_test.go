@@ -34,8 +34,8 @@ const walkthroughs = docsContent + "/walkthroughs"
 // line for line, in a _test.go file of this module, so it is taken from a test
 // or a tested example. A Go, YAML, JSON, Dockerfile or protobuf sample on a
 // page under walkthroughs/<name>/ must appear, line for line, in a file under
-// example/<name>/ other than a _test.go file, so it is taken from the
-// walkthrough's own code. Indentation is compared relative to the sample, so a
+// example/<name>/, its _test.go files included, so it is taken from the
+// walkthrough's own code or tests. Indentation is compared relative to the sample, so a
 // sample may quote the body of a function or a nested block.
 func TestDocs_code_samples(t *testing.T) {
 	problems, err := sampleProblems(os.DirFS("."))
@@ -182,6 +182,7 @@ func TestSampleProblems(t *testing.T) {
 		"example/billing/Dockerfile":          {Data: []byte("FROM gcr.io/distroless/static-debian12:nonroot\nUSER nonroot\n")},
 		"example/billing/proto/billing.proto": {Data: []byte("message Invoice {\n  string id = 1;\n}\n")},
 		"example/mailer/main.go":              {Data: []byte("func send() {\n\tdeliver()\n}\n")},
+		"example/mailer/main_test.go":         {Data: []byte("func TestSend(t *testing.T) {\n\tt.Log(\"only in the mailer's test\")\n}\n")},
 		"example/mailer/deploy/queue.yaml":    {Data: []byte("kind: Deployment\n")},
 		"example/mailer/wiremock/send.json":   {Data: []byte("{\n  \"status\": 202\n}\n")},
 		"example/mailer/Dockerfile":           {Data: []byte("ENTRYPOINT [\"/mailer\"]\n")},
@@ -212,8 +213,9 @@ func TestSampleProblems(t *testing.T) {
 		{"json from another walkthrough", step, "json", []string{"\"status\": 202"}, true},
 		{"dockerfile from another walkthrough", step, "dockerfile", []string{"ENTRYPOINT [\"/mailer\"]"}, true},
 		{"protobuf from another walkthrough", step, "protobuf", []string{"message Mail {}"}, true},
-		{"go from the walkthrough's test", step, "go", []string{"t.Log(\"only in a test\")"}, true},
-		{"go from the module's test", step, "go", []string{"t.Log(\"ok\")"}, true},
+		{"go from the walkthrough's test", step, "go", []string{"t.Log(\"only in a test\")"}, false},
+		{"go from another walkthrough's test", step, "go", []string{"t.Log(\"only in the mailer's test\")"}, true},
+		{"go from a test outside example", step, "go", []string{"t.Log(\"ok\")"}, true},
 		{"sh is unchecked on a walkthrough's page", step, "sh", []string{"./deploy/kind/up.sh"}, false},
 		{"go from a test on a feature page", feature, "go", []string{"t.Log(\"ok\")"}, false},
 		{"go from a walkthrough's test on a feature page", feature, "go", []string{"t.Log(\"only in a test\")"}, false},
@@ -363,14 +365,14 @@ func sampleProblems(repo fs.FS) ([]string, error) {
 			}
 			src, ok := examples[name]
 			if !ok {
-				src, err = sources(repo, "example/"+name, func(p string) bool { return !strings.HasSuffix(p, "_test.go") })
+				src, err = sources(repo, "example/"+name, func(string) bool { return true })
 				if err != nil {
 					return fmt.Errorf("%s: reading its walkthrough's files: %w", p, err)
 				}
 				examples[name] = src
 			}
 			if !quotedIn(src, s.lines) {
-				problems = append(problems, fmt.Sprintf("%s:%d: the %s sample is not taken from any file under example/%s but a _test.go file:\n%s",
+				problems = append(problems, fmt.Sprintf("%s:%d: the %s sample is not taken from any file under example/%s:\n%s",
 					p, s.line, lang, name, strings.Join(s.lines, "\n")))
 			}
 		}
