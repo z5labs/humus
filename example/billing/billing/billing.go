@@ -183,7 +183,7 @@ hand:
 	wg.Wait()
 
 	left := len(invoices) - started + len(why)
-	o.ended(ctx, counts, left)
+	o.ended(ctx, counts, int64(left))
 	if left == 0 {
 		return nil
 	}
@@ -267,15 +267,15 @@ func (r Run) settle(ctx context.Context, o *observer, inv postgres.Invoice) (sta
 	return state, false, nil
 }
 
-func (o *observer) ended(ctx context.Context, counts tally, pending int) {
+func (o *observer) ended(ctx context.Context, counts tally, pending int64) {
 	ctx = context.WithoutCancel(ctx)
-	o.pending.Record(ctx, int64(pending))
+	o.pending.Record(ctx, pending)
 	o.emit(ctx, log.SeverityInfo, "INFO", "billing run ended",
 		attribute.Int64("billing.invoices.issued", counts.issued),
 		attribute.Int64("billing.invoices.charged", counts.charged),
 		attribute.Int64("billing.invoices.declined", counts.declined),
 		attribute.Int64("billing.invoices.failed", counts.failed),
-		attribute.Int("billing.invoices.pending", pending))
+		attribute.Int64("billing.invoices.pending", pending))
 }
 
 func (o *observer) emit(ctx context.Context, sev log.Severity, text, body string, attrs ...attribute.KeyValue) {
