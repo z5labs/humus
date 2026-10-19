@@ -151,6 +151,16 @@ func TestPublisher_what_the_broker_refused_is_returned_after_one_attempt(t *test
 				require.Equal(t, amqp.AccessRefused, ae.Code)
 			},
 		},
+		"406 PRECONDITION_FAILED for a UserID that isn't the login": {
+			fail: func(p *published) {
+				p.ch.fail(&amqp.Error{Code: amqp.PreconditionFailed, Reason: "PRECONDITION_FAILED - user_id property set to 'billing' but authenticated user was 'orders-api'", Server: true})
+			},
+			check: func(t *testing.T, err error) {
+				ae, ok := errors.AsType[*amqp.Error](err)
+				require.True(t, ok, "err = %v", err)
+				require.Equal(t, amqp.PreconditionFailed, ae.Code)
+			},
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

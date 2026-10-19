@@ -109,6 +109,13 @@ type Settings struct {
 	// delivery that carries a scenario, and only when the App has failure
 	// injection. It is set in code, not sourced.
 	//
+	// A publisher is best trusted by Message.UserID, which RabbitMQ
+	// validates against the publishing connection's user. The user-id
+	// comes only from the publisher: a humus service's messages carry one
+	// when its Publish sets Publishing.UserID to the user its Publisher
+	// logs in as, and RabbitMQ adds none to a message published without
+	// one, which then has an empty UserID.
+	//
 	// Default: nil, which trusts no publisher. Valid: any. Check: none.
 	TrustScenario func(m Message) bool
 }
@@ -207,6 +214,10 @@ type PublisherSettings struct {
 	// scenario is stripped from each message's baggage header, and the
 	// rest of the call's baggage still goes. It is set in code, not
 	// sourced.
+	//
+	// The consumer still decides whether to trust a forwarded scenario. One
+	// that trusts by Message.UserID keeps it only from a Publish whose
+	// Publishing.UserID names the user the Publisher logs in as.
 	//
 	// Default: false. Valid: either. Check: none.
 	ForwardScenario bool

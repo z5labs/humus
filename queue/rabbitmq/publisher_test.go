@@ -92,7 +92,8 @@ func TestPublisher_returns_nil_once_the_broker_confirms_and_publishes_every_fiel
 			MessageID:       "order-1",
 			Timestamp:       at,
 			Type:            "order.accepted",
-			AppID:           "orders-api",
+			UserID:          "orders-api",
+			AppID:           "orders-app",
 			Body:            []byte(`{"id":1}`),
 		}
 		done := publishAsync(t.Context(), pub, m)
@@ -115,13 +116,46 @@ func TestPublisher_returns_nil_once_the_broker_confirms_and_publishes_every_fiel
 			MessageId:       "order-1",
 			Timestamp:       at,
 			Type:            "order.accepted",
-			AppId:           "orders-api",
+			UserId:          "orders-api",
+			AppId:           "orders-app",
 			Body:            []byte(`{"id":1}`),
 		}, p.msg)
 
 		p.ack()
 		require.NoError(t, <-done)
 		require.Equal(t, 1, s.dials())
+	})
+}
+
+func TestPublisher_relay_names_the_user_its_Publisher_logs_in_as(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		settings := publisherSettings()
+		settings.ForwardScenario = true
+		login, ok := settings.Connection.SASL.(*amqp.PlainAuth)
+		require.True(t, ok)
+		pub, s := newPublisher(t, settings)
+		s.autoAck = true
+		r := relay{pub: pub, user: login.Username}
+		require.NoError(t, r.Process(t.Context(), rabbitmq.Message{MessageID: "order-1", Body: []byte("order 1")}))
+
+		p := <-s.published
+		require.Equal(t, "orders", p.exchange)
+		require.Equal(t, "accepted", p.key)
+		require.Equal(t, "order-1", p.msg.MessageId)
+		require.Equal(t, login.Username, p.msg.UserId)
+	})
+}
+
+func TestPublisher_a_Publishing_without_a_UserID_sends_none(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		pub, s := newPublisher(t, publisherSettings())
+		s.autoAck = true
+		require.NoError(t, pub.Publish(t.Context(), accepted))
+		require.Empty(t, (<-s.published).msg.UserId, "the Publisher hands amqp091 an empty UserId, which it never sends")
 	})
 }
 
@@ -198,7 +232,11 @@ func TestPublisher_with_MaxAttempts_1_a_nack_is_returned_after_one_attempt(t *te
 func TestPublisher_a_channel_error_is_returned_and_the_channel_replaced(t *testing.T) {
 	t.Parallel()
 
-	for name, code := range map[string]int{"404 NOT_FOUND": amqp.NotFound, "403 ACCESS_REFUSED": amqp.AccessRefused} {
+	for name, code := range map[string]int{
+		"404 NOT_FOUND":           amqp.NotFound,
+		"403 ACCESS_REFUSED":      amqp.AccessRefused,
+		"406 PRECONDITION_FAILED": amqp.PreconditionFailed,
+	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 

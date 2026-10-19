@@ -770,7 +770,28 @@ return o.events.Publish(ctx, rabbitmq.Publishing{
 A `Publishing`'s zero value is persistent, with delivery mode 2, so a
 message isn't lost on a broker restart because a field was left out.
 `Publishing.Transient` makes it delivery mode 1. Every other field is passed
-to the broker as it is, and the caller's `Headers` map is never changed.
+to the broker as it is, a field left `""` isn't sent, and the caller's
+`Headers` map is never changed.
+
+**`Publishing.UserID` is the one field the broker checks.** RabbitMQ
+[validates a `user-id`](https://www.rabbitmq.com/docs/validated-user-id)
+against the user the `Publisher`'s `Connection` logs in as, and refuses a
+publish that names another with `406 PRECONDITION_FAILED`. It adds no
+`user-id` of its own, so a message published without one reaches its
+consumer with an empty `Message.UserID`. A consumer that trusts its
+publishers by `UserID`, as [Failure injection](#failure-injection)
+describes, needs each `Publish` to set it to that login, here `r.user`, the
+user `r.pub` logs in as:
+
+```go
+return r.pub.Publish(ctx, rabbitmq.Publishing{
+	Exchange:   "orders",
+	RoutingKey: "accepted",
+	MessageID:  m.MessageID,
+	UserID:     r.user,
+	Body:       m.Body,
+})
+```
 
 Each channel the `Publisher` opens is in confirm mode and carries one
 publish at a time. Each attempt of a `Publish` takes a channel, connecting
@@ -784,9 +805,10 @@ waits for the broker's answer:
   routed the same way. A caller branches on it to fall back, for example to
   a dead-letter store;
 - **a channel error,** such as `404 NOT_FOUND` for an exchange that doesn't
-  exist, or `403 ACCESS_REFUSED`: `Publish` returns the broker's
-  `*amqp.Error`, with no retry, since the broker refused the message, and
-  the channel is replaced;
+  exist, `403 ACCESS_REFUSED`, or `406 PRECONDITION_FAILED` for a `UserID`
+  that isn't the user the `Publisher` logs in as: `Publish` returns the
+  broker's `*amqp.Error`, with no retry, since the broker refused the
+  message, and the channel is replaced;
 - **nacked by the broker, a dropped connection, a failed dial or a failed
   handshake:** the broker didn't take the message, or its answer was lost,
   and another attempt, on a new channel or connection when the old one was
@@ -859,9 +881,10 @@ The breaker counts the broker, not the messages or the callers, so what an
 attempt's result counts as is fixed too:
 
 - **a success:** confirmed; or returned, `ErrUnroutable`, or a channel
-  error, such as `404 NOT_FOUND` or `403 ACCESS_REFUSED`, since the broker
-  answered. A mistake in one exchange's bindings doesn't open the breaker
-  for the others;
+  error, such as `404 NOT_FOUND`, `403 ACCESS_REFUSED` or
+  `406 PRECONDITION_FAILED`, since the broker answered. A mistake in one
+  exchange's bindings, or in one message's `UserID`, doesn't open the
+  breaker for the others;
 - **a failure:** nacked by the broker, a dropped connection, a failed dial
   or a failed handshake; or the context's deadline, `Timeout`'s or the
   caller's, since a broker that has stopped answering ends every attempt
@@ -1211,7 +1234,10 @@ strips the scenario from the message's headers, unless
 delivery carries, before `Process` sees it, unless `Settings.TrustScenario`
 trusts the delivery, such as by its `UserID`, which RabbitMQ validates
 against the publishing connection's user. When it is nil, the default, no
-delivery is trusted. Without `humus.WithFaults`, nothing is evaluated or
+delivery is trusted. The `user-id` comes only from the publisher, so a
+scenario a humus service forwards is trusted by `UserID` only when its
+`Publish` sets `Publishing.UserID` to the user its `Publisher` logs in as,
+as [A call](#a-call) shows. Without `humus.WithFaults`, nothing is evaluated or
 stripped. [Failure injection]({{< relref "failure-injection" >}}) explains
 the model, whom to trust and how, and how to test a scenario.
 
