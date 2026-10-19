@@ -1,0 +1,104 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: billing
+spec:
+  schedule: "0 3 * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 6
+      activeDeadlineSeconds: 3600
+      podReplacementPolicy: Failed
+      podFailurePolicy:
+        rules:
+          - action: FailJob
+            onExitCodes:
+              containerName: billing
+              operator: In
+              values: [78]
+          - action: Ignore
+            onPodConditions:
+              - type: DisruptionTarget
+                status: "True"
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: billing
+          automountServiceAccountToken: false
+          terminationGracePeriodSeconds: 30
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: billing
+              image: billing
+              env:
+                - name: DATABASE_URL_FILE
+                  value: /etc/billing/database/url
+                - name: PAYMENTS_URL
+                  value: https://payments.example.com
+                - name: PAYMENTS_API_KEY_FILE
+                  value: /etc/billing/payments/api-key
+                - name: PAYMENTS_CA_FILE
+                  value: /etc/billing/payments-ca/ca.crt
+                - name: OTEL_SERVICE_NAME
+                  value: billing
+                - name: OTEL_TRACES_EXPORTER
+                  value: otlp
+                - name: OTEL_METRICS_EXPORTER
+                  value: otlp
+                - name: OTEL_LOGS_EXPORTER
+                  value: otlp
+                - name: OTEL_EXPORTER_OTLP_ENDPOINT
+                  value: otel-collector:4317
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 64Mi
+                limits:
+                  memory: 256Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              volumeMounts:
+                - name: database
+                  mountPath: /etc/billing/database
+                  readOnly: true
+                - name: payments
+                  mountPath: /etc/billing/payments
+                  readOnly: true
+                - name: payments-ca
+                  mountPath: /etc/billing/payments-ca
+                  readOnly: true
+          volumes:
+            - name: database
+              secret:
+                secretName: billing-database
+                defaultMode: 0440
+                items:
+                  - key: url
+                    path: url
+            - name: payments
+              secret:
+                secretName: billing-payments
+                defaultMode: 0440
+                items:
+                  - key: api-key
+                    path: api-key
+            - name: payments-ca
+              configMap:
+                name: billing-payments-ca
+                items:
+                  - key: ca.crt
+                    path: ca.crt
