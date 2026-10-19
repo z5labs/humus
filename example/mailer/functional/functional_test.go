@@ -46,12 +46,30 @@ var forwarding = regexp.MustCompile(`^Forwarding from (127\.0\.0\.1:\d+) -> \d+$
 func TestMailer_passes_the_shared_cases_on_kind(t *testing.T) {
 	kubectl(t, "rollout", "status", "deployment/mailer", "--timeout", "5m")
 
+	target := sharedTarget(t)
+	t.Run("in parallel", func(t *testing.T) {
+		for _, c := range cases.Parallel {
+			t.Run(c.Name, func(t *testing.T) {
+				t.Parallel()
+				c.Run(t, target)
+			})
+		}
+	})
+	for _, c := range cases.Alone {
+		t.Run(c.Name, func(t *testing.T) {
+			c.Run(t, target)
+		})
+	}
+}
+
+func sharedTarget(t *testing.T) cases.Target {
+	t.Helper()
 	brokerCA := pool(t, "mailer-rabbitmq-ca")
 	providerCA := pool(t, "mailer-provider-ca")
 	broker := forward(t, "rabbitmq", 5671)
 	provider := forward(t, "wiremock", 443)
 
-	target := cases.Target{
+	return cases.Target{
 		Addr:     broker,
 		Vhost:    "/",
 		TLS:      &tls.Config{RootCAs: brokerCA, ServerName: "rabbitmq", MinVersion: tls.VersionTLS12},
@@ -68,19 +86,6 @@ func TestMailer_passes_the_shared_cases_on_kind(t *testing.T) {
 		ScenarioKey:      scenarioKey,
 		CloseConnections: closeConnections,
 		Timeout:          timeout,
-	}
-	t.Run("in parallel", func(t *testing.T) {
-		for _, c := range cases.Parallel {
-			t.Run(c.Name, func(t *testing.T) {
-				t.Parallel()
-				c.Run(t, target)
-			})
-		}
-	})
-	for _, c := range cases.Alone {
-		t.Run(c.Name, func(t *testing.T) {
-			c.Run(t, target)
-		})
 	}
 }
 

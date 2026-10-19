@@ -46,6 +46,15 @@ configMapGenerator:
   - name: grafana-datasources
     files:
       - grafana/datasources.yaml
+  - name: grafana-alerting
+    files:
+      - ../alerts.yaml
+  - name: grafana-dashboard-providers
+    files:
+      - grafana/dashboards.yaml
+  - name: grafana-dashboards
+    files:
+      - ../dashboard.json
 patches:
   - target:
       kind: Deployment
