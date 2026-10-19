@@ -15,10 +15,16 @@ import (
 	"time"
 
 	"github.com/z5labs/bedrock/retry"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/z5labs/humus/example/orderstatus/store"
 	"github.com/z5labs/humus/queue/kafka"
 )
+
+const scope = "github.com/z5labs/humus/example/orderstatus"
+
+const reasonKey = attribute.Key("orderstatus.reason")
 
 const (
 	reasonMalformed         = "malformed"
@@ -70,16 +76,31 @@ type Projector struct {
 	retries     Producer
 	deadLetters Producer
 	settings    Settings
+	retried     metric.Int64Counter
+	dropped     metric.Int64Counter
 }
 
-func New(s Store, status, retries, deadLetters Producer, settings Settings) *Projector {
+func New(s Store, status, retries, deadLetters Producer, settings Settings, meters metric.MeterProvider) (*Projector, error) {
 	schedule, err := retry.Exponential(storeMinDelay, storeMaxDelay)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	r, err := retry.New(storeAttempts, schedule, classifyStore, nil)
 	if err != nil {
-		panic(err)
+		return nil, err
+	}
+	meter := meters.Meter(scope)
+	retried, err := meter.Int64Counter("orderstatus.retries",
+		metric.WithDescription("Records produced to the retry topic, by the reason their attempt failed."),
+		metric.WithUnit("{record}"))
+	if err != nil {
+		return nil, err
+	}
+	dropped, err := meter.Int64Counter("orderstatus.dead_letters",
+		metric.WithDescription("Records produced to the dead-letter topic, by the reason they were given up on."),
+		metric.WithUnit("{record}"))
+	if err != nil {
+		return nil, err
 	}
 	return &Projector{
 		store:       s,
@@ -88,7 +109,9 @@ func New(s Store, status, retries, deadLetters Producer, settings Settings) *Pro
 		retries:     retries,
 		deadLetters: deadLetters,
 		settings:    settings,
-	}
+		retried:     retried,
+		dropped:     dropped,
+	}, nil
 }
 
 func classifyStore(ctx context.Context, err error) (retry.Outcome, time.Duration) {
@@ -131,7 +154,7 @@ func (p *Projector) Process(ctx context.Context, m kafka.Message) error {
 		return nil
 	}
 	if ctx.Err() != nil {
-		return err
+		return fmt.Errorf("projecting %s, partition %d, offset %d: %w", from.topic, from.partition, from.offset, context.Cause(ctx))
 	}
 	return p.retry(ctx, m, from, attempt, reason, err)
 }
@@ -312,6 +335,7 @@ func (p *Projector) retry(ctx context.Context, m kafka.Message, from place, atte
 	if err != nil {
 		return fmt.Errorf("retrying %s, partition %d, offset %d as %s, attempt %d: %w", from.topic, from.partition, from.offset, reason, failed, err)
 	}
+	p.retried.Add(ctx, 1, metric.WithAttributes(reasonKey.String(reason)))
 	return nil
 }
 
@@ -383,5 +407,6 @@ func (p *Projector) deadLetter(ctx context.Context, m kafka.Message, from place,
 	if err != nil {
 		return fmt.Errorf("dead-lettering %s, partition %d, offset %d as %s: %w", from.topic, from.partition, from.offset, reason, err)
 	}
+	p.dropped.Add(ctx, 1, metric.WithAttributes(reasonKey.String(reason)))
 	return nil
 }
