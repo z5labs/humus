@@ -12,6 +12,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
+	github.com/z5labs/bedrock/retry v0.25.0
 	github.com/z5labs/humus v0.0.0-00010101000000-000000000000
 	github.com/z5labs/humus/queue/kafka v0.0.0-00010101000000-000000000000
 )
