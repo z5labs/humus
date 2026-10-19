@@ -481,9 +481,10 @@ the context each is given is done when the grace period runs out.
 8. Waits for a signal, or for the first Service to return. A Service whose
    `Serve` returns once a signal has come, or once Run's context is
    cancelled, returned on it, as the health Service, a job or a queue
-   consumer does, so the shutdown is the signal's even when Run receives
-   that `Serve`'s result first. The shutdown is a Service's own only when its
-   `Serve` returned before any signal.
+   consumer does, so the shutdown is the signal's, or the context's, even
+   when Run receives that `Serve`'s result first. The shutdown is a Service's
+   own only when its `Serve` returned before any signal and before Run's
+   context was cancelled.
 9. Stops listening for signals, so that a second interrupt or SIGTERM takes
    its default action and ends the process at once, cancels the context
    passed to `Serve`, and logs `shutting down`.
