@@ -10,16 +10,39 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/metric"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/z5labs/humus/example/mailer/mail"
 	"github.com/z5labs/humus/example/mailer/provider"
 	"github.com/z5labs/humus/queue"
 	"github.com/z5labs/humus/queue/rabbitmq"
+	"github.com/z5labs/humus/telemetry"
 )
+
+const scope = "github.com/z5labs/humus/example/mailer/worker"
 
 const (
 	malformed = "malformed"
 	gaveUp    = "gave-up"
+)
+
+const (
+	attemptKey = attribute.Key("mail.attempt")
+	outcomeKey = attribute.Key("mail.outcome")
+)
+
+const (
+	outcomeSent      = "sent"
+	outcomeRefused   = "refused"
+	outcomeRetried   = "retried"
+	outcomeGaveUp    = "gave_up"
+	outcomeMalformed = "malformed"
 )
 
 type Provider interface {
@@ -36,6 +59,7 @@ type Settings struct {
 	Results     Publisher
 	MaxAttempts int
 	User        string
+	Telemetry   telemetry.SDK
 }
 
 type Worker struct {
@@ -44,6 +68,8 @@ type Worker struct {
 	results     Publisher
 	maxAttempts int
 	user        string
+	logger      log.Logger
+	requests    metric.Int64Counter
 }
 
 var _ queue.Processor[rabbitmq.Message] = (*Worker)(nil)
@@ -65,7 +91,19 @@ func New(settings Settings) (*Worker, error) {
 	if settings.User == "" {
 		errs = append(errs, errors.New("Settings.User must not be empty"))
 	}
+	if settings.Telemetry.MeterProvider == nil {
+		errs = append(errs, errors.New("Settings.Telemetry.MeterProvider must not be nil"))
+	}
+	if settings.Telemetry.LoggerProvider == nil {
+		errs = append(errs, errors.New("Settings.Telemetry.LoggerProvider must not be nil"))
+	}
 	if err := errors.Join(errs...); err != nil {
+		return nil, fmt.Errorf("worker: New: %w", err)
+	}
+	requests, err := settings.Telemetry.MeterProvider.Meter(scope).Int64Counter("mail.requests",
+		metric.WithDescription("Mail requests processed, by outcome."),
+		metric.WithUnit("{request}"))
+	if err != nil {
 		return nil, fmt.Errorf("worker: New: %w", err)
 	}
 	return &Worker{
@@ -74,33 +112,49 @@ func New(settings Settings) (*Worker, error) {
 		results:     settings.Results,
 		maxAttempts: settings.MaxAttempts,
 		user:        settings.User,
+		logger:      settings.Telemetry.LoggerProvider.Logger(scope),
+		requests:    requests,
 	}, nil
 }
 
 func (w *Worker) Process(ctx context.Context, m rabbitmq.Message) error {
-	attempt, err := attemptOf(m)
+	outcome, attempt, err := w.process(ctx, m)
 	if err != nil {
-		return w.deadLetter(ctx, m, malformed, 1, err)
+		return err
 	}
+	w.observe(ctx, m, outcome, attempt)
+	return nil
+}
+
+func (w *Worker) process(ctx context.Context, m rabbitmq.Message) (outcome string, attempt int, err error) {
+	span := trace.SpanFromContext(ctx)
+	attempt, err = attemptOf(m)
+	if err != nil {
+		span.SetAttributes(attemptKey.Int(1))
+		return outcomeMalformed, 1, w.deadLetter(ctx, m, malformed, 1, err)
+	}
+	span.SetAttributes(attemptKey.Int(attempt))
 	r, err := mail.Decode(m)
 	if err != nil {
-		return w.deadLetter(ctx, m, malformed, attempt, err)
+		return outcomeMalformed, attempt, w.deadLetter(ctx, m, malformed, attempt, err)
 	}
-	err = w.send(ctx, r)
+	refused, err := w.send(ctx, r)
 	switch {
+	case err == nil && refused:
+		return outcomeRefused, attempt, nil
 	case err == nil:
-		return nil
+		return outcomeSent, attempt, nil
 	case attempt >= w.maxAttempts:
-		return w.deadLetter(ctx, m, gaveUp, attempt, err)
+		return outcomeGaveUp, attempt, w.deadLetter(ctx, m, gaveUp, attempt, err)
 	default:
-		return w.park(ctx, m, attempt+1)
+		return outcomeRetried, attempt, w.park(ctx, m, attempt+1)
 	}
 }
 
-func (w *Worker) send(ctx context.Context, r mail.Request) error {
+func (w *Worker) send(ctx context.Context, r mail.Request) (refused bool, err error) {
 	res, err := w.provider.Send(ctx, r)
 	if err != nil {
-		return err
+		return false, err
 	}
 	event := r.Sent(res.ID)
 	if res.Refused {
@@ -108,9 +162,29 @@ func (w *Worker) send(ctx context.Context, r mail.Request) error {
 	}
 	err = w.results.Publish(ctx, event)
 	if err != nil && !errors.Is(err, rabbitmq.ErrUnroutable) {
-		return fmt.Errorf("worker: publishing %s: %w", event.RoutingKey, err)
+		return false, fmt.Errorf("worker: publishing %s: %w", event.RoutingKey, err)
 	}
-	return nil
+	return res.Refused, nil
+}
+
+func (w *Worker) observe(ctx context.Context, m rabbitmq.Message, outcome string, attempt int) {
+	trace.SpanFromContext(ctx).SetAttributes(outcomeKey.String(outcome))
+	w.requests.Add(ctx, 1, metric.WithAttributes(outcomeKey.String(outcome)))
+
+	severity, text := log.SeverityInfo, "INFO"
+	if outcome == outcomeGaveUp || outcome == outcomeMalformed {
+		severity, text = log.SeverityWarn, "WARN"
+	}
+	var r log.Record
+	r.SetTimestamp(time.Now())
+	r.SetSeverity(severity)
+	r.SetSeverityText(text)
+	r.SetBody(attribute.StringValue("mail request " + outcome))
+	if m.MessageID != "" {
+		r.AddAttributes(semconv.MessagingMessageID(m.MessageID))
+	}
+	r.AddAttributes(attemptKey.Int(attempt), outcomeKey.String(outcome))
+	w.logger.Emit(ctx, r)
 }
 
 func (w *Worker) park(ctx context.Context, m rabbitmq.Message, attempt int) error {
