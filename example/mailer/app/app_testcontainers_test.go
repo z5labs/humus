@@ -170,22 +170,23 @@ func TestInit_passes_the_shared_cases_against_RabbitMQ_and_WireMock(t *testing.T
 	broker := startRabbitMQ(t)
 	provider := startWireMock(t)
 	mailer := broker.addUser(t, `^$`, `^mail\.(retry|dead|events)$`, `^mail\.send$`)
-	cased := broker.addUser(t, `^amq\.gen-.*$`, `^(mail|amq\.gen-.*)$`, `^(mail\.(events|dead)|amq\.gen-.*)$`)
+	cased := broker.addUser(t, `^amq\.gen-.*$`, `^(mail|amq\.gen-.*)$`, `^(mail\.(events|dead|retry)|amq\.gen-.*)$`)
 
 	ca := humustest.NewCA(t)
 	dir := t.TempDir()
 	probesAddr := freeAddr(t)
 	p, status := humustest.Start(t, app.Init,
-		humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(app.Faults)),
 		humustest.WithEnv(map[string]string{
-			"RABBITMQ_ADDR":          broker.addr,
-			"RABBITMQ_USERNAME":      mailer.username,
-			"RABBITMQ_PASSWORD_FILE": writeFile(t, dir, "rabbitmq-password", []byte(mailer.password+"\n")),
-			"MAIL_FROM":              "mailer@example.com",
-			"PROVIDER_URL":           provider.String(),
-			"PROVIDER_API_KEY_FILE":  writeFile(t, dir, "provider-api-key", []byte(rand.Text())),
-			"PROBES_ADDR":            probesAddr,
-			"PROBES_TLS_PEM_FILE":    writeFile(t, dir, "probes.pem", pemOf(t, ca.Issue(t, "127.0.0.1"))),
+			"RABBITMQ_ADDR":           broker.addr,
+			"RABBITMQ_USERNAME":       mailer.username,
+			"RABBITMQ_PASSWORD_FILE":  writeFile(t, dir, "rabbitmq-password", []byte(mailer.password+"\n")),
+			"MAIL_FROM":               "mailer@example.com",
+			"MAIL_TRUSTED_PUBLISHERS": cased.username,
+			"PROVIDER_URL":            provider.String(),
+			"PROVIDER_API_KEY_FILE":   writeFile(t, dir, "provider-api-key", []byte(rand.Text())),
+			"PROBES_ADDR":             probesAddr,
+			"PROBES_TLS_PEM_FILE":     writeFile(t, dir, "probes.pem", pemOf(t, ca.Issue(t, "127.0.0.1"))),
 		}),
 	)
 

@@ -379,7 +379,7 @@ func TestInit_traces_logs_and_measures_each_request_without_its_address_or_body(
 		require.Positive(t, sumBy(ms["humus.retry.decisions"], "humus.retry.decision")["succeeded"])
 	})
 
-	t.Run("both Publishers' breakers and retries are measured", func(t *testing.T) {
+	t.Run("every Publisher's breaker and retries are measured", func(t *testing.T) {
 		ms := metricsOf(rm, rabbitmqScope)
 		state, ok := ms["humus.circuit.state"]
 		require.True(t, ok, "humus.circuit.state was not recorded for the Publishers")
@@ -387,7 +387,7 @@ func TestInit_traces_logs_and_measures_each_request_without_its_address_or_body(
 		for _, v := range sumBy(state, "humus.circuit.state") {
 			breakers += v
 		}
-		require.Equal(t, float64(2), breakers, "humus.circuit.state doesn't add up to two Publishers' breakers")
+		require.Equal(t, float64(3), breakers, "humus.circuit.state doesn't add up to three Publishers' breakers")
 
 		calls, ok := ms["humus.circuit.calls"]
 		require.True(t, ok, "humus.circuit.calls was not recorded for the Publishers")

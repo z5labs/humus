@@ -57,6 +57,7 @@ type Settings struct {
 	Provider    Provider
 	Retries     Publisher
 	Results     Publisher
+	DeadLetters Publisher
 	MaxAttempts int
 	User        string
 	Telemetry   telemetry.SDK
@@ -66,6 +67,7 @@ type Worker struct {
 	provider    Provider
 	retries     Publisher
 	results     Publisher
+	deadLetters Publisher
 	maxAttempts int
 	user        string
 	logger      log.Logger
@@ -84,6 +86,9 @@ func New(settings Settings) (*Worker, error) {
 	}
 	if settings.Results == nil {
 		errs = append(errs, errors.New("Settings.Results must not be nil"))
+	}
+	if settings.DeadLetters == nil {
+		errs = append(errs, errors.New("Settings.DeadLetters must not be nil"))
 	}
 	if settings.MaxAttempts < 1 {
 		errs = append(errs, fmt.Errorf("Settings.MaxAttempts must be positive, not %d", settings.MaxAttempts))
@@ -110,6 +115,7 @@ func New(settings Settings) (*Worker, error) {
 		provider:    settings.Provider,
 		retries:     settings.Retries,
 		results:     settings.Results,
+		deadLetters: settings.DeadLetters,
 		maxAttempts: settings.MaxAttempts,
 		user:        settings.User,
 		logger:      settings.Telemetry.LoggerProvider.Logger(scope),
@@ -204,7 +210,7 @@ func (w *Worker) deadLetter(ctx context.Context, m rabbitmq.Message, reason stri
 		mail.DeadAttemptsHeader: int64(attempts),
 		mail.DeadErrorHeader:    cause.Error(),
 	})
-	if err := w.results.Publish(ctx, p); err != nil {
+	if err := w.deadLetters.Publish(ctx, p); err != nil {
 		return fmt.Errorf("worker: dead-lettering the request to %s: %w", mail.DeadExchange, err)
 	}
 	return nil

@@ -77,12 +77,13 @@ func failing(exchange string, err error) func(rabbitmq.Publishing) error {
 }
 
 type harness struct {
-	provider *fakeProvider
-	retries  *fakePublisher
-	results  *fakePublisher
-	tel      *humustest.Telemetry
-	sdk      telemetry.SDK
-	worker   *worker.Worker
+	provider    *fakeProvider
+	retries     *fakePublisher
+	results     *fakePublisher
+	deadLetters *fakePublisher
+	tel         *humustest.Telemetry
+	sdk         telemetry.SDK
+	worker      *worker.Worker
 }
 
 func newHarness(t *testing.T, maxAttempts int) *harness {
@@ -91,16 +92,18 @@ func newHarness(t *testing.T, maxAttempts int) *harness {
 	sdk, err := tel.Builder()(t.Context(), bedrock.Process{}, nil)
 	require.NoError(t, err)
 	h := &harness{
-		provider: &fakeProvider{result: provider.Result{ID: "msg_1"}},
-		retries:  &fakePublisher{},
-		results:  &fakePublisher{},
-		tel:      tel,
-		sdk:      sdk,
+		provider:    &fakeProvider{result: provider.Result{ID: "msg_1"}},
+		retries:     &fakePublisher{},
+		results:     &fakePublisher{},
+		deadLetters: &fakePublisher{},
+		tel:         tel,
+		sdk:         sdk,
 	}
 	w, err := worker.New(worker.Settings{
 		Provider:    h.provider,
 		Retries:     h.retries,
 		Results:     h.results,
+		DeadLetters: h.deadLetters,
 		MaxAttempts: maxAttempts,
 		User:        mailerUser,
 		Telemetry:   sdk,
@@ -176,35 +179,39 @@ func TestNew_rejects_settings_it_cannot_work_with(t *testing.T) {
 		says     string
 	}{
 		"no provider": {
-			settings: worker.Settings{Retries: &fakePublisher{}, Results: &fakePublisher{}, MaxAttempts: 5, User: mailerUser, Telemetry: telemetry.Noop()},
+			settings: worker.Settings{Retries: &fakePublisher{}, Results: &fakePublisher{}, DeadLetters: &fakePublisher{}, MaxAttempts: 5, User: mailerUser, Telemetry: telemetry.Noop()},
 			says:     "Settings.Provider must not be nil",
 		},
 		"no retries publisher": {
-			settings: worker.Settings{Provider: &fakeProvider{}, Results: &fakePublisher{}, MaxAttempts: 5, User: mailerUser, Telemetry: telemetry.Noop()},
+			settings: worker.Settings{Provider: &fakeProvider{}, Results: &fakePublisher{}, DeadLetters: &fakePublisher{}, MaxAttempts: 5, User: mailerUser, Telemetry: telemetry.Noop()},
 			says:     "Settings.Retries must not be nil",
 		},
 		"no results publisher": {
-			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, MaxAttempts: 5, User: mailerUser, Telemetry: telemetry.Noop()},
+			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, DeadLetters: &fakePublisher{}, MaxAttempts: 5, User: mailerUser, Telemetry: telemetry.Noop()},
 			says:     "Settings.Results must not be nil",
 		},
+		"no dead-letter publisher": {
+			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, Results: &fakePublisher{}, MaxAttempts: 5, User: mailerUser, Telemetry: telemetry.Noop()},
+			says:     "Settings.DeadLetters must not be nil",
+		},
 		"no attempts": {
-			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, Results: &fakePublisher{}, User: mailerUser, Telemetry: telemetry.Noop()},
+			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, Results: &fakePublisher{}, DeadLetters: &fakePublisher{}, User: mailerUser, Telemetry: telemetry.Noop()},
 			says:     "Settings.MaxAttempts must be positive, not 0",
 		},
 		"negative attempts": {
-			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, Results: &fakePublisher{}, MaxAttempts: -1, User: mailerUser, Telemetry: telemetry.Noop()},
+			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, Results: &fakePublisher{}, DeadLetters: &fakePublisher{}, MaxAttempts: -1, User: mailerUser, Telemetry: telemetry.Noop()},
 			says:     "Settings.MaxAttempts must be positive, not -1",
 		},
 		"no user": {
-			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, Results: &fakePublisher{}, MaxAttempts: 5, Telemetry: telemetry.Noop()},
+			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, Results: &fakePublisher{}, DeadLetters: &fakePublisher{}, MaxAttempts: 5, Telemetry: telemetry.Noop()},
 			says:     "Settings.User must not be empty",
 		},
 		"no meter provider": {
-			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, Results: &fakePublisher{}, MaxAttempts: 5, User: mailerUser, Telemetry: func() telemetry.SDK { s := telemetry.Noop(); s.MeterProvider = nil; return s }()},
+			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, Results: &fakePublisher{}, DeadLetters: &fakePublisher{}, MaxAttempts: 5, User: mailerUser, Telemetry: func() telemetry.SDK { s := telemetry.Noop(); s.MeterProvider = nil; return s }()},
 			says:     "Settings.Telemetry.MeterProvider must not be nil",
 		},
 		"no logger provider": {
-			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, Results: &fakePublisher{}, MaxAttempts: 5, User: mailerUser, Telemetry: func() telemetry.SDK { s := telemetry.Noop(); s.LoggerProvider = nil; return s }()},
+			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, Results: &fakePublisher{}, DeadLetters: &fakePublisher{}, MaxAttempts: 5, User: mailerUser, Telemetry: func() telemetry.SDK { s := telemetry.Noop(); s.LoggerProvider = nil; return s }()},
 			says:     "Settings.Telemetry.LoggerProvider must not be nil",
 		},
 	}
@@ -265,7 +272,8 @@ func TestProcess_dead_letters_a_malformed_request_without_calling_the_provider(t
 				require.NoError(t, err)
 				require.Empty(t, h.provider.calls())
 				require.Empty(t, h.retries.all())
-				got := h.results.all()
+				require.Empty(t, h.results.all())
+				got := h.deadLetters.all()
 				require.Len(t, got, 1)
 				require.Contains(t, got[0].Headers[mail.DeadErrorHeader], tc.says)
 				require.Equal(t, deadLetter(tc.message, "malformed", tc.attempts, got[0].Headers[mail.DeadErrorHeader].(string)), got[0])
@@ -292,6 +300,7 @@ func TestProcess_publishes_mail_sent_for_a_sent_request(t *testing.T) {
 		}}, h.provider.calls())
 		require.Equal(t, []rabbitmq.Publishing{event(t, mail.SentKey, map[string]string{"provider_id": "msg_1"})}, h.results.all())
 		require.Empty(t, h.retries.all())
+		require.Empty(t, h.deadLetters.all())
 	})
 }
 
@@ -305,6 +314,7 @@ func TestProcess_publishes_mail_refused_for_a_refused_request(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, []rabbitmq.Publishing{event(t, mail.RefusedKey, map[string]string{"reason": "the address does not exist"})}, h.results.all())
 		require.Empty(t, h.retries.all())
+		require.Empty(t, h.deadLetters.all())
 	})
 }
 
@@ -318,6 +328,7 @@ func TestProcess_takes_an_unroutable_event_as_no_error(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, h.results.all(), 1)
 		require.Empty(t, h.retries.all())
+		require.Empty(t, h.deadLetters.all())
 	})
 }
 
@@ -346,6 +357,7 @@ func TestProcess_parks_a_request_the_provider_failed_below_its_attempts(t *testi
 				require.Len(t, h.provider.calls(), 1)
 				require.Equal(t, []rabbitmq.Publishing{parked(m, tc.next)}, h.retries.all())
 				require.Empty(t, h.results.all())
+				require.Empty(t, h.deadLetters.all())
 			})
 		})
 	}
@@ -362,6 +374,7 @@ func TestProcess_parks_a_request_whose_event_cannot_be_published(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, []rabbitmq.Publishing{event(t, mail.SentKey, map[string]string{"provider_id": "msg_1"})}, h.results.all())
 		require.Equal(t, []rabbitmq.Publishing{parked(m, 2)}, h.retries.all())
+		require.Empty(t, h.deadLetters.all())
 	})
 }
 
@@ -386,9 +399,10 @@ func TestProcess_dead_letters_a_request_that_failed_on_its_last_attempt(t *testi
 
 				require.NoError(t, err)
 				require.Empty(t, h.retries.all())
+				require.Empty(t, h.results.all())
 				require.Equal(t, []rabbitmq.Publishing{
 					deadLetter(m, "gave-up", tc.attempts, "provider: it answered 503 Service Unavailable"),
-				}, h.results.all())
+				}, h.deadLetters.all())
 			})
 		})
 	}
@@ -397,17 +411,19 @@ func TestProcess_dead_letters_a_request_that_failed_on_its_last_attempt(t *testi
 func TestProcess_dead_letters_with_the_event_error_when_the_last_attempt_could_not_publish_it(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := newHarness(t, 2)
-		h.results.fail = failing(mail.EventsExchange, errors.New("rabbitmq: the broker nacked the publish"))
+		h.results.fail = func(rabbitmq.Publishing) error {
+			return errors.New("rabbitmq: publishing to exchange \"mail.events\": circuit: call rejected")
+		}
 		m := delivery(validBody, map[string]any{mail.AttemptHeader: int64(2)})
 
 		err := h.worker.Process(t.Context(), m)
 
 		require.NoError(t, err)
 		require.Empty(t, h.retries.all())
+		require.Equal(t, []rabbitmq.Publishing{event(t, mail.SentKey, map[string]string{"provider_id": "msg_1"})}, h.results.all())
 		require.Equal(t, []rabbitmq.Publishing{
-			event(t, mail.SentKey, map[string]string{"provider_id": "msg_1"}),
-			deadLetter(m, "gave-up", 2, "worker: publishing mail.sent: rabbitmq: the broker nacked the publish"),
-		}, h.results.all())
+			deadLetter(m, "gave-up", 2, "worker: publishing mail.sent: rabbitmq: publishing to exchange \"mail.events\": circuit: call rejected"),
+		}, h.deadLetters.all())
 	})
 }
 
@@ -430,6 +446,7 @@ func TestProcess_returns_a_failed_publish_to_mail_retry_as_its_error(t *testing.
 				require.ErrorContains(t, err, "worker: parking the request in mail.retry")
 				require.Len(t, h.retries.all(), 1)
 				require.Empty(t, h.results.all())
+				require.Empty(t, h.deadLetters.all())
 			})
 		})
 	}
@@ -457,14 +474,15 @@ func TestProcess_returns_a_failed_publish_to_mail_dead_as_its_error(t *testing.T
 			synctest.Test(t, func(t *testing.T) {
 				h := newHarness(t, tc.maxAttempts)
 				h.provider.err = errors.New("provider: it answered 503 Service Unavailable")
-				h.results.fail = failing(mail.DeadExchange, tc.cause)
+				h.deadLetters.fail = failing(mail.DeadExchange, tc.cause)
 
 				err := h.worker.Process(t.Context(), tc.message)
 
 				require.ErrorIs(t, err, tc.cause)
 				require.ErrorContains(t, err, "worker: dead-lettering the request to mail.dead")
 				require.Empty(t, h.retries.all())
-				require.Len(t, h.results.all(), 1)
+				require.Empty(t, h.results.all())
+				require.Len(t, h.deadLetters.all(), 1)
 			})
 		})
 	}
