@@ -1,0 +1,255 @@
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: mailer
+    folder: Mailer
+    interval: 1m
+    rules:
+      - uid: mail-backlog
+        title: MailBacklog
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: max(rabbitmq_message_current{rabbitmq_queue_name="mail.send", state="ready"}) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [1000]
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: mail.send has held {{ $values.A.Value }} ready messages for 10 minutes.
+          description: The mailer isn't keeping up. Look at the provider's latency and breaker, and whether every replica is consuming.
+      - uid: mail-not-consuming
+        title: MailNotConsuming
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: max(rabbitmq_consumer_count{rabbitmq_queue_name="mail.send"}) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: Nothing has consumed mail.send for 5 minutes.
+          description: Requests wait in mail.send until a mailer consumes it. Look at the Deployment's pods and their logs.
+      - uid: mail-parked
+        title: MailParked
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: sum(rabbitmq_message_current{rabbitmq_queue_name="mail.send.dead"}) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: page
+        annotations:
+          summary: mail.send.dead holds {{ $values.A.Value }} requests.
+          description: Each one is a request the mailer couldn't send, with why in its x-mail-dead-reason header.
+      - uid: mail-giving-up
+        title: MailGivingUp
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 1200
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: (sum(increase(mail_requests{job="mailer", mail_outcome="gave_up"}[15m])) or vector(0)) + (sum(mail_requests{job="mailer", mail_outcome="gave_up"} unless mail_requests{job="mailer", mail_outcome="gave_up"} offset 15m) or vector(0))
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: page
+        annotations:
+          summary: The mailer gave up on requests in the last 15 minutes.
+          description: It parks a request in mail.send.dead once every attempt has failed. The provider is likely down or failing.
+      - uid: mail-retrying
+        title: MailRetrying
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: sum(rate(mail_requests{job="mailer", mail_outcome="retried"}[5m])) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: The mailer has been parking requests for a retry for 10 minutes.
+          description: The provider has been failing some requests for a while. They are tried again after mail.send.retry's delay.
+      - uid: mail-provider-breaker-open
+        title: MailProviderBreakerOpen
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: max(humus_circuit_state{job="mailer", otel_scope_name="github.com/z5labs/humus/httpclient", humus_circuit_state="open"}) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: The provider client's breaker has been open for 5 minutes.
+          description: The mailer sends nothing to the provider while it is open, and parks each request for a retry.
+      - uid: mail-retries-throttled
+        title: MailRetriesThrottled
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: (sum(increase(humus_retry_decisions{job="mailer", humus_retry_decision="throttled"}[5m])) or vector(0)) + (sum(humus_retry_decisions{job="mailer", humus_retry_decision="throttled"} unless humus_retry_decisions{job="mailer", humus_retry_decision="throttled"} offset 5m) or vector(0))
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: page
+        annotations:
+          summary: The mailer's retries were throttled in the last 5 minutes.
+          description: A client's retry budget ran out, so its calls failed without another attempt. Look at which dependency on the dashboard.
+      - uid: mail-crash-looping
+        title: MailCrashLooping
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 1200
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: max(delta(k8s_container_restarts{k8s_container_name="mailer"}[15m])) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [3]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: page
+        annotations:
+          summary: A mailer container restarted more than 3 times in 15 minutes.
+          description: A request that can go to neither mail.retry nor mail.dead crashes each replica that takes it, until the delivery limit dead-letters it.
