@@ -82,7 +82,11 @@ func k3sClient(t *testing.T) *kube.Client {
 		// Overwritten when the start returns, so a start that fails t
 		// rather than returning still leaves an error behind.
 		cluster.err = errors.New("starting k3s did not finish")
+		start := time.Now()
 		cluster.err = startK3s()
+		// The job's log shows how long k3s took to start, with go test
+		// -v, under the test that started it.
+		t.Logf("starting k3s, pulling %s included, took %s", k3sImage, time.Since(start).Round(time.Millisecond))
 	})
 	require.NoError(t, cluster.err, "starting k3s in a container")
 

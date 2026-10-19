@@ -405,6 +405,8 @@ jobs:
   # in Test: they don't slow the unit tests, they don't count toward the
   # coverage gate, and this job is a required check of its own. humus keeps
   # no fake API server, so these are the only tests of kube that reach one.
+  # They run with -v, so the log shows how long each test took, and how long
+  # k3s took to start, pulling its image included.
   kube-testcontainers:
     name: Kubernetes (testcontainers)
     runs-on: ubuntu-latest
@@ -427,7 +429,7 @@ jobs:
             name: kube-testcontainers
 
         - name: Test
-          run: go -C kube test -count=1 -race -tags testcontainers ./...
+          run: go -C kube test -count=1 -race -v -tags testcontainers ./...
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache
