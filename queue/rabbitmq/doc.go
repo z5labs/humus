@@ -467,9 +467,10 @@
 //     confirm that follows it, so a return that is waiting once the confirm
 //     arrives belongs to that publish;
 //   - a channel error, such as 404 NOT_FOUND for an exchange that doesn't
-//     exist, or 403 ACCESS_REFUSED: Publish returns the broker's
-//     *amqp.Error, with no retry, since the broker refused the message, and
-//     the channel is replaced;
+//     exist, 403 ACCESS_REFUSED, or 406 PRECONDITION_FAILED for a
+//     [Publishing].UserID that isn't the user the Publisher logs in as:
+//     Publish returns the broker's *amqp.Error, with no retry, since the
+//     broker refused the message, and the channel is replaced;
 //   - nacked by the broker, a dropped connection, a failed dial or a failed
 //     handshake: the broker didn't take the message, or its answer was
 //     lost, and another attempt, on a new channel or connection when the
@@ -522,10 +523,10 @@
 // counts as is fixed too:
 //
 //   - confirmed: a success;
-//   - returned, [ErrUnroutable], or a channel error, such as 404 NOT_FOUND
-//     or 403 ACCESS_REFUSED: a success, since the broker answered. A
-//     mistake in one exchange's bindings doesn't open the breaker for the
-//     others;
+//   - returned, [ErrUnroutable], or a channel error, such as 404 NOT_FOUND,
+//     403 ACCESS_REFUSED or 406 PRECONDITION_FAILED: a success, since the
+//     broker answered. A mistake in one exchange's bindings, or in one
+//     message's UserID, doesn't open the breaker for the others;
 //   - nacked by the broker, a dropped connection, a failed dial or a failed
 //     handshake: a failure;
 //   - the context's deadline, Timeout's or the caller's: a failure, since a
@@ -604,7 +605,12 @@
 // message isn't lost on a broker restart because a field was left out.
 // [Publishing].Transient makes it delivery mode 1. Every other field is
 // passed to the broker as it is, and the caller's Headers map is never
-// changed.
+// changed. A field left "" isn't sent, and [Publishing].UserID is the one
+// the broker checks: RabbitMQ validates a user-id against the user the
+// Publisher's Connection logs in as, and refuses a publish that names
+// another with 406 PRECONDITION_FAILED. It adds no user-id of its own, so
+// a message published without one reaches its consumer with an empty
+// [Message].UserID.
 //
 // The Publisher reports through the Setup's telemetry, as the Service does,
 // under the same scope. Each Publish has a span of its own, a child of the
@@ -714,7 +720,10 @@
 // Set ForwardScenario for a destination whose consumers take part in
 // failure injection with the same codec, such as another service of the
 // end user's, so that a scenario can reach the points they publish to in
-// turn.
+// turn. Forwarding puts the scenario on the message, and the consumer
+// still decides whether to trust it: one that trusts by UserID, as below,
+// keeps it only from a Publish whose [Publishing].UserID names the user
+// the Publisher logs in as.
 //
 // A Service strips the scenario a delivery carries from publishers the end
 // user hasn't chosen to trust, after the delivery's process span starts
@@ -740,8 +749,26 @@
 //		return m.UserID == "orders-api"
 //	}
 //
-// A message published without a user-id has an empty UserID, which that
-// func doesn't trust.
+// The user-id comes only from the publisher: RabbitMQ adds none to a
+// message published without one, so nothing the Service sees tells it who
+// published that message, and a message without one has an empty UserID,
+// which that func doesn't trust. A humus service's messages carry one when
+// each Publish sets [Publishing].UserID to the user its Publisher's
+// Connection logs in as, the same login it sources for Connection.SASL, or
+// the user a client certificate maps to with amqp091's ExternalAuth. Here
+// r.user is the user r.pub logs in as, such as orders-api:
+//
+//	return r.pub.Publish(ctx, rabbitmq.Publishing{
+//		Exchange:   "orders",
+//		RoutingKey: "accepted",
+//		MessageID:  m.MessageID,
+//		UserID:     r.user,
+//		Body:       m.Body,
+//	})
+//
+// A UserID that isn't that user is refused with 406 PRECONDITION_FAILED, a
+// channel error, which Publish returns at once, as the Publisher's fixed
+// tables say.
 //
 // TrustScenario and ForwardScenario are set in code, not sourced: who is
 // trusted is the end user's design decision, not an operator's.

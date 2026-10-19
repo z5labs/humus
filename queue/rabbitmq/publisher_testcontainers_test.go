@@ -25,6 +25,8 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/z5labs/humus"
@@ -84,6 +86,7 @@ func TestPublisher_a_confirmed_publish_reaches_its_queue(t *testing.T) {
 				MessageID:       "order-1",
 				Timestamp:       at,
 				Type:            "order.accepted",
+				UserID:          rabbit(t).username,
 				AppID:           "orders-api",
 				Body:            []byte(`{"id":1}`),
 			}
@@ -104,6 +107,7 @@ func TestPublisher_a_confirmed_publish_reaches_its_queue(t *testing.T) {
 			require.Equal(t, "order-1", d.MessageId)
 			require.True(t, at.Equal(d.Timestamp), "timestamp %v, want %v", d.Timestamp, at)
 			require.Equal(t, "order.accepted", d.Type)
+			require.Equal(t, rabbit(t).username, d.UserId, "RabbitMQ validated the user-id against the Publisher's login")
 			require.Equal(t, "orders-api", d.AppId)
 			require.Equal(t, []byte(`{"id":1}`), d.Body)
 		})
@@ -137,6 +141,55 @@ func TestPublisher_a_missing_exchange_is_404_NOT_FOUND_and_the_next_publish_is_c
 	got := takeReady(t, q)
 	require.Len(t, got, 1)
 	require.Equal(t, "kept", got[0].MessageId)
+}
+
+func TestPublisher_a_UserID_that_isnt_the_login_is_406_PRECONDITION_FAILED_once_and_the_next_publish_is_confirmed(t *testing.T) {
+	t.Parallel()
+
+	q := declareQueue(t)
+	user := rabbit(t).username
+	settings := rabbitmq.DefaultPublisherSettings()
+	settings.Connection = plainText(t)
+	var errs [2]error
+	tel := humustest.NewTelemetry()
+	_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		pub, err := rabbitmq.NewPublisher(s, settings)
+		if err != nil {
+			return nil, err
+		}
+		return []humus.Service{job.NewService(s, func(ctx context.Context) error {
+			errs[0] = pub.Publish(ctx, rabbitmq.Publishing{RoutingKey: q, MessageID: "claimed", UserID: "not-" + user, Body: []byte("claimed")})
+			errs[1] = pub.Publish(ctx, rabbitmq.Publishing{RoutingKey: q, MessageID: "own", UserID: user, Body: []byte("own")})
+			return nil
+		})}, nil
+	}, humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(tel.Builder())))
+	st := exit(t, status)
+	require.Zero(t, st.Code(), "cause: %v", st.Cause())
+
+	ae, ok := errors.AsType[*amqp.Error](errs[0])
+	require.True(t, ok, "err = %v", errs[0])
+	require.Equal(t, amqp.PreconditionFailed, ae.Code)
+	require.NoError(t, errs[1])
+	got := takeReady(t, q)
+	require.Len(t, got, 1, "the refused message never reached the queue")
+	require.Equal(t, "own", got[0].MessageId)
+	require.Equal(t, user, got[0].UserId)
+
+	// One attempt each: the refusal was stopped, not retried, and the
+	// breaker counted both a success, since the broker answered.
+	counts := func(name, key string) map[string]int64 {
+		out := map[string]int64{}
+		sum, ok := metricNamed(t, tel, name).Data.(metricdata.Sum[int64])
+		require.True(t, ok)
+		for _, dp := range sum.DataPoints {
+			v, _ := dp.Attributes.Value(attribute.Key(key))
+			out[v.AsString()] += dp.Value
+		}
+		return out
+	}
+	require.Equal(t, map[string]int64{"stopped": 1, "succeeded": 1}, counts("humus.retry.decisions", "humus.retry.decision"))
+	require.Equal(t, map[string]int64{"success": 2}, counts("humus.circuit.calls", "humus.circuit.outcome"))
+	require.Equal(t, map[string]int64{"406": 1, "": 1}, counts("messaging.client.sent.messages", "error.type"))
 }
 
 func TestPublisher_carries_its_trace_to_the_Service_that_consumes_the_message(t *testing.T) {

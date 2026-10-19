@@ -23,7 +23,8 @@ import (
 //
 //   - confirmed: Success;
 //   - returned unroutable, ErrUnroutable, or a channel error, such as 404
-//     NOT_FOUND or 403 ACCESS_REFUSED: Success, since the broker answered;
+//     NOT_FOUND, 403 ACCESS_REFUSED or 406 PRECONDITION_FAILED: Success,
+//     since the broker answered;
 //   - nacked by the broker, or lost: a dropped connection, a channel closed
 //     without the broker's error, a failed dial or a failed handshake:
 //     Failure;

@@ -7,6 +7,7 @@ package rabbitmq_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -17,6 +18,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock/circuit"
 	"go.opentelemetry.io/otel"
@@ -230,6 +232,30 @@ func TestPublisher_metrics_count_a_throttled_retry(t *testing.T) {
 			"humus.retry.decision=throttled": 2,
 		}, points(t, rm, "humus.retry.decisions"))
 		require.Equal(t, map[string]int64{"humus.circuit.outcome=failure": 3}, points(t, rm, "humus.circuit.calls"))
+	})
+}
+
+func TestPublisher_metrics_count_a_UserID_the_broker_refused_a_success_and_stopped(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		tp := newTracedPublisherOf(t, publisherSettings())
+		m := accepted
+		m.UserID = "billing"
+		done := publishAsync(t.Context(), tp.pub, m)
+		p := <-tp.s.published
+		require.Equal(t, "billing", p.msg.UserId)
+		p.ch.fail(&amqp.Error{Code: amqp.PreconditionFailed, Reason: "PRECONDITION_FAILED - user_id property set to 'billing' but authenticated user was 'orders-api'", Server: true})
+		ae, ok := errors.AsType[*amqp.Error](<-done)
+		require.True(t, ok)
+		require.Equal(t, amqp.PreconditionFailed, ae.Code)
+		requireNoMorePublishes(t, tp.s)
+
+		rm := collect(t, t.Context(), tp.tel)
+		require.Equal(t, map[string]int64{"humus.circuit.outcome=success": 1}, points(t, rm, "humus.circuit.calls"),
+			"the broker answered, so the breaker counts a success")
+		require.Equal(t, map[string]int64{"humus.retry.decision=stopped": 1}, points(t, rm, "humus.retry.decisions"),
+			"a channel error is never retried")
 	})
 }
 

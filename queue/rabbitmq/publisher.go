@@ -83,6 +83,14 @@ type Publishing struct {
 	// Type is its type name.
 	Type string
 
+	// UserID is the user that publishes it, which RabbitMQ validates: it
+	// must be the user the Publisher's Connection logs in as, or the broker
+	// refuses the publish with 406 PRECONDITION_FAILED, a channel error.
+	// "" sends none, and RabbitMQ adds none of its own, so the consumer's
+	// Message.UserID is "" too. Set it for a consumer that trusts its
+	// publishers by Message.UserID.
+	UserID string
+
 	// AppID is the ID of the application that publishes it.
 	AppID string
 
@@ -112,6 +120,7 @@ func (m Publishing) amqpPublishing() amqp.Publishing {
 		MessageId:       m.MessageID,
 		Timestamp:       m.Timestamp,
 		Type:            m.Type,
+		UserId:          m.UserID,
 		AppId:           m.AppID,
 		Body:            m.Body,
 	}
@@ -156,8 +165,8 @@ func lost(err error) error {
 //   - confirmed: Success;
 //   - returned unroutable, ErrUnroutable: Stop, since another attempt is
 //     routed the same way;
-//   - a channel error, such as 404 NOT_FOUND or 403 ACCESS_REFUSED: Stop,
-//     since the broker refused the publish;
+//   - a channel error, such as 404 NOT_FOUND, 403 ACCESS_REFUSED or 406
+//     PRECONDITION_FAILED: Stop, since the broker refused the publish;
 //   - nacked by the broker, or lost: a dropped connection, a channel closed
 //     without the broker's error, a failed dial or a failed handshake:
 //     Retry, since another attempt, on a new channel or connection, may be
@@ -478,8 +487,9 @@ func (p *Publisher) close(ctx context.Context) error {
 //     error matching ErrUnroutable at once, since another attempt would be
 //     routed the same way;
 //   - a channel error, as with 404 NOT_FOUND for an exchange that doesn't
-//     exist or 403 ACCESS_REFUSED: Publish returns the broker's *amqp.Error
-//     at once, since the broker refused m;
+//     exist, 403 ACCESS_REFUSED, or 406 PRECONDITION_FAILED for a UserID
+//     that isn't the user the Publisher logs in as: Publish returns the
+//     broker's *amqp.Error at once, since the broker refused m;
 //   - nacked by the broker, a dropped connection, a failed dial or a failed
 //     handshake: another attempt follows, after a wait drawn from
 //     retry.Exponential(BackoffBase, BackoffMax), up to MaxAttempts
@@ -506,8 +516,9 @@ func (p *Publisher) close(ctx context.Context) error {
 // result counts as:
 //
 //   - confirmed: a success;
-//   - returned unroutable, or a channel error such as 404 NOT_FOUND or 403
-//     ACCESS_REFUSED: a success, since the broker answered;
+//   - returned unroutable, or a channel error such as 404 NOT_FOUND, 403
+//     ACCESS_REFUSED or 406 PRECONDITION_FAILED: a success, since the
+//     broker answered;
 //   - nacked by the broker, a dropped connection, a failed dial or a
 //     failed handshake: a failure;
 //   - ended by ctx's deadline, Timeout's or the caller's: a failure;

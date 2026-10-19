@@ -207,6 +207,12 @@ func TestPublisher_a_failed_publish_is_on_its_span_and_both_instruments(t *testi
 		"unroutable":    {fail: (*published).unroutable, errType: "312"},
 		"nacked":        {fail: (*published).nack, errType: "nacked"},
 		"404 NOT_FOUND": {fail: func(p *published) { p.ch.fail(&amqp.Error{Code: amqp.NotFound, Reason: "no exchange", Server: true}) }, errType: "404"},
+		"406 PRECONDITION_FAILED": {
+			fail: func(p *published) {
+				p.ch.fail(&amqp.Error{Code: amqp.PreconditionFailed, Reason: "user_id property set to 'billing'", Server: true})
+			},
+			errType: "406",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
