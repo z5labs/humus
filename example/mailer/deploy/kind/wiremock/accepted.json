@@ -1,0 +1,15 @@
+{
+  "priority": 3,
+  "request": {
+    "method": "POST",
+    "url": "/v1/messages"
+  },
+  "response": {
+    "status": 202,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": "{\"id\":\"msg_{{request.headers.Idempotency-Key}}\"}",
+    "transformers": ["response-template"]
+  }
+}
