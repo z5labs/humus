@@ -48,33 +48,78 @@ func (r Run) Run(ctx context.Context) error {
 		return err
 	}
 
+	var (
+		mu      sync.Mutex
+		started int
+		why     []error
+		halted  bool
+	)
+	halt := make(chan struct{})
+	stopped := func() bool {
+		select {
+		case <-halt:
+			return true
+		case <-ctx.Done():
+			return true
+		default:
+			return false
+		}
+	}
+
 	work := make(chan postgres.Invoice)
-	pending := make(chan error, len(invoices))
 	var wg sync.WaitGroup
 	for range min(r.Concurrency, len(invoices)) {
 		wg.Go(func() {
 			for inv := range work {
-				if err := r.charge(ctx, inv); err != nil {
-					pending <- err
+				mu.Lock()
+				if stopped() {
+					mu.Unlock()
+					continue
 				}
+				started++
+				mu.Unlock()
+
+				stop, err := r.charge(ctx, inv)
+				if err == nil {
+					continue
+				}
+				mu.Lock()
+				why = append(why, err)
+				if stop && !halted {
+					halted = true
+					close(halt)
+				}
+				mu.Unlock()
 			}
 		})
 	}
+hand:
 	for _, inv := range invoices {
-		work <- inv
+		if stopped() {
+			break
+		}
+		select {
+		case work <- inv:
+		case <-halt:
+			break hand
+		case <-ctx.Done():
+			break hand
+		}
 	}
 	close(work)
 	wg.Wait()
-	close(pending)
 
-	var why []error
-	for err := range pending {
-		why = append(why, err)
-	}
-	if len(why) == 0 {
+	left := len(invoices) - started + len(why)
+	if left == 0 {
 		return nil
 	}
-	return fmt.Errorf("left %d of %d invoices pending: %w", len(why), len(invoices), errors.Join(why...))
+	if ctx.Err() != nil {
+		return context.Cause(ctx)
+	}
+	if halted {
+		return fmt.Errorf("stopped early, leaving %d of %d invoices pending: %w", left, len(invoices), errors.Join(why...))
+	}
+	return fmt.Errorf("left %d of %d invoices pending: %w", left, len(invoices), errors.Join(why...))
 }
 
 func (r Run) period() time.Time {
@@ -85,7 +130,7 @@ func (r Run) period() time.Time {
 	return time.Date(now.Year(), now.Month()-1, 1, 0, 0, 0, 0, time.UTC)
 }
 
-func (r Run) charge(ctx context.Context, inv postgres.Invoice) error {
+func (r Run) charge(ctx context.Context, inv postgres.Invoice) (stop bool, err error) {
 	res, err := r.Payments.Charge(ctx, payments.Charge{
 		ID:          inv.ID,
 		AccountID:   inv.AccountID,
@@ -93,7 +138,7 @@ func (r Run) charge(ctx context.Context, inv postgres.Invoice) error {
 		Currency:    inv.Currency,
 	})
 	if err != nil {
-		return err
+		return errors.Is(err, payments.ErrStop), err
 	}
 	switch res.State {
 	case payments.Charged:
@@ -103,7 +148,7 @@ func (r Run) charge(ctx context.Context, inv postgres.Invoice) error {
 	case payments.Failed:
 		_, err = r.Invoices.SettleFailed(ctx, inv.ID, res.Answer)
 	default:
-		err = fmt.Errorf("charging invoice %s: the payments client answered an unknown state %d", inv.ID, res.State)
+		return false, fmt.Errorf("charging invoice %s: the payments client answered an unknown state %d", inv.ID, res.State)
 	}
-	return err
+	return err != nil, err
 }

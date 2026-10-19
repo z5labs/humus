@@ -11,6 +11,8 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -23,6 +25,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/circuit"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/httpclient"
@@ -56,6 +59,7 @@ type store struct {
 	mu            sync.Mutex
 	subscriptions []subscription
 	invoices      []*invoice
+	settleErr     error
 }
 
 func (s *store) Issue(_ context.Context, period time.Time) (int64, error) {
@@ -111,27 +115,30 @@ func (s *store) Pending(context.Context) ([]postgres.Invoice, error) {
 }
 
 func (s *store) SettleCharged(_ context.Context, id uuid.UUID, chargeID string) (bool, error) {
-	return s.settle(id, func(inv *invoice) { inv.state, inv.chargeID = "charged", chargeID }), nil
+	return s.settle(id, func(inv *invoice) { inv.state, inv.chargeID = "charged", chargeID })
 }
 
 func (s *store) SettleDeclined(_ context.Context, id uuid.UUID, declineCode string) (bool, error) {
-	return s.settle(id, func(inv *invoice) { inv.state, inv.declineCode = "declined", declineCode }), nil
+	return s.settle(id, func(inv *invoice) { inv.state, inv.declineCode = "declined", declineCode })
 }
 
 func (s *store) SettleFailed(_ context.Context, id uuid.UUID, answer string) (bool, error) {
-	return s.settle(id, func(inv *invoice) { inv.state, inv.answer = "failed", answer }), nil
+	return s.settle(id, func(inv *invoice) { inv.state, inv.answer = "failed", answer })
 }
 
-func (s *store) settle(id uuid.UUID, set func(*invoice)) bool {
+func (s *store) settle(id uuid.UUID, set func(*invoice)) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.settleErr != nil {
+		return false, s.settleErr
+	}
 	for _, inv := range s.invoices {
 		if inv.ID == id && inv.state == "pending" {
 			set(inv)
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 func (s *store) all() []invoice {
@@ -441,5 +448,134 @@ func TestRun_never_more_charges_in_flight_than_the_concurrency(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, e.api.requests(), 10)
 		require.Equal(t, 3, most)
+	})
+}
+
+func TestRun_the_api_down_opens_the_breaker_and_stops_the_run_with_every_unsent_invoice_pending(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e := newEnv(t, func(_ *http.Request, _ string, w http.ResponseWriter) {
+			w.WriteHeader(http.StatusInternalServerError)
+		})
+		var accounts []string
+		for i := range 10 {
+			accounts = append(accounts, fmt.Sprintf("acct-%02d", i))
+		}
+		e.subscribe(accounts...)
+
+		err := e.run(t, month(1999, time.December), 1).Run(t.Context())
+
+		require.ErrorIs(t, err, circuit.ErrRejected)
+		require.ErrorIs(t, err, payments.ErrStop)
+		require.ErrorContains(t, err, "leaving 10 of 10 invoices pending")
+		for _, inv := range e.store.all() {
+			require.Equal(t, "pending", inv.state, inv.AccountID)
+		}
+		var sentTo []string
+		for _, s := range e.api.requests() {
+			if !slices.Contains(sentTo, s.account) {
+				sentTo = append(sentTo, s.account)
+			}
+		}
+		require.Less(t, len(sentTo), len(accounts))
+		require.Equal(t, accounts[:len(sentTo)], sentTo, "oldest first, and nothing after the breaker rejected a call")
+	})
+}
+
+func TestRun_a_401_or_403_stops_the_run_after_the_charges_in_flight(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				e := newEnv(t, func(r *http.Request, account string, w http.ResponseWriter) {
+					if account == "acct-3" {
+						time.Sleep(500 * time.Millisecond)
+						w.WriteHeader(status)
+						_, _ = io.WriteString(w, `{"error":"bad key"}`)
+						return
+					}
+					time.Sleep(time.Second)
+					charging(r, account, w)
+				})
+				e.subscribe("acct-1", "acct-2", "acct-3", "acct-4", "acct-5")
+
+				err := e.run(t, month(1999, time.December), 3).Run(t.Context())
+
+				require.ErrorIs(t, err, payments.ErrStop)
+				require.ErrorContains(t, err, "leaving 3 of 5 invoices pending")
+				require.ErrorContains(t, err, `{"error":"bad key"}`)
+				for _, inv := range e.store.all() {
+					want := "pending"
+					if inv.AccountID == "acct-1" || inv.AccountID == "acct-2" {
+						want = "charged"
+					}
+					require.Equal(t, want, inv.state, inv.AccountID)
+				}
+				require.Empty(t, e.api.to("acct-4"))
+				require.Empty(t, e.api.to("acct-5"))
+			})
+		})
+	}
+}
+
+func TestRun_a_failed_statement_stops_the_run(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e := newEnv(t, charging)
+		e.subscribe("acct-1", "acct-2", "acct-3")
+		e.store.settleErr = errors.New(rand.Text())
+
+		err := e.run(t, month(1999, time.December), 1).Run(t.Context())
+
+		require.ErrorIs(t, err, e.store.settleErr)
+		require.ErrorContains(t, err, "leaving 3 of 3 invoices pending")
+		for _, inv := range e.store.all() {
+			require.Equal(t, "pending", inv.state, inv.AccountID)
+		}
+		require.Len(t, e.api.requests(), 1)
+	})
+}
+
+func TestRun_a_signal_while_a_charges_answer_is_lost_leaves_its_invoice_pending_for_the_next_run(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		signal := errors.New("interrupt")
+		ctx, cancel := context.WithCancelCause(t.Context())
+		var mu sync.Mutex
+		lost := true
+		e := newEnv(t, func(r *http.Request, account string, w http.ResponseWriter) {
+			mu.Lock()
+			lose := lost
+			mu.Unlock()
+			if lose {
+				cancel(signal)
+				select {
+				case <-r.Context().Done():
+				case <-time.After(time.Minute):
+				}
+				return
+			}
+			charging(r, account, w)
+		})
+		e.subscribe("acct-1", "acct-2")
+
+		err := e.run(t, month(1999, time.December), 1).Run(ctx)
+
+		require.Equal(t, signal, err)
+		first := e.store.of(t, "acct-1")
+		require.Len(t, first, 1)
+		require.Equal(t, "pending", first[0].state)
+		require.Equal(t, "pending", e.store.of(t, "acct-2")[0].state)
+		require.Len(t, e.api.requests(), 1)
+		mu.Lock()
+		lost = false
+		mu.Unlock()
+
+		err = e.run(t, month(1999, time.December), 1).Run(t.Context())
+
+		require.NoError(t, err)
+		keys := []string{}
+		for _, s := range e.api.to("acct-1") {
+			keys = append(keys, s.idempotencyKey)
+		}
+		require.Equal(t, []string{first[0].ID.String(), first[0].ID.String()}, keys)
+		require.Equal(t, "charged", e.store.of(t, "acct-1")[0].state)
+		require.Equal(t, "ch_"+first[0].ID.String(), e.store.of(t, "acct-1")[0].chargeID)
 	})
 }
