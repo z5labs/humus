@@ -11,15 +11,36 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
+
+	"github.com/z5labs/bedrock/retry"
 
 	"github.com/z5labs/humus/example/orderstatus/store"
 	"github.com/z5labs/humus/queue/kafka"
 )
 
 const (
-	reasonMalformed   = "malformed"
-	reasonUnknownType = "unknown-type"
+	reasonMalformed         = "malformed"
+	reasonUnknownType       = "unknown-type"
+	reasonInvalidTransition = "invalid-transition"
+	reasonUnavailable       = "unavailable"
+)
+
+const (
+	headerAttempt   = "retry.attempt"
+	headerReason    = "retry.reason"
+	headerError     = "retry.error"
+	headerPartition = "retry.partition"
+	headerOffset    = "retry.offset"
+)
+
+const (
+	workDeadline        = 15 * time.Second
+	storeAttempts       = 5
+	storeMinDelay       = 100 * time.Millisecond
+	storeMaxDelay       = 2 * time.Second
+	storeAttemptTimeout = 2 * time.Second
 )
 
 type Store interface {
@@ -33,47 +54,210 @@ type Producer interface {
 }
 
 type Settings struct {
+	EventsTopic     string
 	StatusTopic     string
+	RetryTopic      string
 	DeadLetterTopic string
+	Attempts        int
+	MinDelay        time.Duration
+	MaxDelay        time.Duration
 }
 
 type Projector struct {
 	store       Store
+	retrier     *retry.Retrier
 	status      Producer
+	retries     Producer
 	deadLetters Producer
 	settings    Settings
 }
 
-func New(s Store, status, deadLetters Producer, settings Settings) *Projector {
+func New(s Store, status, retries, deadLetters Producer, settings Settings) *Projector {
+	schedule, err := retry.Exponential(storeMinDelay, storeMaxDelay)
+	if err != nil {
+		panic(err)
+	}
+	r, err := retry.New(storeAttempts, schedule, classifyStore, nil)
+	if err != nil {
+		panic(err)
+	}
 	return &Projector{
 		store:       s,
+		retrier:     r,
 		status:      status,
+		retries:     retries,
 		deadLetters: deadLetters,
 		settings:    settings,
 	}
 }
 
+func classifyStore(ctx context.Context, err error) (retry.Outcome, time.Duration) {
+	switch {
+	case err == nil:
+		return retry.Success, 0
+	case errors.Is(err, store.ErrApplied):
+		return retry.Stop, 0
+	default:
+		return retry.Retry, 0
+	}
+}
+
+type place struct {
+	topic     string
+	partition int32
+	offset    int64
+}
+
 func (p *Projector) Process(ctx context.Context, m kafka.Message) error {
-	e, reason, err := decode(m)
+	attempt, from, err := p.origin(m)
 	if err != nil {
-		return p.deadLetter(ctx, m, reason, err)
+		return p.deadLetter(ctx, m, from, reasonMalformed, err, 0)
 	}
 
-	applied, err := p.store.Applied(ctx, e.Partition, e.Offset)
+	e, reason, err := decode(m, from)
+	if err != nil {
+		return p.deadLetter(ctx, m, from, reason, err, 0)
+	}
+
+	err = p.wait(ctx, m, attempt)
 	if err != nil {
 		return err
 	}
-	if applied {
+
+	work, cancel := context.WithTimeout(ctx, workDeadline)
+	defer cancel()
+	reason, err = p.project(work, m, e)
+	if err == nil {
 		return nil
 	}
-
-	history, err := p.store.Events(ctx, e.OrderID)
-	if err != nil {
+	if ctx.Err() != nil {
 		return err
+	}
+	return p.retry(ctx, m, from, attempt, reason, err)
+}
+
+func (p *Projector) origin(m kafka.Message) (int, place, error) {
+	own := place{topic: m.Topic, partition: m.Partition, offset: m.Offset}
+	if m.Topic != p.settings.RetryTopic {
+		return 0, own, nil
+	}
+
+	var errs []error
+	attempt, err := header(m, headerAttempt, func(s string) (int, error) {
+		n, err := strconv.Atoi(s)
+		if err == nil && n < 1 {
+			err = errors.New("it is less than 1")
+		}
+		return n, err
+	})
+	errs = append(errs, err)
+	partition, err := header(m, headerPartition, func(s string) (int32, error) {
+		n, err := strconv.ParseInt(s, 10, 32)
+		if err == nil && n < 0 {
+			err = errors.New("it is negative")
+		}
+		return int32(n), err
+	})
+	errs = append(errs, err)
+	offset, err := header(m, headerOffset, func(s string) (int64, error) {
+		n, err := strconv.ParseInt(s, 10, 64)
+		if err == nil && n < 0 {
+			err = errors.New("it is negative")
+		}
+		return n, err
+	})
+	errs = append(errs, err)
+	if err := errors.Join(errs...); err != nil {
+		return 0, own, err
+	}
+	return attempt, place{topic: p.settings.EventsTopic, partition: partition, offset: offset}, nil
+}
+
+func header[T any](m kafka.Message, key string, parse func(string) (T, error)) (T, error) {
+	var zero T
+	value, found := "", false
+	for _, h := range m.Headers {
+		if h.Key == key {
+			value, found = string(h.Value), true
+		}
+	}
+	if !found {
+		return zero, fmt.Errorf("the record has no %s header", key)
+	}
+	v, err := parse(value)
+	if err != nil {
+		return zero, fmt.Errorf("the %s header %q is not valid: %w", key, value, err)
+	}
+	return v, nil
+}
+
+func (p *Projector) backoff(attempt int) time.Duration {
+	d := p.settings.MinDelay
+	for i := 1; i < attempt && d > 0 && d < p.settings.MaxDelay; i++ {
+		d *= 2
+	}
+	return min(d, p.settings.MaxDelay)
+}
+
+func (p *Projector) wait(ctx context.Context, m kafka.Message, attempt int) error {
+	if attempt == 0 {
+		return nil
+	}
+	d := time.Until(m.Timestamp.Add(p.backoff(attempt)))
+	if d <= 0 {
+		return nil
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("waiting to retry %s, partition %d, offset %d: %w", m.Topic, m.Partition, m.Offset, context.Cause(ctx))
+	case <-t.C:
+		return nil
+	}
+}
+
+func (p *Projector) call(ctx context.Context, f func(context.Context) error) error {
+	var err error
+	for a := range p.retrier.Attempts(ctx) {
+		err = attemptStore(ctx, f)
+		a.Done(err)
+	}
+	return err
+}
+
+func attemptStore(ctx context.Context, f func(context.Context) error) error {
+	ctx, cancel := context.WithTimeout(ctx, storeAttemptTimeout)
+	defer cancel()
+	return f(ctx)
+}
+
+func (p *Projector) project(ctx context.Context, m kafka.Message, e store.Event) (string, error) {
+	var applied bool
+	err := p.call(ctx, func(ctx context.Context) error {
+		var err error
+		applied, err = p.store.Applied(ctx, e.Partition, e.Offset)
+		return err
+	})
+	if err != nil {
+		return reasonUnavailable, err
+	}
+	if applied {
+		return "", nil
+	}
+
+	var history []store.Event
+	err = p.call(ctx, func(ctx context.Context) error {
+		var err error
+		history, err = p.store.Events(ctx, e.OrderID)
+		return err
+	})
+	if err != nil {
+		return reasonUnavailable, err
 	}
 	status, changes, err := Fold(history, e)
 	if err != nil {
-		return err
+		return reasonInvalidTransition, err
 	}
 
 	if len(changes) > 0 {
@@ -87,15 +271,48 @@ func (p *Projector) Process(ctx context.Context, m kafka.Message) error {
 		}
 		err := p.status.Produce(ctx, records...)
 		if err != nil {
-			return fmt.Errorf("producing order %s's changes from partition %d, offset %d: %w", e.OrderID, e.Partition, e.Offset, err)
+			return reasonUnavailable, fmt.Errorf("producing order %s's changes from partition %d, offset %d: %w", e.OrderID, e.Partition, e.Offset, err)
 		}
 	}
 
-	err = p.store.Apply(ctx, e, status)
-	if errors.Is(err, store.ErrApplied) {
-		return nil
+	err = p.call(ctx, func(ctx context.Context) error {
+		return p.store.Apply(ctx, e, status)
+	})
+	if err != nil && !errors.Is(err, store.ErrApplied) {
+		return reasonUnavailable, err
 	}
-	return err
+	return "", nil
+}
+
+func (p *Projector) retry(ctx context.Context, m kafka.Message, from place, attempt int, reason string, cause error) error {
+	failed := attempt + 1
+	if failed >= p.settings.Attempts {
+		return p.deadLetter(ctx, m, from, reason, cause, failed)
+	}
+
+	headers := make([]kafka.Header, 0, len(m.Headers)+5)
+	for _, h := range m.Headers {
+		if !strings.HasPrefix(h.Key, "retry.") {
+			headers = append(headers, h)
+		}
+	}
+	headers = append(headers,
+		kafka.Header{Key: headerAttempt, Value: []byte(strconv.Itoa(failed))},
+		kafka.Header{Key: headerReason, Value: []byte(reason)},
+		kafka.Header{Key: headerError, Value: []byte(cause.Error())},
+		kafka.Header{Key: headerPartition, Value: []byte(strconv.FormatInt(int64(from.partition), 10))},
+		kafka.Header{Key: headerOffset, Value: []byte(strconv.FormatInt(from.offset, 10))},
+	)
+	err := p.retries.Produce(ctx, kafka.Record{
+		Topic:   p.settings.RetryTopic,
+		Key:     m.Key,
+		Value:   m.Value,
+		Headers: headers,
+	})
+	if err != nil {
+		return fmt.Errorf("retrying %s, partition %d, offset %d as %s, attempt %d: %w", from.topic, from.partition, from.offset, reason, failed, err)
+	}
+	return nil
 }
 
 type event struct {
@@ -103,7 +320,7 @@ type event struct {
 	At   time.Time `json:"at"`
 }
 
-func decode(m kafka.Message) (store.Event, string, error) {
+func decode(m kafka.Message, from place) (store.Event, string, error) {
 	if len(m.Key) == 0 {
 		return store.Event{}, reasonMalformed, errors.New("the record has no key")
 	}
@@ -121,8 +338,8 @@ func decode(m kafka.Message) (store.Event, string, error) {
 		return store.Event{}, reasonUnknownType, fmt.Errorf("the event's type %q is not one this processor knows", v.Type)
 	}
 	return store.Event{
-		Partition: m.Partition,
-		Offset:    m.Offset,
+		Partition: from.partition,
+		Offset:    from.offset,
 		OrderID:   string(m.Key),
 		Type:      v.Type,
 		At:        v.At,
@@ -144,16 +361,19 @@ func encodeChange(orderID string, c Change) []byte {
 	return b
 }
 
-func (p *Projector) deadLetter(ctx context.Context, m kafka.Message, reason string, cause error) error {
-	headers := make([]kafka.Header, 0, len(m.Headers)+5)
+func (p *Projector) deadLetter(ctx context.Context, m kafka.Message, from place, reason string, cause error, attempts int) error {
+	headers := make([]kafka.Header, 0, len(m.Headers)+6)
 	headers = append(headers, m.Headers...)
 	headers = append(headers,
 		kafka.Header{Key: "dlq.reason", Value: []byte(reason)},
 		kafka.Header{Key: "dlq.error", Value: []byte(cause.Error())},
-		kafka.Header{Key: "dlq.topic", Value: []byte(m.Topic)},
-		kafka.Header{Key: "dlq.partition", Value: []byte(strconv.FormatInt(int64(m.Partition), 10))},
-		kafka.Header{Key: "dlq.offset", Value: []byte(strconv.FormatInt(m.Offset, 10))},
+		kafka.Header{Key: "dlq.topic", Value: []byte(from.topic)},
+		kafka.Header{Key: "dlq.partition", Value: []byte(strconv.FormatInt(int64(from.partition), 10))},
+		kafka.Header{Key: "dlq.offset", Value: []byte(strconv.FormatInt(from.offset, 10))},
 	)
+	if attempts > 0 {
+		headers = append(headers, kafka.Header{Key: "dlq.attempts", Value: []byte(strconv.Itoa(attempts))})
+	}
 	err := p.deadLetters.Produce(ctx, kafka.Record{
 		Topic:   p.settings.DeadLetterTopic,
 		Key:     m.Key,
@@ -161,7 +381,7 @@ func (p *Projector) deadLetter(ctx context.Context, m kafka.Message, reason stri
 		Headers: headers,
 	})
 	if err != nil {
-		return fmt.Errorf("dead-lettering %s, partition %d, offset %d as %s: %w", m.Topic, m.Partition, m.Offset, reason, err)
+		return fmt.Errorf("dead-lettering %s, partition %d, offset %d as %s: %w", from.topic, from.partition, from.offset, reason, err)
 	}
 	return nil
 }
