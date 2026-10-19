@@ -757,7 +757,7 @@
 // put on an object unchanged. The tool that runs the experiment writes it:
 //
 //	codec, _ := jsonscenario.New("acme.fault")
-//	ctx, _ := fit.ContextWithScenario(ctx, codec, fit.Scenario{Rules: []fit.Rule{
+//	ctx, _ := fit.ContextWithScenario(context.Background(), codec, fit.Scenario{Rules: []fit.Rule{
 //		{Point: "kube:deployments.apps:patch", Fault: fit.Fault{Abort: true}},
 //	}})
 //	value := baggage.FromContext(ctx).String()
