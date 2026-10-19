@@ -1,0 +1,15 @@
+{
+  "priority": 3,
+  "request": {
+    "method": "POST",
+    "url": "/v1/charges"
+  },
+  "response": {
+    "status": 201,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": "{\"id\":\"ch_{{request.headers.Idempotency-Key}}\"}",
+    "transformers": ["response-template"]
+  }
+}

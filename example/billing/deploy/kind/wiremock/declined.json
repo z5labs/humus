@@ -1,0 +1,24 @@
+{
+  "priority": 2,
+  "request": {
+    "method": "POST",
+    "url": "/v1/charges",
+    "bodyPatterns": [
+      {
+        "matchesJsonPath": {
+          "expression": "$.account",
+          "matches": "^declined-.*"
+        }
+      }
+    ]
+  },
+  "response": {
+    "status": 402,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "code": "card_declined"
+    }
+  }
+}
