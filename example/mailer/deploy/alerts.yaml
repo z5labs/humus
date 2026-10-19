@@ -252,4 +252,4 @@ groups:
           severity: page
         annotations:
           summary: A mailer container restarted more than 3 times in 15 minutes.
-          description: A request that can go to neither mail.retry nor mail.dead crashes each replica that takes it, until the delivery limit dead-letters it.
+          description: A request that can be published to neither the mail.retry exchange nor the mail.dead exchange crashes each replica that takes it, until the delivery limit dead-letters it.
