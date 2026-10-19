@@ -227,9 +227,9 @@ rabbitmqctl set_permissions --vhost / mailer '^$' '^mail\.(retry|dead|events)$' 
 
 | Permission | The mailer's | Because |
 |---|---|---|
-| configure | `^$`, none | it declares nothing |
-| write | `^mail\.(retry\|dead\|events)$` | it parks, dead-letters and publishes events |
-| read | `^mail\.send$` | it consumes its work queue only |
+| configure | none | it declares nothing |
+| write | `mail.retry`, `mail.dead` and `mail.events` | it parks, dead-letters and publishes events |
+| read | `mail.send` | it consumes its work queue only |
 
 A service that asks for emails needs to write `mail` and nothing else, as
 the kind overlay's `mailrequest` login does:
