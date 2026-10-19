@@ -131,16 +131,20 @@ func TestPublisher_relay_names_the_user_its_Publisher_logs_in_as(t *testing.T) {
 	t.Parallel()
 
 	synctest.Test(t, func(t *testing.T) {
-		pub, s := newPublisher(t, publisherSettings())
+		settings := publisherSettings()
+		settings.ForwardScenario = true
+		login, ok := settings.Connection.SASL.(*amqp.PlainAuth)
+		require.True(t, ok)
+		pub, s := newPublisher(t, settings)
 		s.autoAck = true
-		r := relay{pub: pub, user: "orders-api"}
+		r := relay{pub: pub, user: login.Username}
 		require.NoError(t, r.Process(t.Context(), rabbitmq.Message{MessageID: "order-1", Body: []byte("order 1")}))
 
 		p := <-s.published
 		require.Equal(t, "orders", p.exchange)
 		require.Equal(t, "accepted", p.key)
 		require.Equal(t, "order-1", p.msg.MessageId)
-		require.Equal(t, "orders-api", p.msg.UserId)
+		require.Equal(t, login.Username, p.msg.UserId)
 	})
 }
 
@@ -151,7 +155,7 @@ func TestPublisher_a_Publishing_without_a_UserID_sends_none(t *testing.T) {
 		pub, s := newPublisher(t, publisherSettings())
 		s.autoAck = true
 		require.NoError(t, pub.Publish(t.Context(), accepted))
-		require.Empty(t, (<-s.published).msg.UserId, "amqp091 sends no user-id property for an empty UserId")
+		require.Empty(t, (<-s.published).msg.UserId, "the Publisher hands amqp091 an empty UserId, which it never sends")
 	})
 }
 
