@@ -261,6 +261,21 @@ records the exception. It is tested in two parts:
 [Consuming and publishing with RabbitMQ]({{< relref "rabbitmq#testing" >}})
 shows both.
 
+The `kube` module ships no test package and no fake API server either, for
+the same reason, and client-go's fakes can't apply an unstructured object or
+run admission, validation, defaulting or garbage collection. A controller
+runs on `humus.Main`'s defaults, and is tested in three parts:
+
+- **Its Reconciler, as a function,** handed a plain `kube.Object`, with the
+  resources it applies going through client-go's `kubefake.NewClientset()`.
+- **Its CRD,** with a golden test of `Resource.CRD()`'s YAML.
+- **The whole App, against k3s in a container,** with `humustest.Start` and
+  `humus.WithHost(humus.OSHost())`, in real time, behind a build tag, in a
+  CI job of its own.
+
+[Writing a Kubernetes controller]({{< relref "kubernetes#testing" >}})
+shows all three.
+
 ### Helpers
 
 `Start` returns bedrocktest's `Process` and the App's status channel

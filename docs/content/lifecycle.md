@@ -791,6 +791,23 @@ explicitly from `Setup`:
   [Consuming and publishing with RabbitMQ]({{< relref "rabbitmq#amqp091s-logger" >}})
   describes, and an end user who wants its messages sets it once, in
   `main`.
+- **client-go's feature gates.** client-go, Kubernetes' own client, which
+  the `kube` module is built on, reads its feature gates from `KUBE_FEATURE_*`
+  variables of the real environment, with `os.LookupEnv`, the first time a
+  gate is used. The only way to replace them is
+  `features.ReplaceFeatureGates`, which is process-wide state, so `kube`
+  never calls it, and lint denies it in every humus module, as
+  [Writing a Kubernetes controller]({{< relref "kubernetes#what-client-go-still-reaches" >}})
+  describes.
+- **klog's global logger.** client-go logs through klog, and a code path
+  with no logger in its context falls back to klog's global logger, which
+  writes to the real standard error, not through the Setup's
+  `LoggerProvider`. A `kube.Controller` puts a logger in the context of
+  everything of client-go's it runs, so its records reach the
+  `LoggerProvider`; client-go code the end user calls with a context of
+  their own, such as in `Init`, can still reach the global logger. Setting
+  klog's logger, output or flags is process-wide state, and lint denies it
+  in every humus module.
 
 `flag`, `exec.Cmd`, `http.ProxyFromEnvironment` and `slog.Default` are on
 [bedrock's own list](https://pkg.go.dev/github.com/z5labs/bedrock#hdr-Ambient_leaks).

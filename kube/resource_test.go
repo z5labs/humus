@@ -613,6 +613,9 @@ func golden(t *testing.T, name string, got []byte) {
 	require.Equal(t, string(want), string(got), "run go test -update to rewrite %s", path)
 }
 
+// TestResource_CRD_golden compares the CRDs of the test resources with their
+// golden files. Memcached's is TestMemcachedCRD's, in example_test.go, as
+// the end user writes it.
 func TestResource_CRD_golden(t *testing.T) {
 	t.Parallel()
 
@@ -620,7 +623,6 @@ func TestResource_CRD_golden(t *testing.T) {
 		file string
 		crd  func() (*apiextensionsv1.CustomResourceDefinition, error)
 	}{
-		{"memcached.yaml", Memcached.CRD},
 		{"widget.yaml", Widget.CRD},
 	}
 	for _, tc := range tests {
