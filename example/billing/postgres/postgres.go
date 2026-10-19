@@ -14,6 +14,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/z5labs/humus/fault"
 )
 
 type Invoice struct {
@@ -25,14 +27,29 @@ type Invoice struct {
 }
 
 type Store struct {
-	pool *pgxpool.Pool
+	pool   *pgxpool.Pool
+	faults fault.Injector
 }
 
-func New(pool *pgxpool.Pool) *Store {
-	return &Store{pool: pool}
+func New(pool *pgxpool.Pool, faults fault.Injector) *Store {
+	return &Store{pool: pool, faults: faults}
+}
+
+func (s *Store) inject(ctx context.Context, point string) error {
+	f := s.faults.Eval(ctx, point)
+	if err := f.Wait(ctx); err != nil {
+		return &fault.InjectedError{Point: point, Err: err}
+	}
+	if f.Abort {
+		return &fault.InjectedError{Point: point}
+	}
+	return nil
 }
 
 func (s *Store) Issue(ctx context.Context, period time.Time) (issued int64, err error) {
+	if err := s.inject(ctx, "postgresql:issue"); err != nil {
+		return 0, fmt.Errorf("issuing %s: %w", period.Format("2006-01"), err)
+	}
 	tag, err := s.pool.Exec(ctx, `
 		INSERT INTO invoices (account_id, period, amount_cents, currency)
 		SELECT account_id, $1::date, amount_cents, currency FROM subscriptions WHERE active
@@ -78,6 +95,9 @@ func (s *Store) SettleFailed(ctx context.Context, id uuid.UUID, answer string) (
 }
 
 func (s *Store) settle(ctx context.Context, id uuid.UUID, state, column, value string) (bool, error) {
+	if err := s.inject(ctx, "postgresql:settle"); err != nil {
+		return false, fmt.Errorf("settling invoice %s as %s: %w", id, state, err)
+	}
 	tag, err := s.pool.Exec(ctx,
 		`UPDATE invoices SET state = $2, `+column+` = $3, settled_at = now() WHERE id = $1 AND state = 'pending'`,
 		id, state, value,

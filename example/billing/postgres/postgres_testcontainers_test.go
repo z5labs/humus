@@ -23,8 +23,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/z5labs/bedrock/fit"
 
 	"github.com/z5labs/humus/example/billing/postgres"
+	"github.com/z5labs/humus/fault"
+	"github.com/z5labs/humus/fault/jsonscenario"
 )
 
 const postgresImage = "docker.io/library/postgres:18.0"
@@ -64,6 +67,7 @@ func startServer() error {
 type database struct {
 	pool  *pgxpool.Pool
 	store *postgres.Store
+	codec jsonscenario.Codec
 }
 
 func newDatabase(t *testing.T) database {
@@ -107,7 +111,31 @@ func newDatabase(t *testing.T) database {
 	_, err = pool.Exec(ctx, string(schema))
 	require.NoError(t, err)
 
-	return database{pool: pool, store: postgres.New(pool)}
+	codec, err := jsonscenario.New("acme.fault")
+	require.NoError(t, err)
+	fs := fault.DefaultSettings()
+	fs.Decoder = codec
+	faults, err := fault.New(fs)
+	require.NoError(t, err)
+
+	return database{pool: pool, store: postgres.New(pool, faults), codec: codec}
+}
+
+func (db database) aborting(t *testing.T, point string) context.Context {
+	t.Helper()
+	ctx, err := fit.ContextWithScenario(t.Context(), db.codec, fit.Scenario{Rules: []fit.Rule{
+		{Point: point, Fault: fit.Fault{Abort: true}},
+	}})
+	require.NoError(t, err)
+	return ctx
+}
+
+func requireInjected(t *testing.T, err error, point string) {
+	t.Helper()
+	var injected *fault.InjectedError
+	require.ErrorAs(t, err, &injected)
+	require.Equal(t, point, injected.Point)
+	require.ErrorIs(t, err, fit.ErrInjected)
 }
 
 func (db database) subscribe(t *testing.T, accountID string, amountCents int64, currency string, active bool) {
@@ -297,4 +325,49 @@ func TestStore_pending_invoices_come_oldest_first_across_periods(t *testing.T) {
 	rest, err := db.store.Pending(ctx)
 	require.NoError(t, err)
 	require.Equal(t, pending[1:], rest)
+}
+
+func TestStore_an_abort_at_postgresql_issue_fails_the_statement_and_changes_nothing(t *testing.T) {
+	db := newDatabase(t)
+	db.subscribe(t, "acct-a", 1500, "USD", true)
+	db.subscribe(t, "acct-b", 990, "EUR", true)
+
+	issued, err := db.store.Issue(db.aborting(t, "postgresql:issue"), month(2026, time.March))
+
+	requireInjected(t, err, "postgresql:issue")
+	require.Zero(t, issued)
+	require.Empty(t, db.invoices(t))
+
+	issued, err = db.store.Issue(db.aborting(t, "postgresql:settle"), month(2026, time.March))
+	require.NoError(t, err)
+	require.EqualValues(t, 2, issued)
+}
+
+func TestStore_an_abort_at_postgresql_settle_fails_the_statement_and_changes_nothing(t *testing.T) {
+	db := newDatabase(t)
+	db.subscribe(t, "acct-a", 1500, "USD", true)
+	_, err := db.store.Issue(t.Context(), month(2026, time.March))
+	require.NoError(t, err)
+	pending, err := db.store.Pending(t.Context())
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	id := pending[0].ID
+	ctx := db.aborting(t, "postgresql:settle")
+
+	settled, err := db.store.SettleCharged(ctx, id, "ch_1")
+	requireInjected(t, err, "postgresql:settle")
+	require.False(t, settled)
+	settled, err = db.store.SettleDeclined(ctx, id, "card_declined")
+	requireInjected(t, err, "postgresql:settle")
+	require.False(t, settled)
+	settled, err = db.store.SettleFailed(ctx, id, "500 Internal Server Error")
+	requireInjected(t, err, "postgresql:settle")
+	require.False(t, settled)
+
+	require.Equal(t, row{AccountID: "acct-a", Period: month(2026, time.March), AmountCents: 1500, Currency: "USD", State: "pending"}, db.invoice(t, id))
+
+	settled, err = db.store.SettleCharged(db.aborting(t, "postgresql:issue"), id, "ch_1")
+	require.NoError(t, err)
+	require.True(t, settled)
+	require.Equal(t, "charged", db.invoice(t, id).State)
 }
