@@ -125,6 +125,7 @@ func (m *memory) all() []invoice {
 type charge struct {
 	authorization  string
 	idempotencyKey string
+	baggage        string
 	account        string
 }
 
@@ -145,6 +146,7 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	a.charges = append(a.charges, charge{
 		authorization:  r.Header.Get("Authorization"),
 		idempotencyKey: r.Header.Get("Idempotency-Key"),
+		baggage:        r.Header.Get("Baggage"),
 		account:        body.Account,
 	})
 	a.mu.Unlock()
@@ -288,6 +290,8 @@ func TestInit_a_bad_setting_exits_78(t *testing.T) {
 		"PAYMENTS_CA_FILE not found":           {map[string]string{"PAYMENTS_CA_FILE": "nowhere.pem"}, "config PAYMENTS_CA_FILE:"},
 		"PAYMENTS_API_KEY_FILE not found":      {map[string]string{"PAYMENTS_API_KEY_FILE": "secrets/nowhere"}, "config PAYMENTS_API_KEY_FILE:"},
 		"OTEL_TRACES_EXPORTER not an exporter": {map[string]string{"OTEL_TRACES_EXPORTER": "zipkin"}, "config OTEL_TRACES_EXPORTER:"},
+		"FAULT_MAX_DELAY 0":                    {map[string]string{"FAULT_MAX_DELAY": "0s"}, "config FAULT_MAX_DELAY: must be positive"},
+		"FAULT_MAX_DELAY not a duration":       {map[string]string{"FAULT_MAX_DELAY": "soon"}, "config FAULT_MAX_DELAY:"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {

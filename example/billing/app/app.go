@@ -26,6 +26,8 @@ import (
 	"github.com/z5labs/humus/example/billing/billing"
 	"github.com/z5labs/humus/example/billing/payments"
 	"github.com/z5labs/humus/example/billing/postgres"
+	"github.com/z5labs/humus/fault"
+	"github.com/z5labs/humus/fault/jsonscenario"
 	"github.com/z5labs/humus/httpclient"
 	"github.com/z5labs/humus/job"
 	"github.com/z5labs/humus/telemetry"
@@ -34,7 +36,22 @@ import (
 func Options() []humus.Option {
 	return []humus.Option{
 		humus.WithTelemetry(buildTelemetry),
+		humus.WithFaults(Faults),
 	}
+}
+
+func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
+	codec, err := jsonscenario.New("acme.fault")
+	if err != nil {
+		return fault.Settings{}, err
+	}
+	d := fault.DefaultSettings()
+	return config.Struct(func(r *config.Resolver) fault.Settings {
+		f := d
+		f.Decoder = codec
+		f.MaxDelay = r.Get(config.Env(s.Process.Environment, "FAULT_MAX_DELAY").Parse(time.ParseDuration).Default(d.MaxDelay).Validate(fault.CheckMaxDelay))
+		return f
+	}).Read(ctx)
 }
 
 func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
@@ -186,7 +203,7 @@ func openPostgres(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (bil
 		pool.Close()
 		return nil
 	})
-	return postgres.New(pool), nil
+	return postgres.New(pool, s.Faults), nil
 }
 
 func buildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
