@@ -205,7 +205,7 @@ jobs:
             key: ${{ steps.go-cache.outputs.key }}
             path: ${{ steps.go-cache.outputs.path }}
 
-  # The tests behind the testcontainers tag run in the four testcontainers
+  # The tests behind the testcontainers tag run in the testcontainers
   # jobs below, so here they are only compiled and vetted, without starting
   # a container, alongside the unit tests. Every module under example/ that
   # go-modules.sh lists is vetted, so a new example needs no change here.
@@ -463,6 +463,39 @@ jobs:
 
         - name: Test
           run: go -C example/shoppingcart test -count=1 -race -tags testcontainers ./...
+
+        - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
+          uses: ./.github/actions/save-go-cache
+          with:
+            key: ${{ steps.go-cache.outputs.key }}
+            path: ${{ steps.go-cache.outputs.path }}
+
+  # The billing walkthrough's tests behind the testcontainers build tag run
+  # against PostgreSQL in a container. The ruleset doesn't require this job,
+  # and Build doesn't wait on it; Vet the testcontainers tests vets them.
+  billing-testcontainers:
+    name: Billing walkthrough (testcontainers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: write
+      contents: read
+    steps:
+        - name: Checkout
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+          with:
+            go-version: '1.27.2'
+            cache: false
+
+        - id: go-cache
+          uses: ./.github/actions/restore-go-cache
+          with:
+            name: billing-testcontainers
+
+        - name: Test
+          run: go -C example/billing test -count=1 -race -tags testcontainers ./...
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache
