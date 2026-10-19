@@ -14,7 +14,10 @@ builds an App's failure injection, and
 is a ready-made codec for its scenarios. Both are built on bedrock's
 [`fit`](https://pkg.go.dev/github.com/z5labs/bedrock/fit). Every humus client
 is an injection point, and every humus server strips scenarios from callers
-it doesn't trust.
+it doesn't trust. A [Kubernetes controller](/humus/kubernetes/#failure-injection)
+answers no request, so an annotation of the object it reconciles carries a
+scenario into its reconciles, and every request of its Client is an
+injection point.
 
 The design behind everything on this page is in
 [Proposal: failure injection](https://github.com/z5labs/humus/discussions/869),
@@ -208,8 +211,8 @@ Every humus client is an injection point, named after its dependency, from
 the attribute OpenTelemetry already records of it. So a rule can target one
 dependency, such as `http:payments:8443`, or every dependency of one kind,
 such as `http:*`, and a scenario's rules read like the trace they fail. Each
-attempt evaluates its point once, inside the client's circuit breaker, so an
-attempt the breaker rejects evaluates nothing:
+attempt evaluates its point once, inside the client's circuit breaker where
+it has one, so an attempt the breaker rejects evaluates nothing:
 
 | Client | Point | An abort | A delay |
 |---|---|---|---|
@@ -217,6 +220,7 @@ attempt the breaker rejects evaluates nothing:
 | [`grpcclient`](/humus/grpc-client/) | `grpc:<service>/<method>`: the full method without its leading slash, as `rpc.method` writes it, such as `grpc:payments.v1.Payments/Charge` | status `Unavailable`, wrapping the `*fault.InjectedError`. grpc-go isn't called, so the Client records the attempt's span itself | waited before grpc-go is called, inside `Timeout`. Cut short, it ends as grpc-go would, `DeadlineExceeded` or `Canceled` |
 | The Kafka [`Producer`](/humus/kafka/#producing) | `kafka:<topic>`, one evaluation per record, such as `kafka:orders` | every record of the call fails unsent. A call is one unit, as the breaker counts it, so one record's abort fails them all | the call waits the longest `Delay` of its records, inside `DeliveryTimeout` |
 | The RabbitMQ [`Publisher`](/humus/rabbitmq/#publishing) | `rabbitmq:<exchange>:<routing key>`, leaving out what is empty, as `messaging.destination.name` writes it, such as `rabbitmq:orders:accepted` | the attempt fails with nothing sent, marked as a lost connection's error is: `rabbitmq: publishing to …: fit: injected failure at …` | waited inside `Timeout`, before the attempt takes a channel |
+| The `kube` [`Client`](/humus/kubernetes/#injection-points) | `kube:<resource>[.<group>][/<subresource>]:<verb>`, one evaluation per request to the API server, which names what the request does to which resource as the API server's audit log does, such as `kube:deployments.apps:patch` | a transport error: client-go returns an error wrapping the `*fault.InjectedError`, with no response, nothing sent and no call to `Connection.Token` | waited before the request is sent, inside its span and in `http.client.request.duration` |
 
 An abort emulates a dependency that can't be reached, in every client: a
 transport error, `Unavailable`, a lost connection. A delay is waited, and
@@ -230,11 +234,18 @@ delay cut short's holds what cut it short, such as `context.DeadlineExceeded`,
 which it matches, and doesn't match `fit.ErrInjected`. One exception: an
 `httpclient` call that its `Timeout` ends returns net/http's timeout error,
 which matches `context.DeadlineExceeded` but holds no `*fault.InjectedError`,
-since net/http replaces the error the transport returned. The attempts'
-spans still carry the injected error's `error.type`.
+since net/http replaces the error the transport returned. So may a `kube`
+request whose delay is cut short by the `Timeout` of a `rest.Config` the end
+user set, since client-go then gives the `http.Client` that `Timeout` too.
+`Client.Config()` sets none, so a controller's own requests always fail with
+the `*fault.InjectedError`. The attempts' spans still carry the injected
+error's `error.type`.
 
 The probes servers, the OTLP exporters and `grpcclient`'s `Connected` serve
-no request, and are no injection point.
+no request, and are no injection point. A Kubernetes controller's informers,
+leader election and check that its resource is served run on `Serve`'s
+context, which never carries a scenario, so their requests are evaluated
+without one.
 
 ### Points of your own
 
@@ -279,11 +290,13 @@ end user's code runs, unless its `TrustScenario` setting trusts the caller:
 | [`grpcserver`](/humus/grpc/) | the RPC's context, which holds its peer and its incoming metadata, and its full method |
 | The Kafka [consumer](/humus/kafka/) | the record's `kafka.Message` |
 | The RabbitMQ [consumer](/humus/rabbitmq/) | the delivery's `rabbitmq.Message` |
+| A Kubernetes [controller](/humus/kubernetes/#trusting-an-objects-annotation-trustscenario), with the `kube.TrustScenario` part | the object, whose annotation carries the scenario into the object's reconciles |
 
 - **A nil `TrustScenario` trusts no caller,** and is the default. A server
   the end user hasn't decided about is a trust boundary, so an API on the
   internet strips every scenario without any setting, and only a server the
-  end user marks takes them.
+  end user marks takes them. A controller without the `TrustScenario` part
+  reads no annotation.
 - **A stripped request keeps every other baggage member,** and its span gets
   a `humus.fit.strip` event.
 - **`TrustScenario` is asked only about a request that carries a scenario,**
@@ -291,8 +304,9 @@ end user's code runs, unless its `TrustScenario` setting trusts the caller:
   other request. It is set in code, not sourced: whom a server trusts is the
   end user's design decision, not an operator's.
 - **A panic in it is handled** as its server handles a panic of the end
-  user's code: `httpserver` and `grpcserver` fail that request, and the
-  consumers recover nothing, as for a `Processor`.
+  user's code: `httpserver` and `grpcserver` fail that request, the
+  consumers recover nothing, as for a `Processor`, and a controller recovers
+  it as a Reconciler's panic, and doesn't retry the object.
 
 Trust needs nothing from [authentication](/humus/auth/), which runs
 later, in the end user's handlers and interceptors. A request already
@@ -394,6 +408,34 @@ func (r relay) Process(ctx context.Context, m rabbitmq.Message) error {
 A `UserID` that isn't that user is refused by the broker with
 `406 PRECONDITION_FAILED`, which `Publish` returns at once, with no retry.
 
+### Kubernetes: the object's annotation
+
+A controller's reconciles answer no request, so a scenario reaches them in
+an annotation of the object they reconcile, which the end user names, such
+as `acme.example.com/failure-scenario`. Who may set it is the cluster's to
+decide, with RBAC and admission, so `kube.TrustScenario`'s `trust` is handed
+the object, and reads what those decisions leave visible on it. This one
+trusts every object in the staging namespace, where an admission policy lets
+only the chaos harness's ServiceAccount set the annotation:
+
+```go
+kube.TrustScenario(scenarioAnnotation, func(obj metav1.Object) bool {
+	return obj.GetNamespace() == "staging"
+}),
+```
+
+The annotation's value is W3C baggage that carries a scenario as the App's
+`Decoder` reads it, so a scenario written for a request's `baggage` header
+goes on an object unchanged. Only the `Decoder`'s members join the
+reconcile's context: any other member of the annotation is dropped. The
+reconcile's Reconciler, a `Finalize`'s function, the controller's own
+writes, and every request and point they reach then see the scenario. An
+untrusted object's scenario, and a value that isn't W3C baggage, are
+stripped on the reconcile's span. Adding the annotation starts an
+experiment, and removing it ends one, at once, as
+[Starting and ending an experiment](/humus/kubernetes/#starting-and-ending-an-experiment)
+shows.
+
 ### A job trusts its `BAGGAGE`
 
 A [job](/humus/jobs/#joining-the-trace-that-started-the-job) reads
@@ -437,8 +479,22 @@ strip it. Only its server's trust is needed. For a Kafka `Producer` or a
 RabbitMQ `Publisher`, the dependency is every consumer of the topic or the
 destination, and so is the trust boundary.
 
+**The `kube` Client has no `ForwardScenario`.** The API server takes no part
+in failure injection, so the Client strips the scenario from every request
+it sends. In Kubernetes, sending a scenario on means carrying it on to the
+reconciled object's children instead: in a reconcile that carries a
+scenario, the Client sets the `TrustScenario`'s annotation in every
+server-side apply of an object whose controller owner reference is the
+reconciled object. So one experiment on the top object of an operator of
+several controllers reaches every controller below it, as
+[An operator of two controllers](/humus/kubernetes/#an-operator-of-two-controllers)
+shows. A create, an update, and a patch that isn't an apply are sent as
+they are, since only an apply takes the annotation off again once the
+experiment ends.
+
 Forwarding puts the scenario on what is sent, and the next service still
-decides whether to trust it. A RabbitMQ consumer that trusts by `UserID`
+decides whether to trust it, as a child's controller does with a
+`TrustScenario` of its own. A RabbitMQ consumer that trusts by `UserID`
 keeps a forwarded scenario only from a `Publish` that sets
 `Publishing.UserID` to the user its `Publisher` logs in as, as
 [RabbitMQ: `UserID`](#rabbitmq-userid) shows.
@@ -456,6 +512,7 @@ attempt is retried, and the breaker counts it, as that failure would be:
 | `grpcclient` | `Unavailable`: `Retry`, `Failure`, under the default `Classify` | `DeadlineExceeded`: `Stop`, `Failure`. `Canceled`: `Stop`, `Ignored` |
 | Kafka `Producer` | `Failure`. The Producer retries nothing of its own, and franz-go is never reached | by `DeliveryTimeout`: `Failure`, as records not stored in time are |
 | RabbitMQ `Publisher` | as a lost connection: `Retry`, `Failure` | as an attempt whose context ended: no further attempt, and `Failure` when the deadline passed, `Ignored` when the caller cancelled |
+| `kube` `Client` | returned by client-go at once, since it retries only a connection that was reset, ended early or lost, and a response with `Retry-After`, not even a GET's. Returned by the Reconciler, it retries the object with the work queue's backoff, and the reconcile's outcome is `error` | returned by client-go at once, and retried with the object, as an abort is. A delay that isn't cut short only makes the request, and its reconcile, slower |
 
 - **A retried attempt meets the same fault.** Each attempt evaluates the
   point again, and the scenario hasn't changed. So a call that a scenario
@@ -469,6 +526,13 @@ attempt is retried, and the breaker counts it, as that failure would be:
   is the point of the scenario.
 - **humus's own instruments count these attempts** like any other, such as
   `humus.circuit.calls` and `humus.retry.decisions`.
+- **A controller has no breaker, and its Client retries nothing.** Its work
+  queue retries the object instead, and the scenario stays as long as the
+  object's annotation, so every retry meets it again: an object whose
+  reconcile a scenario aborts backs off to `RetryMaxDelay`, as it would
+  while the API server is down. The controller's own writes, its status and
+  its finalizer, are requests like any other, so a scenario can fail them
+  too.
 
 FIT works this way at Netflix: injected latency exhausted a Hystrix
 command's thread pool, its fallbacks were served, and its circuit opened,
@@ -548,12 +612,25 @@ request passes through are discovered: a scenario with no rules injects
 nothing and reports every point. A request with no scenario adds no event.
 In `httpclient` and the Kafka `Producer`, the span is the attempt's or the
 record's own. In `grpcclient` it is the caller's, since the attempt's span
-doesn't exist yet. The RabbitMQ `Publisher`'s is the `Publish`'s span.
+doesn't exist yet. The RabbitMQ `Publisher`'s is the `Publish`'s span. The
+`kube` Client's is the request's own span, from `otelhttp`, except a
+watch's: the Client doesn't trace a watch, so its event lands on the span in
+its context, such as a reconcile's.
 
 **A strip is a `humus.fit.strip` event,** with no attributes, on the span
 where it happens: a server's span when a server strips an untrusted caller,
-and a client's span when a client strips what it sends. The span's kind
-tells the two apart.
+a client's span when a client strips what it sends, and a reconcile's span
+when a controller drops an object's annotation. The span's kind tells a
+server's from a client's.
+
+**One strip has attributes:** a reconcile's strip of an annotation that
+isn't W3C baggage has `error.type` and `error.message`. A server's
+propagator drops baggage it can't parse before humus sees it, so a server's
+strip has nothing to explain. A controller parses the annotation itself, so
+only it can tell an annotation it can't read from an object it doesn't
+trust. Setting a child's annotation adds no event: the apply's span has its
+evaluation and its strip, and the child's reconciles show the scenario they
+carry.
 
 **An injected failure's `error.type` is
 `github.com/z5labs/humus/fault.InjectedError`,** an abort or a delay cut
@@ -699,6 +776,34 @@ b := storedBaggage(t, stored[0])
 require.Equal(t, "acme", b.Member("tenant").Value())
 require.Equal(t, forward, b.Member(scenarioKey).Key() != "", "the scenario member")
 ```
+
+### A Kubernetes object's annotation
+
+A test of a controller is the harness: it writes the scenario into an
+object's annotation. Inside `synctest`, on client-go's fakes, as
+[Testing](/humus/kubernetes/#the-reconciler-as-a-function) on the
+Kubernetes page describes, `kube`'s own test of the staging controller
+starts an experiment on a Memcached in staging and on one elsewhere, with
+the harness's `setScenario`, and sees only the first carry the scenario:
+
+```go
+staging := fc.dyn.Resource(Memcached.GVR()).Namespace("staging")
+elsewhere := fc.dyn.Resource(Memcached.GVR()).Namespace("default")
+require.NoError(t, setScenario(t.Context(), staging, "cache", value))
+require.NoError(t, setScenario(t.Context(), elsewhere, "cache", value))
+time.Sleep(settle)
+
+require.Equal(t, []bool{false, true}, rec.of("staging/cache"), "the annotation starts the experiment at once")
+require.Equal(t, []bool{false, false}, rec.of("default/cache"), "only the staging namespace runs experiments")
+```
+
+`rec`'s Reconciler records, for each reconcile, whether
+`s.Faults.Eval(ctx, "kube:deployments.apps:patch")` aborts. client-go's
+fakes never see a request's context, so the points of the Client's own
+requests, and the annotation carried on to children, are tested against
+k3s, as
+[The whole App, against k3s](/humus/kubernetes/#the-whole-app-against-k3s)
+describes.
 
 ### A unit test
 
