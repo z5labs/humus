@@ -21,9 +21,14 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/fit"
+	"go.opentelemetry.io/otel/baggage"
+
+	"github.com/z5labs/humus/fault/jsonscenario"
 )
 
 const (
+	exitFailure  = 1
 	exitConfig   = 78
 	period       = "2025-12"
 	declinedCode = "card_declined"
@@ -49,6 +54,10 @@ var All = []Case{
 	{Name: "RunningAgain", Run: RunningAgain},
 	{Name: "ADeclinedCard", Run: ADeclinedCard},
 	{Name: "ABadSetting", Run: ABadSetting},
+	{Name: "ThePaymentsAPIIsDown", Run: ThePaymentsAPIIsDown},
+	{Name: "ThePaymentsAPIIsSlow", Run: ThePaymentsAPIIsSlow},
+	{Name: "ChargedButNotRecorded", Run: ChargedButNotRecorded},
+	{Name: "TheMonthCantBeIssued", Run: TheMonthCantBeIssued},
 }
 
 func BillingAMonth(t testing.TB, target Target) {
@@ -119,6 +128,98 @@ func ABadSetting(t testing.TB, target Target) {
 		require.Empty(t, db.invoices(ctx, t), "BILLING_PERIOD=%s", setting)
 		require.Empty(t, db.journal(ctx, t, target), "BILLING_PERIOD=%s", setting)
 	}
+}
+
+func ThePaymentsAPIIsDown(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	db := newDatabase(ctx, t, target, "billing-")
+	db.subscribe(ctx, t, "a", "b", "c")
+
+	require.Equal(t, exitFailure, db.runWith(ctx, t, target, rehearsing(t, fit.Rule{Point: "http:*", Fault: fit.Fault{Abort: true}})))
+
+	invoices := db.invoices(ctx, t)
+	require.Len(t, invoices, 3)
+	for _, inv := range invoices {
+		require.Equal(t, "pending", inv.State)
+	}
+	require.Empty(t, db.journal(ctx, t, target))
+
+	require.Equal(t, 0, db.run(ctx, t, target, period))
+
+	invoices = db.invoices(ctx, t)
+	requireCharged(t, invoices)
+	requireSentOnce(t, target, invoices, db.journal(ctx, t, target))
+}
+
+func ThePaymentsAPIIsSlow(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	db := newDatabase(ctx, t, target, "billing-")
+	db.subscribe(ctx, t, "a", "b", "c")
+
+	require.Equal(t, 0, db.runWith(ctx, t, target, rehearsing(t, fit.Rule{Point: "http:*", Fault: fit.Fault{Delay: 2 * time.Second}})))
+
+	invoices := db.invoices(ctx, t)
+	require.Len(t, invoices, 3)
+	requireCharged(t, invoices)
+	requireSentOnce(t, target, invoices, db.journal(ctx, t, target))
+}
+
+func ChargedButNotRecorded(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	db := newDatabase(ctx, t, target, "billing-")
+	db.subscribe(ctx, t, "a", "b", "c")
+	env := rehearsing(t, fit.Rule{Point: "postgresql:settle", Fault: fit.Fault{Abort: true}})
+	env["BILLING_CONCURRENCY"] = "1"
+
+	require.Equal(t, exitFailure, db.runWith(ctx, t, target, env))
+
+	invoices := db.invoices(ctx, t)
+	require.Len(t, invoices, 3)
+	for _, inv := range invoices {
+		require.Equal(t, "pending", inv.State)
+	}
+	first := db.journal(ctx, t, target)
+	require.Len(t, first, 1, "one invoice sent before its settle was aborted")
+	key := first[0].header("Idempotency-Key")
+	require.Contains(t, ids(invoices), key)
+
+	require.Equal(t, 0, db.run(ctx, t, target, period))
+
+	invoices = db.invoices(ctx, t)
+	requireCharged(t, invoices)
+	want := make(map[string]int, len(invoices))
+	for _, inv := range invoices {
+		want[inv.ID] = 1
+	}
+	want[key] = 2
+	requireSent(t, target, invoices, db.journal(ctx, t, target), want)
+}
+
+func TheMonthCantBeIssued(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	db := newDatabase(ctx, t, target, "billing-")
+	active := db.subscribe(ctx, t, "a", "b", "c")
+
+	require.Equal(t, exitFailure, db.runWith(ctx, t, target, rehearsing(t, fit.Rule{Point: "postgresql:issue", Fault: fit.Fault{Abort: true}})))
+
+	require.Empty(t, db.invoices(ctx, t))
+	require.Empty(t, db.journal(ctx, t, target))
+
+	require.Equal(t, 0, db.run(ctx, t, target, period))
+
+	invoices := db.invoices(ctx, t)
+	require.Equal(t, active, accounts(invoices))
+	requireCharged(t, invoices)
+	requireSentOnce(t, target, invoices, db.journal(ctx, t, target))
+}
+
+func rehearsing(t testing.TB, rule fit.Rule) map[string]string {
+	t.Helper()
+	codec, err := jsonscenario.New("acme.fault")
+	require.NoError(t, err)
+	b, err := codec.Encode(baggage.Baggage{}, fit.Scenario{Rules: []fit.Rule{rule}})
+	require.NoError(t, err)
+	return map[string]string{"BILLING_PERIOD": period, "BAGGAGE": b.String()}
 }
 
 func bounded(t testing.TB, target Target) context.Context {
@@ -196,7 +297,12 @@ func (db database) insert(ctx context.Context, t testing.TB, active bool, suffix
 
 func (db database) run(ctx context.Context, t testing.TB, target Target, billingPeriod string) int {
 	t.Helper()
-	code, err := target.Run(ctx, db.url, map[string]string{"BILLING_PERIOD": billingPeriod})
+	return db.runWith(ctx, t, target, map[string]string{"BILLING_PERIOD": billingPeriod})
+}
+
+func (db database) runWith(ctx context.Context, t testing.TB, target Target, env map[string]string) int {
+	t.Helper()
+	code, err := target.Run(ctx, db.url, env)
 	require.NoError(t, err, "running the billing job")
 	return code
 }
@@ -220,6 +326,24 @@ func (db database) invoices(ctx context.Context, t testing.TB) []invoice {
 	invoices, err := pgx.CollectRows(rows, pgx.RowToStructByPos[invoice])
 	require.NoError(t, err)
 	return invoices
+}
+
+func ids(invoices []invoice) []string {
+	var ids []string
+	for _, inv := range invoices {
+		ids = append(ids, inv.ID)
+	}
+	return ids
+}
+
+func requireCharged(t testing.TB, invoices []invoice) {
+	t.Helper()
+	require.NotEmpty(t, invoices)
+	for _, inv := range invoices {
+		require.Equal(t, period, inv.Period)
+		require.Equal(t, "charged", inv.State)
+		require.Equal(t, "ch_"+inv.ID, inv.ChargeID)
+	}
 }
 
 func accounts(invoices []invoice) []string {
@@ -255,19 +379,29 @@ func (s sent) account(t testing.TB) string {
 
 func requireSentOnce(t testing.TB, target Target, invoices []invoice, charges []sent) {
 	t.Helper()
-	require.Len(t, charges, len(invoices), "one charge per invoice")
-	byKey := make(map[string]sent, len(charges))
+	want := make(map[string]int, len(invoices))
+	for _, inv := range invoices {
+		want[inv.ID] = 1
+	}
+	requireSent(t, target, invoices, charges, want)
+}
+
+func requireSent(t testing.TB, target Target, invoices []invoice, charges []sent, want map[string]int) {
+	t.Helper()
+	byID := make(map[string]invoice, len(invoices))
+	for _, inv := range invoices {
+		byID[inv.ID] = inv
+	}
+	got := make(map[string]int, len(charges))
 	for _, c := range charges {
 		key := c.header("Idempotency-Key")
-		require.NotContains(t, byKey, key, "a second charge with the key %s", key)
-		byKey[key] = c
-	}
-	for _, inv := range invoices {
-		c, ok := byKey[inv.ID]
-		require.True(t, ok, "no charge with the key of invoice %s", inv.ID)
+		inv, ok := byID[key]
+		require.True(t, ok, "a charge with the key %s, of no invoice", key)
 		require.Equal(t, inv.AccountID, c.account(t))
 		require.Equal(t, "Bearer "+target.Key, c.header("Authorization"))
+		got[key]++
 	}
+	require.Equal(t, want, got, "charges sent, by Idempotency-Key")
 }
 
 func (db database) journal(ctx context.Context, t testing.TB, target Target) []sent {
