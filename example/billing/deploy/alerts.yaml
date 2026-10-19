@@ -1,0 +1,131 @@
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: billing
+    folder: Billing
+    interval: 1m
+    rules:
+      - uid: billing-not-succeeded
+        title: BillingNotSucceeded
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 93600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: min(min_over_time(billing_invoices_pending{job="billing"}[26h])) or vector(1)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: Alerting
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: No billing run has left nothing pending in 26h.
+          description: Either no run has ended in 26h, or every run that did left invoices pending. Look at the CronJob's Jobs and the latest run's logs.
+      - uid: billing-invoices-pending
+        title: BillingInvoicesPending
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 93600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: max(last_over_time(billing_invoices_pending{job="billing"}[26h])) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: The last billing run left {{ $values.A.Value }} invoices pending.
+          description: The Job retries the run, and the next scheduled run charges whatever is still pending. The run's exit cause says why they were left.
+      - uid: billing-invoices-failed
+        title: BillingInvoicesFailed
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 86400
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: sum(max_over_time(billing_invoices_settled{job="billing", billing_invoice_state="failed"}[1d])) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: Billing failed {{ $values.A.Value }} invoices in the last day.
+          description: A failed invoice is final, and keeps the payments API's answer that failed it. A person has to look at each one.
+      - uid: billing-payments-breaker-opened
+        title: BillingPaymentsBreakerOpened
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 86400
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: sum(max_over_time(humus_circuit_transitions{job="billing", humus_circuit_state="open"}[1d])) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: info
+        annotations:
+          summary: The payments client's breaker opened in the last day.
+          description: A run stops charging when the breaker opens, and leaves the rest pending for its retry or the next run.
