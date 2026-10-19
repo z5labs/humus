@@ -1,0 +1,24 @@
+{
+  "priority": 1,
+  "request": {
+    "method": "POST",
+    "url": "/v1/messages",
+    "headers": {
+      "Authorization": {
+        "or": [
+          { "absent": true },
+          { "doesNotMatch": "^Bearer \\S+$" }
+        ]
+      }
+    }
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "reason": "no bearer token"
+    }
+  }
+}

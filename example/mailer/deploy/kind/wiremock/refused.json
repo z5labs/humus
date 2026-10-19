@@ -1,0 +1,24 @@
+{
+  "priority": 2,
+  "request": {
+    "method": "POST",
+    "url": "/v1/messages",
+    "bodyPatterns": [
+      {
+        "matchesJsonPath": {
+          "expression": "$.to",
+          "matches": "(?i)^[^@]+@([^@.]+\\.)*invalid$"
+        }
+      }
+    ]
+  },
+  "response": {
+    "status": 422,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "reason": "the recipient's domain does not exist"
+    }
+  }
+}
