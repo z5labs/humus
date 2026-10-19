@@ -19,6 +19,11 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/noop"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/z5labs/humus/example/orderstatus/projector"
 	"github.com/z5labs/humus/example/orderstatus/store"
@@ -109,6 +114,44 @@ func (s *memoryStore) Apply(ctx context.Context, e store.Event, status store.Sta
 	s.events = append(s.events, e)
 	s.applied = append(s.applied, applied{event: e, status: status})
 	return nil
+}
+
+func newProjector(t *testing.T, s projector.Store, status, retries, deadLetters projector.Producer, set projector.Settings) *projector.Projector {
+	t.Helper()
+	return newMeasuredProjector(t, s, status, retries, deadLetters, set, noop.NewMeterProvider())
+}
+
+func newMeasuredProjector(t *testing.T, s projector.Store, status, retries, deadLetters projector.Producer, set projector.Settings, meters metric.MeterProvider) *projector.Projector {
+	t.Helper()
+	p, err := projector.New(s, status, retries, deadLetters, set, meters)
+	require.NoError(t, err)
+	return p
+}
+
+func counts(t *testing.T, reader *sdkmetric.ManualReader, name string) map[string]int64 {
+	t.Helper()
+	var rm metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(t.Context(), &rm))
+	got := map[string]int64{}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != name {
+				continue
+			}
+			require.Equal(t, "github.com/z5labs/humus/example/orderstatus", sm.Scope.Name)
+			require.Equal(t, "{record}", m.Unit)
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			require.True(t, ok, "%s is a %T", name, m.Data)
+			require.True(t, sum.IsMonotonic)
+			for _, dp := range sum.DataPoints {
+				require.Equal(t, 1, dp.Attributes.Len())
+				reason, ok := dp.Attributes.Value(attribute.Key("orderstatus.reason"))
+				require.True(t, ok)
+				got[reason.AsString()] += dp.Value
+			}
+		}
+	}
+	return got
 }
 
 func firstErr(errs ...error) error {
@@ -251,7 +294,7 @@ func TestProcess_ProducesEachChangeThenStoresTheEvent(t *testing.T) {
 		s := &memoryStore{}
 		status := &producer{}
 		dlq := &producer{}
-		p := projector.New(s, status, &producer{}, dlq, settings)
+		p := newProjector(t, s, status, &producer{}, dlq, settings)
 
 		require.NoError(t, p.Process(t.Context(), eventMessage(10, projector.Placed, 0)))
 		require.NoError(t, p.Process(t.Context(), eventMessage(11, projector.Paid, 1)))
@@ -275,7 +318,7 @@ func TestProcess_ALateEventProducesItsChangeAndEveryLaterOneAgain(t *testing.T) 
 	synctest.Test(t, func(t *testing.T) {
 		s := &memoryStore{}
 		status := &producer{}
-		p := projector.New(s, status, &producer{}, &producer{}, settings)
+		p := newProjector(t, s, status, &producer{}, &producer{}, settings)
 
 		require.NoError(t, p.Process(t.Context(), eventMessage(10, projector.Placed, 0)))
 		require.NoError(t, p.Process(t.Context(), eventMessage(11, projector.Cancelled, 2)))
@@ -298,7 +341,7 @@ func TestProcess_AnEventThatRepeatsTheStatusIsStoredAndProducesNothing(t *testin
 	synctest.Test(t, func(t *testing.T) {
 		s := &memoryStore{}
 		status := &producer{}
-		p := projector.New(s, status, &producer{}, &producer{}, settings)
+		p := newProjector(t, s, status, &producer{}, &producer{}, settings)
 
 		require.NoError(t, p.Process(t.Context(), eventMessage(10, projector.Placed, 0)))
 		status.records = nil
@@ -316,7 +359,7 @@ func TestProcess_ARedeliveredEventProducesAndStoresNothing(t *testing.T) {
 		s := &memoryStore{}
 		status := &producer{}
 		dlq := &producer{}
-		p := projector.New(s, status, &producer{}, dlq, settings)
+		p := newProjector(t, s, status, &producer{}, dlq, settings)
 
 		require.NoError(t, p.Process(t.Context(), eventMessage(10, projector.Placed, 0)))
 		require.NoError(t, p.Process(t.Context(), eventMessage(11, projector.Paid, 1)))
@@ -333,7 +376,7 @@ func TestProcess_ARedeliveredEventProducesAndStoresNothing(t *testing.T) {
 func TestProcess_AnEventAnotherWriterAppliedFirstIsNotAnError(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s := &memoryStore{applyErrs: []error{fmt.Errorf("storing: %w", store.ErrApplied)}}
-		p := projector.New(s, &producer{}, &producer{}, &producer{}, settings)
+		p := newProjector(t, s, &producer{}, &producer{}, &producer{}, settings)
 
 		require.NoError(t, p.Process(t.Context(), eventMessage(10, projector.Placed, 0)))
 	})
@@ -368,7 +411,7 @@ func TestProcess_DeadLetters(t *testing.T) {
 				s := &memoryStore{}
 				status := &producer{}
 				dlq := &producer{}
-				p := projector.New(s, status, &producer{}, dlq, settings)
+				p := newProjector(t, s, status, &producer{}, dlq, settings)
 
 				require.NoError(t, p.Process(t.Context(), tc.msg))
 
@@ -403,7 +446,7 @@ func TestProcess_DeadLetters(t *testing.T) {
 func TestProcess_ADeadLetterThatCannotBeProducedIsTheError(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		errDown := errors.New("cluster down")
-		p := projector.New(&memoryStore{}, &producer{}, &producer{}, &producer{err: errDown}, settings)
+		p := newProjector(t, &memoryStore{}, &producer{}, &producer{}, &producer{err: errDown}, settings)
 
 		err := p.Process(t.Context(), message(20, `placed`))
 
@@ -447,7 +490,7 @@ func TestProcess_RetriesThenDeadLetters(t *testing.T) {
 				status := tc.status()
 				retries := &producer{}
 				dlq := &producer{}
-				p := projector.New(s, status, retries, dlq, settings)
+				p := newProjector(t, s, status, retries, dlq, settings)
 				m := eventMessage(11, projector.Shipped, 1)
 				if tc.reason == "unavailable" {
 					m = eventMessage(11, projector.Placed, 1)
@@ -514,7 +557,7 @@ func TestProcess_ARetriedRecordWaitsItsBackoff(t *testing.T) {
 		dlq := &producer{}
 		ten := settings
 		ten.Attempts = 10
-		p := projector.New(s, &producer{}, retries, dlq, ten)
+		p := newProjector(t, s, &producer{}, retries, dlq, ten)
 
 		m := eventMessage(11, projector.Shipped, 1)
 		var waits []time.Duration
@@ -562,7 +605,7 @@ func TestProcess_ARetriedRecordWaitsFromItsTimestamp(t *testing.T) {
 				s := &memoryStore{events: []store.Event{storedEvent(10, projector.Placed, 0)}}
 				ten := settings
 				ten.Attempts = 10
-				p := projector.New(s, &producer{}, &producer{}, &producer{}, ten)
+				p := newProjector(t, s, &producer{}, &producer{}, &producer{}, ten)
 				m := retryMessage(eventMessage(11, projector.Paid, 1), 3, time.Now().Add(-tc.age))
 
 				before := time.Now()
@@ -581,7 +624,7 @@ func TestProcess_AWaitHonoursItsContext(t *testing.T) {
 		status := &producer{}
 		retries := &producer{}
 		dlq := &producer{}
-		p := projector.New(s, status, retries, dlq, settings)
+		p := newProjector(t, s, status, retries, dlq, settings)
 		ctx, cancel := context.WithCancel(t.Context())
 		time.AfterFunc(500*time.Millisecond, cancel)
 
@@ -603,7 +646,7 @@ func TestProcess_ARefusedEventFoldsOnceItsRetryComesBack(t *testing.T) {
 		status := &producer{}
 		retries := &producer{}
 		dlq := &producer{}
-		p := projector.New(s, status, retries, dlq, settings)
+		p := newProjector(t, s, status, retries, dlq, settings)
 
 		require.NoError(t, p.Process(t.Context(), eventMessage(10, projector.Placed, 0)))
 		require.NoError(t, p.Process(t.Context(), eventMessage(11, projector.Shipped, 2)))
@@ -634,7 +677,7 @@ func TestProcess_ARetriedRecordAppliedAlreadyIsSkippedByItsPlace(t *testing.T) {
 		status := &producer{}
 		retries := &producer{}
 		dlq := &producer{}
-		p := projector.New(s, status, retries, dlq, settings)
+		p := newProjector(t, s, status, retries, dlq, settings)
 
 		require.NoError(t, p.Process(t.Context(), retryMessage(eventMessage(11, projector.Paid, 1), 1, time.Now())))
 
@@ -682,7 +725,7 @@ func TestProcess_TheStoreIsRetriedInProcess(t *testing.T) {
 				s := tc.store(4)
 				status := &producer{}
 				retries := &producer{}
-				p := projector.New(s, status, retries, &producer{}, settings)
+				p := newProjector(t, s, status, retries, &producer{}, settings)
 
 				require.NoError(t, p.Process(t.Context(), eventMessage(10, projector.Placed, 0)))
 
@@ -698,7 +741,7 @@ func TestProcess_TheStoreIsRetriedInProcess(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				s := tc.store(5)
 				retries := &producer{}
-				p := projector.New(s, &producer{}, retries, &producer{}, settings)
+				p := newProjector(t, s, &producer{}, retries, &producer{}, settings)
 
 				require.NoError(t, p.Process(t.Context(), eventMessage(10, projector.Placed, 0)))
 
@@ -738,7 +781,7 @@ func TestProcess_WorkThatOutlastsItsDeadlineIsRetried(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				s := &memoryStore{}
 				retries := &producer{}
-				p := projector.New(s, &producer{block: true}, retries, &producer{}, settings)
+				p := newProjector(t, s, &producer{block: true}, retries, &producer{}, settings)
 
 				before := time.Now()
 				require.NoError(t, p.Process(t.Context(), tc.msg()))
@@ -760,13 +803,15 @@ func TestProcess_ACancelledContextIsTheErrorAndNotARetry(t *testing.T) {
 		s := &memoryStore{}
 		retries := &producer{}
 		dlq := &producer{}
-		p := projector.New(s, &producer{block: true}, retries, dlq, settings)
+		p := newProjector(t, s, &producer{block: true}, retries, dlq, settings)
 		ctx, cancel := context.WithCancel(t.Context())
 		time.AfterFunc(time.Second, cancel)
 
 		err := p.Process(ctx, eventMessage(10, projector.Placed, 0))
 
 		require.ErrorIs(t, err, context.Canceled)
+		require.ErrorContains(t, err, "orders.events, partition 4, offset 10")
+		require.NotContains(t, err.Error(), "order-1")
 		require.Empty(t, retries.records)
 		require.Empty(t, dlq.records)
 		require.Empty(t, s.applied)
@@ -798,7 +843,7 @@ func TestProcess_ARecordThatCannotGoAnywhereIsTheError(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				s := &memoryStore{events: []store.Event{storedEvent(10, projector.Placed, 0)}}
-				p := projector.New(s, &producer{}, tc.retries, tc.dlq, settings)
+				p := newProjector(t, s, &producer{}, tc.retries, tc.dlq, settings)
 
 				err := p.Process(t.Context(), tc.msg())
 
@@ -815,7 +860,7 @@ func TestProcess_RetryHeadersOnARecordFromTheEventsTopicAreIgnored(t *testing.T)
 	synctest.Test(t, func(t *testing.T) {
 		s := &memoryStore{events: []store.Event{storedEvent(10, projector.Placed, 0)}}
 		retries := &producer{}
-		p := projector.New(s, &producer{}, retries, &producer{}, settings)
+		p := newProjector(t, s, &producer{}, retries, &producer{}, settings)
 		m := eventMessage(11, projector.Shipped, 1)
 		m.Headers = append(m.Headers,
 			kafka.Header{Key: "retry.attempt", Value: []byte("9")},
@@ -868,7 +913,7 @@ func TestProcess_ARetriedRecordWithBadHeadersIsADeadLetter(t *testing.T) {
 				s := &memoryStore{}
 				retries := &producer{}
 				dlq := &producer{}
-				p := projector.New(s, &producer{}, retries, dlq, settings)
+				p := newProjector(t, s, &producer{}, retries, dlq, settings)
 				m := retryMessage(eventMessage(10, projector.Placed, 0), 1, time.Now())
 				m.Headers = tc.change(m.Headers)
 
@@ -886,6 +931,107 @@ func TestProcess_ARetriedRecordWithBadHeadersIsADeadLetter(t *testing.T) {
 				require.Equal(t, "7", headers["dlq.partition"])
 				require.Equal(t, "900", headers["dlq.offset"])
 				require.NotContains(t, headers, "dlq.attempts")
+			})
+		})
+	}
+}
+
+func TestProcess_CountsEachRetryAndDeadLetterByReason(t *testing.T) {
+	errDown := errors.New("down")
+	at := start.Format(time.RFC3339)
+	testCases := []struct {
+		name        string
+		store       func() *memoryStore
+		msg         kafka.Message
+		retries     map[string]int64
+		deadLetters map[string]int64
+	}{
+		{
+			name:        "a malformed record",
+			store:       func() *memoryStore { return &memoryStore{} },
+			msg:         message(20, `placed`),
+			retries:     map[string]int64{},
+			deadLetters: map[string]int64{"malformed": 1},
+		},
+		{
+			name:        "an unknown type",
+			store:       func() *memoryStore { return &memoryStore{} },
+			msg:         message(20, fmt.Sprintf(`{"type":"returned","at":%q}`, at)),
+			retries:     map[string]int64{},
+			deadLetters: map[string]int64{"unknown-type": 1},
+		},
+		{
+			name: "a refused event",
+			store: func() *memoryStore {
+				return &memoryStore{events: []store.Event{storedEvent(10, projector.Placed, 0)}}
+			},
+			msg:         eventMessage(11, projector.Shipped, 1),
+			retries:     map[string]int64{"invalid-transition": 1},
+			deadLetters: map[string]int64{},
+		},
+		{
+			name:        "a store that keeps failing",
+			store:       func() *memoryStore { return &memoryStore{eventsErr: errDown} },
+			msg:         eventMessage(11, projector.Placed, 1),
+			retries:     map[string]int64{"unavailable": 1},
+			deadLetters: map[string]int64{},
+		},
+		{
+			name: "a refused event on its last attempt",
+			store: func() *memoryStore {
+				return &memoryStore{events: []store.Event{storedEvent(10, projector.Placed, 0)}}
+			},
+			msg:         retryMessage(eventMessage(11, projector.Shipped, 1), 2, start),
+			retries:     map[string]int64{},
+			deadLetters: map[string]int64{"invalid-transition": 1},
+		},
+		{
+			name:        "an event projected",
+			store:       func() *memoryStore { return &memoryStore{} },
+			msg:         eventMessage(10, projector.Placed, 0),
+			retries:     map[string]int64{},
+			deadLetters: map[string]int64{},
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				reader := sdkmetric.NewManualReader()
+				meters := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+				p := newMeasuredProjector(t, tc.store(), &producer{}, &producer{}, &producer{}, settings, meters)
+
+				require.NoError(t, p.Process(t.Context(), tc.msg))
+
+				require.Equal(t, tc.retries, counts(t, reader, "orderstatus.retries"))
+				require.Equal(t, tc.deadLetters, counts(t, reader, "orderstatus.dead_letters"))
+			})
+		})
+	}
+}
+
+func TestProcess_ARetryOrDeadLetterThatCannotBeProducedCountsNothing(t *testing.T) {
+	errDown := errors.New("cluster down")
+	testCases := []struct {
+		name    string
+		msg     kafka.Message
+		retries *producer
+		dlq     *producer
+	}{
+		{name: "a retry", msg: eventMessage(11, projector.Shipped, 1), retries: &producer{err: errDown}, dlq: &producer{}},
+		{name: "a dead letter", msg: message(20, `placed`), retries: &producer{}, dlq: &producer{err: errDown}},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				reader := sdkmetric.NewManualReader()
+				meters := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+				s := &memoryStore{events: []store.Event{storedEvent(10, projector.Placed, 0)}}
+				p := newMeasuredProjector(t, s, &producer{}, tc.retries, tc.dlq, settings, meters)
+
+				require.ErrorIs(t, p.Process(t.Context(), tc.msg), errDown)
+
+				require.Empty(t, counts(t, reader, "orderstatus.retries"))
+				require.Empty(t, counts(t, reader, "orderstatus.dead_letters"))
 			})
 		})
 	}

@@ -12,5 +12,5 @@ import (
 )
 
 func main() {
-	humus.Main(app.Init)
+	humus.Main(app.Init, humus.WithTelemetry(app.BuildTelemetry))
 }

@@ -186,7 +186,7 @@ func (p *processor) cluster(t *testing.T, opts ...kfake.Opt) *kfake.Cluster {
 	return c
 }
 
-func (p *processor) start(t *testing.T, env map[string]string) (signal func(os.Signal), status <-chan bedrock.ExitStatus) {
+func (p *processor) start(t *testing.T, env map[string]string, opts ...humus.Option) (signal func(os.Signal), status <-chan bedrock.ExitStatus) {
 	t.Helper()
 	merged := maps.Clone(p.env)
 	for name, value := range env {
@@ -200,7 +200,7 @@ func (p *processor) start(t *testing.T, env map[string]string) (signal func(os.S
 		return initWith(ctx, s, p.store.open)
 	}
 	proc, st := humustest.Start(t, init,
-		humustest.WithApp(humus.WithHost(p.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		humustest.WithApp(append([]humus.Option{humus.WithHost(p.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)}, opts...)...),
 		humustest.WithEnv(merged),
 	)
 	return proc.Signal, st
