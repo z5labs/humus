@@ -35,8 +35,10 @@ const walkthroughs = docsContent + "/walkthroughs"
 // or a tested example. A Go, YAML, JSON, Dockerfile or protobuf sample on a
 // page under walkthroughs/<name>/ must appear, line for line, in a file under
 // example/<name>/, its _test.go files included, so it is taken from the
-// walkthrough's own code or tests. Indentation is compared relative to the sample, so a
-// sample may quote the body of a function or a nested block.
+// walkthrough's own code or tests. Files under hidden directories and
+// node_modules are not read for either rule. Indentation is compared relative
+// to the sample, so a sample may quote the body of a function or a nested
+// block.
 func TestDocs_code_samples(t *testing.T) {
 	problems, err := sampleProblems(os.DirFS("."))
 	if err != nil {
