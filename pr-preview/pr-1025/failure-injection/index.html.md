@@ -512,7 +512,7 @@ attempt is retried, and the breaker counts it, as that failure would be:
 | `grpcclient` | `Unavailable`: `Retry`, `Failure`, under the default `Classify` | `DeadlineExceeded`: `Stop`, `Failure`. `Canceled`: `Stop`, `Ignored` |
 | Kafka `Producer` | `Failure`. The Producer retries nothing of its own, and franz-go is never reached | by `DeliveryTimeout`: `Failure`, as records not stored in time are |
 | RabbitMQ `Publisher` | as a lost connection: `Retry`, `Failure` | as an attempt whose context ended: no further attempt, and `Failure` when the deadline passed, `Ignored` when the caller cancelled |
-| `kube` `Client` | returned by client-go at once, since it retries only a connection that was reset, ended early or lost, and a response with `Retry-After`, not even a GET's. Returned by the Reconciler, it retries the object with the work queue's backoff, and the reconcile's outcome is `error` | returned by client-go at once, and retried with the object, as an abort is. A delay that isn't cut short only slows the request, and the reconcile |
+| `kube` `Client` | returned by client-go at once, since it retries only a connection that was reset, ended early or lost, and a response with `Retry-After`, not even a GET's. Returned by the Reconciler, it retries the object with the work queue's backoff, and the reconcile's outcome is `error` | returned by client-go at once, and retried with the object, as an abort is. A delay that isn't cut short only makes the request, and its reconcile, slower |
 
 - **A retried attempt meets the same fault.** Each attempt evaluates the
   point again, and the scenario hasn't changed. So a call that a scenario

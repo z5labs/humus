@@ -1446,8 +1446,8 @@ kube:<resource>[.<group>][/<subresource>]:<verb>
   as kubectl writes a resource: `deployments.apps`, `secrets`,
   `memcacheds.cache.example.com`;
 - `<verb>` is the API server's: `get`, `list`, `watch`, `create`, `update`,
-  `patch`, `delete` or `deletecollection`. A server-side apply is a
-  `patch`;
+  `patch`, `delete` or `deletecollection`, or `proxy` for a request to a
+  resource's proxy. A server-side apply is a `patch`;
 - a request for a path that isn't a resource, such as discovery's `/apis`,
   is `kube:<path>:<verb>`, such as `kube:/apis:get`.
 
