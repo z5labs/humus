@@ -83,11 +83,11 @@ type Projector struct {
 func New(s Store, status, retries, deadLetters Producer, settings Settings, meters metric.MeterProvider) (*Projector, error) {
 	schedule, err := retry.Exponential(storeMinDelay, storeMaxDelay)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	r, err := retry.New(storeAttempts, schedule, classifyStore, nil)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	meter := meters.Meter(scope)
 	retried, err := meter.Int64Counter("orderstatus.retries",
