@@ -53,8 +53,16 @@ func (e *TransitionError) Error() string {
 }
 
 func Fold(history []store.Event, e store.Event) (store.Status, []Change, error) {
-	events := append(slices.Clone(history), e)
-	slices.SortStableFunc(events, func(a, b store.Event) int {
+	type entry struct {
+		store.Event
+		isNew bool
+	}
+	events := make([]entry, 0, len(history)+1)
+	for _, ev := range history {
+		events = append(events, entry{Event: ev})
+	}
+	events = append(events, entry{Event: e, isNew: true})
+	slices.SortStableFunc(events, func(a, b entry) int {
 		return cmp.Or(a.At.Compare(b.At), cmp.Compare(a.Offset, b.Offset))
 	})
 
@@ -62,14 +70,12 @@ func Fold(history []store.Event, e store.Event) (store.Status, []Change, error) 
 	var changes []Change
 	reached := false
 	for _, ev := range events {
-		if !reached && ev.Partition == e.Partition && ev.Offset == e.Offset {
-			reached = true
-		}
+		reached = reached || ev.isNew
 		if status.Status != "" && ev.Type == status.Status {
 			continue
 		}
 		if !slices.Contains(transitions[ev.Type], status.Status) {
-			return store.Status{}, nil, &TransitionError{Event: ev, Previous: status.Status}
+			return store.Status{}, nil, &TransitionError{Event: ev.Event, Previous: status.Status}
 		}
 		if reached {
 			changes = append(changes, Change{Status: ev.Type, Previous: status.Status, At: ev.At})

@@ -216,3 +216,18 @@ func TestFold_DoesNotReorderTheHistoryItWasGiven(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []store.Event{paid, placed}, h)
 }
+
+func TestFold_ChangesStartAtTheNewEventEvenIfTheHistoryRepeatsItsOffset(t *testing.T) {
+	placed := event(0, projector.Placed, 0)
+	paid := event(1, projector.Paid, 1)
+	cancelled := event(2, projector.Cancelled, 2)
+	again := paid
+	again.At = cancelled.At.Add(time.Minute)
+	again.Type = projector.Cancelled
+
+	status, changes, err := projector.Fold([]store.Event{placed, paid, cancelled}, again)
+
+	require.NoError(t, err)
+	require.Equal(t, store.Status{Status: projector.Cancelled, At: cancelled.At}, status)
+	require.Empty(t, changes)
+}
