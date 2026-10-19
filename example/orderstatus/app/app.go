@@ -252,6 +252,9 @@ func topicList(s string) ([]string, error) {
 }
 
 func trustTopics(topics []string) func(m kafka.Message) bool {
+	if len(topics) == 0 {
+		return nil
+	}
 	trusted := make(map[string]bool, len(topics))
 	for _, t := range topics {
 		trusted[t] = true
