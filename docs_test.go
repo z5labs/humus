@@ -9,10 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -21,35 +24,25 @@ import (
 // package.
 const docsContent = "docs/content"
 
-// TestDocs_code_samples checks that every Go code sample on the docs site is
-// taken from a test or a tested example: each one must appear, line for line,
-// in a _test.go file of this module. Indentation is compared relative to the
-// sample, so a sample may quote the body of a function.
+// walkthroughs is the docs site's Walkthroughs section. The pages of the
+// walkthrough of example/<name> are under walkthroughs/<name>/.
+const walkthroughs = docsContent + "/walkthroughs"
+
+// TestDocs_code_samples checks that every code sample the docs site quotes is
+// taken from the code it documents. A Go sample on any other page must appear,
+// line for line, in a _test.go file of this module, so it is taken from a test
+// or a tested example. A Go, YAML, JSON, Dockerfile or protobuf sample on a
+// page under walkthroughs/<name>/ must appear, line for line, in a file under
+// example/<name>/ other than a _test.go file, so it is taken from the
+// walkthrough's own code. Indentation is compared relative to the sample, so a
+// sample may quote the body of a function or a nested block.
 func TestDocs_code_samples(t *testing.T) {
-	sources := testSources(t)
-	pages := 0
-	err := filepath.WalkDir(docsContent, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || filepath.Ext(path) != ".md" {
-			return err
-		}
-		pages++
-		b, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		for _, s := range goSamples(string(b)) {
-			if !quotedIn(sources, s.lines) {
-				t.Errorf("%s:%d: the Go sample is not taken from any _test.go file:\n%s",
-					path, s.line, strings.Join(s.lines, "\n"))
-			}
-		}
-		return nil
-	})
+	problems, err := sampleProblems(os.DirFS("."))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pages == 0 {
-		t.Fatalf("no pages found under %s", docsContent)
+	for _, p := range problems {
+		t.Error(p)
 	}
 }
 
@@ -140,7 +133,7 @@ func frontMatter(page string) (pageFrontMatter, error) {
 	return fm, nil
 }
 
-func TestGoSamples(t *testing.T) {
+func TestSamples(t *testing.T) {
 	page := strings.Join([]string{
 		"# Title",
 		"```go",
@@ -151,21 +144,129 @@ func TestGoSamples(t *testing.T) {
 		"```sh",
 		"go test ./...",
 		"```",
+		"```",
 		"```go",
-		"z := 3",
+		"```",
+		"```YAML {hl_lines=[1]}",
+		"z: 3",
 		"```",
 	}, "\n")
 
-	got := goSamples(page)
+	got := samples(page)
 
-	if len(got) != 2 {
-		t.Fatalf("got %d samples, want 2: %v", len(got), got)
+	if len(got) != 4 {
+		t.Fatalf("got %d samples, want 4: %v", len(got), got)
 	}
-	if got[0].line != 2 || strings.Join(got[0].lines, "|") != "x := 1||y := 2" {
-		t.Errorf("first sample = %d %q, want line 2 and the dedented lines", got[0].line, got[0].lines)
+	if got[0].line != 2 || got[0].lang != "go" || strings.Join(got[0].lines, "|") != "x := 1||y := 2" {
+		t.Errorf("first sample = %d %q %q, want line 2, go and the dedented lines", got[0].line, got[0].lang, got[0].lines)
 	}
-	if got[1].line != 10 || strings.Join(got[1].lines, "|") != "z := 3" {
-		t.Errorf("second sample = %d %q", got[1].line, got[1].lines)
+	if got[1].line != 7 || got[1].lang != "sh" {
+		t.Errorf("second sample = %d %q, want line 7 and sh", got[1].line, got[1].lang)
+	}
+	if got[2].line != 10 || got[2].lang != "" || strings.Join(got[2].lines, "|") != "```go" {
+		t.Errorf("third sample = %d %q %q, want line 10, no language and the fence it quotes", got[2].line, got[2].lang, got[2].lines)
+	}
+	if got[3].line != 13 || got[3].lang != "yaml" || strings.Join(got[3].lines, "|") != "z: 3" {
+		t.Errorf("fourth sample = %d %q %q, want line 13 and yaml", got[3].line, got[3].lang, got[3].lines)
+	}
+}
+
+func TestSampleProblems(t *testing.T) {
+	repo := fstest.MapFS{
+		"app_test.go":                         {Data: []byte("func TestApp(t *testing.T) {\n\tt.Log(\"ok\")\n}\n")},
+		"example/billing/main.go":             {Data: []byte("func main() {\n\thumus.Main(app.Init)\n}\n")},
+		"example/billing/main_test.go":        {Data: []byte("func TestMain(t *testing.T) {\n\tt.Log(\"only in a test\")\n}\n")},
+		"example/billing/deploy/job.yaml":     {Data: []byte("kind: CronJob\nspec:\n  schedule: \"0 2 * * *\"\n")},
+		"example/billing/wiremock/pay.json":   {Data: []byte("{\n  \"request\": {\n    \"method\": \"POST\"\n  }\n}\n")},
+		"example/billing/Dockerfile":          {Data: []byte("FROM gcr.io/distroless/static-debian12:nonroot\nUSER nonroot\n")},
+		"example/billing/proto/billing.proto": {Data: []byte("message Invoice {\n  string id = 1;\n}\n")},
+		"example/mailer/main.go":              {Data: []byte("func send() {\n\tdeliver()\n}\n")},
+		"example/mailer/deploy/queue.yaml":    {Data: []byte("kind: Deployment\n")},
+		"example/mailer/wiremock/send.json":   {Data: []byte("{\n  \"status\": 202\n}\n")},
+		"example/mailer/Dockerfile":           {Data: []byte("ENTRYPOINT [\"/mailer\"]\n")},
+		"example/mailer/proto/mail.proto":     {Data: []byte("message Mail {}\n")},
+	}
+
+	const (
+		step    = walkthroughs + "/billing/step.md"
+		feature = docsContent + "/jobs.md"
+	)
+	cases := []struct {
+		name  string
+		page  string
+		fence string
+		lines []string
+		fails bool
+	}{
+		{"go from the walkthrough", step, "go", []string{"humus.Main(app.Init)"}, false},
+		{"yaml from the walkthrough", step, "yaml", []string{"spec:", "  schedule: \"0 2 * * *\""}, false},
+		{"json from the walkthrough", step, "json", []string{"\"request\": {", "  \"method\": \"POST\"", "}"}, false},
+		{"dockerfile from the walkthrough", step, "dockerfile", []string{"USER nonroot"}, false},
+		{"protobuf from the walkthrough", step, "protobuf", []string{"message Invoice {", "  string id = 1;", "}"}, false},
+		{"yml from the walkthrough", step, "yml", []string{"kind: CronJob"}, false},
+		{"proto from the walkthrough", step, "proto", []string{"string id = 1;"}, false},
+		{"Dockerfile from the walkthrough", step, "Dockerfile", []string{"USER nonroot"}, false},
+		{"go from another walkthrough", step, "go", []string{"deliver()"}, true},
+		{"yaml from another walkthrough", step, "yaml", []string{"kind: Deployment"}, true},
+		{"json from another walkthrough", step, "json", []string{"\"status\": 202"}, true},
+		{"dockerfile from another walkthrough", step, "dockerfile", []string{"ENTRYPOINT [\"/mailer\"]"}, true},
+		{"protobuf from another walkthrough", step, "protobuf", []string{"message Mail {}"}, true},
+		{"go from the walkthrough's test", step, "go", []string{"t.Log(\"only in a test\")"}, true},
+		{"go from the module's test", step, "go", []string{"t.Log(\"ok\")"}, true},
+		{"sh is unchecked on a walkthrough's page", step, "sh", []string{"./deploy/kind/up.sh"}, false},
+		{"go from a test on a feature page", feature, "go", []string{"t.Log(\"ok\")"}, false},
+		{"go from a walkthrough's test on a feature page", feature, "go", []string{"t.Log(\"only in a test\")"}, false},
+		{"go from a walkthrough on a feature page", feature, "go", []string{"humus.Main(app.Init)"}, true},
+		{"yaml is unchecked on a feature page", feature, "yaml", []string{"kind: Pod"}, false},
+		{"the section's index keeps the feature pages' rule", walkthroughs + "/_index.md", "yaml", []string{"kind: Pod"}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fsys := maps.Clone(repo)
+			page := "# Step\n\n```" + c.fence + "\n" + strings.Join(c.lines, "\n") + "\n```\n"
+			fsys[c.page] = &fstest.MapFile{Data: []byte(page)}
+
+			problems, err := sampleProblems(fsys)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if !c.fails {
+				if len(problems) != 0 {
+					t.Fatalf("problems = %q, want none", problems)
+				}
+				return
+			}
+			if len(problems) != 1 {
+				t.Fatalf("problems = %q, want one", problems)
+			}
+			if want := c.page + ":3:"; !strings.HasPrefix(problems[0], want) {
+				t.Errorf("problem = %q, want it to name the page as %q", problems[0], want)
+			}
+			if want := "\n" + strings.Join(c.lines, "\n"); !strings.HasSuffix(problems[0], want) {
+				t.Errorf("problem = %q, want it to end with the sample", problems[0])
+			}
+		})
+	}
+}
+
+func TestSampleProblems_missing_walkthrough(t *testing.T) {
+	fsys := fstest.MapFS{
+		walkthroughs + "/billing/step.md": {Data: []byte("```go\nfunc main() {}\n```\n")},
+	}
+
+	_, err := sampleProblems(fsys)
+
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("err = %v, want fs.ErrNotExist", err)
+	}
+}
+
+func TestSampleProblems_no_pages(t *testing.T) {
+	fsys := fstest.MapFS{"app_test.go": {Data: []byte("package humus_test\n")}}
+
+	if _, err := sampleProblems(fsys); err == nil {
+		t.Error("sampleProblems found no pages and returned no error")
 	}
 }
 
@@ -188,22 +289,110 @@ func TestQuotedIn(t *testing.T) {
 	}
 }
 
-// sample is a Go code sample on a page: the line its fence opens on, and its
-// lines with their common indentation removed.
+// walkthroughLangs names, by the languages their fences give, the samples on a
+// walkthrough's pages that must be taken from the walkthrough's files.
+var walkthroughLangs = map[string]string{
+	"go":         "Go",
+	"yaml":       "YAML",
+	"yml":        "YAML",
+	"json":       "JSON",
+	"dockerfile": "Dockerfile",
+	"protobuf":   "protobuf",
+	"proto":      "protobuf",
+}
+
+// sampleProblems checks the samples on every page of the docs site in repo,
+// the repository's root, and describes each one that is not taken from the
+// files its page's rule allows.
+func sampleProblems(repo fs.FS) ([]string, error) {
+	tests, err := sources(repo, ".", func(p string) bool { return strings.HasSuffix(p, "_test.go") })
+	if err != nil {
+		return nil, err
+	}
+	examples := map[string][][]string{}
+	var problems []string
+	pages := 0
+	err = fs.WalkDir(repo, docsContent, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || path.Ext(p) != ".md" {
+			return err
+		}
+		pages++
+		b, err := fs.ReadFile(repo, p)
+		if err != nil {
+			return err
+		}
+		name := walkthroughName(p)
+		for _, s := range samples(string(b)) {
+			if name == "" {
+				if s.lang == "go" && !quotedIn(tests, s.lines) {
+					problems = append(problems, fmt.Sprintf("%s:%d: the Go sample is not taken from any _test.go file:\n%s",
+						p, s.line, strings.Join(s.lines, "\n")))
+				}
+				continue
+			}
+			lang, ok := walkthroughLangs[s.lang]
+			if !ok {
+				continue
+			}
+			src, ok := examples[name]
+			if !ok {
+				src, err = sources(repo, "example/"+name, func(p string) bool { return !strings.HasSuffix(p, "_test.go") })
+				if err != nil {
+					return fmt.Errorf("%s: reading its walkthrough's files: %w", p, err)
+				}
+				examples[name] = src
+			}
+			if !quotedIn(src, s.lines) {
+				problems = append(problems, fmt.Sprintf("%s:%d: the %s sample is not taken from any file under example/%s but a _test.go file:\n%s",
+					p, s.line, lang, name, strings.Join(s.lines, "\n")))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if pages == 0 {
+		return nil, fmt.Errorf("no pages found under %s", docsContent)
+	}
+	return problems, nil
+}
+
+// walkthroughName returns the name of the walkthrough whose pages include
+// page, or "" if page is not one of a walkthrough's pages.
+func walkthroughName(page string) string {
+	rest, ok := strings.CutPrefix(page, walkthroughs+"/")
+	if !ok {
+		return ""
+	}
+	name, _, ok := strings.Cut(rest, "/")
+	if !ok {
+		return ""
+	}
+	return name
+}
+
+// sample is a fenced code block on a page: the line its fence opens on, the
+// language its fence gives, in lower case, and its lines with their common
+// indentation removed.
 type sample struct {
 	line  int
+	lang  string
 	lines []string
 }
 
-// goSamples returns the ```go fenced code blocks in page.
-func goSamples(page string) []sample {
+// samples returns the fenced code blocks in page.
+func samples(page string) []sample {
 	var samples []sample
 	var cur *sample
 	for i, l := range strings.Split(page, "\n") {
 		trimmed := strings.TrimSpace(l)
 		switch {
-		case cur == nil && trimmed == "```go":
+		case cur == nil && strings.HasPrefix(trimmed, "```"):
 			cur = &sample{line: i + 1}
+			if fields := strings.Fields(strings.TrimPrefix(trimmed, "```")); len(fields) > 0 {
+				cur.lang = strings.ToLower(fields[0])
+			}
 		case cur != nil && trimmed == "```":
 			cur.lines = dedent(cur.lines)
 			samples = append(samples, *cur)
@@ -215,31 +404,28 @@ func goSamples(page string) []sample {
 	return samples
 }
 
-// testSources returns the lines of every _test.go file in this module.
-func testSources(t *testing.T) [][]string {
-	t.Helper()
+// sources returns the lines of every file under root in repo whose path keep
+// accepts, leaving out hidden directories and node_modules.
+func sources(repo fs.FS, root string, keep func(path string) bool) ([][]string, error) {
 	var sources [][]string
-	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+	err := fs.WalkDir(repo, root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() && path != "." && (strings.HasPrefix(d.Name(), ".") || d.Name() == "node_modules") {
-			return filepath.SkipDir
+		if d.IsDir() && p != root && (strings.HasPrefix(d.Name(), ".") || d.Name() == "node_modules") {
+			return fs.SkipDir
 		}
-		if d.IsDir() || !strings.HasSuffix(path, "_test.go") {
+		if d.IsDir() || !keep(p) {
 			return nil
 		}
-		b, err := os.ReadFile(path)
+		b, err := fs.ReadFile(repo, p)
 		if err != nil {
 			return err
 		}
 		sources = append(sources, strings.Split(string(b), "\n"))
 		return nil
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return sources
+	return sources, err
 }
 
 // quotedIn reports whether lines appear, consecutively and with the same
