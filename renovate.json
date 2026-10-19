@@ -46,6 +46,18 @@
       "automerge": true
     },
     {
+      "description": "Kubernetes' modules move together, and k8s.io/kube-openapi's master often breaks the latest Kubernetes release until the next one ships, so they get a pull request of their own that can stay red without holding back every other update. This rule comes after the patch and minor rules so its group wins",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchPackageNames": [
+        "k8s.io/**",
+        "sigs.k8s.io/**"
+      ],
+      "groupName": "Kubernetes",
+      "groupSlug": "kubernetes"
+    },
+    {
       "description": "The requirements between humus modules name the last release and are set only by the release workflow, so Renovate leaves them alone",
       "matchManagers": [
         "gomod"
