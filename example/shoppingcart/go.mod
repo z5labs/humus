@@ -1,11 +1,11 @@
-module github.com/z5labs/humus/example
+module github.com/z5labs/humus/example/shoppingcart
 
 go 1.27.0
 
-// The core module is always the one in the same commit, so the examples are
-// built and tested against the humus they ship beside. pgx, uuid and
+// The core module is always the one in the same commit, so the example is
+// built and tested against the humus it ships beside. pgx, uuid and
 // testcontainers are this module's, and stay out of the core module's graph.
-replace github.com/z5labs/humus => ../
+replace github.com/z5labs/humus => ../..
 
 require (
 	github.com/go-jose/go-jose/v4 v4.1.6

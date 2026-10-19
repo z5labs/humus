@@ -126,9 +126,11 @@ Host, whose network and filesystem the test controls. See
 ## Releases
 
 humus is several Go modules: the root `github.com/z5labs/humus`, and the
-nested `grpc`, `queue/kafka`, `queue/rabbitmq`, `kube` and `example` modules. Every
+nested `grpc`, `queue/kafka`, `queue/rabbitmq` and `kube` modules. Every
 humus module is released with the same version on every release, whether or
 not it changed, so one version names a set of modules that work together.
+Each example under `example/` is a module of its own too, and is never
+released.
 Require the same version of every humus module you use:
 
 ```sh

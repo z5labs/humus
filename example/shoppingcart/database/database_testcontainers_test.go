@@ -12,7 +12,7 @@ package database_test
 // schema.sql. They open real sockets, so they sit behind the testcontainers
 // build tag and run in a CI job of their own, outside the coverage gate:
 //
-//	go -C example test -race -tags testcontainers ./...
+//	go -C example/shoppingcart test -race -tags testcontainers ./...
 
 import (
 	"context"

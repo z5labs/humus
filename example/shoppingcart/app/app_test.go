@@ -558,8 +558,8 @@ func TestInit_serves_its_document(t *testing.T) {
 
 // oas32 is the directory of the OpenAPI Initiative's 3.2 schema-base, with
 // the schema, the dialect and the meta-schema it refers to, which
-// openapi/v3's tests keep. The example module replaces humus with the one in
-// the same commit, so the files are always beside it.
+// openapi/v3's tests keep. The shoppingcart's module replaces humus with the
+// one in the same commit, so the files are always beside it.
 var oas32 = filepath.Join("..", "..", "..", "openapi", "v3", "testdata", "oas3.2")
 
 // schemaBaseID is the $id of the 3.2 schema-base, which checks each Schema
