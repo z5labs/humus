@@ -64,6 +64,7 @@ func initWith(ctx context.Context, s *humus.Setup, open openStore) ([]humus.Serv
 		Payments:    client,
 		Period:      set.Period,
 		Concurrency: set.Concurrency,
+		Telemetry:   s.Telemetry,
 	}
 	return []humus.Service{job.NewService(s, run.Run)}, nil
 }

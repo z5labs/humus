@@ -208,7 +208,7 @@ func newJob(t *testing.T, accounts ...string) *target {
 	return j
 }
 
-func (j *target) run(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error), env map[string]string) bedrock.ExitStatus {
+func (j *target) run(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error), env map[string]string, opts ...humustest.Option) bedrock.ExitStatus {
 	t.Helper()
 	all := maps.Clone(j.env)
 	for name, value := range env {
@@ -218,11 +218,11 @@ func (j *target) run(t *testing.T, init func(context.Context, *humus.Setup) ([]h
 		}
 		all[name] = value
 	}
-	_, status := humustest.Start(t, init,
+	_, status := humustest.Start(t, init, append([]humustest.Option{
 		humustest.WithApp(Options()...),
 		humustest.WithApp(humus.WithHost(j.host.Host())),
 		humustest.WithEnv(all),
-	)
+	}, opts...)...)
 	return <-status
 }
 

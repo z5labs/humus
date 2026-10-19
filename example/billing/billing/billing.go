@@ -14,10 +14,18 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/z5labs/humus/example/billing/payments"
 	"github.com/z5labs/humus/example/billing/postgres"
+	"github.com/z5labs/humus/telemetry"
 )
+
+const scope = "github.com/z5labs/humus/example/billing"
 
 type Invoices interface {
 	Issue(ctx context.Context, period time.Time) (issued int64, err error)
@@ -32,6 +40,62 @@ type Run struct {
 	Payments    *payments.Client
 	Period      time.Time
 	Concurrency int
+	Telemetry   telemetry.SDK
+}
+
+type observer struct {
+	tracer  trace.Tracer
+	logger  log.Logger
+	issued  metric.Int64Counter
+	settled metric.Int64Counter
+	pending metric.Int64Gauge
+}
+
+func newObserver(sdk telemetry.SDK) (*observer, error) {
+	meter := sdk.MeterProvider.Meter(scope)
+	issued, err := meter.Int64Counter("billing.invoices.issued",
+		metric.WithDescription("Invoices issued."),
+		metric.WithUnit("{invoice}"))
+	if err != nil {
+		return nil, err
+	}
+	settled, err := meter.Int64Counter("billing.invoices.settled",
+		metric.WithDescription("Invoices settled, by the state they were settled in."),
+		metric.WithUnit("{invoice}"))
+	if err != nil {
+		return nil, err
+	}
+	pending, err := meter.Int64Gauge("billing.invoices.pending",
+		metric.WithDescription("Invoices left pending as the run ended."),
+		metric.WithUnit("{invoice}"))
+	if err != nil {
+		return nil, err
+	}
+	return &observer{
+		tracer:  sdk.TracerProvider.Tracer(scope),
+		logger:  sdk.LoggerProvider.Logger(scope),
+		issued:  issued,
+		settled: settled,
+		pending: pending,
+	}, nil
+}
+
+type tally struct {
+	issued   int64
+	charged  int64
+	declined int64
+	failed   int64
+}
+
+func (t *tally) add(state string) {
+	switch state {
+	case "charged":
+		t.charged++
+	case "declined":
+		t.declined++
+	case "failed":
+		t.failed++
+	}
 }
 
 func (r Run) Run(ctx context.Context) error {
@@ -39,7 +103,13 @@ func (r Run) Run(ctx context.Context) error {
 		return fmt.Errorf("billing with a concurrency of %d: it must be at least 1", r.Concurrency)
 	}
 
-	if _, err := r.Invoices.Issue(ctx, r.period()); err != nil {
+	o, err := newObserver(r.Telemetry)
+	if err != nil {
+		return err
+	}
+
+	issued, err := r.issue(ctx, o)
+	if err != nil {
 		return err
 	}
 
@@ -53,6 +123,7 @@ func (r Run) Run(ctx context.Context) error {
 		started int
 		why     []error
 		halted  bool
+		counts  = tally{issued: issued}
 	)
 	halt := make(chan struct{})
 	stopped := func() bool {
@@ -79,11 +150,13 @@ func (r Run) Run(ctx context.Context) error {
 				started++
 				mu.Unlock()
 
-				stop, err := r.charge(ctx, inv)
+				state, stop, err := r.charge(ctx, o, inv)
+				mu.Lock()
+				counts.add(state)
 				if err == nil {
+					mu.Unlock()
 					continue
 				}
-				mu.Lock()
 				why = append(why, err)
 				if stop && !halted {
 					halted = true
@@ -110,6 +183,7 @@ hand:
 	wg.Wait()
 
 	left := len(invoices) - started + len(why)
+	o.ended(ctx, counts, left)
 	if left == 0 {
 		return nil
 	}
@@ -130,7 +204,31 @@ func (r Run) period() time.Time {
 	return time.Date(now.Year(), now.Month()-1, 1, 0, 0, 0, 0, time.UTC)
 }
 
-func (r Run) charge(ctx context.Context, inv postgres.Invoice) (stop bool, err error) {
+func (r Run) issue(ctx context.Context, o *observer) (int64, error) {
+	ctx, span := o.tracer.Start(ctx, "issue")
+	defer span.End()
+
+	issued, err := r.Invoices.Issue(ctx, r.period())
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return 0, err
+	}
+	o.issued.Add(ctx, issued)
+	return issued, nil
+}
+
+func (r Run) charge(ctx context.Context, o *observer, inv postgres.Invoice) (state string, stop bool, err error) {
+	ctx, span := o.tracer.Start(ctx, "charge", trace.WithAttributes(attribute.String("billing.invoice.id", inv.ID.String())))
+	defer span.End()
+
+	state, stop, err = r.settle(ctx, o, inv)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+	}
+	return state, stop, err
+}
+
+func (r Run) settle(ctx context.Context, o *observer, inv postgres.Invoice) (state string, stop bool, err error) {
 	res, err := r.Payments.Charge(ctx, payments.Charge{
 		ID:          inv.ID,
 		AccountID:   inv.AccountID,
@@ -138,17 +236,54 @@ func (r Run) charge(ctx context.Context, inv postgres.Invoice) (stop bool, err e
 		Currency:    inv.Currency,
 	})
 	if err != nil {
-		return errors.Is(err, payments.ErrStop), err
+		return "", errors.Is(err, payments.ErrStop), err
 	}
+	var settled bool
 	switch res.State {
 	case payments.Charged:
-		_, err = r.Invoices.SettleCharged(ctx, inv.ID, res.ChargeID)
+		state = "charged"
+		settled, err = r.Invoices.SettleCharged(ctx, inv.ID, res.ChargeID)
 	case payments.Declined:
-		_, err = r.Invoices.SettleDeclined(ctx, inv.ID, res.DeclineCode)
+		state = "declined"
+		settled, err = r.Invoices.SettleDeclined(ctx, inv.ID, res.DeclineCode)
 	case payments.Failed:
-		_, err = r.Invoices.SettleFailed(ctx, inv.ID, res.Answer)
+		state = "failed"
+		settled, err = r.Invoices.SettleFailed(ctx, inv.ID, res.Answer)
 	default:
-		return false, fmt.Errorf("charging invoice %s: the payments client answered an unknown state %d", inv.ID, res.State)
+		return "", false, fmt.Errorf("charging invoice %s: the payments client answered an unknown state %d", inv.ID, res.State)
 	}
-	return err != nil, err
+	if err != nil {
+		return "", true, err
+	}
+	if !settled {
+		return "", false, nil
+	}
+	o.settled.Add(ctx, 1, metric.WithAttributes(attribute.String("billing.invoice.state", state)))
+	if res.State == payments.Failed {
+		o.emit(ctx, log.SeverityWarn, "WARN", "invoice failed",
+			attribute.String("billing.invoice.id", inv.ID.String()),
+			attribute.String("billing.invoice.answer", res.Answer))
+	}
+	return state, false, nil
+}
+
+func (o *observer) ended(ctx context.Context, counts tally, pending int) {
+	ctx = context.WithoutCancel(ctx)
+	o.pending.Record(ctx, int64(pending))
+	o.emit(ctx, log.SeverityInfo, "INFO", "billing run ended",
+		attribute.Int64("billing.invoices.issued", counts.issued),
+		attribute.Int64("billing.invoices.charged", counts.charged),
+		attribute.Int64("billing.invoices.declined", counts.declined),
+		attribute.Int64("billing.invoices.failed", counts.failed),
+		attribute.Int("billing.invoices.pending", pending))
+}
+
+func (o *observer) emit(ctx context.Context, sev log.Severity, text, body string, attrs ...attribute.KeyValue) {
+	var r log.Record
+	r.SetTimestamp(time.Now())
+	r.SetSeverity(sev)
+	r.SetSeverityText(text)
+	r.SetBody(attribute.StringValue(body))
+	r.AddAttributes(attrs...)
+	o.logger.Emit(ctx, r)
 }
