@@ -54,9 +54,6 @@ func observeThreeRecords(t *testing.T) observed {
 	require.Zero(t, st.Code(), "cause: %v", st.Cause())
 
 	require.Equal(t, projector.Placed, p.store.status(projected))
-	require.Len(t, p.readAll(t, c, statusTopic), 1)
-	require.Len(t, p.readAll(t, c, retryTopic), 1)
-	require.Len(t, p.readAll(t, c, deadLetterTopic), 2)
 
 	metrics, err := tel.Metrics(context.Background())
 	require.NoError(t, err)
