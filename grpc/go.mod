@@ -9,9 +9,9 @@ replace github.com/z5labs/humus => ../
 require (
 	github.com/stretchr/testify v1.12.1
 	github.com/z5labs/bedrock v0.25.0
-	github.com/z5labs/bedrock/circuit v0.24.0
+	github.com/z5labs/bedrock/circuit v0.25.0
 	github.com/z5labs/bedrock/fit v0.25.0
-	github.com/z5labs/bedrock/retry v0.24.0
+	github.com/z5labs/bedrock/retry v0.25.0
 	github.com/z5labs/humus v0.0.0-00010101000000-000000000000
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.72.0
 	go.opentelemetry.io/otel v1.47.0
