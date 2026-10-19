@@ -399,8 +399,8 @@ type abortsDeployments struct {
 	aborted map[string][]bool
 }
 
-// reconciler returns a Reconciler that records into a with s.Faults, and
-// settles.
+// reconciler returns a Reconciler that evaluates the point with s.Faults
+// in each reconcile, records whether it aborts, and settles.
 func (a *abortsDeployments) reconciler(s *humus.Setup) kube.ReconcilerFunc[MemcachedSpec, MemcachedStatus] {
 	return func(ctx context.Context, m kube.Object[MemcachedSpec, MemcachedStatus]) (kube.Result[MemcachedStatus], error) {
 		f := s.Faults.Eval(ctx, "kube:deployments.apps:patch")
