@@ -9,6 +9,7 @@
 package functional
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/tls"
@@ -30,6 +31,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -555,6 +557,237 @@ func TestBilling_sends_a_runs_telemetry_to_the_LGTM_stack(t *testing.T) {
 			})
 		}
 	})
+}
+
+var alertRules = []struct {
+	title  string
+	series string
+}{
+	{title: "BillingNotSucceeded", series: `billing_invoices_pending{job="billing"}`},
+	{title: "BillingInvoicesPending", series: `billing_invoices_pending{job="billing"}`},
+	{title: "BillingInvoicesFailed", series: `billing_invoices_settled{job="billing", billing_invoice_state="failed"}`},
+	{title: "BillingPaymentsBreakerOpened", series: `humus_circuit_transitions{job="billing", humus_circuit_state="open"}`},
+}
+
+func TestGrafana_alerts_on_the_billing_job_and_has_its_dashboard(t *testing.T) {
+	require.NotEmpty(t, *postgresURL, "-postgres")
+	require.NotEmpty(t, *wiremockURL, "-wiremock")
+	require.NotEmpty(t, *mimirURL, "-mimir")
+	require.NotEmpty(t, *grafanaURL, "-grafana")
+	require.NotEmpty(t, *grafanaPassword, "-grafana-password")
+	d := deployed(t)
+	target := d.target(t)
+	target.Run = d.run
+	admin := func(req *http.Request) {
+		req.SetBasicAuth("admin", *grafanaPassword)
+	}
+
+	loaded, cancel := context.WithTimeout(t.Context(), *caseTimeout)
+	defer cancel()
+
+	t.Run("Grafana loaded every rule", func(t *testing.T) {
+		want := make([]string, 0, len(alertRules))
+		for _, r := range alertRules {
+			want = append(want, r.title)
+		}
+		slices.Sort(want)
+		eventually(loaded, t, func(ctx context.Context) error {
+			var rules []struct {
+				Title string `json:"title"`
+			}
+			if err := getJSON(ctx, *grafanaURL+"/api/v1/provisioning/alert-rules", admin, &rules); err != nil {
+				return err
+			}
+			got := make([]string, 0, len(rules))
+			for _, r := range rules {
+				got = append(got, r.Title)
+			}
+			slices.Sort(got)
+			if !slices.Equal(got, want) {
+				return fmt.Errorf("Grafana has the rules %v, not %v", got, want)
+			}
+			return nil
+		})
+	})
+
+	t.Run("Grafana loaded the dashboard", func(t *testing.T) {
+		eventually(loaded, t, func(ctx context.Context) error {
+			var body struct {
+				Dashboard struct {
+					Title  string            `json:"title"`
+					Panels []json.RawMessage `json:"panels"`
+				} `json:"dashboard"`
+				Meta struct {
+					Provisioned bool `json:"provisioned"`
+				} `json:"meta"`
+			}
+			if err := getJSON(ctx, *grafanaURL+"/api/dashboards/uid/billing", admin, &body); err != nil {
+				return err
+			}
+			if body.Dashboard.Title != "Billing" || !body.Meta.Provisioned || len(body.Dashboard.Panels) == 0 {
+				return fmt.Errorf("the dashboard billing is %q, provisioned %t, with %d panels", body.Dashboard.Title, body.Meta.Provisioned, len(body.Dashboard.Panels))
+			}
+			return nil
+		})
+	})
+
+	started := time.Now()
+	cases.ThePaymentsAPIIsDown(t, target)
+	failingAnInvoice(t, d, target)
+
+	ctx, cancel := context.WithTimeout(t.Context(), *caseTimeout)
+	defer cancel()
+
+	t.Run("Mimir holds every series the rules read", func(t *testing.T) {
+		for _, r := range alertRules {
+			t.Run(r.title, func(t *testing.T) {
+				q := url.Values{
+					"match[]": {r.series},
+					"start":   {strconv.FormatInt(started.Unix(), 10)},
+				}
+				eventually(ctx, t, func(ctx context.Context) error {
+					var body struct {
+						Data []map[string]string `json:"data"`
+					}
+					if err := getJSON(ctx, *mimirURL+"/prometheus/api/v1/series?"+q.Encode(), nil, &body); err != nil {
+						return err
+					}
+					if len(body.Data) == 0 {
+						return fmt.Errorf("no series of %s since %s", r.series, started.Format(time.RFC3339))
+					}
+					return nil
+				})
+			})
+		}
+	})
+
+	held := time.Now()
+	t.Run("each rule evaluates without error", func(t *testing.T) {
+		for _, r := range alertRules {
+			t.Run(r.title, func(t *testing.T) {
+				eventually(ctx, t, func(ctx context.Context) error {
+					var body struct {
+						Data struct {
+							Groups []struct {
+								Rules []struct {
+									Name           string    `json:"name"`
+									Health         string    `json:"health"`
+									LastError      string    `json:"lastError"`
+									LastEvaluation time.Time `json:"lastEvaluation"`
+								} `json:"rules"`
+							} `json:"groups"`
+						} `json:"data"`
+					}
+					if err := getJSON(ctx, *grafanaURL+"/api/prometheus/grafana/api/v1/rules", admin, &body); err != nil {
+						return err
+					}
+					for _, g := range body.Data.Groups {
+						for _, rule := range g.Rules {
+							if rule.Name != r.title {
+								continue
+							}
+							if rule.LastEvaluation.Before(held) {
+								return fmt.Errorf("%s was last evaluated at %s, before Mimir held its series", r.title, rule.LastEvaluation.Format(time.RFC3339))
+							}
+							if rule.Health != "ok" || rule.LastError != "" {
+								return fmt.Errorf("%s is %s: %s", r.title, rule.Health, rule.LastError)
+							}
+							return nil
+						}
+					}
+					return fmt.Errorf("Grafana has no rule %s", r.title)
+				})
+			})
+		}
+	})
+}
+
+func failingAnInvoice(t *testing.T, d deployment, target cases.Target) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), *caseTimeout)
+	defer cancel()
+
+	admin, err := pgx.Connect(ctx, target.Postgres)
+	require.NoError(t, err, "connecting to PostgreSQL")
+	defer func() { _ = admin.Close(context.WithoutCancel(ctx)) }()
+	name := "failed-" + strings.ToLower(rand.Text())
+	ident := pgx.Identifier{name}.Sanitize()
+	_, err = admin.Exec(ctx, "CREATE DATABASE "+ident)
+	require.NoError(t, err)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+		defer cancel()
+		_, err := admin.Exec(ctx, "DROP DATABASE "+ident+" WITH (FORCE)")
+		require.NoError(t, err)
+	}()
+
+	u, err := url.Parse(target.Postgres)
+	require.NoError(t, err)
+	u.Path = "/" + name
+	conn, err := pgx.Connect(ctx, u.String())
+	require.NoError(t, err)
+	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
+	_, err = conn.Exec(ctx, target.Schema)
+	require.NoError(t, err)
+	_, err = conn.Exec(ctx,
+		`INSERT INTO subscriptions (account_id, amount_cents, currency, active) VALUES ($1, $2, $3, $4)`,
+		name+"-a", 4999, "USD", true,
+	)
+	require.NoError(t, err)
+
+	unprocessable(ctx, t, target, name)
+
+	code, err := d.run(ctx, u.String(), map[string]string{"BILLING_PERIOD": "2025-12"})
+	require.NoError(t, err)
+	require.Zero(t, code)
+	var state string
+	require.NoError(t, conn.QueryRow(ctx, `SELECT state FROM invoices`).Scan(&state))
+	require.Equal(t, "failed", state)
+}
+
+func unprocessable(ctx context.Context, t *testing.T, target cases.Target, prefix string) {
+	t.Helper()
+	mapping, err := json.Marshal(map[string]any{
+		"priority": 1,
+		"request": map[string]any{
+			"method": http.MethodPost,
+			"url":    "/v1/charges",
+			"bodyPatterns": []any{
+				map[string]any{"matchesJsonPath": map[string]any{"expression": "$.account", "matches": "^" + prefix + "-.*"}},
+			},
+		},
+		"response": map[string]any{
+			"status":   http.StatusUnprocessableEntity,
+			"jsonBody": map[string]any{"code": "amount_invalid"},
+		},
+	})
+	require.NoError(t, err)
+	var created struct {
+		ID string `json:"id"`
+	}
+	wiremockDo(ctx, t, target, http.MethodPost, target.WireMock.JoinPath("__admin", "mappings").String(), mapping, http.StatusCreated, &created)
+	require.NotEmpty(t, created.ID)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+		defer cancel()
+		wiremockDo(ctx, t, target, http.MethodDelete, target.WireMock.JoinPath("__admin", "mappings", created.ID).String(), nil, http.StatusOK, nil)
+	})
+}
+
+func wiremockDo(ctx context.Context, t *testing.T, target cases.Target, method, u string, body []byte, want int, v any) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(ctx, method, u, bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := target.Client.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	b, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, want, resp.StatusCode, "%s %s: %s", method, req.URL.Path, b)
+	if v != nil {
+		require.NoError(t, json.Unmarshal(b, v))
+	}
 }
 
 func randomHex(t *testing.T, n int) string {
