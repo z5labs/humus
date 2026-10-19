@@ -536,10 +536,13 @@ jobs:
           run: |
             kubectl --namespace billing create job billing-kind --from=cronjob/billing
             kubectl --namespace billing wait --for=condition=Complete --timeout=5m job/billing-kind
-            code=$(kubectl --namespace billing get pods --selector job-name=billing-kind \
-              --output jsonpath='{.items[*].status.containerStatuses[0].state.terminated.exitCode}')
-            echo "exit codes: $code"
-            test "$code" = 0
+            kubectl --namespace billing get pods --selector job-name=billing-kind \
+              --output custom-columns=POD:.metadata.name,EXIT:.status.containerStatuses[0].state.terminated.exitCode
+            failed=$(kubectl --namespace billing get job billing-kind --output jsonpath='{.status.failed}')
+            if [ -n "$failed" ] && [ "$failed" != 0 ]; then
+              echo "::error::billing exited non-zero in $failed pod(s) before a retry completed the Job"
+              exit 1
+            fi
 
         - name: Show the billing namespace
           if: ${{ failure() }}
