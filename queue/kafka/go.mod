@@ -12,7 +12,7 @@ require (
 	github.com/testcontainers/testcontainers-go v0.44.0
 	github.com/twmb/franz-go v1.22.2
 	github.com/twmb/franz-go/pkg/kadm v1.19.0
-	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261018181104-6fb30eeefbed
+	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261018232743-f49d7ddc2cb4
 	github.com/twmb/franz-go/pkg/kmsg v1.15.0
 	github.com/twmb/franz-go/plugin/kotel v1.7.1
 	github.com/z5labs/bedrock v0.25.0
@@ -43,7 +43,7 @@ require (
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/go-connections v0.8.2 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
-	github.com/ebitengine/purego v0.11.1 // indirect
+	github.com/ebitengine/purego v0.11.2 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
