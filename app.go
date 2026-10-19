@@ -427,13 +427,20 @@ func (a App) run(ctx, sigCtx context.Context, stop context.CancelFunc, p bedrock
 		case first = <-served:
 			received = true
 		}
+		if received && first.signalled {
+			// That Service returned on the signal, so it was still serving
+			// as the shutdown started. Its result goes back for the drain
+			// and the shutdown to receive, as when Run waited in time; served
+			// holds a result for every Service, so this never blocks.
+			served <- first
+			received = false
+		}
 		if received {
 			pending--
 			errs = appendServeErr(errs, first.err)
-		}
-		signalled = !received || first.signalled
-		if !signalled {
 			returned = serviceReturned(first.err)
+		} else {
+			signalled = true
 		}
 	}
 	cause := context.Cause(sigCtx)
