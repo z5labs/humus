@@ -92,11 +92,14 @@ func newHarness(t *testing.T, maxAttempts int) *harness {
 		Retries:     h.retries,
 		Results:     h.results,
 		MaxAttempts: maxAttempts,
+		User:        mailerUser,
 	})
 	require.NoError(t, err)
 	h.worker = w
 	return h
 }
+
+const mailerUser = "mailer"
 
 const validBody = `{"to":"ada@example.com","subject":"Your order","text":"It shipped."}`
 
@@ -121,6 +124,7 @@ func parked(m rabbitmq.Message, attempt int64) rabbitmq.Publishing {
 		ContentType:   m.ContentType,
 		MessageID:     m.MessageID,
 		CorrelationID: m.CorrelationID,
+		UserID:        mailerUser,
 		Body:          m.Body,
 	}
 }
@@ -161,24 +165,28 @@ func TestNew_rejects_settings_it_cannot_work_with(t *testing.T) {
 		says     string
 	}{
 		"no provider": {
-			settings: worker.Settings{Retries: &fakePublisher{}, Results: &fakePublisher{}, MaxAttempts: 5},
+			settings: worker.Settings{Retries: &fakePublisher{}, Results: &fakePublisher{}, MaxAttempts: 5, User: mailerUser},
 			says:     "Settings.Provider must not be nil",
 		},
 		"no retries publisher": {
-			settings: worker.Settings{Provider: &fakeProvider{}, Results: &fakePublisher{}, MaxAttempts: 5},
+			settings: worker.Settings{Provider: &fakeProvider{}, Results: &fakePublisher{}, MaxAttempts: 5, User: mailerUser},
 			says:     "Settings.Retries must not be nil",
 		},
 		"no results publisher": {
-			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, MaxAttempts: 5},
+			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, MaxAttempts: 5, User: mailerUser},
 			says:     "Settings.Results must not be nil",
 		},
 		"no attempts": {
-			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, Results: &fakePublisher{}},
+			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, Results: &fakePublisher{}, User: mailerUser},
 			says:     "Settings.MaxAttempts must be positive, not 0",
 		},
 		"negative attempts": {
-			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, Results: &fakePublisher{}, MaxAttempts: -1},
+			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, Results: &fakePublisher{}, MaxAttempts: -1, User: mailerUser},
 			says:     "Settings.MaxAttempts must be positive, not -1",
+		},
+		"no user": {
+			settings: worker.Settings{Provider: &fakeProvider{}, Retries: &fakePublisher{}, Results: &fakePublisher{}, MaxAttempts: 5},
+			says:     "Settings.User must not be empty",
 		},
 	}
 	for name, tc := range cases {

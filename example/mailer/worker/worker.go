@@ -35,6 +35,7 @@ type Settings struct {
 	Retries     Publisher
 	Results     Publisher
 	MaxAttempts int
+	User        string
 }
 
 type Worker struct {
@@ -42,6 +43,7 @@ type Worker struct {
 	retries     Publisher
 	results     Publisher
 	maxAttempts int
+	user        string
 }
 
 var _ queue.Processor[rabbitmq.Message] = (*Worker)(nil)
@@ -60,6 +62,9 @@ func New(settings Settings) (*Worker, error) {
 	if settings.MaxAttempts < 1 {
 		errs = append(errs, fmt.Errorf("Settings.MaxAttempts must be positive, not %d", settings.MaxAttempts))
 	}
+	if settings.User == "" {
+		errs = append(errs, errors.New("Settings.User must not be empty"))
+	}
 	if err := errors.Join(errs...); err != nil {
 		return nil, fmt.Errorf("worker: New: %w", err)
 	}
@@ -68,6 +73,7 @@ func New(settings Settings) (*Worker, error) {
 		retries:     settings.Retries,
 		results:     settings.Results,
 		maxAttempts: settings.MaxAttempts,
+		user:        settings.User,
 	}, nil
 }
 
@@ -111,6 +117,7 @@ func (w *Worker) park(ctx context.Context, m rabbitmq.Message, attempt int) erro
 	p := request(m, mail.RetryExchange, map[string]any{
 		mail.AttemptHeader: int64(attempt),
 	})
+	p.UserID = w.user
 	if err := w.retries.Publish(ctx, p); err != nil {
 		return fmt.Errorf("worker: parking the request in %s: %w", mail.RetryExchange, err)
 	}

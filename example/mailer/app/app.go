@@ -26,6 +26,8 @@ import (
 	"github.com/z5labs/humus/example/mailer/mail"
 	"github.com/z5labs/humus/example/mailer/provider"
 	"github.com/z5labs/humus/example/mailer/worker"
+	"github.com/z5labs/humus/fault"
+	"github.com/z5labs/humus/fault/jsonscenario"
 	"github.com/z5labs/humus/health"
 	"github.com/z5labs/humus/httpclient"
 	"github.com/z5labs/humus/httphealth"
@@ -39,13 +41,35 @@ const (
 	defaultMaxAttempts = 5
 )
 
+const scenarioKey = "acme.fault"
+
+func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
+	codec, err := jsonscenario.New(scenarioKey)
+	if err != nil {
+		return fault.Settings{}, err
+	}
+	settings := fault.DefaultSettings()
+	settings.Decoder = codec
+	settings.MaxDelay, err = config.Env(s.Process.Environment, "FAULT_MAX_DELAY").
+		Parse(time.ParseDuration).
+		Default(settings.MaxDelay).
+		Validate(fault.CheckMaxDelay).
+		Read(ctx)
+	if err != nil {
+		return fault.Settings{}, err
+	}
+	return settings, nil
+}
+
 func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	settings, err := readSettings(ctx, s)
 	if err != nil {
 		return nil, err
 	}
 
-	retries, err := rabbitmq.NewPublisher(s, settings.Publisher)
+	retrySettings := settings.Publisher
+	retrySettings.ForwardScenario = true
+	retries, err := rabbitmq.NewPublisher(s, retrySettings)
 	if err != nil {
 		return nil, err
 	}
@@ -62,6 +86,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		Retries:     retries,
 		Results:     results,
 		MaxAttempts: settings.MaxAttempts,
+		User:        settings.Login,
 	})
 	if err != nil {
 		return nil, err
@@ -79,11 +104,13 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 }
 
 type settings struct {
-	Consumer    rabbitmq.Settings
-	Publisher   rabbitmq.PublisherSettings
-	MaxAttempts int
-	Provider    provider.Settings
-	Probes      httphealth.Settings
+	Consumer          rabbitmq.Settings
+	Publisher         rabbitmq.PublisherSettings
+	Login             string
+	TrustedPublishers []string
+	MaxAttempts       int
+	Provider          provider.Settings
+	Probes            httphealth.Settings
 }
 
 func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
@@ -96,8 +123,9 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 		conn.Addr = r.Get(env("RABBITMQ_ADDR").Validate(rabbitmq.CheckAddr))
 		conn.Vhost = r.Get(env("RABBITMQ_VHOST").Default(conn.Vhost).Validate(rabbitmq.CheckVhost))
 		conn.TLS = r.Get(env("RABBITMQ_CA_FILE").Parse(file).Parse(certPool).Map(trusting).Default(nil))
+		login := r.Get(env("RABBITMQ_USERNAME").Validate(notEmpty))
 		conn.SASL = &amqp.PlainAuth{
-			Username: r.Get(env("RABBITMQ_USERNAME").Validate(notEmpty)),
+			Username: login,
 			Password: r.Get(env("RABBITMQ_PASSWORD_FILE").Parse(file).Parse(secret)),
 		}
 		consumer.Connection = conn
@@ -111,9 +139,11 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 
 		client := httpclient.DefaultSettings()
 		return settings{
-			Consumer:    consumer,
-			Publisher:   publisher,
-			MaxAttempts: r.Get(env("MAIL_MAX_ATTEMPTS").Parse(strconv.Atoi).Default(defaultMaxAttempts).Validate(positive)),
+			Consumer:          consumer,
+			Publisher:         publisher,
+			Login:             login,
+			TrustedPublishers: r.Get(env("MAIL_TRUSTED_PUBLISHERS").Parse(logins).Default(nil)),
+			MaxAttempts:       r.Get(env("MAIL_MAX_ATTEMPTS").Parse(strconv.Atoi).Default(defaultMaxAttempts).Validate(positive)),
 			Provider: provider.Settings{
 				URL:            r.Get(env("PROVIDER_URL").Parse(url.Parse).Validate(httpclient.CheckBaseURL)),
 				CA:             r.Get(env("PROVIDER_CA_FILE").Parse(file).Parse(certPool).Default(nil)),
@@ -138,7 +168,33 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 			Err:  fmt.Errorf("must be at most RABBITMQ_PREFETCH, %d", read.Consumer.Prefetch),
 		}
 	}
+	read.Consumer.TrustScenario = trustedBy(append([]string{read.Login}, read.TrustedPublishers...))
 	return read, nil
+}
+
+func logins(s string) ([]string, error) {
+	if s == "" {
+		return nil, nil
+	}
+	var users []string
+	for user := range strings.SplitSeq(s, ",") {
+		user = strings.TrimSpace(user)
+		if user == "" {
+			return nil, errors.New("must be RabbitMQ users separated by commas, with none empty")
+		}
+		users = append(users, user)
+	}
+	return users, nil
+}
+
+func trustedBy(users []string) func(m rabbitmq.Message) bool {
+	trusted := make(map[string]bool, len(users))
+	for _, user := range users {
+		trusted[user] = true
+	}
+	return func(m rabbitmq.Message) bool {
+		return trusted[m.UserID]
+	}
 }
 
 func notEmpty(s string) error {

@@ -127,7 +127,7 @@ func exitsConfig(t *testing.T, env map[string]string, files map[string][]byte) e
 	var cause error
 	synctest.Test(t, func(t *testing.T) {
 		m := newMailer(t, files)
-		_, status := m.start(t, env)
+		_, status := m.start(t, env, humus.WithFaults(app.Faults))
 		st := <-status
 		cause = st.Cause()
 		require.Equal(t, humus.ExitConfig, st.Code(), "cause: %v", cause)
@@ -173,34 +173,39 @@ func TestInit_with_a_bad_setting_exits_78(t *testing.T) {
 		files  map[string][]byte
 		secret bool
 	}{
-		"an AMQP URI as the address":            {name: "RABBITMQ_ADDR", value: "amqp://mailer:" + rand.Text() + "@" + brokerAddr, secret: true},
-		"an address with no port":               {name: "RABBITMQ_ADDR", value: "rabbitmq.internal"},
-		"an empty username":                     {name: "RABBITMQ_USERNAME", value: ""},
-		"an empty vhost":                        {name: "RABBITMQ_VHOST", value: ""},
-		"a password file that doesn't exist":    {name: "RABBITMQ_PASSWORD_FILE", value: "secrets/missing"},
-		"an empty password file":                {name: "RABBITMQ_PASSWORD_FILE", value: "secrets/empty", files: map[string][]byte{"secrets/empty": []byte("\n")}},
-		"a broker CA file that doesn't exist":   {name: "RABBITMQ_CA_FILE", value: "certs/missing.pem"},
-		"a broker CA file with no certificate":  {name: "RABBITMQ_CA_FILE", value: "certs/junk.pem", files: map[string][]byte{"certs/junk.pem": []byte("junk")}},
-		"a prefetch that isn't a number":        {name: "RABBITMQ_PREFETCH", value: "many"},
-		"a prefetch of 0":                       {name: "RABBITMQ_PREFETCH", value: "0"},
-		"a concurrency of 0":                    {name: "RABBITMQ_CONCURRENCY", value: "0"},
-		"a concurrency above the prefetch":      {name: "RABBITMQ_CONCURRENCY", value: "17"},
-		"an empty sender":                       {name: "MAIL_FROM", value: ""},
-		"max attempts of 0":                     {name: "MAIL_MAX_ATTEMPTS", value: "0"},
-		"negative max attempts":                 {name: "MAIL_MAX_ATTEMPTS", value: "-1"},
-		"max attempts that aren't a number":     {name: "MAIL_MAX_ATTEMPTS", value: "five"},
-		"a provider URL that isn't http":        {name: "PROVIDER_URL", value: "ftp://provider.internal"},
-		"a relative provider URL":               {name: "PROVIDER_URL", value: "/v1"},
-		"an API key file that doesn't exist":    {name: "PROVIDER_API_KEY_FILE", value: "secrets/missing"},
-		"an empty API key file":                 {name: "PROVIDER_API_KEY_FILE", value: "secrets/empty", files: map[string][]byte{"secrets/empty": nil}},
-		"a provider CA file that doesn't exist": {name: "PROVIDER_CA_FILE", value: "certs/missing.pem"},
-		"a provider timeout of 0":               {name: "PROVIDER_TIMEOUT", value: "0s"},
-		"a provider timeout with no unit":       {name: "PROVIDER_TIMEOUT", value: "10"},
-		"a negative attempt timeout":            {name: "PROVIDER_ATTEMPT_TIMEOUT", value: "-1s"},
-		"provider max attempts of 0":            {name: "PROVIDER_MAX_ATTEMPTS", value: "0"},
-		"a probes address with no port":         {name: "PROBES_ADDR", value: "localhost"},
-		"a probes PEM file that doesn't exist":  {name: "PROBES_TLS_PEM_FILE", value: "secrets/missing.pem"},
-		"a probes PEM file with no key":         {name: "PROBES_TLS_PEM_FILE", value: "secrets/ca.pem", files: map[string][]byte{"secrets/ca.pem": []byte("not a certificate")}},
+		"an AMQP URI as the address":             {name: "RABBITMQ_ADDR", value: "amqp://mailer:" + rand.Text() + "@" + brokerAddr, secret: true},
+		"an address with no port":                {name: "RABBITMQ_ADDR", value: "rabbitmq.internal"},
+		"an empty username":                      {name: "RABBITMQ_USERNAME", value: ""},
+		"an empty vhost":                         {name: "RABBITMQ_VHOST", value: ""},
+		"a password file that doesn't exist":     {name: "RABBITMQ_PASSWORD_FILE", value: "secrets/missing"},
+		"an empty password file":                 {name: "RABBITMQ_PASSWORD_FILE", value: "secrets/empty", files: map[string][]byte{"secrets/empty": []byte("\n")}},
+		"a broker CA file that doesn't exist":    {name: "RABBITMQ_CA_FILE", value: "certs/missing.pem"},
+		"a broker CA file with no certificate":   {name: "RABBITMQ_CA_FILE", value: "certs/junk.pem", files: map[string][]byte{"certs/junk.pem": []byte("junk")}},
+		"a prefetch that isn't a number":         {name: "RABBITMQ_PREFETCH", value: "many"},
+		"a prefetch of 0":                        {name: "RABBITMQ_PREFETCH", value: "0"},
+		"a concurrency of 0":                     {name: "RABBITMQ_CONCURRENCY", value: "0"},
+		"a concurrency above the prefetch":       {name: "RABBITMQ_CONCURRENCY", value: "17"},
+		"an empty sender":                        {name: "MAIL_FROM", value: ""},
+		"max attempts of 0":                      {name: "MAIL_MAX_ATTEMPTS", value: "0"},
+		"negative max attempts":                  {name: "MAIL_MAX_ATTEMPTS", value: "-1"},
+		"max attempts that aren't a number":      {name: "MAIL_MAX_ATTEMPTS", value: "five"},
+		"a provider URL that isn't http":         {name: "PROVIDER_URL", value: "ftp://provider.internal"},
+		"a relative provider URL":                {name: "PROVIDER_URL", value: "/v1"},
+		"an API key file that doesn't exist":     {name: "PROVIDER_API_KEY_FILE", value: "secrets/missing"},
+		"an empty API key file":                  {name: "PROVIDER_API_KEY_FILE", value: "secrets/empty", files: map[string][]byte{"secrets/empty": nil}},
+		"a provider CA file that doesn't exist":  {name: "PROVIDER_CA_FILE", value: "certs/missing.pem"},
+		"a provider timeout of 0":                {name: "PROVIDER_TIMEOUT", value: "0s"},
+		"a provider timeout with no unit":        {name: "PROVIDER_TIMEOUT", value: "10"},
+		"a negative attempt timeout":             {name: "PROVIDER_ATTEMPT_TIMEOUT", value: "-1s"},
+		"provider max attempts of 0":             {name: "PROVIDER_MAX_ATTEMPTS", value: "0"},
+		"a probes address with no port":          {name: "PROBES_ADDR", value: "localhost"},
+		"a probes PEM file that doesn't exist":   {name: "PROBES_TLS_PEM_FILE", value: "secrets/missing.pem"},
+		"a probes PEM file with no key":          {name: "PROBES_TLS_PEM_FILE", value: "secrets/ca.pem", files: map[string][]byte{"secrets/ca.pem": []byte("not a certificate")}},
+		"an empty trusted publisher":             {name: "MAIL_TRUSTED_PUBLISHERS", value: "orders,,billing"},
+		"a trailing comma in trusted publishers": {name: "MAIL_TRUSTED_PUBLISHERS", value: "orders,"},
+		"a fault max delay of 0":                 {name: "FAULT_MAX_DELAY", value: "0s"},
+		"a negative fault max delay":             {name: "FAULT_MAX_DELAY", value: "-1s"},
+		"a fault max delay with no unit":         {name: "FAULT_MAX_DELAY", value: "10"},
 	}
 	for desc, tc := range testCases {
 		t.Run(desc, func(t *testing.T) {
