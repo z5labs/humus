@@ -248,8 +248,8 @@ PostgreSQL applies it when it creates the database:
 ## WireMock
 
 WireMock stands in for the payments API with three mappings. The lowest
-`priority` wins, so a charge without a key is refused before it can be
-charged:
+`priority` wins, so a charge without a `Bearer` API key is refused before it
+can be charged:
 
 ```json
 {
@@ -305,8 +305,8 @@ charged:
 }
 ```
 
-The charge's ID is made from its key, so a repeated key gets the same answer
-back:
+The charge's ID is made from its `Idempotency-Key`, so a repeated key gets
+the same answer back:
 
 ```json
 {
