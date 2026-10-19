@@ -253,6 +253,49 @@ jobs:
             key: ${{ steps.go-cache.outputs.key }}
             path: ${{ steps.go-cache.outputs.path }}
 
+  # The tests behind the functional tag run against a deployment, such as a
+  # walkthrough's on kind, so here they are only compiled and vetted. Every
+  # module under example/ that go-modules.sh lists is vetted, so a new
+  # example needs no change here.
+  vet-functional:
+    name: Vet the functional tests
+    needs: modules
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+        - name: Checkout
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+          with:
+            go-version: '1.27.2'
+            cache: false
+
+        - id: go-cache
+          uses: ./.github/actions/restore-go-cache
+          with:
+            name: vet-functional
+
+        - name: Vet
+          env:
+            MODULES: ${{ needs.modules.outputs.modules }}
+          run: |
+            failed=0
+            for module in $(jq -r '.[] | select(startswith("example/"))' <<<"$MODULES"); do
+              echo "::group::go vet -tags functional ($module)"
+              go -C "$module" vet -tags functional ./... || failed=1
+              echo "::endgroup::"
+            done
+            exit "$failed"
+
+        - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
+          uses: ./.github/actions/save-go-cache
+          with:
+            key: ${{ steps.go-cache.outputs.key }}
+            path: ${{ steps.go-cache.outputs.path }}
+
   # The loopback half of humustest's conformance test opens real sockets on
   # 127.0.0.1 and 127.0.0.2, and telemetry's sets OTEL_* variables in the
   # real environment, so both are behind the conformance build tag and run
@@ -320,6 +363,7 @@ jobs:
       - compile
       - test
       - vet-testcontainers
+      - vet-functional
       - conformance
       - scripts
     if: ${{ always() }}
@@ -511,17 +555,31 @@ jobs:
   # repository as the context, since its module replaces humus with ../..,
   # and its kustomization, rendered. up.sh then creates a kind cluster,
   # loads the image and applies the kind overlay, and one Job made from the
-  # CronJob's template has to complete. The ruleset doesn't require this
-  # job, and Build doesn't wait on it.
+  # CronJob's template has to complete. test.sh then runs the tests behind
+  # the functional tag against it: the shared cases, each as Jobs made from
+  # the CronJob's template, and the template as it is, failing a bad setting
+  # by its pod failure policy. The ruleset doesn't require this job, and
+  # Build doesn't wait on it; Vet the functional tests vets them.
   billing-kind:
     name: Billing walkthrough (kind)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
+      actions: write
       contents: read
     steps:
         - name: Checkout
           uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+          with:
+            go-version: '1.27.2'
+            cache: false
+
+        - id: go-cache
+          uses: ./.github/actions/restore-go-cache
+          with:
+            name: billing-kind
 
         - name: Build the image
           run: docker build --file example/billing/Dockerfile --tag billing .
@@ -544,12 +602,21 @@ jobs:
               exit 1
             fi
 
+        - name: Run the functional tests
+          run: example/billing/deploy/kind/test.sh
+
         - name: Show the billing namespace
           if: ${{ failure() }}
           run: |
             kubectl --namespace billing get all
             kubectl --namespace billing describe pods
             kubectl --namespace billing logs job/billing-kind || true
+
+        - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
+          uses: ./.github/actions/save-go-cache
+          with:
+            key: ${{ steps.go-cache.outputs.key }}
+            path: ${{ steps.go-cache.outputs.path }}
 
   # The order status walkthrough's tests behind the testcontainers build tag
   # run against PostgreSQL in a container. The ruleset doesn't require this
