@@ -130,12 +130,12 @@
 // fails or slows down at the points it names, every humus client being
 // one, while every humus server strips scenarios from callers it doesn't
 // trust, documented at https://z5labs.github.io/humus/failure-injection/.
-// The kube module, new rather than come back, has landed: its kube package
-// writes Kubernetes controllers as Services on client-go, without
-// controller-runtime, reaching the API server through the Setup's Host,
-// declaring custom resources as Go values whose CRDs it reflects from Go
-// types, and reconciling their objects, or those of Kubernetes' own kinds,
-// with leader election on a Lease, documented at
+// The kube module, a new feature rather than one that came back, has
+// landed: its kube package writes Kubernetes controllers as Services on
+// client-go, without controller-runtime, reaching the API server through
+// the Setup's Host, declaring custom resources as Go values whose CRDs it
+// reflects from Go types, and reconciling their objects, or those of
+// Kubernetes' own kinds, with leader election on a Lease, documented at
 // https://z5labs.github.io/humus/kubernetes/.
 // The other runtime packages come back through their own proposals.
 //

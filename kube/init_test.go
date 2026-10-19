@@ -257,7 +257,7 @@ func (d *deletes) all() []string {
 	return append([]string(nil), d.objs...)
 }
 
-func TestFinalizing_deletes_a_Memcacheds_backups_before_it_is_deleted(t *testing.T) {
+func TestFinalizing_deletes_the_backups_before_the_Memcached_is_deleted(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		fc := newFakeCluster(t, memcachedObject("cache", 2))
