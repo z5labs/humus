@@ -1,0 +1,19 @@
+multitenancy_enabled: false
+server:
+  http_listen_port: 9009
+  grpc_listen_port: 9095
+common:
+  storage:
+    backend: filesystem
+    filesystem:
+      dir: /var/mimir/data
+blocks_storage:
+  storage_prefix: blocks
+ingester:
+  ring:
+    replication_factor: 1
+store_gateway:
+  sharding_ring:
+    replication_factor: 1
+usage_stats:
+  enabled: false

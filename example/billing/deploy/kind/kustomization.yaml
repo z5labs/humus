@@ -7,6 +7,11 @@ resources:
   - ../cronjob.yaml
   - postgres.yaml
   - wiremock.yaml
+  - otel-collector.yaml
+  - loki.yaml
+  - tempo.yaml
+  - mimir.yaml
+  - grafana.yaml
 configMapGenerator:
   - name: postgres-schema
     files:
@@ -16,6 +21,21 @@ configMapGenerator:
       - wiremock/charged.json
       - wiremock/declined.json
       - wiremock/unauthorized.json
+  - name: otel-collector-config
+    files:
+      - otel-collector/config.yaml
+  - name: loki-config
+    files:
+      - loki/config.yaml
+  - name: tempo-config
+    files:
+      - tempo/config.yaml
+  - name: mimir-config
+    files:
+      - mimir/config.yaml
+  - name: grafana-datasources
+    files:
+      - grafana/datasources.yaml
 patches:
   - target:
       kind: CronJob
@@ -37,9 +57,3 @@ patches:
                     env:
                       - name: PAYMENTS_URL
                         value: https://wiremock
-                      - name: OTEL_TRACES_EXPORTER
-                        value: console
-                      - name: OTEL_METRICS_EXPORTER
-                        value: console
-                      - name: OTEL_LOGS_EXPORTER
-                        value: console

@@ -13,15 +13,19 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -45,6 +49,11 @@ var (
 	postgresAddress = flag.String("postgres-address", "", "the PostgreSQL server's host:port as the billing job reaches it, the -postgres URL's if empty")
 	wiremockURL     = flag.String("wiremock", "", "the payments API stand-in's base URL as the tests reach it")
 	caseTimeout     = flag.Duration("timeout", 5*time.Minute, "how long each case may take")
+	tempoURL        = flag.String("tempo", "", "Tempo's HTTP base URL as the tests reach it")
+	lokiURL         = flag.String("loki", "", "Loki's HTTP base URL as the tests reach it")
+	mimirURL        = flag.String("mimir", "", "Mimir's HTTP base URL as the tests reach it")
+	grafanaURL      = flag.String("grafana", "", "Grafana's base URL as the tests reach it")
+	grafanaPassword = flag.String("grafana-password", "", "the password of Grafana's admin user")
 )
 
 const (
@@ -354,11 +363,8 @@ func (d deployment) run(ctx context.Context, databaseURL string, env map[string]
 	return code, nil
 }
 
-func TestBilling_passes_the_shared_cases_as_deployed(t *testing.T) {
-	require.NotEmpty(t, *postgresURL, "-postgres")
-	require.NotEmpty(t, *wiremockURL, "-wiremock")
-	d := deployed(t)
-
+func (d deployment) target(t *testing.T) cases.Target {
+	t.Helper()
 	key, err := d.read(t.Context(), "PAYMENTS_API_KEY_FILE")
 	require.NoError(t, err)
 	ca, err := d.read(t.Context(), "PAYMENTS_CA_FILE")
@@ -374,7 +380,7 @@ func TestBilling_passes_the_shared_cases_as_deployed(t *testing.T) {
 	schema, err := os.ReadFile(filepath.Join("..", "postgres", "schema.sql"))
 	require.NoError(t, err)
 
-	target := cases.Target{
+	return cases.Target{
 		Postgres: *postgresURL,
 		Schema:   string(schema),
 		WireMock: wiremock,
@@ -388,6 +394,13 @@ func TestBilling_passes_the_shared_cases_as_deployed(t *testing.T) {
 		Key:     strings.TrimSpace(string(key)),
 		Timeout: *caseTimeout,
 	}
+}
+
+func TestBilling_passes_the_shared_cases_as_deployed(t *testing.T) {
+	require.NotEmpty(t, *postgresURL, "-postgres")
+	require.NotEmpty(t, *wiremockURL, "-wiremock")
+	d := deployed(t)
+	target := d.target(t)
 
 	t.Run("in parallel", func(t *testing.T) {
 		for _, c := range cases.All {
@@ -424,4 +437,167 @@ func TestCronJob_fails_a_bad_setting_after_one_pod_by_its_pod_failure_policy(t *
 	code, err := exitCode(pods[0])
 	require.NoError(t, err)
 	require.Equal(t, exitConfig, code)
+}
+
+func TestBilling_sends_a_runs_telemetry_to_the_LGTM_stack(t *testing.T) {
+	require.NotEmpty(t, *postgresURL, "-postgres")
+	require.NotEmpty(t, *wiremockURL, "-wiremock")
+	require.NotEmpty(t, *tempoURL, "-tempo")
+	require.NotEmpty(t, *lokiURL, "-loki")
+	require.NotEmpty(t, *mimirURL, "-mimir")
+	require.NotEmpty(t, *grafanaURL, "-grafana")
+	require.NotEmpty(t, *grafanaPassword, "-grafana-password")
+	d := deployed(t)
+	target := d.target(t)
+
+	traceID := randomHex(t, 16)
+	traceparent := "00-" + traceID + "-" + randomHex(t, 8) + "-01"
+	started := time.Now()
+	target.Run = func(ctx context.Context, databaseURL string, env map[string]string) (int, error) {
+		own := maps.Clone(env)
+		if own == nil {
+			own = map[string]string{}
+		}
+		own["TRACEPARENT"] = traceparent
+		return d.run(ctx, databaseURL, own)
+	}
+	cases.BillingAMonth(t, target)
+
+	ctx, cancel := context.WithTimeout(t.Context(), *caseTimeout)
+	defer cancel()
+
+	t.Run("its trace is in Tempo", func(t *testing.T) {
+		eventually(ctx, t, func(ctx context.Context) error {
+			var body struct {
+				Trace struct {
+					ResourceSpans []json.RawMessage `json:"resourceSpans"`
+				} `json:"trace"`
+			}
+			if err := getJSON(ctx, *tempoURL+"/api/v2/traces/"+traceID, nil, &body); err != nil {
+				return err
+			}
+			if len(body.Trace.ResourceSpans) == 0 {
+				return fmt.Errorf("the trace %s has no spans", traceID)
+			}
+			return nil
+		})
+	})
+
+	t.Run("its records are in Loki", func(t *testing.T) {
+		q := url.Values{
+			"query": {fmt.Sprintf(`{service_name="billing"} | trace_id=%q`, traceID)},
+			"start": {strconv.FormatInt(started.UnixNano(), 10)},
+		}
+		eventually(ctx, t, func(ctx context.Context) error {
+			var body struct {
+				Data struct {
+					Result []struct {
+						Values [][]string `json:"values"`
+					} `json:"result"`
+				} `json:"data"`
+			}
+			if err := getJSON(ctx, *lokiURL+"/loki/api/v1/query_range?"+q.Encode(), nil, &body); err != nil {
+				return err
+			}
+			for _, r := range body.Data.Result {
+				if len(r.Values) > 0 {
+					return nil
+				}
+			}
+			return fmt.Errorf("no records of the trace %s", traceID)
+		})
+	})
+
+	t.Run("its billing metrics are in Mimir", func(t *testing.T) {
+		q := url.Values{
+			"match[]": {`{__name__=~"billing[._].+", job="billing"}`},
+			"start":   {strconv.FormatInt(started.Unix(), 10)},
+		}
+		eventually(ctx, t, func(ctx context.Context) error {
+			var body struct {
+				Data []map[string]string `json:"data"`
+			}
+			if err := getJSON(ctx, *mimirURL+"/prometheus/api/v1/series?"+q.Encode(), nil, &body); err != nil {
+				return err
+			}
+			names := map[string]bool{}
+			for _, series := range body.Data {
+				names[strings.ReplaceAll(series["__name__"], ".", "_")] = true
+			}
+			for _, want := range []string{"billing_invoices_issued", "billing_invoices_settled", "billing_invoices_pending"} {
+				if !names[want] && !names[want+"_total"] {
+					return fmt.Errorf("no series of %s among %v", want, slices.Sorted(maps.Keys(names)))
+				}
+			}
+			return nil
+		})
+	})
+
+	t.Run("Grafana has all three as data sources", func(t *testing.T) {
+		for _, uid := range []string{"tempo", "loki", "mimir"} {
+			t.Run(uid, func(t *testing.T) {
+				eventually(ctx, t, func(ctx context.Context) error {
+					var body struct {
+						Status  string `json:"status"`
+						Message string `json:"message"`
+					}
+					err := getJSON(ctx, *grafanaURL+"/api/datasources/uid/"+uid+"/health", func(req *http.Request) {
+						req.SetBasicAuth("admin", *grafanaPassword)
+					}, &body)
+					if err != nil {
+						return err
+					}
+					if body.Status != "OK" {
+						return fmt.Errorf("the data source %s is %s: %s", uid, body.Status, body.Message)
+					}
+					return nil
+				})
+			})
+		}
+	})
+}
+
+func randomHex(t *testing.T, n int) string {
+	t.Helper()
+	b := make([]byte, n)
+	_, err := rand.Read(b)
+	require.NoError(t, err)
+	return hex.EncodeToString(b)
+}
+
+func eventually(ctx context.Context, t *testing.T, check func(context.Context) error) {
+	t.Helper()
+	var last error
+	err := wait.PollUntilContextCancel(ctx, 2*time.Second, true, func(ctx context.Context) (bool, error) {
+		last = check(ctx)
+		return last == nil, nil
+	})
+	require.NoError(t, err, "last: %v", last)
+}
+
+var lgtm = &http.Client{Transport: &http.Transport{}, Timeout: 30 * time.Second}
+
+func getJSON(ctx context.Context, u string, auth func(*http.Request), v any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return err
+	}
+	if auth != nil {
+		auth(req)
+	}
+	resp, err := lgtm.Do(req)
+	if err != nil {
+		return err
+	}
+	b, err := io.ReadAll(resp.Body)
+	if cerr := resp.Body.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("GET %s: %s: %s", req.URL.Path, resp.Status, b)
+	}
+	return json.Unmarshal(b, v)
 }
