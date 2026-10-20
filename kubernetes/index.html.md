@@ -27,6 +27,11 @@ The examples on this page are the kubebuilder book's Memcached operator: a
 `Memcached` custom resource, whose controller applies a Deployment of
 memcached pods and reports how many are ready.
 
+The [databases controller walkthrough](/humus/walkthroughs/databases/)
+builds a production-ready controller on `kube`, step by step: a `Database`
+resource whose controller provisions a database and its role in PostgreSQL,
+owns a Secret of their credentials, and drops them with a finalizer.
+
 ## Why not kubebuilder
 
 Nearly every Go controller is written with kubebuilder: controller-runtime at
