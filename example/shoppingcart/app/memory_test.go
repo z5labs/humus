@@ -24,8 +24,12 @@ import (
 )
 
 func inject(ctx context.Context, faults fault.Injector, point string, unavailable error) error {
-	if err := faults.Eval(ctx, point).Inject(ctx); err != nil {
-		return fmt.Errorf("%w: %w", unavailable, err)
+	f := faults.Eval(ctx, point)
+	if err := f.Wait(ctx); err != nil {
+		return fmt.Errorf("%w: %w", unavailable, &fault.InjectedError{Point: point, Err: err})
+	}
+	if f.Abort {
+		return fmt.Errorf("%w: %w", unavailable, &fault.InjectedError{Point: point})
 	}
 	return nil
 }

@@ -93,8 +93,12 @@ func (db *fakeDatabase) inject(ctx context.Context) error {
 	db.mu.Lock()
 	faults := db.faults
 	db.mu.Unlock()
-	if err := faults.Eval(ctx, database.Point).Inject(ctx); err != nil {
-		return fmt.Errorf("%w: %w", endpoint.ErrUnavailable, err)
+	f := faults.Eval(ctx, database.Point)
+	if err := f.Wait(ctx); err != nil {
+		return fmt.Errorf("%w: %w", endpoint.ErrUnavailable, &fault.InjectedError{Point: database.Point, Err: err})
+	}
+	if f.Abort {
+		return fmt.Errorf("%w: %w", endpoint.ErrUnavailable, &fault.InjectedError{Point: database.Point})
 	}
 	return nil
 }
