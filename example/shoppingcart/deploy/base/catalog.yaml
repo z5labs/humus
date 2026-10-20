@@ -1,0 +1,151 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog
+  labels:
+    app.kubernetes.io/name: catalog
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: catalog
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: catalog
+    spec:
+      serviceAccountName: catalog
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: migrate
+          image: shoppingcart
+          command: ["/migrate"]
+          env:
+            - name: MIGRATIONS
+              value: catalog
+            - name: APP_ROLE
+              value: catalog
+            - name: DATABASE_URL_FILE
+              value: /etc/catalog/database-owner/url
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: database-owner
+              mountPath: /etc/catalog/database-owner
+              readOnly: true
+            - name: ca
+              mountPath: /etc/catalog/ca
+              readOnly: true
+      containers:
+        - name: catalog
+          image: shoppingcart
+          command: ["/catalog"]
+          envFrom:
+            - configMapRef:
+                name: catalog
+          ports:
+            - name: https
+              containerPort: 8443
+          startupProbe:
+            httpGet:
+              path: /health/liveness
+              port: https
+              scheme: HTTPS
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /health/liveness
+              port: https
+              scheme: HTTPS
+          readinessProbe:
+            httpGet:
+              path: /health/readiness
+              port: https
+              scheme: HTTPS
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tls
+              mountPath: /etc/catalog/tls
+              readOnly: true
+            - name: client-ca
+              mountPath: /etc/catalog/client-ca
+              readOnly: true
+            - name: database
+              mountPath: /etc/catalog/database
+              readOnly: true
+            - name: ca
+              mountPath: /etc/catalog/ca
+              readOnly: true
+      volumes:
+        - name: tls
+          secret:
+            secretName: catalog-tls
+            defaultMode: 0440
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: client-ca
+          secret:
+            secretName: catalog-client-ca
+            defaultMode: 0440
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: database
+          secret:
+            secretName: catalog-database
+            defaultMode: 0440
+            items:
+              - key: url
+                path: url
+        - name: database-owner
+          secret:
+            secretName: catalog-database-owner
+            defaultMode: 0440
+            items:
+              - key: url
+                path: url
+        - name: ca
+          secret:
+            secretName: catalog-ca
+            defaultMode: 0440
+            items:
+              - key: ca.crt
+                path: ca.crt
