@@ -253,6 +253,7 @@ func CatalogBreakerOpens(t testing.TB, target Target) {
 		if strings.Contains(detail, shed) {
 			break
 		}
+		pause(ctx, t, pollEvery)
 	}
 	require.Empty(t, s.getCart(ctx, t, c.CartID).Items)
 
