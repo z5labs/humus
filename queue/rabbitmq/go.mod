@@ -7,7 +7,7 @@ go 1.27.0
 replace github.com/z5labs/humus => ../..
 
 require (
-	github.com/rabbitmq/amqp091-go v1.15.0
+	github.com/rabbitmq/amqp091-go v1.16.0
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/rabbitmq v0.44.0

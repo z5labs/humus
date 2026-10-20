@@ -150,8 +150,11 @@
 //	| the broker closes the channel  | the Service stops, and Serve returns | the same                             |
 //	| with 406 PRECONDITION_FAILED   | the error; exit 1                    |                                      |
 //
-// The login or the vhost is refused with ACCESS_REFUSED, or amqp091's
-// ErrCredentials, ErrSASL or ErrVhost. The queue is refused with 404
+// The login is refused with ACCESS_REFUSED, or amqp091's ErrCredentials or
+// ErrSASL. The vhost is refused with 530 NOT_ALLOWED, which RabbitMQ also
+// answers Connection.Open with once a connection limit is reached, or with
+// amqp091's ErrVhost when the broker closes the connection without saying
+// why. The queue is refused with 404
 // NOT_FOUND, 403 ACCESS_REFUSED, or 405 RESOURCE_LOCKED for a queue another
 // connection consumes exclusively. An error that ends the Service is
 // returned rather than logged, and the lifecycle logs it.
@@ -311,9 +314,11 @@
 // A step that fails closes the network connection. One that fails because
 // ConnectTimeout ran out reports context.DeadlineExceeded, and one cut short
 // by its context reports the context's error, never amqp091's
-// ErrCredentials or ErrVhost, which amqp091 returns for any failure at those
-// points of the handshake. Otherwise a wrong login fails with ErrCredentials,
-// and a vhost the login can't open with ErrVhost.
+// ErrCredentials or ErrVhost, which amqp091 returns for a failure at those
+// points of the handshake when the broker doesn't say why. Otherwise a wrong
+// login fails with ErrCredentials, and a vhost the broker refuses with its
+// reply, 530 NOT_ALLOWED, or with ErrVhost when the broker closes the
+// connection without one.
 //
 // Serve makes its attempts to connect, and to consume on the connection,
 // within a retry.Retrier from github.com/z5labs/bedrock/retry: exponential

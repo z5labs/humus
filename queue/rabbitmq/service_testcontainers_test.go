@@ -598,6 +598,19 @@ func TestService_stops_when_the_broker_refuses_the_queue_or_the_login(t *testing
 		require.Equal(t, humus.ExitFailure, st.Code(), "cause: %v", st.Cause())
 		require.ErrorIs(t, st.Cause(), amqp.ErrCredentials)
 	})
+
+	t.Run("a missing vhost", func(t *testing.T) {
+		t.Parallel()
+
+		c := plainText(t)
+		c.Vhost = unique("missing")
+		_, status := startApp(t, consumerSettings(c, declareQueue(t)), func(context.Context, rabbitmq.Message) error {
+			return nil
+		})
+		st := exit(t, status)
+		require.Equal(t, humus.ExitFailure, st.Code(), "cause: %v", st.Cause())
+		require.ErrorContains(t, st.Cause(), "NOT_ALLOWED")
+	})
 }
 
 func TestService_consumes_over_TLS(t *testing.T) {

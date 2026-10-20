@@ -283,8 +283,9 @@ func classifyConnect(_ context.Context, err error) (retry.Outcome, time.Duration
 // stops reports whether err is one the broker won't change its mind about,
 // so connecting again won't fix it, and the Service stops:
 //
-//   - the login or the vhost refused: ACCESS_REFUSED, or amqp091's
-//     ErrCredentials, ErrSASL or ErrVhost;
+//   - the login or the vhost refused: ACCESS_REFUSED, amqp091's
+//     ErrCredentials, ErrSASL or ErrVhost, or a vhostRefusal, which a
+//     reached connection limit is too;
 //   - the queue refused: 404 NOT_FOUND, 403 ACCESS_REFUSED, or 405
 //     RESOURCE_LOCKED for a queue another connection consumes exclusively.
 //
@@ -292,6 +293,9 @@ func classifyConnect(_ context.Context, err error) (retry.Outcome, time.Duration
 // broker closed with 320 CONNECTION_FORCED, is one a later attempt may fix.
 func stops(err error) bool {
 	if errors.Is(err, amqp.ErrCredentials) || errors.Is(err, amqp.ErrSASL) || errors.Is(err, amqp.ErrVhost) {
+		return true
+	}
+	if _, ok := errors.AsType[*vhostRefusal](err); ok {
 		return true
 	}
 	ae, ok := errors.AsType[*amqp.Error](err)

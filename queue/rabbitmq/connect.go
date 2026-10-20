@@ -8,11 +8,13 @@ package rabbitmq
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 
 	"github.com/z5labs/humus"
 )
@@ -35,9 +37,11 @@ const locale = "en_US"
 // On any failure the network connection is closed, so nothing stays open.
 // When a step fails because ConnectTimeout ran out or ctx is done, the error
 // wraps ctx's error, context.DeadlineExceeded or context.Canceled, and not
-// amqp091's: amqp091 reports any failure after Connection.Start as
-// ErrCredentials, and any during Connection.Open as ErrVhost, so a timeout
-// would otherwise read as a wrong login.
+// amqp091's: amqp091 reports a failure after Connection.Start as
+// ErrCredentials, and one during Connection.Open as ErrVhost, whenever the
+// broker didn't say why, so a timeout would otherwise read as a wrong login.
+// When the broker refuses Connection.Open with 530 NOT_ALLOWED, the error
+// wraps a vhostRefusal.
 func connect(ctx context.Context, host humus.Host, c Connection) (*amqp.Connection, error) {
 	var cfg *tls.Config
 	if c.TLS != nil {
@@ -102,7 +106,29 @@ func connect(ctx context.Context, host humus.Host, c Connection) (*amqp.Connecti
 		}
 		return nil, fmt.Errorf("rabbitmq: AMQP handshake with %s: %w (%v)", c.Addr, cause, err)
 	}
+	if ae, ok := errors.AsType[*amqp.Error](err); ok && ae.Server && ae.Code == amqp.NotAllowed {
+		err = &vhostRefusal{err: ae}
+	}
 	return nil, fmt.Errorf("rabbitmq: AMQP handshake with %s: %w", c.Addr, err)
+}
+
+// vhostRefusal is the broker's refusal of Connection.Open with 530
+// NOT_ALLOWED, the reply RabbitMQ gives a vhost that doesn't exist or that
+// the login has no access to, and a connection limit that's been reached.
+// amqp091 returns the reply as the broker sent it, and RabbitMQ sends 530
+// during the handshake only at Connection.Open, so connect marks it: a 530
+// on an open connection isn't one. Its message, and its error.type, are the
+// reply's.
+type vhostRefusal struct{ err *amqp.Error }
+
+func (e *vhostRefusal) Error() string { return e.err.Error() }
+
+func (e *vhostRefusal) Unwrap() error { return e.err }
+
+// ErrorType is semconv's error.type of the reply, which semconv.ErrorType
+// asks for when it finds a vhostRefusal in an error's chain.
+func (e *vhostRefusal) ErrorType() string {
+	return semconv.ErrorType(e.err).Value.AsString()
 }
 
 // ended returns ctx's error, or context.DeadlineExceeded once deadline has
