@@ -860,16 +860,31 @@ jobs:
   # PostgreSQL beside the controller and the cases' namespace prefix trusted,
   # and the controller's Deployment has to become ready. The Database beside
   # up.sh is then checked against the CRD with a server-side dry run. The
-  # ruleset doesn't require this job, and Build doesn't wait on it.
+  # tests behind the functional tag then run the shared cases against it, the
+  # failure injection cases included, through the kind cluster's kubeconfig,
+  # and verify against the overlay's PostgreSQL with the admin password up.sh
+  # generates. The ruleset doesn't require this job, and Build doesn't wait
+  # on it; Vet the functional tests vets them.
   databases-kind:
     name: Databases walkthrough (kind)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
+      actions: write
       contents: read
     steps:
         - name: Checkout
           uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+          with:
+            go-version: '1.27.2'
+            cache: false
+
+        - id: go-cache
+          uses: ./.github/actions/restore-go-cache
+          with:
+            name: databases-kind
 
         - name: Build the image
           run: docker build --file example/databases/Dockerfile --tag databases .
@@ -886,6 +901,9 @@ jobs:
         - name: Check the Database beside up.sh against the CRD
           run: kubectl apply --dry-run=server --namespace default --filename example/databases/deploy/kind/database.yaml
 
+        - name: Run the shared cases against kind
+          run: go -C example/databases test -count=1 -race -tags functional ./functional/
+
         - name: Show the databases namespace
           if: ${{ failure() }}
           run: |
@@ -893,3 +911,9 @@ jobs:
             kubectl --namespace databases describe pods
             kubectl --namespace databases logs deployment/postgres --tail 200 || true
             kubectl --namespace databases logs deployment/databases --all-containers --tail 200 || true
+
+        - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
+          uses: ./.github/actions/save-go-cache
+          with:
+            key: ${{ steps.go-cache.outputs.key }}
+            path: ${{ steps.go-cache.outputs.path }}

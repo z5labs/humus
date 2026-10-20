@@ -31,6 +31,8 @@ spec:
               value: postgres
             - name: POSTGRES_DB
               value: postgres
+            - name: POSTGRES_INITDB_ARGS
+              value: --auth-host=scram-sha-256
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
