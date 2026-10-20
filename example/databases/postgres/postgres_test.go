@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock/fit"
+	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/z5labs/humus/example/databases/postgres"
 	"github.com/z5labs/humus/fault"
@@ -29,7 +30,7 @@ func TestServer_an_abort_fails_before_reaching_the_server(t *testing.T) {
 	fs.Decoder = codec
 	faults, err := fault.New(fs)
 	require.NoError(t, err)
-	var admin postgres.Admin = postgres.New(pool, faults)
+	var admin postgres.Admin = postgres.New(pool, faults, noop.NewTracerProvider())
 	password := rand.Text()
 
 	testCases := []struct {

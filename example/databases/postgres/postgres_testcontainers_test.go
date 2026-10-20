@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -23,6 +24,11 @@ import (
 	"github.com/stretchr/testify/require"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/z5labs/bedrock/fit"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/z5labs/humus/example/databases/postgres"
 	"github.com/z5labs/humus/fault"
@@ -90,6 +96,7 @@ type env struct {
 	admin      *pgxpool.Pool
 	server     *postgres.Server
 	statements *statements
+	spans      *tracetest.SpanRecorder
 	codec      jsonscenario.Codec
 	name       string
 }
@@ -118,7 +125,9 @@ func newEnv(t *testing.T) env {
 	require.NoError(t, err)
 
 	name := "db_" + strings.ToLower(rand.Text())
-	e := env{admin: pool, server: postgres.New(pool, faults), statements: stmts, codec: codec, name: name}
+	spans := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spans))
+	e := env{admin: pool, server: postgres.New(pool, faults, tp), statements: stmts, spans: spans, codec: codec, name: name}
 	t.Cleanup(func() {
 		ident := pgx.Identifier{name}.Sanitize()
 		ctx := context.Background()
@@ -306,4 +315,96 @@ func TestServer_an_abort_at_postgresql_drop_changes_nothing(t *testing.T) {
 	role, database = e.exists(t)
 	require.False(t, role)
 	require.False(t, database)
+}
+
+func (e env) traced(t *testing.T, call func(ctx context.Context) error) ([]sdktrace.ReadOnlySpan, error) {
+	t.Helper()
+	before := len(e.spans.Ended())
+	tp := sdktrace.NewTracerProvider()
+	ctx, parent := tp.Tracer("reconcile").Start(t.Context(), "reconcile Database")
+	err := call(ctx)
+	parent.End()
+	spans := e.spans.Ended()[before:]
+	for _, s := range spans {
+		require.Equal(t, parent.SpanContext().SpanID(), s.Parent().SpanID(), "the span %s isn't under its caller's", s.Name())
+	}
+	return spans, err
+}
+
+func names(spans []sdktrace.ReadOnlySpan) []string {
+	var out []string
+	for _, s := range spans {
+		out = append(out, s.Name())
+	}
+	return out
+}
+
+func attrs(s sdktrace.ReadOnlySpan) map[attribute.Key]attribute.Value {
+	out := map[attribute.Key]attribute.Value{}
+	for _, kv := range s.Attributes() {
+		out[kv.Key] = kv.Value
+	}
+	return out
+}
+
+func TestServer_traces_each_statement_as_a_PostgreSQL_client_span(t *testing.T) {
+	e := newEnv(t)
+	u, err := url.Parse(server.url)
+	require.NoError(t, err)
+	password, rotated := rand.Text(), rand.Text()
+
+	provisioned, err := e.traced(t, func(ctx context.Context) error { return e.server.Provision(ctx, e.name, password) })
+	require.NoError(t, err)
+	reprovisioned, err := e.traced(t, func(ctx context.Context) error { return e.server.Provision(ctx, e.name, rotated) })
+	require.NoError(t, err)
+	dropped, err := e.traced(t, func(ctx context.Context) error { return e.server.Drop(ctx, e.name) })
+	require.NoError(t, err)
+
+	require.Equal(t, []string{"SELECT pg_roles", "CREATE ROLE", "SELECT pg_database", "CREATE DATABASE"}, names(provisioned))
+	require.Equal(t, []string{"SELECT pg_roles", "ALTER ROLE", "SELECT pg_database"}, names(reprovisioned))
+	require.Equal(t, []string{"DROP DATABASE", "DROP ROLE"}, names(dropped))
+
+	all := append(append(append([]sdktrace.ReadOnlySpan(nil), provisioned...), reprovisioned...), dropped...)
+	for _, s := range all {
+		require.Equal(t, trace.SpanKindClient, s.SpanKind(), s.Name())
+		require.Equal(t, codes.Unset, s.Status().Code, s.Name())
+		operation, _, _ := strings.Cut(s.Name(), " ")
+		require.Equal(t, map[attribute.Key]attribute.Value{
+			"db.system.name":    attribute.StringValue("postgresql"),
+			"db.namespace":      attribute.StringValue("postgres"),
+			"db.query.summary":  attribute.StringValue(s.Name()),
+			"db.operation.name": attribute.StringValue(operation),
+			"server.address":    attribute.StringValue(u.Hostname()),
+			"server.port":       attribute.IntValue(mustAtoi(t, u.Port())),
+		}, attrs(s), s.Name())
+		for _, kv := range s.Attributes() {
+			require.NotContains(t, kv.Value.Emit(), password)
+			require.NotContains(t, kv.Value.Emit(), rotated)
+			require.NotContains(t, kv.Value.Emit(), "SCRAM-SHA-256")
+		}
+	}
+}
+
+func TestServer_a_failed_statement_is_an_error_span_with_its_SQLSTATE(t *testing.T) {
+	e := newEnv(t)
+	reserved := "pg_" + strings.ToLower(rand.Text())
+	password := rand.Text()
+
+	spans, err := e.traced(t, func(ctx context.Context) error { return e.server.Provision(ctx, reserved, password) })
+
+	require.Error(t, err)
+	require.Equal(t, []string{"SELECT pg_roles", "CREATE ROLE"}, names(spans))
+	failed := spans[1]
+	require.Equal(t, codes.Error, failed.Status().Code)
+	require.NotContains(t, failed.Status().Description, password)
+	a := attrs(failed)
+	require.Equal(t, "42939", a["db.response.status_code"].AsString())
+	require.Equal(t, "42939", a["error.type"].AsString())
+}
+
+func mustAtoi(t *testing.T, s string) int {
+	t.Helper()
+	n, err := strconv.Atoi(s)
+	require.NoError(t, err)
+	return n
 }

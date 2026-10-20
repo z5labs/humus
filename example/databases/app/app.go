@@ -3,7 +3,7 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-// Package app is the databases controller's Init: its settings, its Client, its Controller and its probes.
+// Package app is the databases controller's Init: its settings, its Client, its Controller, its probes and its telemetry.
 package app
 
 import (
@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/config"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,6 +35,7 @@ import (
 	"github.com/z5labs/humus/health"
 	"github.com/z5labs/humus/httphealth"
 	"github.com/z5labs/humus/kube"
+	"github.com/z5labs/humus/telemetry"
 )
 
 const (
@@ -54,6 +56,32 @@ func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
 		f.MaxDelay = r.Get(config.Env(s.Process.Environment, "FAULT_MAX_DELAY").Parse(time.ParseDuration).Default(d.MaxDelay).Validate(fault.CheckMaxDelay))
 		return f
 	}).Read(ctx)
+}
+
+func BuildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+	d := telemetry.DefaultSettings()
+	env := func(name string) config.Value[string] { return config.Env(p.Environment, name) }
+	exporter := func(name string, def telemetry.Exporter) config.Value[telemetry.Exporter] {
+		return env(name).
+			Map(func(s string) telemetry.Exporter { return telemetry.Exporter(s) }).
+			Default(def).
+			Validate(telemetry.CheckExporter)
+	}
+
+	s, err := config.Struct(func(r *config.Resolver) telemetry.Settings {
+		s := d
+		s.Disabled = r.Get(env("OTEL_SDK_DISABLED").Parse(strconv.ParseBool).Default(d.Disabled))
+		s.ServiceName = r.Get(env("OTEL_SERVICE_NAME").Default("databases").Validate(telemetry.CheckServiceName))
+		s.Traces = r.Get(exporter("OTEL_TRACES_EXPORTER", d.Traces))
+		s.Metrics = r.Get(exporter("OTEL_METRICS_EXPORTER", d.Metrics))
+		s.Logs = r.Get(exporter("OTEL_LOGS_EXPORTER", d.Logs))
+		s.OTLP.Endpoint = r.Get(env("OTEL_EXPORTER_OTLP_ENDPOINT").Default(d.OTLP.Endpoint).Validate(telemetry.CheckOTLPEndpoint))
+		return s
+	}).Read(ctx)
+	if err != nil {
+		return telemetry.SDK{}, err
+	}
+	return telemetry.New(ctx, s, dial, p.Stdout)
 }
 
 func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
@@ -200,7 +228,7 @@ func openPostgres(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (*po
 		pool.Close()
 		return nil
 	})
-	return postgres.New(pool, s.Faults), nil
+	return postgres.New(pool, s.Faults, s.Telemetry.TracerProvider), nil
 }
 
 func readFile(fsys humus.FS) func(name string) ([]byte, error) {

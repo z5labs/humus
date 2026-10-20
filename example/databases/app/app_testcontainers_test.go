@@ -26,6 +26,8 @@ import (
 	tck3s "github.com/testcontainers/testcontainers-go/modules/k3s"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+	"github.com/z5labs/bedrock"
+	"github.com/z5labs/bedrock/bedrocktest"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -158,7 +160,15 @@ func writeFile(t *testing.T, dir, name string, contents []byte) string {
 	return path
 }
 
-func TestInit_passes_the_shared_cases_against_k3s_and_PostgreSQL(t *testing.T) {
+type controller struct {
+	p      *bedrocktest.Process
+	status <-chan bedrock.ExitStatus
+	target cases.Target
+	token  string
+}
+
+func startController(t *testing.T, build telemetry.Builder) controller {
+	t.Helper()
 	dsn, pgHost, pgPort := startPostgres(t)
 	cfg, caData := startK3s(t)
 	createCRD(t, cfg)
@@ -169,7 +179,7 @@ func TestInit_passes_the_shared_cases_against_k3s_and_PostgreSQL(t *testing.T) {
 	dir := t.TempDir()
 	ca := humustest.NewCA(t)
 	p, status := humustest.Start(t, app.Init,
-		humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(app.Faults)),
+		humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(build), humus.WithFaults(app.Faults)),
 		humustest.WithEnv(map[string]string{
 			"KUBERNETES_SERVICE_HOST":        server.Hostname(),
 			"KUBERNETES_SERVICE_PORT":        server.Port(),
@@ -199,41 +209,56 @@ func TestInit_passes_the_shared_cases_against_k3s_and_PostgreSQL(t *testing.T) {
 		return resp.StatusCode == http.StatusOK
 	}, waitLimit, 100*time.Millisecond, "the controller didn't become ready")
 
-	target := cases.Target{
-		Config:      rest.CopyConfig(cfg),
-		Prefix:      casesPrefix,
-		Annotation:  "postgres.example.com/failure-scenario",
-		ScenarioKey: "acme.fault",
-		Postgres:    dsn,
-		Timeout:     waitLimit,
+	return controller{
+		p:      p,
+		status: status,
+		target: cases.Target{
+			Config:      rest.CopyConfig(cfg),
+			Prefix:      casesPrefix,
+			Annotation:  "postgres.example.com/failure-scenario",
+			ScenarioKey: "acme.fault",
+			Postgres:    dsn,
+			Timeout:     waitLimit,
+		},
+		token: token,
 	}
+}
+
+func (c controller) stop(t *testing.T) {
+	t.Helper()
+	select {
+	case <-c.p.Notified(syscall.SIGTERM):
+	case <-time.After(waitLimit):
+		t.Fatal("the controller never listened for SIGTERM")
+	}
+	c.p.Signal(syscall.SIGTERM)
+	select {
+	case st := <-c.status:
+		require.Zero(t, st.Code(), "cause: %v", st.Cause())
+	case <-time.After(waitLimit):
+		t.Fatal("the controller didn't exit")
+	}
+}
+
+func TestInit_passes_the_shared_cases_against_k3s_and_PostgreSQL(t *testing.T) {
+	c := startController(t, telemetry.NoopBuilder)
+
 	t.Run("in parallel", func(t *testing.T) {
-		for _, c := range cases.All {
-			t.Run(c.Name, func(t *testing.T) {
+		for _, tc := range cases.All {
+			t.Run(tc.Name, func(t *testing.T) {
 				t.Parallel()
-				c.Run(t, target)
+				tc.Run(t, c.target)
 			})
 		}
 		for name, run := range faultCases {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
-				run(t, target)
+				run(t, c.target)
 			})
 		}
 	})
 
-	select {
-	case <-p.Notified(syscall.SIGTERM):
-	case <-time.After(waitLimit):
-		t.Fatal("the controller never listened for SIGTERM")
-	}
-	p.Signal(syscall.SIGTERM)
-	select {
-	case st := <-status:
-		require.Zero(t, st.Code(), "cause: %v", st.Cause())
-	case <-time.After(waitLimit):
-		t.Fatal("the controller didn't exit")
-	}
+	c.stop(t)
 }
 
 func pemOf(t *testing.T, c *humustest.Certificate) []byte {

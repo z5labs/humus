@@ -14,5 +14,5 @@ import (
 )
 
 func main() {
-	humus.Main(app.Init, humus.WithFaults(app.Faults), humus.WithShutdownGracePeriod(20*time.Second))
+	humus.Main(app.Init, humus.WithTelemetry(app.BuildTelemetry), humus.WithFaults(app.Faults), humus.WithShutdownGracePeriod(20*time.Second))
 }

@@ -6,6 +6,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/tls"
@@ -82,6 +83,11 @@ func newTarget(t *testing.T, files map[string][]byte) *target {
 
 func (c *target) start(t *testing.T, env map[string]string) (signal func(os.Signal), status <-chan bedrock.ExitStatus) {
 	t.Helper()
+	return c.startWith(t, env, telemetry.NoopBuilder)
+}
+
+func (c *target) startWith(t *testing.T, env map[string]string, build telemetry.Builder) (signal func(os.Signal), status <-chan bedrock.ExitStatus) {
+	t.Helper()
 	merged := maps.Clone(c.env)
 	for name, value := range env {
 		if value == unset {
@@ -91,7 +97,7 @@ func (c *target) start(t *testing.T, env map[string]string) (signal func(os.Sign
 		merged[name] = value
 	}
 	proc, st := humustest.Start(t, Init,
-		humustest.WithApp(humus.WithHost(c.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(Faults)),
+		humustest.WithApp(humus.WithHost(c.h.Host()), humus.WithTelemetry(build), humus.WithFaults(Faults)),
 		humustest.WithEnv(merged),
 	)
 	return proc.Signal, st
@@ -374,6 +380,51 @@ func TestTrustPrefix(t *testing.T) {
 		t.Run(desc, func(t *testing.T) {
 			obj := &metav1.ObjectMeta{Name: "orders", Namespace: tc.namespace}
 			require.Equal(t, tc.want, trustPrefix(tc.prefix)(obj))
+		})
+	}
+}
+
+func TestInit_with_a_bad_telemetry_setting_exits_78(t *testing.T) {
+	for name, value := range map[string]string{
+		"OTEL_SDK_DISABLED":           "maybe",
+		"OTEL_SERVICE_NAME":           "",
+		"OTEL_TRACES_EXPORTER":        "zipkin",
+		"OTEL_METRICS_EXPORTER":       "prometheus",
+		"OTEL_LOGS_EXPORTER":          "file",
+		"OTEL_EXPORTER_OTLP_ENDPOINT": "collector",
+	} {
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				c := newTarget(t, nil)
+				_, status := c.startWith(t, map[string]string{name: value}, BuildTelemetry)
+				st := <-status
+				require.Equal(t, humus.ExitConfig, st.Code(), "cause: %v", st.Cause())
+				require.ErrorContains(t, st.Cause(), "config "+name+":")
+			})
+		})
+	}
+}
+
+func TestBuildTelemetry_names_the_service_databases(t *testing.T) {
+	for name, tc := range map[string]struct {
+		env  map[string]string
+		want string
+	}{
+		"by default":           {env: map[string]string{}, want: "databases"},
+		"unless it is renamed": {env: map[string]string{"OTEL_SERVICE_NAME": "databases-canary"}, want: "databases-canary"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := map[string]string{"OTEL_TRACES_EXPORTER": "console", "OTEL_LOGS_EXPORTER": "none", "OTEL_METRICS_EXPORTER": "none"}
+			maps.Copy(env, tc.env)
+			var stdout bytes.Buffer
+			sdk, err := BuildTelemetry(t.Context(), bedrock.Process{Environment: bedrock.NewStaticEnvironment(env), Stdout: &stdout}, nil)
+			require.NoError(t, err)
+
+			_, span := sdk.TracerProvider.Tracer("test").Start(t.Context(), "probe")
+			span.End()
+			require.NoError(t, sdk.Shutdown(context.Background()))
+
+			require.Contains(t, stdout.String(), `"Key":"service.name","Value":{"Type":"STRING","Value":"`+tc.want+`"}`)
 		})
 	}
 }
