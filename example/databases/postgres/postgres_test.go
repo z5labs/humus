@@ -13,6 +13,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock/fit"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/z5labs/humus/example/databases/postgres"
 	"github.com/z5labs/humus/fault"
@@ -29,7 +33,7 @@ func TestServer_an_abort_fails_before_reaching_the_server(t *testing.T) {
 	fs.Decoder = codec
 	faults, err := fault.New(fs)
 	require.NoError(t, err)
-	var admin postgres.Admin = postgres.New(pool, faults)
+	var admin postgres.Admin = postgres.New(pool, faults, noop.NewTracerProvider())
 	password := rand.Text()
 
 	testCases := []struct {
@@ -56,4 +60,34 @@ func TestServer_an_abort_fails_before_reaching_the_server(t *testing.T) {
 			require.Zero(t, pool.Stat().TotalConns())
 		})
 	}
+}
+
+func TestServer_a_statement_that_never_reached_the_server_is_an_error_span_with_its_error_type(t *testing.T) {
+	pool, err := pgxpool.New(t.Context(), "postgres://admin@127.0.0.1:1/postgres?connect_timeout=1")
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+	codec, err := jsonscenario.New("acme.fault")
+	require.NoError(t, err)
+	fs := fault.DefaultSettings()
+	fs.Decoder = codec
+	faults, err := fault.New(fs)
+	require.NoError(t, err)
+	spans := tracetest.NewSpanRecorder()
+	server := postgres.New(pool, faults, sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spans)))
+
+	require.Error(t, server.Drop(t.Context(), "orders"))
+
+	ended := spans.Ended()
+	require.Len(t, ended, 1)
+	require.Equal(t, "DROP DATABASE", ended[0].Name())
+	require.Equal(t, codes.Error, ended[0].Status().Code)
+	var errorType string
+	for _, kv := range ended[0].Attributes() {
+		require.NotEqual(t, "db.response.status_code", string(kv.Key))
+		if kv.Key == "error.type" {
+			errorType = kv.Value.AsString()
+		}
+	}
+	require.NotEmpty(t, errorType)
+	require.NotEqual(t, "_OTHER", errorType)
 }
