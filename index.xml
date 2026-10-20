@@ -1169,7 +1169,47 @@ port, and sign in as &lt;code&gt;admin&lt;/code&gt; at &lt;a href="http://localh
 &lt;p&gt;Each run is a trace. Its root is the &lt;code&gt;job&lt;/code&gt; span, or a child of the trace in
 &lt;code&gt;TRACEPARENT&lt;/code&gt; when whatever started the run set one. Under it are an &lt;code&gt;issue&lt;/code&gt;
 span, a &lt;code&gt;charge&lt;/code&gt; span for each invoice, and a &lt;code&gt;POST&lt;/code&gt; span for each attempt
-at the payments API. In Explore, Tempo finds the runs with:&lt;/p&gt;</description></item><item><title>Observing</title><link>https://z5labs.github.io/humus/walkthroughs/mailer/observing/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/mailer/observing/</guid><description>&lt;h2 id="opening-grafana"&gt;Opening Grafana&lt;/h2&gt;
+at the payments API. In Explore, Tempo finds the runs with:&lt;/p&gt;</description></item><item><title>Observing</title><link>https://z5labs.github.io/humus/walkthroughs/databases/observing/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/databases/observing/</guid><description>&lt;h2 id="opening-grafana"&gt;Opening Grafana&lt;/h2&gt;
+&lt;p&gt;&lt;code&gt;up.sh&lt;/code&gt; generates Grafana&amp;rsquo;s admin password into the &lt;code&gt;grafana-admin&lt;/code&gt; Secret.
+Read it, then forward Grafana&amp;rsquo;s port:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre tabindex="0" class="chroma"&gt;&lt;code class="language-sh" data-lang="sh"&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;kubectl --context kind-kind --namespace databases get secret grafana-admin &lt;span class="se"&gt;\
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="se"&gt;&lt;/span&gt; --output &lt;span class="nv"&gt;jsonpath&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;{.data.password}&amp;#39;&lt;/span&gt; &lt;span class="p"&gt;|&lt;/span&gt; base64 --decode
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;kubectl --context kind-kind --namespace databases port-forward service/grafana 3000:3000
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;p&gt;Sign in at &lt;a href="http://localhost:3000"&gt;http://localhost:3000&lt;/a&gt; as &lt;code&gt;admin&lt;/code&gt;.&lt;/p&gt;
+&lt;h2 id="a-reconciles-trace"&gt;A reconcile&amp;rsquo;s trace&lt;/h2&gt;
+&lt;p&gt;Apply the &lt;code&gt;Database&lt;/code&gt; in &lt;code&gt;deploy/kind/database.yaml&lt;/code&gt;, as
+&lt;a href="https://z5labs.github.io/humus/walkthroughs/databases/deploying/#applying-a-database"&gt;Deploying&lt;/a&gt;
+shows. In &lt;strong&gt;Explore&lt;/strong&gt;, choose &lt;strong&gt;Tempo&lt;/strong&gt; and find its reconciles by its
+namespace and name:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre tabindex="0" class="chroma"&gt;&lt;code class="language-text" data-lang="text"&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;{resource.service.name=&amp;#34;databases&amp;#34; &amp;amp;&amp;amp; span.k8s.namespace.name=&amp;#34;default&amp;#34; &amp;amp;&amp;amp; span.humus.kube.object.name=&amp;#34;orders&amp;#34;}
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;table&gt;
+ &lt;thead&gt;
+ &lt;tr&gt;
+ &lt;th&gt;Span&lt;/th&gt;
+ &lt;th&gt;What it is&lt;/th&gt;
+ &lt;/tr&gt;
+ &lt;/thead&gt;
+ &lt;tbody&gt;
+ &lt;tr&gt;
+ &lt;td&gt;&lt;code&gt;reconcile Database&lt;/code&gt;&lt;/td&gt;
+ &lt;td&gt;the reconcile, a root span, with &lt;code&gt;k8s.namespace.name&lt;/code&gt; and &lt;code&gt;humus.kube.object.name&lt;/code&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;&lt;code&gt;SELECT pg_roles&lt;/code&gt;, &lt;code&gt;CREATE ROLE&lt;/code&gt;, &lt;code&gt;ALTER ROLE&lt;/code&gt;, &lt;code&gt;SELECT pg_database&lt;/code&gt;, &lt;code&gt;CREATE DATABASE&lt;/code&gt;, &lt;code&gt;ALTER DATABASE&lt;/code&gt;&lt;/td&gt;
+ &lt;td&gt;the &lt;code&gt;Server&lt;/code&gt;&amp;rsquo;s statements as it provisions, with &lt;code&gt;db.query.summary&lt;/code&gt; and no SQL text&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;&lt;code&gt;DROP DATABASE&lt;/code&gt;, &lt;code&gt;DROP ROLE&lt;/code&gt;&lt;/td&gt;
+ &lt;td&gt;the statements of a &lt;code&gt;Finalize&lt;/code&gt; whose policy is &lt;code&gt;Delete&lt;/code&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;&lt;code&gt;GET&lt;/code&gt;, &lt;code&gt;PATCH&lt;/code&gt;&lt;/td&gt;
+ &lt;td&gt;each request to the API server, from &lt;code&gt;otelhttp&lt;/code&gt;, such as reading the Secret and applying it&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;So a reconcile&amp;rsquo;s trace holds everything it did. A test of the App checks
+it:&lt;/p&gt;</description></item><item><title>Observing</title><link>https://z5labs.github.io/humus/walkthroughs/mailer/observing/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/mailer/observing/</guid><description>&lt;h2 id="opening-grafana"&gt;Opening Grafana&lt;/h2&gt;
 &lt;p&gt;&lt;code&gt;up.sh&lt;/code&gt; generates Grafana&amp;rsquo;s admin password into the &lt;code&gt;grafana-admin&lt;/code&gt; Secret.
 Read it, then forward Grafana&amp;rsquo;s port:&lt;/p&gt;
 &lt;div class="highlight"&gt;&lt;pre tabindex="0" class="chroma"&gt;&lt;code class="language-sh" data-lang="sh"&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;kubectl --context kind-kind --namespace mailer get secret grafana-admin &lt;span class="se"&gt;\
@@ -1268,7 +1308,83 @@ variable. A bad one exits 78:&lt;/p&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nt"&gt;values&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="m"&gt;78&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;&lt;span class="w"&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;h2 id="no-secret-is-in-the-environment-the-logs-or-the-spans"&gt;No secret is in the environment, the logs or the spans&lt;/h2&gt;
 &lt;p&gt;The database URL and the API key are files from Secrets, read through the
-Host:&lt;/p&gt;</description></item><item><title>Production-ready</title><link>https://z5labs.github.io/humus/walkthroughs/mailer/production-ready/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/mailer/production-ready/</guid><description>&lt;p&gt;The mailer meets each item. Check your own worker against them:&lt;/p&gt;
+Host:&lt;/p&gt;</description></item><item><title>Production-ready</title><link>https://z5labs.github.io/humus/walkthroughs/databases/production-ready/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/databases/production-ready/</guid><description>&lt;p&gt;The controller meets each item. Check your own controller against them:&lt;/p&gt;
+&lt;table&gt;
+ &lt;thead&gt;
+ &lt;tr&gt;
+ &lt;th&gt;Item&lt;/th&gt;
+ &lt;th&gt;How&lt;/th&gt;
+ &lt;th&gt;Where&lt;/th&gt;
+ &lt;/tr&gt;
+ &lt;/thead&gt;
+ &lt;tbody&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Every setting sourced and checked; a bad one exits 78, naming its variable&lt;/td&gt;
+ &lt;td&gt;&lt;code&gt;config.Struct&lt;/code&gt;, &lt;code&gt;kube&lt;/code&gt;&amp;rsquo;s checks and the controller&amp;rsquo;s own&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/databases/init/#the-settings"&gt;The settings&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;No secret in the environment, the logs or the spans&lt;/td&gt;
+ &lt;td&gt;the admin DSN, the service account&amp;rsquo;s token and CA, and the probes&amp;rsquo; key are files read through &lt;code&gt;s.Host.FS&lt;/code&gt;. A role&amp;rsquo;s password reaches PostgreSQL as a SCRAM verifier, and a statement&amp;rsquo;s span carries its summary, never its SQL. A test of the App checks that no password, DSN or token is in a span, a record or a metric&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/databases/init/#the-secrets-as-files"&gt;The secrets, as files&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/databases/postgres/#keeping-the-password-out-of-the-sql"&gt;Keeping the password out of the SQL&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/databases/postgres/#keeping-credentials-out-of-the-spans"&gt;Keeping credentials out of the spans&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Certificates renewed without a restart&lt;/td&gt;
+ &lt;td&gt;the probes&amp;rsquo; certificate is served through &lt;code&gt;GetCertificate&lt;/code&gt;, by a small helper of the walkthrough&amp;rsquo;s own that reads its file again when it changes. The token&amp;rsquo;s file is read each time the Client asks, so a rotated one is picked up&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/databases/init/#the-probes"&gt;The probes&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/databases/init/#the-connection"&gt;The Connection&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Available through a lost replica&lt;/td&gt;
+ &lt;td&gt;two replicas share the Lease, and the standby takes over when the leader stops. A rollout starts a new replica before it stops an old one, and a PodDisruptionBudget of &lt;code&gt;minAvailable: 1&lt;/code&gt;&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/databases/init/#the-settings-and-the-lease"&gt;The Settings and the Lease&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/databases/deploying/#the-deployment"&gt;The Deployment&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/databases/deploying/#the-disruption-budget"&gt;The disruption budget&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Ready only once its caches have synced&lt;/td&gt;
+ &lt;td&gt;&lt;code&gt;Synced&lt;/code&gt; as readiness, on an HTTPS probes port&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/databases/init/#the-probes"&gt;The probes&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;A rollout loses nothing&lt;/td&gt;
+ &lt;td&gt;SIGTERM finishes the reconciles in flight and releases the Lease, in a grace period of 20s, and &lt;code&gt;terminationGracePeriodSeconds&lt;/code&gt; is 30. The next leader lists every &lt;code&gt;Database&lt;/code&gt; again&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/databases/deploying/#the-grace-period"&gt;The grace period&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/databases/init/#main"&gt;&lt;code&gt;main&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Reconciling again is harmless&lt;/td&gt;
+ &lt;td&gt;the Secret is the password&amp;rsquo;s source of truth, so every reconcile sets the same one. The role and the database are ensured, and the drops are &lt;code&gt;IF EXISTS&lt;/code&gt;&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/databases/reconciling/#the-password"&gt;The password&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/databases/postgres/#provisioning"&gt;Provisioning&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/databases/cleaning-up/#dropping"&gt;Dropping&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Deleting cleans up, as the &lt;code&gt;Database&lt;/code&gt; says&lt;/td&gt;
+ &lt;td&gt;the finalizer holds a deleted &lt;code&gt;Database&lt;/code&gt; until &lt;code&gt;Finalize&lt;/code&gt; has dropped what its &lt;code&gt;deletionPolicy&lt;/code&gt; says to. The Secret is deleted with it, as the &lt;code&gt;Database&lt;/code&gt; controls it&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/databases/cleaning-up/#the-finalizer"&gt;The finalizer&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/databases/cleaning-up/#the-secret"&gt;The Secret&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Least privilege&lt;/td&gt;
+ &lt;td&gt;a ClusterRole that watches and patches &lt;code&gt;Database&lt;/code&gt;s and applies Secrets, and a Role for its own Lease and no other. A non-root container, on a read-only root filesystem, with every capability dropped&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/databases/deploying/#rbac"&gt;RBAC&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/databases/deploying/#the-deployment"&gt;The Deployment&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Observable&lt;/td&gt;
+ &lt;td&gt;traces, logs and metrics over OTLP, and rules for failing, panicking and stuck reconciles, a backlog and restarts, on humus&amp;rsquo;s own instruments, and a dashboard&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/databases/observing/"&gt;Observing&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Failures say why&lt;/td&gt;
+ &lt;td&gt;a failed step sets &lt;code&gt;Ready&lt;/code&gt; to &lt;code&gt;False&lt;/code&gt;, with a reason naming the step, &lt;code&gt;PostgresUnavailable&lt;/code&gt; or &lt;code&gt;SecretApplyFailed&lt;/code&gt;&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/databases/reconciling/#the-conditions"&gt;The conditions&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Failures are rehearsed&lt;/td&gt;
+ &lt;td&gt;the failure injection cases&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/databases/testing/#the-failure-injection-cases"&gt;The failure injection cases&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Safe by default&lt;/td&gt;
+ &lt;td&gt;&lt;code&gt;deletionPolicy&lt;/code&gt; defaults to &lt;code&gt;Retain&lt;/code&gt;, and &lt;code&gt;name&lt;/code&gt; is immutable. No namespace&amp;rsquo;s scenarios are trusted&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/databases/resource/#the-resource-and-its-rules"&gt;The resource and its rules&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/databases/init/#trusting-a-namespaces-scenarios"&gt;Trusting a namespace&amp;rsquo;s scenarios&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;/tbody&gt;
+&lt;/table&gt;</description></item><item><title>Production-ready</title><link>https://z5labs.github.io/humus/walkthroughs/mailer/production-ready/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/mailer/production-ready/</guid><description>&lt;p&gt;The mailer meets each item. Check your own worker against them:&lt;/p&gt;
 &lt;table&gt;
  &lt;thead&gt;
  &lt;tr&gt;
