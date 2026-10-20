@@ -280,11 +280,7 @@ func TestService_serves_plain_text_only(t *testing.T) {
 		_, err := healthpb.NewHealthClient(conn).Check(t.Context(), &healthpb.HealthCheckRequest{Service: "liveness"})
 		require.Equal(t, codes.Unavailable, status.Code(err), "a client over TLS connected: %v", err)
 
-		// The client goes on reconnecting until it is closed. The Host's
-		// connections are unbuffered net.Pipes, on which a TLS client and a
-		// plaintext server both write first, so a reconnect in flight would
-		// hold GracefulStop past the grace period; over TCP, the kernel's
-		// buffers let each side's first write through.
+		// The client goes on reconnecting until it is closed.
 		require.NoError(t, conn.Close())
 		synctest.Wait()
 

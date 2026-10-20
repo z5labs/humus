@@ -18,7 +18,7 @@ import (
 	"github.com/z5labs/humus"
 )
 
-// Host is a humus.Host for tests: a network of net.Pipe connections, and a
+// Host is a humus.Host for tests: a network of in-memory connections, and a
 // filesystem in a directory from t.TempDir(). The network starts no
 // goroutines, so the Host works inside a testing/synctest bubble; build it
 // inside the bubble that uses it.
@@ -151,14 +151,16 @@ func (h *Host) Dial(ctx context.Context, network, address string) (net.Conn, err
 		return nil, refused(network, k)
 	}
 
-	client, server := net.Pipe()
-	if err := l.connect(ctx, client, &conn{Conn: server, local: l.Addr()}); err != nil {
+	client, server := newPipe()
+	client.remote = k.addr()
+	server.local = l.Addr()
+	if err := l.connect(ctx, client, server); err != nil {
 		if errors.Is(err, errListenerClosed) {
 			return nil, refused(network, k)
 		}
 		return nil, &net.OpError{Op: "dial", Net: network, Addr: k.addr(), Err: err}
 	}
-	return &conn{Conn: client, remote: k.addr()}, nil
+	return client, nil
 }
 
 // Listening returns a channel that is closed once a listener exists that a

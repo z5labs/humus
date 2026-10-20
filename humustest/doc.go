@@ -115,11 +115,12 @@
 // reads the PKCS#12 bundle from a file written with [WithFiles], and a
 // client trusts the CA through [CA.Pool].
 //
-// A connection on the network is a net.Pipe, which has no buffer. When
-// both ends of a TLS connection close at once, each waits to send its
-// close_notify alert until crypto/tls's five-second write deadline passes.
-// Inside a synctest bubble that wait takes no time; outside one, it is
-// real.
+// A connection on the network buffers up to 256 KiB in each direction, as
+// a real socket does, so a Write returns once its bytes are buffered, not
+// once the peer reads them. So a TLS connection closes as it does on a
+// real socket: its close_notify alert is buffered even when the peer isn't
+// reading, and Close returns at once, whatever happens to the connection's
+// write deadline meanwhile.
 //
 // # Services
 //

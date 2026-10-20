@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -21,6 +22,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -796,4 +799,322 @@ func TestInit_stops_on_a_record_that_can_go_to_neither_the_retry_nor_the_dead_le
 		require.Empty(t, p.readAll(t, c, deadLetterTopic))
 		require.Equal(t, int64(1), committed(c, eventsTopic))
 	})
+}
+
+// trace logs what happens during a close, with the bubble time since it
+// began. It stops logging before the test returns, as franz-go's goroutines
+// may still log.
+type trace struct {
+	t     *testing.T
+	armed atomic.Bool
+
+	mu    sync.Mutex
+	start time.Time
+	done  bool
+}
+
+func (tr *trace) arm() {
+	tr.mu.Lock()
+	tr.start = time.Now()
+	tr.mu.Unlock()
+	tr.armed.Store(true)
+}
+
+func (tr *trace) log(format string, args ...any) {
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	if tr.done {
+		return
+	}
+	tr.t.Logf("%-8v "+format, append([]any{time.Since(tr.start)}, args...)...)
+}
+
+func (tr *trace) stop() {
+	tr.mu.Lock()
+	tr.done = true
+	tr.mu.Unlock()
+}
+
+// Level and Log make trace franz-go's logger, at debug, once it is armed.
+func (tr *trace) Level() kgo.LogLevel { return kgo.LogLevelDebug }
+
+func (tr *trace) Log(level kgo.LogLevel, msg string, keyvals ...any) {
+	if tr.armed.Load() {
+		tr.log("franz-go %s: %s %v", level, msg, keyvals)
+	}
+}
+
+// closeRace orders the close of a consumer's fetch connection. Close stops
+// the consumer's session, which cuts short the read of the long-poll Fetch
+// in flight, and then sends a Fetch that kills the fetch session. closeRace
+// holds the cut-short read until the session-kill Fetch is written on the
+// same connection, so the read fails, and franz-go closes the connection,
+// after that write. With holdReset, it also holds the write deadline reset
+// that follows that write until crypto/tls is writing close_notify. Without
+// it, the read waits for the reset instead.
+type closeRace struct {
+	tr        *trace
+	holdReset bool
+
+	killWritten  chan struct{} // closed once the session-kill Fetch is written
+	resetDone    chan struct{} // closed once that write has reset the write deadline
+	alertWriting chan struct{} // closed as crypto/tls begins writing close_notify
+
+	mu     sync.Mutex
+	writes map[string]int // the requests written since the close began
+}
+
+func newCloseRace(tr *trace, holdReset bool) *closeRace {
+	return &closeRace{
+		tr:           tr,
+		holdReset:    holdReset,
+		killWritten:  make(chan struct{}),
+		resetDone:    make(chan struct{}),
+		alertWriting: make(chan struct{}),
+		writes:       map[string]int{},
+	}
+}
+
+// wait waits for ch, for at most 10s of bubble time, so that an order that
+// never comes doesn't hold a call forever.
+func (r *closeRace) wait(what string, ch <-chan struct{}) {
+	select {
+	case <-ch:
+	case <-time.After(10 * time.Second):
+		r.tr.log("gave up waiting for %s", what)
+	}
+}
+
+func (r *closeRace) count(key int16) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.writes[kmsg.NameForKey(key)]++
+}
+
+func (r *closeRace) written() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []string
+	for name, n := range r.writes {
+		out = append(out, fmt.Sprintf("%s %d", name, n))
+	}
+	sort.Strings(out)
+	return strings.Join(out, ", ")
+}
+
+// dial dials as processor.dial does, and wraps the connection on both
+// sides of crypto/tls.
+func (r *closeRace) dial(p *processor) func(ctx context.Context, network, address string) (net.Conn, error) {
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		conn, err := p.h.Dial(ctx, network, address)
+		if err != nil {
+			return nil, err
+		}
+		c := &raceConn{r: r}
+		c.wire = &wireConn{Conn: conn, log: r.tr.log, onAlert: func() { close(r.alertWriting) }}
+		cfg := p.client.Clone()
+		cfg.ServerName, _, _ = net.SplitHostPort(address)
+		tc := tls.Client(c.wire, cfg)
+		if err := tc.HandshakeContext(ctx); err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+		c.Conn = tc
+		return c, nil
+	}
+}
+
+// raceConn is the *tls.Conn franz-go writes requests on.
+type raceConn struct {
+	net.Conn
+	r    *closeRace
+	wire *wireConn
+
+	fetch  atomic.Bool // a Fetch has been written on it
+	killer atomic.Bool // the session-kill Fetch has been written on it
+	reset  atomic.Bool // that write has reset the write deadline
+}
+
+func (c *raceConn) Write(b []byte) (int, error) {
+	n, err := c.Conn.Write(b)
+	if len(b) < 6 {
+		return n, err
+	}
+	key := int16(binary.BigEndian.Uint16(b[4:6]))
+	if c.r.tr.armed.Load() {
+		c.r.count(key)
+		if key == kmsg.Fetch.Int16() && c.fetch.Load() && c.killer.CompareAndSwap(false, true) {
+			c.r.tr.log("the session-kill Fetch is written on the long-poll Fetch's connection: %d bytes, err %v", n, err)
+			close(c.r.killWritten)
+		}
+	}
+	if key == kmsg.Fetch.Int16() {
+		c.fetch.Store(true)
+	}
+	return n, err
+}
+
+func (c *raceConn) SetReadDeadline(t time.Time) error {
+	if c.r.tr.armed.Load() && c.fetch.Load() && !c.killer.Load() && !t.IsZero() && !t.After(time.Now()) {
+		if c.r.holdReset {
+			c.r.tr.log("franz-go cuts short the long-poll Fetch's read; held until the session-kill Fetch is written")
+			c.r.wait("the session-kill Fetch", c.r.killWritten)
+		} else {
+			c.r.tr.log("franz-go cuts short the long-poll Fetch's read; held until the session-kill Fetch's write resets the write deadline")
+			c.r.wait("the write deadline reset", c.r.resetDone)
+		}
+		c.r.tr.log("the long-poll Fetch's read is cut short")
+	}
+	return c.Conn.SetReadDeadline(t)
+}
+
+func (c *raceConn) SetWriteDeadline(t time.Time) error {
+	if !t.IsZero() || !c.killer.Load() || !c.reset.CompareAndSwap(false, true) {
+		return c.Conn.SetWriteDeadline(t)
+	}
+	if c.r.holdReset {
+		c.r.tr.log("the session-kill Fetch's write resets the write deadline; held until crypto/tls writes close_notify")
+		c.r.wait("close_notify", c.r.alertWriting)
+	}
+	err := c.Conn.SetWriteDeadline(t)
+	c.r.tr.log("the session-kill Fetch's write has reset the connection's write deadline to none")
+	close(c.r.resetDone)
+	return err
+}
+
+func (c *raceConn) Close() error {
+	if !c.killer.Load() {
+		return c.Conn.Close()
+	}
+	c.wire.closing.Store(true)
+	c.r.tr.log("franz-go closes the long-poll Fetch's connection")
+	err := c.Conn.Close()
+	c.r.tr.log("the connection's Close returns: %v", err)
+	return err
+}
+
+// wireConn is the connection beneath crypto/tls. Once closing is set, it
+// logs crypto/tls's write deadlines, and reports its first write, which is
+// close_notify.
+type wireConn struct {
+	net.Conn
+	log     func(format string, args ...any)
+	onAlert func()
+
+	closing atomic.Bool
+	alerted atomic.Bool
+}
+
+func (w *wireConn) SetWriteDeadline(t time.Time) error {
+	if w.closing.Load() {
+		if t.IsZero() {
+			w.log("the write deadline beneath crypto/tls is set to none")
+		} else {
+			w.log("the write deadline beneath crypto/tls is set %v ahead", time.Until(t))
+		}
+	}
+	return w.Conn.SetWriteDeadline(t)
+}
+
+func (w *wireConn) Write(b []byte) (int, error) {
+	if !w.closing.Load() || !w.alerted.CompareAndSwap(false, true) {
+		return w.Conn.Write(b)
+	}
+	w.log("crypto/tls writes close_notify: %d bytes", len(b))
+	w.onAlert()
+	start := time.Now()
+	n, err := w.Conn.Write(b)
+	w.log("close_notify's write returns after %v: %v", time.Since(start), err)
+	return n, err
+}
+
+// closeReadAllClient polls and closes a client as readAll does, with the
+// connections ordered by closeRace, and fails the test if Close hasn't
+// returned after a minute of bubble time.
+func closeReadAllClient(t *testing.T, holdReset bool) {
+	synctest.Test(t, func(t *testing.T) {
+		p := newProcessor(t, nil)
+		c := p.cluster(t)
+		p.produce(t, c, &kgo.Record{Topic: statusTopic, Key: []byte("order-1"), Value: []byte(`{"order_id":"order-1"}`)})
+
+		tr := &trace{t: t}
+		defer tr.stop()
+		r := newCloseRace(tr, holdReset)
+		cl, err := kgo.NewClient(
+			kgo.SeedBrokers(c.ListenAddrs()...),
+			kgo.Dialer(r.dial(p)),
+			kgo.ConsumeTopics(statusTopic),
+			kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
+			kgo.WithLogger(tr),
+		)
+		require.NoError(t, err)
+
+		var out []*kgo.Record
+		for {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			fetches := cl.PollFetches(ctx)
+			cancel()
+			n := 0
+			fetches.EachRecord(func(rec *kgo.Record) {
+				out = append(out, rec)
+				n++
+			})
+			if n == 0 {
+				break
+			}
+		}
+		require.Len(t, out, 1)
+
+		tr.arm()
+		tr.log("readAll closes its client, with its long-poll Fetch in flight")
+		closed := make(chan struct{})
+		go func() {
+			defer close(closed)
+			cl.Close()
+		}()
+
+		select {
+		case <-closed:
+			tr.log("Close returns")
+			tr.log("the client wrote: %s", r.written())
+		case <-time.After(time.Minute):
+			t.Errorf("Close hasn't returned after %v of bubble time", time.Minute)
+			tr.log("Close hasn't returned; meanwhile the client wrote: %s", r.written())
+			for _, g := range stuckGoroutines() {
+				tr.log("stuck:\n%s", g)
+			}
+			c.Close()
+			<-closed
+			tr.log("Close returns once the cluster closes its connections")
+		}
+	})
+}
+
+// stuckGoroutines returns the stacks of the goroutines in a synctest bubble
+// that write on a pipe, wait on the session-kill Fetch, or are kfake's
+// reader of a connection: the ones the hung runs of #1098 showed.
+func stuckGoroutines() []string {
+	buf := make([]byte, 1<<20)
+	buf = buf[:runtime.Stack(buf, true)]
+	var out []string
+	for _, g := range strings.Split(string(buf), "\n\n") {
+		if !strings.Contains(g, "synctest bubble") {
+			continue
+		}
+		for _, frame := range []string{"net.(*pipe).write", "killSessionOnClose", "kfake.(*clientConn).read("} {
+			if strings.Contains(g, frame) {
+				out = append(out, g)
+				break
+			}
+		}
+	}
+	return out
+}
+
+func TestReadAll_closes_its_client_when_the_session_kill_Fetch_resets_the_deadline_close_notify_waits_on(t *testing.T) {
+	closeReadAllClient(t, true)
+}
+
+func TestReadAll_closes_its_client_when_the_session_kill_Fetch_resets_its_deadline_before_close_notify(t *testing.T) {
+	closeReadAllClient(t, false)
 }
