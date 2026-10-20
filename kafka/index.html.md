@@ -1368,6 +1368,10 @@ describes for any App, against a fake cluster on the test's Host.
 `humus.Main`'s, and putting a fake cluster on its Host takes one option. The
 helpers below are a few lines each, which no API would save.
 
+The [order status walkthrough](/humus/walkthroughs/orderstatus/testing/)
+tests its `Processor` as a unit, and runs the same black-box cases against
+the App in process, on kfake, and against its deployment on kind.
+
 ### A fake cluster on the test Host
 
 franz-go's [kfake](https://pkg.go.dev/github.com/twmb/franz-go/pkg/kfake) is
