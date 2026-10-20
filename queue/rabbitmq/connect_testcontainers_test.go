@@ -346,12 +346,16 @@ func TestConnect_fails_with_ErrCredentials_for_a_wrong_password(t *testing.T) {
 	require.Nil(t, conn)
 }
 
-func TestConnect_fails_with_ErrVhost_for_a_vhost_that_does_not_exist(t *testing.T) {
+func TestConnect_fails_with_the_brokers_530_reply_for_a_vhost_that_does_not_exist(t *testing.T) {
 	t.Parallel()
 
 	c := plainText(t)
 	c.Vhost = unique("missing")
 	conn, err := rabbitmq.Connect(t.Context(), humus.OSHost(), c)
-	require.ErrorIs(t, err, amqp.ErrVhost)
+	ae, ok := errors.AsType[*amqp.Error](err)
+	require.True(t, ok, "err: %v", err)
+	require.Equal(t, amqp.NotAllowed, ae.Code)
+	require.True(t, ae.Server, "the broker's reply")
+	require.Contains(t, ae.Reason, c.Vhost)
 	require.Nil(t, conn)
 }

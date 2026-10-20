@@ -16,6 +16,7 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/require"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 )
 
 func TestStops(t *testing.T) {
@@ -29,6 +30,8 @@ func TestStops(t *testing.T) {
 		{name: "a wrong login", err: amqp.ErrCredentials, stops: true},
 		{name: "no shared SASL mechanism", err: amqp.ErrSASL, stops: true},
 		{name: "a vhost the login can't open", err: amqp.ErrVhost, stops: true},
+		{name: "a vhost the broker refused at Connection.Open", err: fmt.Errorf("rabbitmq: AMQP handshake with rabbit:5672: %w", &vhostRefusal{err: &amqp.Error{Code: amqp.NotAllowed, Reason: "NOT_ALLOWED - vhost orders not found", Server: true}}), stops: true},
+		{name: "a connection limit the broker reached at Connection.Open", err: &vhostRefusal{err: &amqp.Error{Code: amqp.NotAllowed, Reason: "NOT_ALLOWED - access to vhost 'orders' refused for user 'svc': connection limit (10) is reached", Server: true}}, stops: true},
 		{name: "ACCESS_REFUSED from the broker", err: &amqp.Error{Code: amqp.AccessRefused, Reason: "ACCESS_REFUSED - Login was refused", Server: true}, stops: true},
 		{name: "a queue that does not exist", err: &amqp.Error{Code: amqp.NotFound, Reason: "NOT_FOUND - no queue 'orders' in vhost '/'", Server: true}, stops: true},
 		{name: "a queue the login can't read", err: &amqp.Error{Code: amqp.AccessRefused, Reason: "ACCESS_REFUSED - access to queue 'orders' in vhost '/' refused", Server: true}, stops: true},
@@ -40,6 +43,7 @@ func TestStops(t *testing.T) {
 		{name: "a connection the broker forced closed", err: &amqp.Error{Code: amqp.ConnectionForced, Reason: "CONNECTION_FORCED - broker forced connection closure with reason 'shutdown'", Server: true}},
 		{name: "a closed channel", err: amqp.ErrClosed},
 		{name: "a precondition failure", err: &amqp.Error{Code: amqp.PreconditionFailed, Server: true}},
+		{name: "NOT_ALLOWED on an open connection", err: &amqp.Error{Code: amqp.NotAllowed, Reason: "NOT_ALLOWED - number of channels opened (2047) has reached the negotiated channel_max (2047)", Server: true}},
 		{name: "any other error", err: errors.New("EOF")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -48,6 +52,20 @@ func TestStops(t *testing.T) {
 			require.Equal(t, tc.stops, stops(tc.err))
 		})
 	}
+}
+
+func TestVhostRefusal_keeps_the_replys_message_and_error_type(t *testing.T) {
+	t.Parallel()
+
+	reply := &amqp.Error{Code: amqp.NotAllowed, Reason: "NOT_ALLOWED - vhost orders not found", Server: true}
+	marked := fmt.Errorf("rabbitmq: AMQP handshake with rabbit:5672: %w", &vhostRefusal{err: reply})
+	unmarked := fmt.Errorf("rabbitmq: AMQP handshake with rabbit:5672: %w", reply)
+
+	require.Equal(t, unmarked.Error(), marked.Error())
+	require.Equal(t, semconv.ErrorType(unmarked), semconv.ErrorType(marked))
+	got, ok := errors.AsType[*amqp.Error](marked)
+	require.True(t, ok)
+	require.Same(t, reply, got)
 }
 
 func TestStopsConsuming(t *testing.T) {
