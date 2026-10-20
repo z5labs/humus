@@ -42,8 +42,10 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/example/orderstatus/cases"
 	"github.com/z5labs/humus/example/orderstatus/projector"
 	"github.com/z5labs/humus/example/orderstatus/store"
+	"github.com/z5labs/humus/fault/jsonscenario"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/job"
 	"github.com/z5labs/humus/telemetry"
@@ -597,6 +599,129 @@ func TestInit_projects_an_order_and_turns_ready_once_it_has_joined_its_group(t *
 		require.Empty(t, p.readAll(t, c, deadLetterTopic))
 		require.Equal(t, int64(1), committed(c, eventsTopic))
 	})
+}
+
+var casesEnv = map[string]string{
+	"RETRY_ATTEMPTS":       "3",
+	"RETRY_MIN_DELAY":      "100ms",
+	"RETRY_MAX_DELAY":      "400ms",
+	"FAULT_TRUSTED_TOPICS": eventsTopic + "," + retryTopic,
+}
+
+type running struct {
+	signal func(os.Signal)
+	status <-chan bedrock.ExitStatus
+}
+
+func (p *processor) startForCases(t *testing.T, probes string) running {
+	t.Helper()
+	env := maps.Clone(casesEnv)
+	env["PROBES_ADDR"] = probes
+	signal, status := p.start(t, env, humus.WithFaults(Faults))
+	return running{signal: signal, status: status}
+}
+
+func (r running) stop(t *testing.T) {
+	t.Helper()
+	r.signal(syscall.SIGTERM)
+	st := <-r.status
+	require.Zero(t, st.Code(), "cause: %v", st.Cause())
+}
+
+type rollout struct {
+	t       *testing.T
+	p       *processor
+	c       *kfake.Cluster
+	current running
+	probes  []string
+}
+
+func (r *rollout) run(ctx context.Context) error {
+	release := pauseFetches(r.c)
+	defer release()
+	synctest.Wait()
+
+	next := r.p.startForCases(r.t, r.probes[0])
+	r.probes = append(r.probes[1:], r.probes[0])
+	if err := r.await(ctx, next, 2); err != nil {
+		return err
+	}
+
+	r.current.signal(syscall.SIGTERM)
+	var st bedrock.ExitStatus
+	select {
+	case st = <-r.current.status:
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	}
+	r.current = next
+	if st.Code() != 0 {
+		return fmt.Errorf("the replaced App exited %d: %w", st.Code(), st.Cause())
+	}
+	return r.await(ctx, next, 1)
+}
+
+func (r *rollout) await(ctx context.Context, next running, members int) error {
+	for {
+		info := r.c.GroupInfo(group)
+		if info != nil && info.State == "Stable" && len(info.Members) == members {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return context.Cause(ctx)
+		case st := <-next.status:
+			return fmt.Errorf("the new App exited %d: %w", st.Code(), st.Cause())
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+func pauseFetches(c *kfake.Cluster) func() {
+	release := make(chan struct{})
+	c.ControlKey(kmsg.Fetch.Int16(), func(kmsg.Request) (kmsg.Response, error, bool) {
+		c.KeepControl()
+		select {
+		case <-release:
+		default:
+			c.SleepControl(func() { <-release })
+		}
+		return nil, nil, false
+	})
+	var once sync.Once
+	return func() { once.Do(func() { close(release) }) }
+}
+
+func TestInit_passes_the_shared_cases(t *testing.T) {
+	codec, err := jsonscenario.New("acme.fault")
+	require.NoError(t, err)
+	for _, c := range cases.All {
+		t.Run(c.Name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				p := newProcessor(t, nil)
+				cl := p.cluster(t, kfake.SeedTopics(3, eventsTopic, statusTopic, retryTopic, deadLetterTopic))
+				r := &rollout{t: t, p: p, c: cl, current: p.startForCases(t, probesAddr), probes: []string{"localhost:8444", probesAddr}}
+
+				c.Run(t, cases.Target{
+					Kafka:           []kgo.Opt{kgo.SeedBrokers(cl.ListenAddrs()...), kgo.Dialer(p.dial)},
+					EventsTopic:     eventsTopic,
+					StatusTopic:     statusTopic,
+					RetryTopic:      retryTopic,
+					DeadLetterTopic: deadLetterTopic,
+					Group:           group,
+					Scenario:        codec,
+					ScenarioKey:     "acme.fault",
+					RetryAttempts:   3,
+					RetryMinDelay:   100 * time.Millisecond,
+					RetryMaxDelay:   400 * time.Millisecond,
+					Timeout:         time.Minute,
+					Rollout:         r.run,
+				})
+
+				r.current.stop(t)
+			})
+		})
+	}
 }
 
 var graceEnv = map[string]string{
