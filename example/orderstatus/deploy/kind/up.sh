@@ -42,6 +42,7 @@ issue kafka DNS:localhost
 issue admin
 issue postgres
 issue orderstatus
+issue cases
 
 printf '%s' "$postgres_password" >"$tmp/postgres-password"
 printf '%s' "$orderstatus_password" >"$tmp/orderstatus-password"
@@ -70,6 +71,8 @@ secret() {
   secret orderstatus-postgres --from-file=password="$tmp/orderstatus-password" --from-file=ca.crt="$tmp/ca.crt"
   echo ---
   secret orderstatus-probes --from-file=tls.pem="$tmp/orderstatus.pem"
+  echo ---
+  secret cases-kafka --from-file=tls.pem="$tmp/cases.pem" --from-file=ca.crt="$tmp/ca.crt"
 } >"$tmp/orderstatus.yaml"
 
 kind load docker-image orderstatus --name "$cluster"
@@ -77,8 +80,10 @@ k delete job kafka-topics --ignore-not-found
 k apply -f "$tmp/orderstatus.yaml"
 
 k rollout restart deployment/kafka deployment/postgres
+k delete job kafka-topics
 k rollout status deployment/kafka --timeout 5m
 k rollout status deployment/postgres --timeout 5m
+k apply -f "$tmp/orderstatus.yaml"
 
 k exec -i deployment/postgres -- psql -v ON_ERROR_STOP=1 -U postgres -d orders <<SQL
 CREATE ROLE orderstatus LOGIN PASSWORD '$orderstatus_password';
