@@ -1,0 +1,58 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: shoppingcart
+resources:
+  - ../base
+  - postgres.yaml
+  - wiremock.yaml
+configMapGenerator:
+  - name: cart
+    behavior: merge
+    literals:
+      - JWKS_URL=https://wiremock/.well-known/jwks.json
+      - FAULT_TRUST_SCOPE=faults:rehearse
+  - name: catalog
+    behavior: merge
+    literals:
+      - JWKS_URL=https://wiremock/.well-known/jwks.json
+  - name: postgres-config
+    files:
+      - postgres/pg_hba.conf
+  - name: wiremock-mappings
+    files:
+      - wiremock/jwks.json
+patches:
+  - target:
+      kind: Deployment
+      name: cart
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: cart
+      spec:
+        template:
+          spec:
+            initContainers:
+              - name: migrate
+                imagePullPolicy: Never
+            containers:
+              - name: cart
+                imagePullPolicy: Never
+  - target:
+      kind: Deployment
+      name: catalog
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: catalog
+      spec:
+        template:
+          spec:
+            initContainers:
+              - name: migrate
+                imagePullPolicy: Never
+            containers:
+              - name: catalog
+                imagePullPolicy: Never
