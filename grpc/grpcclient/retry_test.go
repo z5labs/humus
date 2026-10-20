@@ -435,6 +435,23 @@ func TestClient_decides_what_is_about_the_call(t *testing.T) {
 
 	t.Run("an open stream that fails isn't retried", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
+			b := &backend{streamErr: status.Error(codes.Internal, "lost its state")}
+
+			var (
+				asked atomic.Int32
+				got   int
+			)
+			_, err := withBackend(t, b, retryAll(&asked), streamOne(&got)).run(t)
+
+			require.Equal(t, codes.Internal, status.Code(err), "err = %v", err)
+			require.Equal(t, 1, got)
+			require.EqualValues(t, 1, b.calls.Load())
+			require.EqualValues(t, 1, asked.Load(), "Classify is asked about the stream's end, for the breaker, and not about its open")
+		})
+	})
+
+	t.Run("an open stream that ends with Unavailable isn't retried, and Classify isn't asked about it", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
 			b := &backend{streamErr: status.Error(codes.Unavailable, "going away")}
 
 			var (
@@ -446,7 +463,7 @@ func TestClient_decides_what_is_about_the_call(t *testing.T) {
 			require.Equal(t, codes.Unavailable, status.Code(err), "err = %v", err)
 			require.Equal(t, 1, got)
 			require.EqualValues(t, 1, b.calls.Load())
-			require.EqualValues(t, 1, asked.Load(), "Classify is asked about the stream's end, for the breaker, and not about its open")
+			require.Zero(t, asked.Load(), "the Client decides the end of an open stream with Unavailable")
 		})
 	})
 }

@@ -227,9 +227,10 @@ func (s *stream) RecvMsg(m any) error {
 // err, nil for io.EOF. A stream that failed once its caller cancelled ctx
 // is released, counting nothing, as watch releases it, whichever of the
 // two runs first. Any other error once ctx has ended is the Client's to
-// classify, as for a unary attempt, and Classify is asked about the rest,
-// with the stream's trailer. A panic in Classify passes to the caller of
-// RecvMsg, and the ticket is released.
+// classify, as for a unary attempt, and so is Unavailable while ctx is
+// live, as goneAway describes. Classify is asked about the rest, with the
+// stream's trailer. A panic in Classify passes to the caller of RecvMsg,
+// and the ticket is released.
 func (s *stream) settle(err error) {
 	s.settled.Do(func() {
 		s.stop()
@@ -241,12 +242,27 @@ func (s *stream) settle(err error) {
 			return
 		}
 		var class Classification
-		if err != nil && ended(s.ctx) {
+		switch {
+		case err != nil && ended(s.ctx):
 			class = decided(s.ctx)
-		} else {
+		case status.Code(err) == codes.Unavailable:
+			class = goneAway
+		default:
 			class = s.c.classify(s.method, err, s.Trailer())
 			mustBeValid(class)
 		}
 		s.ticket.Done(&result{err: err, class: class})
 	})
 }
+
+// goneAway is the Classification of an open stream that ends with
+// Unavailable, which the Client decides without asking Classify. It is how
+// a stream ends when its server or its connection goes away: grpcserver's
+// Shutdown ends every stream with it, and grpc-go ends every stream on a
+// connection that closes, such as one the server's MaxConnectionAgeGrace
+// closes. Those streams end together, so counting each one would open the
+// breaker on a dependency whose other pods are healthy. The breaker ignores
+// it: the next open goes through the breaker, and while the dependency is
+// down it fails, and counts. Its Retry is never read, since an open stream
+// is never retried.
+var goneAway = Classification{Retry: retry.Stop, Breaker: circuit.Ignored}

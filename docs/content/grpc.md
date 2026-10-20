@@ -295,6 +295,9 @@ The server sends a GOAWAY once a connection reaches that age, give or take
 whichever pod the Service picks, so a `grpcclient` Client sees no error.
 `MaxConnectionAgeGrace` bounds how long the RPCs on an old connection may
 take before it is closed under them, which a server with long streams sets.
+grpc-go ends the streams still open then with `Unavailable`, as
+[Streams at shutdown](#streams-at-shutdown) does, and a `grpcclient` Client's
+circuit breaker ignores them, so its end user's code opens them again.
 [Calling gRPC services]({{< relref "grpc-client#spreading-the-load-with-maxconnectionage" >}})
 describes what a client does with it.
 
@@ -394,6 +397,12 @@ func receive(stream grpc.ServerStreamingClient[testpb.StreamingOutputCallRespons
 	}
 }
 ```
+
+**A `grpcclient` Client's circuit breaker ignores a stream that ends with
+`Unavailable`,** however many end at once, so a rollout doesn't open the
+breaker of a client whose streams it ends, and the client's reconnect goes
+through, as
+[Calling gRPC services]({{< relref "grpc-client#streams" >}}) describes.
 
 The streams are cancelled when `Shutdown` starts, after the drain, and not
 when `Serve`'s context is done. During the drain, a load balancer may still

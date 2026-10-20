@@ -190,6 +190,11 @@
 //		// The server is going away. Reconnect: the new stream lands on another pod.
 //	}
 //
+// A grpcclient Client's circuit breaker ignores a stream that ends with
+// Unavailable, however many end at once, so a rollout doesn't open the
+// breaker of a client whose streams it ends, and the client's reconnect
+// goes through.
+//
 // The streams are cancelled when Shutdown starts, after the drain, and not
 // when Serve's context is done. During the drain, a load balancer may still
 // route a client that reconnects back to this pod.
