@@ -512,6 +512,11 @@ trace context with the dead letter's own, as [The send span](#the-send-span)
 describes. A `Processor` that wants a dead letter to say where it came from
 adds headers of its own, such as the record's topic, partition and offset.
 
+The [order status walkthrough]({{< relref "walkthroughs/orderstatus/retries" >}})
+dead-letters a record that never will succeed, with headers that say why
+and where it came from, and retries one that failed for now through a retry
+topic before it gives up on it.
+
 ## Shutdown and rebalances
 
 A Service gets the lifecycle's [two signals]({{< relref "lifecycle#service" >}}),
