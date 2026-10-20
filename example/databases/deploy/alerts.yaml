@@ -1,0 +1,162 @@
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: databases
+    folder: Databases
+    interval: 1m
+    rules:
+      - uid: databases-reconcile-failing
+        title: DatabasesReconcileFailing
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: sum(increase(humus_kube_controller_reconcile_duration_count{job="databases", humus_kube_controller_name="databases-controller", humus_kube_controller_reconcile_outcome="error"}[30m])) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 15m
+        labels:
+          severity: page
+        annotations:
+          summary: The controller's reconciles have kept ending with error for 15 minutes.
+          description: A failing Database's Ready condition says why, as PostgresUnavailable or SecretApplyFailed. Look at its reconciles' traces in Tempo and the controller's logs in Loki, for whether PostgreSQL or the API server is failing them.
+      - uid: databases-reconcile-panicked
+        title: DatabasesReconcilePanicked
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 1200
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: sum((increase(humus_kube_controller_reconcile_duration_count{job="databases", humus_kube_controller_name="databases-controller", humus_kube_controller_reconcile_outcome="panic"}[15m]) > 0) or (humus_kube_controller_reconcile_duration_count{job="databases", humus_kube_controller_name="databases-controller", humus_kube_controller_reconcile_outcome="panic"} unless humus_kube_controller_reconcile_duration_count{job="databases", humus_kube_controller_name="databases-controller", humus_kube_controller_reconcile_outcome="panic"} offset 15m)) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: ticket
+        annotations:
+          summary: A reconcile panicked in the last 15 minutes.
+          description: A panic is a mistake in the controller. It was recovered, and its Database isn't reconciled again until it changes, the resync comes or a new leader takes over. The reconcile's trace in Tempo and the controller's logs in Loki record it.
+      - uid: databases-reconcile-stuck
+        title: DatabasesReconcileStuck
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: max(humus_kube_controller_reconcile_longest_unfinished_duration{job="databases", humus_kube_controller_name="databases-controller"}) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [300]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: page
+        annotations:
+          summary: A reconcile has been running for {{ $values.A.Value }}s.
+          description: Something the reconcile waits on isn't answering. Look at its trace in Tempo, for whether PostgreSQL or the API server is holding it.
+      - uid: databases-backlogged
+        title: DatabasesBacklogged
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: max(humus_kube_controller_queue_depth{job="databases", humus_kube_controller_name="databases-controller"} and on (k8s_pod_name) humus_kube_controller_reconcile_duration_count{job="databases", humus_kube_controller_name="databases-controller"}) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [50]
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: The controller has had {{ $values.A.Value }} Databases waiting in its work queue for 10 minutes.
+          description: The controller isn't keeping up. Look at how long its reconciles take, and at whether PostgreSQL is slow. A standby's queue holds every Database, so this reads only the replica that reconciles.
+      - uid: databases-restarting
+        title: DatabasesRestarting
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 1200
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: max(delta(k8s_container_restarts{k8s_namespace_name="databases", k8s_container_name="databases"}[15m])) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: ticket
+        annotations:
+          summary: A databases container restarted in the last 15 minutes.
+          description: A controller that crashes can't report it. Look at the previous container's logs in Loki, and at its pod's events, for why it stopped.
