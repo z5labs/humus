@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -59,51 +60,65 @@ type service struct {
 }
 
 type fixture struct {
-	h        *humustest.Host
-	ca       *humustest.CA
-	idpCert  *humustest.Certificate
-	password string
-	env      map[string]string
+	h          *humustest.Host
+	ca         *humustest.CA
+	idpCert    *humustest.Certificate
+	dbPassword string
+	files      map[string][]byte
+	env        map[string]string
 }
 
-func newFixture(t *testing.T, hostOpts ...humustest.HostOption) fixture {
+func newFixture(t *testing.T) fixture {
 	t.Helper()
 	ca := humustest.NewCA(t)
-	bundle, password := ca.Issue(t, "localhost").PKCS12(t)
+	certPEM, keyPEM := pemPair(t, ca.Issue(t, "localhost"))
 	idpCert := ca.Issue(t, "idp.internal")
 	clientCert, clientKey := pemPair(t, ca.Issue(t, "shoppingcart"))
-	h := humustest.NewHost(t, append(hostOpts, humustest.WithFiles(map[string][]byte{
-		"tls.p12":        bundle,
-		"idp-ca.pem":     caPEM(idpCert),
-		"catalog-ca.pem": caPEM(idpCert),
-		"catalog.crt":    clientCert,
-		"catalog.key":    clientKey,
-	}))...)
+	password := rand.Text()
+	files := map[string][]byte{
+		"tls/tls.crt":     certPEM,
+		"tls/tls.key":     keyPEM,
+		"database/url":    []byte("postgres://carts:" + password + "@" + dbHost + "/carts?sslmode=disable\n"),
+		"idp/ca.crt":      caPEM(idpCert),
+		"catalog/ca.crt":  caPEM(idpCert),
+		"catalog/tls.crt": clientCert,
+		"catalog/tls.key": clientKey,
+	}
 	return fixture{
-		h:        h,
-		ca:       ca,
-		idpCert:  idpCert,
-		password: password,
+		h:          humustest.NewHost(t, humustest.WithFiles(files)),
+		ca:         ca,
+		idpCert:    idpCert,
+		dbPassword: password,
+		files:      files,
 		env: map[string]string{
 			"ADDR":                     ":8443",
-			"TLS_PKCS12_FILE":          "tls.p12",
-			"TLS_PKCS12_PASSWORD":      password,
-			"DATABASE_URL":             "postgres://carts:" + rand.Text() + "@" + dbHost + "/carts?sslmode=disable",
+			"TLS_CERT_FILE":            "tls/tls.crt",
+			"TLS_KEY_FILE":             "tls/tls.key",
+			"DATABASE_URL_FILE":        "database/url",
 			"CATALOG_URL":              "https://" + catalogHost,
-			"CATALOG_CA_FILE":          "catalog-ca.pem",
-			"CATALOG_CLIENT_CERT_FILE": "catalog.crt",
-			"CATALOG_CLIENT_KEY_FILE":  "catalog.key",
+			"CATALOG_CA_FILE":          "catalog/ca.crt",
+			"CATALOG_CLIENT_CERT_FILE": "catalog/tls.crt",
+			"CATALOG_CLIENT_KEY_FILE":  "catalog/tls.key",
 			"JWKS_URL":                 "https://" + idpHost + jwksPath,
-			"JWKS_CA_FILE":             "idp-ca.pem",
+			"JWKS_CA_FILE":             "idp/ca.crt",
 			"JWT_ISSUER":               issuer,
 			"JWT_AUDIENCE":             audience,
 		},
 	}
 }
 
-func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error), hostOpts ...humustest.HostOption) *service {
+func (f fixture) exit(t *testing.T) bedrock.ExitStatus {
 	t.Helper()
-	f := newFixture(t, hostOpts...)
+	_, status := httpservertest.Start(t, Init,
+		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		humustest.WithEnv(f.env),
+	)
+	return <-status
+}
+
+func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error)) *service {
+	t.Helper()
+	f := newFixture(t)
 
 	provider := newIdP(t)
 	stopIdP := provider.serve(t, f.h.Host(), idpHost, f.idpCert)
@@ -113,7 +128,11 @@ func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Servi
 		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
 		humustest.WithEnv(f.env),
 	)
-	<-f.h.Listening("localhost:8443")
+	select {
+	case <-f.h.Listening("localhost:8443"):
+	case st := <-status:
+		t.Fatalf("the cart exited %d: %v", st.Code(), st.Cause())
+	}
 	return &service{
 		h:       f.h,
 		ca:      f.ca,
@@ -472,8 +491,8 @@ func TestInit_answers_a_failure_without_its_text(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		secret := rand.Text()
 		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
-			return initWith(ctx, setup, func(context.Context, *humus.Setup, *pgxpool.Config) (endpoint.Store, error) {
-				return failingStore{err: errors.New("the database said " + secret)}, nil
+			return initWith(ctx, setup, func(context.Context, *humus.Setup, *pgxpool.Config) (endpoint.Store, func(context.Context) error, error) {
+				return failingStore{err: errors.New("the database said " + secret)}, func(context.Context) error { return nil }, nil
 			}, fakePrices().open)
 		})
 
@@ -568,8 +587,8 @@ func TestInit_answers_a_catalog_that_is_down_with_503(t *testing.T) {
 func TestInit_answers_a_database_that_is_down_with_503(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
-			return initWith(ctx, setup, func(context.Context, *humus.Setup, *pgxpool.Config) (endpoint.Store, error) {
-				return failingStore{err: fmt.Errorf("creating a cart: %w: dial tcp %s: connection refused", database.ErrUnavailable, dbHost)}, nil
+			return initWith(ctx, setup, func(context.Context, *humus.Setup, *pgxpool.Config) (endpoint.Store, func(context.Context) error, error) {
+				return failingStore{err: fmt.Errorf("creating a cart: %w: dial tcp %s: connection refused", database.ErrUnavailable, dbHost)}, func(context.Context) error { return nil }, nil
 			}, fakePrices().open)
 		})
 		cart := "/carts/" + uuid.NewString()
@@ -664,9 +683,9 @@ func TestInit_with_a_bad_catalog_setting_exits_78(t *testing.T) {
 	for _, tc := range []struct{ name, value, cause string }{
 		{"CATALOG_URL", "http://" + catalogHost, "must be an https URL"},
 		{"CATALOG_URL", "catalog.internal", "absolute"},
-		{"CATALOG_CA_FILE", "catalog.key", "no PEM certificate in the file"},
+		{"CATALOG_CA_FILE", "catalog/tls.key", "no PEM certificate in the file"},
 		{"CATALOG_CA_FILE", "missing.pem", "missing.pem"},
-		{"CATALOG_CLIENT_KEY_FILE", "catalog-ca.pem", "catalog.crt"},
+		{"CATALOG_CLIENT_KEY_FILE", "catalog/ca.crt", "catalog/tls.crt"},
 		{"CATALOG_TIMEOUT", "0s", "positive"},
 		{"CATALOG_ATTEMPT_TIMEOUT", "5", "missing unit"},
 		{"CATALOG_MAX_ATTEMPTS", "0", "at least 1"},
@@ -687,6 +706,240 @@ func TestInit_with_a_bad_catalog_setting_exits_78(t *testing.T) {
 			})
 		})
 	}
+}
+
+var secretSettings = []string{"TLS_CERT_FILE", "TLS_KEY_FILE", "DATABASE_URL_FILE"}
+
+func TestInit_without_a_secret_setting_exits_78(t *testing.T) {
+	for _, name := range secretSettings {
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t)
+				delete(f.env, name)
+
+				st := f.exit(t)
+				require.Equal(t, humus.ExitConfig, st.Code())
+				require.ErrorContains(t, st.Cause(), "config "+name+": not found")
+				for _, other := range secretSettings {
+					if other != name {
+						require.NotContains(t, st.Cause().Error(), "config "+other+":")
+					}
+				}
+			})
+		})
+	}
+}
+
+func TestInit_with_a_bad_secret_file_exits_78(t *testing.T) {
+	for _, tc := range []struct{ name, value, file, cause string }{
+		{name: "TLS_CERT_FILE", value: "missing.crt", cause: "missing.crt"},
+		{name: "TLS_CERT_FILE", value: "tls/tls.key", cause: "no PEM certificate in the file"},
+		{name: "TLS_KEY_FILE", value: "missing.key", cause: "missing.key"},
+		{name: "TLS_KEY_FILE", value: "catalog/tls.key", cause: "tls/tls.crt"},
+		{name: "TLS_KEY_FILE", value: "tls/tls.crt", cause: "tls/tls.crt"},
+		{name: "DATABASE_URL_FILE", value: "missing.url", cause: "missing.url"},
+		{name: "DATABASE_URL_FILE", value: "bad.url", file: "postgres://carts:" + rand.Text() + "@db.internal:port/carts", cause: "must hold a PostgreSQL URL"},
+	} {
+		t.Run(tc.name+"="+tc.value, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t)
+				if tc.file != "" {
+					f.h = humustest.NewHost(t, humustest.WithFiles(f.files), humustest.WithFiles(map[string][]byte{tc.value: []byte(tc.file)}))
+				}
+				f.env[tc.name] = tc.value
+
+				st := f.exit(t)
+				require.Equal(t, humus.ExitConfig, st.Code())
+				require.ErrorContains(t, st.Cause(), "config "+tc.name+": ")
+				require.ErrorContains(t, st.Cause(), tc.cause)
+				require.NotContains(t, st.Cause().Error(), f.dbPassword)
+				if tc.file != "" {
+					require.NotContains(t, st.Cause().Error(), tc.file)
+				}
+			})
+		})
+	}
+}
+
+func TestInit_reads_its_files_only_through_the_Host(t *testing.T) {
+	for name, file := range map[string]string{
+		"TLS_CERT_FILE":            "tls/tls.crt",
+		"TLS_KEY_FILE":             "tls/tls.key",
+		"DATABASE_URL_FILE":        "database/url",
+		"CATALOG_CA_FILE":          "catalog/ca.crt",
+		"CATALOG_CLIENT_CERT_FILE": "catalog/tls.crt",
+		"CATALOG_CLIENT_KEY_FILE":  "catalog/tls.key",
+		"JWKS_CA_FILE":             "idp/ca.crt",
+	} {
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t)
+				outside := filepath.Join(t.TempDir(), filepath.Base(file))
+				require.NoError(t, os.WriteFile(outside, f.files[file], 0o600))
+				f.env[name] = outside
+
+				st := f.exit(t)
+				require.Equal(t, humus.ExitConfig, st.Code())
+				require.ErrorContains(t, st.Cause(), "config "+name+": ")
+			})
+		})
+	}
+}
+
+func TestInit_reads_the_database_URL_from_its_file(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var cfg *pgxpool.Config
+		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
+			return initWith(ctx, setup, func(ctx context.Context, setup *humus.Setup, c *pgxpool.Config) (endpoint.Store, func(context.Context) error, error) {
+				cfg = c
+				return inMemory(ctx, setup, c)
+			}, fakePrices().open)
+		})
+
+		require.Equal(t, "db.internal", cfg.ConnConfig.Host)
+		require.EqualValues(t, 5432, cfg.ConnConfig.Port)
+		require.Equal(t, "carts", cfg.ConnConfig.User)
+		require.NotEmpty(t, cfg.ConnConfig.Password)
+		require.Equal(t, "carts", cfg.ConnConfig.Database)
+
+		s.stop(t)
+	})
+}
+
+type fakeDatabase struct {
+	mu    sync.Mutex
+	down  bool
+	pings int
+}
+
+func (db *fakeDatabase) open(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (endpoint.Store, func(context.Context) error, error) {
+	store, _, err := inMemory(ctx, s, cfg)
+	return store, db.ping, err
+}
+
+func (db *fakeDatabase) ping(context.Context) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	db.pings++
+	if db.down {
+		return errors.New("the database is down")
+	}
+	return nil
+}
+
+func (db *fakeDatabase) setDown(down bool) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	db.down = down
+}
+
+func (db *fakeDatabase) pinged() int {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	return db.pings
+}
+
+func (s *service) probe(t *testing.T, path string) response {
+	t.Helper()
+	return s.as("").do(t, http.MethodGet, path, "", "")
+}
+
+func TestInit_is_ready_once_the_database_and_the_catalog_answer_and_stays_ready(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		db := &fakeDatabase{down: true}
+		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
+			return initWith(ctx, setup, db.open, openCatalog)
+		})
+		catalog := &catalogServer{down: true}
+		stopCatalog := catalog.serve(t, s.h.Host(), catalogHost, s.ca.Issue(t, "catalog.internal"), s.ca.Pool())
+		<-s.h.Listening(catalogHost)
+
+		for range 2 {
+			r := s.probe(t, "/health/readiness")
+			require.Equal(t, http.StatusServiceUnavailable, r.code, "%s", r.body)
+			r = s.probe(t, "/health/liveness")
+			require.Equal(t, http.StatusOK, r.code, "%s", r.body)
+		}
+		require.Equal(t, 2, db.pinged())
+		require.Zero(t, catalog.probed())
+
+		db.setDown(false)
+		r := s.probe(t, "/health/readiness")
+		require.Equal(t, http.StatusServiceUnavailable, r.code, "%s", r.body)
+		require.Equal(t, 3, db.pinged())
+		require.NotZero(t, catalog.probed())
+
+		catalog.setDown(false)
+		time.Sleep(time.Minute)
+		r = s.probe(t, "/health/readiness")
+		require.Equal(t, http.StatusOK, r.code, "%s", r.body)
+		require.Equal(t, 3, db.pinged())
+		probed := catalog.probed()
+
+		db.setDown(true)
+		r = s.probe(t, "/health/readiness")
+		require.Equal(t, http.StatusOK, r.code, "%s", r.body)
+		catalog.setDown(true)
+		r = s.probe(t, "/health/readiness")
+		require.Equal(t, http.StatusOK, r.code, "%s", r.body)
+		require.Equal(t, 3, db.pinged())
+		require.Equal(t, probed, catalog.probed())
+
+		s.stop(t)
+		stopCatalog()
+	})
+}
+
+func TestInit_stays_unready_on_a_catalog_it_cant_trust_or_that_rejects_its_certificate(t *testing.T) {
+	for name, tc := range map[string]struct {
+		cert      func(s *service) *humustest.Certificate
+		clientCAs func(s *service) *x509.CertPool
+	}{
+		"a certificate the CA didn't sign": {
+			cert:      func(*service) *humustest.Certificate { return humustest.NewCA(t).Issue(t, "catalog.internal") },
+			clientCAs: func(s *service) *x509.CertPool { return s.ca.Pool() },
+		},
+		"a client certificate it rejects": {
+			cert:      func(s *service) *humustest.Certificate { return s.ca.Issue(t, "catalog.internal") },
+			clientCAs: func(*service) *x509.CertPool { return humustest.NewCA(t).Pool() },
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
+					return initWith(ctx, setup, (&fakeDatabase{}).open, openCatalog)
+				})
+				catalog := &catalogServer{}
+				stopCatalog := catalog.serve(t, s.h.Host(), catalogHost, tc.cert(s), tc.clientCAs(s))
+				<-s.h.Listening(catalogHost)
+
+				for range 2 {
+					r := s.probe(t, "/health/readiness")
+					require.Equal(t, http.StatusServiceUnavailable, r.code, "%s", r.body)
+					time.Sleep(time.Minute)
+				}
+				require.Zero(t, catalog.probed())
+
+				s.stop(t)
+				stopCatalog()
+			})
+		})
+	}
+}
+
+func TestInit_answers_its_probes_without_a_token(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := start(t, onFakes(fakePrices()))
+
+		isProblem(t, s.probe(t, "/carts/"+uuid.NewString()), http.StatusUnauthorized)
+		for _, path := range []string{"/health/liveness", "/health/readiness"} {
+			r := s.probe(t, path)
+			require.Equal(t, http.StatusOK, r.code, "%s: %s", path, r.body)
+			require.Equal(t, "OK", strings.TrimSpace(string(r.body)), path)
+		}
+
+		s.stop(t)
+	})
 }
 
 func TestInit_dials_Postgres_through_the_Host(t *testing.T) {
@@ -723,7 +976,7 @@ func TestInit_without_its_settings_exits_78(t *testing.T) {
 
 		st := <-status
 		require.Equal(t, humus.ExitConfig, st.Code())
-		for _, name := range []string{"ADDR", "TLS_PKCS12_FILE", "DATABASE_URL", "CATALOG_URL", "CATALOG_CA_FILE", "CATALOG_CLIENT_CERT_FILE", "JWKS_URL", "JWT_ISSUER", "JWT_AUDIENCE"} {
+		for _, name := range []string{"ADDR", "TLS_CERT_FILE", "DATABASE_URL_FILE", "CATALOG_URL", "CATALOG_CA_FILE", "CATALOG_CLIENT_CERT_FILE", "JWKS_URL", "JWT_ISSUER", "JWT_AUDIENCE"} {
 			require.ErrorContains(t, st.Cause(), "config "+name+": not found")
 		}
 	})

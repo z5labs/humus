@@ -68,10 +68,14 @@ func TestInit_serves_carts_from_Postgres_on_the_OS_Host(t *testing.T) {
 	url := startPostgres(t)
 
 	ca := humustest.NewCA(t)
-	bundle, password := ca.Issue(t, "localhost", "127.0.0.1").PKCS12(t)
+	certPEM, keyPEM := pemPair(t, ca.Issue(t, "localhost", "127.0.0.1"))
 	dir := t.TempDir()
-	certFile := filepath.Join(dir, "tls.p12")
-	require.NoError(t, os.WriteFile(certFile, bundle, 0o600))
+	certFile := filepath.Join(dir, "tls.crt")
+	require.NoError(t, os.WriteFile(certFile, certPEM, 0o600))
+	keyFile := filepath.Join(dir, "tls.key")
+	require.NoError(t, os.WriteFile(keyFile, keyPEM, 0o600))
+	databaseURLFile := filepath.Join(dir, "database-url")
+	require.NoError(t, os.WriteFile(databaseURLFile, []byte(url), 0o600))
 	addr := freeAddr(t)
 
 	provider := newIdP(t)
@@ -98,9 +102,9 @@ func TestInit_serves_carts_from_Postgres_on_the_OS_Host(t *testing.T) {
 		humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(telemetry.NoopBuilder)),
 		humustest.WithEnv(map[string]string{
 			"ADDR":                     addr,
-			"TLS_PKCS12_FILE":          certFile,
-			"TLS_PKCS12_PASSWORD":      password,
-			"DATABASE_URL":             url,
+			"TLS_CERT_FILE":            certFile,
+			"TLS_KEY_FILE":             keyFile,
+			"DATABASE_URL_FILE":        databaseURLFile,
 			"CATALOG_URL":              "https://" + catalogAddr,
 			"CATALOG_CA_FILE":          catalogCAFile,
 			"CATALOG_CLIENT_CERT_FILE": clientCertFile,
@@ -146,6 +150,13 @@ func TestInit_serves_carts_from_Postgres_on_the_OS_Host(t *testing.T) {
 	}
 
 	waitListening(t, addr)
+
+	token = ""
+	require.Eventually(t, func() bool {
+		code, _ := do(http.MethodGet, "/health/readiness", "")
+		return code == http.StatusOK
+	}, waitLimit, 50*time.Millisecond)
+	token = provider.token(t, shopper, endpoint.ScopeWrite)
 
 	code, body := do(http.MethodPost, "/carts", "")
 	require.Equal(t, http.StatusCreated, code, "%s", body)

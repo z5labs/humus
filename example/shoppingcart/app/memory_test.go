@@ -28,8 +28,8 @@ type ownedCart struct {
 	endpoint.Cart
 }
 
-func inMemory(context.Context, *humus.Setup, *pgxpool.Config) (endpoint.Store, error) {
-	return &memoryStore{carts: map[uuid.UUID]*ownedCart{}}, nil
+func inMemory(context.Context, *humus.Setup, *pgxpool.Config) (endpoint.Store, func(context.Context) error, error) {
+	return &memoryStore{carts: map[uuid.UUID]*ownedCart{}}, func(context.Context) error { return nil }, nil
 }
 
 func (m *memoryStore) CreateCart(_ context.Context, owner string) (endpoint.Cart, error) {

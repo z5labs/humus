@@ -15,7 +15,6 @@ require (
 	github.com/z5labs/bedrock v0.25.0
 	github.com/z5labs/bedrock/circuit v0.25.0
 	github.com/z5labs/humus v0.0.0-00010101000000-000000000000
-	software.sslmate.com/src/go-pkcs12 v0.7.4
 )
 
 require (
@@ -105,4 +104,5 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261019180522-ce908d29299b // indirect
 	google.golang.org/grpc v1.84.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
+	software.sslmate.com/src/go-pkcs12 v0.7.4 // indirect
 )

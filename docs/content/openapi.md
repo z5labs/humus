@@ -894,9 +894,9 @@ of the test's own and signs the tokens the test sends. A `newFixture` helper
 makes the Host, its files and the variables:
 
 ```go
-func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error), hostOpts ...humustest.HostOption) *service {
+func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error)) *service {
 	t.Helper()
-	f := newFixture(t, hostOpts...)
+	f := newFixture(t)
 
 	provider := newIdP(t)
 	stopIdP := provider.serve(t, f.h.Host(), idpHost, f.idpCert)
@@ -906,7 +906,11 @@ func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Servi
 		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
 		humustest.WithEnv(f.env),
 	)
-	<-f.h.Listening("localhost:8443")
+	select {
+	case <-f.h.Listening("localhost:8443"):
+	case st := <-status:
+		t.Fatalf("the cart exited %d: %v", st.Code(), st.Cause())
+	}
 	return &service{
 		h:       f.h,
 		ca:      f.ca,
@@ -1014,10 +1018,10 @@ the host unresolved, so the Host's `Dial` resolves the name too. Everything
 else pgx reads, it reads from the real process, whatever Host the App runs
 on, as [Ambient leaks]({{< relref "lifecycle#ambient-leaks" >}}) lists:
 
-- `pgxpool.ParseConfig`, which parses `DATABASE_URL`, fills in whatever the
-  URL leaves out from the real `PG*` variables, such as `PGHOST`, `PGUSER`,
-  `PGPASSWORD`, `PGSSLMODE` and `PGSERVICE`, not from the Process's
-  environment.
+- `pgxpool.ParseConfig`, which parses the URL in the file
+  `DATABASE_URL_FILE` names, fills in whatever the URL leaves out from the
+  real `PG*` variables, such as `PGHOST`, `PGUSER`, `PGPASSWORD`,
+  `PGSSLMODE` and `PGSERVICE`, not from the Process's environment.
 - With no password in the URL or in `PGPASSWORD`, it reads the password from
   the real `~/.pgpass`, or the file `PGPASSFILE` names. A `PGSERVICE`, or a
   service in the URL, is read from the real `pg_service.conf`.
@@ -1028,10 +1032,10 @@ on, as [Ambient leaks]({{< relref "lifecycle#ambient-leaks" >}}) lists:
   through the Host's `Dial`, which may not reach it.
 
 So the URL sets every field the service uses, host, port, user, password,
-database and sslmode, and nothing is left for pgx to find:
+database and sslmode, and nothing is left for pgx to find. The file holds:
 
-```sh
-DATABASE_URL=postgres://carts:secret@db.internal:5432/carts?sslmode=verify-full
+```text
+postgres://carts:secret@db.internal:5432/carts?sslmode=verify-full
 ```
 
 The tests do the same, with a password generated for each test, so what a

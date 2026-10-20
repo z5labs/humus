@@ -61,8 +61,8 @@ func (c *fakeCatalog) fail(err error) {
 	c.err = err
 }
 
-func (c *fakeCatalog) open(*humus.Setup, httpclient.Settings) (endpoint.Catalog, error) {
-	return c, nil
+func (c *fakeCatalog) open(*humus.Setup, httpclient.Settings) (endpoint.Catalog, func(context.Context) error, error) {
+	return c, func(context.Context) error { return nil }, nil
 }
 
 func onFakes(catalog *fakeCatalog) func(context.Context, *humus.Setup) ([]humus.Service, error) {
@@ -74,8 +74,33 @@ func onFakes(catalog *fakeCatalog) func(context.Context, *humus.Setup) ([]humus.
 type catalogServer struct {
 	prices map[string]float64
 
-	mu    sync.Mutex
-	peers []string
+	mu     sync.Mutex
+	peers  []string
+	down   bool
+	probes int
+}
+
+func (c *catalogServer) readiness(w http.ResponseWriter, _ *http.Request) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.probes++
+	if c.down {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	_, _ = w.Write([]byte("OK\n"))
+}
+
+func (c *catalogServer) setDown(down bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.down = down
+}
+
+func (c *catalogServer) probed() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.probes
 }
 
 func (c *catalogServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -119,6 +144,7 @@ func (c *catalogServer) serve(t *testing.T, host humus.Host, addr string, cert *
 		}
 		mux := http.NewServeMux()
 		mux.Handle("GET /products/{productId}", c)
+		mux.HandleFunc("GET /health/readiness", c.readiness)
 		svc, err := httpserver.NewService(s, settings, mux)
 		if err != nil {
 			return nil, err
