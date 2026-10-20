@@ -850,3 +850,45 @@ jobs:
           with:
             key: ${{ steps.go-cache.outputs.key }}
             path: ${{ steps.go-cache.outputs.path }}
+
+  # The databases walkthrough's image, built from its Dockerfile with the
+  # repository as the context, since its module replaces humus and kube with
+  # paths under ../.., and its kustomization, rendered. up.sh then creates a
+  # kind cluster, generates PostgreSQL's admin password and the probes'
+  # certificate, loads the image and applies the kind overlay, with
+  # PostgreSQL beside the controller and the cases' namespace prefix trusted,
+  # and the controller's Deployment has to become ready. The Database beside
+  # up.sh is then checked against the CRD with a server-side dry run. The
+  # ruleset doesn't require this job, and Build doesn't wait on it.
+  databases-kind:
+    name: Databases walkthrough (kind)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+        - name: Checkout
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+        - name: Build the image
+          run: docker build --file example/databases/Dockerfile --tag databases .
+
+        - name: Render the kustomization
+          run: kubectl kustomize example/databases/deploy
+
+        - name: Bring the databases controller up on kind
+          run: example/databases/deploy/kind/up.sh
+
+        - name: Wait for the databases controller's Deployment
+          run: kubectl --namespace databases rollout status deployment/databases --timeout 5m
+
+        - name: Check the Database beside up.sh against the CRD
+          run: kubectl apply --dry-run=server --namespace default --filename example/databases/deploy/kind/database.yaml
+
+        - name: Show the databases namespace
+          if: ${{ failure() }}
+          run: |
+            kubectl --namespace databases get all
+            kubectl --namespace databases describe pods
+            kubectl --namespace databases logs deployment/postgres --tail 200 || true
+            kubectl --namespace databases logs deployment/databases --all-containers --tail 200 || true

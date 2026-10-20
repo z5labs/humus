@@ -1,0 +1,35 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: databases
+resources:
+  - ../crd.yaml
+  - ../namespace.yaml
+  - ../serviceaccount.yaml
+  - ../clusterrole.yaml
+  - ../clusterrolebinding.yaml
+  - ../role.yaml
+  - ../rolebinding.yaml
+  - ../deployment.yaml
+  - ../poddisruptionbudget.yaml
+  - postgres.yaml
+configMapGenerator:
+  - name: databases
+    envs:
+      - ../databases.env
+    literals:
+      - FAULT_TRUSTED_NAMESPACE_PREFIX=databases-cases-
+patches:
+  - target:
+      kind: Deployment
+      name: databases
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: databases
+      spec:
+        template:
+          spec:
+            containers:
+              - name: databases
+                imagePullPolicy: Never
