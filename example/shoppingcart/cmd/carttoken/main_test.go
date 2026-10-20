@@ -307,13 +307,13 @@ func TestInit_exits_ExitConfig_on_a_bad_setting(t *testing.T) {
 				"config -sub: must not be empty",
 				"config -iss:",
 				"config -aud:",
-				`config -scope: "" is empty or has a space`,
+				`config -scope: "" is empty or has whitespace`,
 				"config -ttl: must be positive",
 			},
 		},
 		"a scope with a space": {
 			args: signArgs("alice", "carts:read carts:write"),
-			want: []string{`config -scope: "carts:read carts:write" is empty or has a space`},
+			want: []string{`config -scope: "carts:read carts:write" is empty or has whitespace`},
 		},
 		"a ttl that isn't a duration": {
 			args: append(signArgs("alice"), "-ttl", "an hour"),

@@ -287,7 +287,7 @@ func notEmpty(s string) error {
 func checkScopes(scopes []string) error {
 	for _, scope := range scopes {
 		if scope == "" || strings.ContainsFunc(scope, unicode.IsSpace) {
-			return fmt.Errorf("%q is empty or has a space", scope)
+			return fmt.Errorf("%q is empty or has whitespace", scope)
 		}
 	}
 	return nil
