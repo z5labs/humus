@@ -529,8 +529,11 @@ jobs:
   # issues every certificate from a CA it generates, makes the roles'
   # passwords and the signing key, and applies the kind overlay, with
   # PostgreSQL over TLS and WireMock serving the key set, and both services'
-  # Deployments have to become ready. The ruleset doesn't require this job,
-  # and Build doesn't wait on it.
+  # Deployments have to become ready. The tests behind the functional tag
+  # then run the shared cases against it, the failure injection cases
+  # included, through kubectl port-forward, trusting the CA up.sh generated
+  # and signing tokens with the key it made. The ruleset doesn't require this
+  # job, and Build doesn't wait on it; Vet the functional tests vets them.
   shoppingcart-kind:
     name: Shoppingcart walkthrough (kind)
     runs-on: ubuntu-latest
@@ -560,6 +563,9 @@ jobs:
 
         - name: Bring the shoppingcart up on kind
           run: example/shoppingcart/deploy/kind/up.sh
+
+        - name: Run the shared cases against kind
+          run: go -C example/shoppingcart test -count=1 -race -tags functional ./functional/
 
         - name: Show the shoppingcart namespace
           if: ${{ failure() }}
