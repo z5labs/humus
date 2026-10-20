@@ -80,8 +80,10 @@ k delete job kafka-topics --ignore-not-found
 k apply -f "$tmp/orderstatus.yaml"
 
 k rollout restart deployment/kafka deployment/postgres
+k delete job kafka-topics
 k rollout status deployment/kafka --timeout 5m
 k rollout status deployment/postgres --timeout 5m
+k apply -f "$tmp/orderstatus.yaml"
 
 k exec -i deployment/postgres -- psql -v ON_ERROR_STOP=1 -U postgres -d orders <<SQL
 CREATE ROLE orderstatus LOGIN PASSWORD '$orderstatus_password';
