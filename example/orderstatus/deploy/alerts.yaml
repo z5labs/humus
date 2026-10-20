@@ -128,7 +128,7 @@ groups:
           severity: ticket
         annotations:
           summary: The processor dead-lettered records to orders.dlq in the last 15 minutes, as {{ $labels.orderstatus_reason }}.
-          description: Each dead letter's dlq. headers name the record it came from and why it was given up on. What to do with them is yours to plan.
+          description: Each dead letter's dlq.topic, dlq.partition and dlq.offset headers name the record it came from, and its dlq.reason and dlq.error headers say why it was given up on. What to do with them is yours to plan.
       - uid: order-status-retrying
         title: OrderStatusRetrying
         condition: B
@@ -159,7 +159,7 @@ groups:
           severity: ticket
         annotations:
           summary: The processor has been sending records to orders.retry for 10 minutes.
-          description: Records are failing their attempts for a while. The dashboard shows the reasons, and each retried record's retry. headers name its reason.
+          description: Records are failing their attempts for a while. The dashboard shows the reasons, and each retried record's retry.reason and retry.error headers say why its attempt failed.
       - uid: order-status-breaker-open
         title: OrderStatusBreakerOpen
         condition: B
