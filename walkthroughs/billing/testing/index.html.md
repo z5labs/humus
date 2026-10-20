@@ -212,12 +212,12 @@ var All = []Case{
 
 ## A case
 
-Each case creates a database of its own, applies `Schema` to it, and drops it
-at the end. Its account IDs start with the database's name:
+Each case creates a database of its own with `NewDatabase`, applies `Schema`
+to it, and drops it at the end. Its account IDs start with the database's name:
 
 ```go
-func (db database) account(suffix string) string {
-	return db.name + "-" + suffix
+func (db Database) account(suffix string) string {
+	return db.Name + "-" + suffix
 }
 ```
 
@@ -229,9 +229,29 @@ query, err := json.Marshal(map[string]any{
 	"method": http.MethodPost,
 	"url":    "/v1/charges",
 	"bodyPatterns": []any{
-		map[string]any{"matchesJsonPath": map[string]any{"expression": "$.account", "matches": "^" + db.name + "-.*"}},
+		map[string]any{"matchesJsonPath": map[string]any{"expression": "$.account", "matches": "^" + db.Name + "-.*"}},
 	},
 })
+```
+
+It drops the database only once PostgreSQL has ended the case's own
+connection to it. Through `kubectl port-forward`, a drop that ends a
+connection still closing resets it, and that ends the whole forward:
+
+```go
+func disconnected(ctx context.Context, admin *pgx.Conn, name string, pid uint32) error {
+	for {
+		var connected bool
+		err := admin.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = $1 AND datname = $2)`,
+			pid, name,
+		).Scan(&connected)
+		if err != nil || !connected {
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 ```
 
 Billing a month:
@@ -239,7 +259,7 @@ Billing a month:
 ```go
 func BillingAMonth(t testing.TB, target Target) {
 	ctx := bounded(t, target)
-	db := newDatabase(ctx, t, target, "billing-")
+	db := NewDatabase(ctx, t, target, "billing-")
 	active := db.subscribe(ctx, t, "a", "b", "c")
 	inactive := db.unsubscribed(ctx, t, "gone")
 
@@ -405,7 +425,7 @@ The payments API is down:
 ```go
 func ThePaymentsAPIIsDown(t testing.TB, target Target) {
 	ctx := bounded(t, target)
-	db := newDatabase(ctx, t, target, "billing-")
+	db := NewDatabase(ctx, t, target, "billing-")
 	db.subscribe(ctx, t, "a", "b", "c")
 
 	require.Equal(t, exitFailure, db.runWith(ctx, t, target, rehearsing(t, fit.Rule{Point: "http:*", Fault: fit.Fault{Abort: true}})))
@@ -431,7 +451,7 @@ is sent before its aborted settle stops the run:
 ```go
 func ChargedButNotRecorded(t testing.TB, target Target) {
 	ctx := bounded(t, target)
-	db := newDatabase(ctx, t, target, "billing-")
+	db := NewDatabase(ctx, t, target, "billing-")
 	db.subscribe(ctx, t, "a", "b", "c")
 	env := rehearsing(t, fit.Rule{Point: "postgresql:settle", Fault: fit.Fault{Abort: true}})
 	env["BILLING_CONCURRENCY"] = "1"
