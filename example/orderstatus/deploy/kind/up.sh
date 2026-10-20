@@ -42,6 +42,7 @@ issue kafka DNS:localhost
 issue admin
 issue postgres
 issue orderstatus
+issue cases
 
 printf '%s' "$postgres_password" >"$tmp/postgres-password"
 printf '%s' "$orderstatus_password" >"$tmp/orderstatus-password"
@@ -70,6 +71,8 @@ secret() {
   secret orderstatus-postgres --from-file=password="$tmp/orderstatus-password" --from-file=ca.crt="$tmp/ca.crt"
   echo ---
   secret orderstatus-probes --from-file=tls.pem="$tmp/orderstatus.pem"
+  echo ---
+  secret cases-kafka --from-file=tls.pem="$tmp/cases.pem" --from-file=ca.crt="$tmp/ca.crt"
 } >"$tmp/orderstatus.yaml"
 
 kind load docker-image orderstatus --name "$cluster"
