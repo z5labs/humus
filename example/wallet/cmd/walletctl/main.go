@@ -138,7 +138,7 @@ func watch(ctx context.Context, wallet walletpb.WalletClient, out io.Writer) err
 	for {
 		err := watchOnce(ctx, wallet, out)
 		switch {
-		case ctx.Err() != nil, errors.Is(err, io.EOF):
+		case ctx.Err() != nil:
 			return nil
 		case status.Code(err) != codes.Unavailable:
 			return err
@@ -158,6 +158,9 @@ func watchOnce(ctx context.Context, wallet walletpb.WalletClient, out io.Writer)
 	}
 	for {
 		resp, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return errors.New("the wallet ended the watch")
+		}
 		if err != nil {
 			return err
 		}

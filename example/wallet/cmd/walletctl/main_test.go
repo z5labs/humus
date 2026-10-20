@@ -180,6 +180,7 @@ type call struct {
 type watchScript struct {
 	balances []int64
 	end      error
+	ok       bool
 }
 
 type fakeWallet struct {
@@ -285,6 +286,9 @@ func (w *fakeWallet) WatchAccount(_ *walletpb.WatchAccountRequest, stream grpc.S
 		}
 	}
 	w.watching <- struct{}{}
+	if script.ok {
+		return nil
+	}
 	if script.end != nil {
 		return script.end
 	}
@@ -668,19 +672,34 @@ func TestInit_watch_prints_each_balance_and_watches_again_when_its_watch_ends_Un
 }
 
 func TestInit_watch_exits_1_when_its_watch_ends_any_other_way(t *testing.T) {
-	var got run
-	synctest.Test(t, func(t *testing.T) {
-		f := newFixture(t, nil)
-		w := newFakeWallet()
-		w.scripts = []watchScript{
-			{balances: []int64{2500}, end: status.Error(codes.NotFound, "no such account")},
-		}
-		f.startWallet(t, w)
-		got = f.start(t, telemetry.NoopBuilder, walletArgs("watch", "alice")...)
-	})
-	require.Equal(t, 1, got.code, "cause: %v", got.cause)
-	require.Equal(t, "balance 2500\n", got.stdout)
-	require.ErrorContains(t, got.cause, "no such account")
+	testCases := map[string]struct {
+		script watchScript
+		want   string
+	}{
+		"with another code": {
+			script: watchScript{balances: []int64{2500}, end: status.Error(codes.NotFound, "no such account")},
+			want:   "no such account",
+		},
+		"with OK": {
+			script: watchScript{balances: []int64{2500}, ok: true},
+			want:   "the wallet ended the watch",
+		},
+	}
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			var got run
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t, nil)
+				w := newFakeWallet()
+				w.scripts = []watchScript{tc.script}
+				f.startWallet(t, w)
+				got = f.start(t, telemetry.NoopBuilder, walletArgs("watch", "alice")...)
+			})
+			require.Equal(t, 1, got.code, "cause: %v", got.cause)
+			require.Equal(t, "balance 2500\n", got.stdout)
+			require.ErrorContains(t, got.cause, tc.want)
+		})
+	}
 }
 
 func TestInit_deposit_calls_the_ledger_with_the_client_certificate(t *testing.T) {
