@@ -84,6 +84,12 @@ func (p *idp) setDown(down bool) {
 
 func (p *idp) token(t *testing.T, subject string, scopes ...string) string {
 	t.Helper()
+	raw, err := p.sign(subject, scopes...)
+	require.NoError(t, err)
+	return raw
+}
+
+func (p *idp) sign(subject string, scopes ...string) (string, error) {
 	now := time.Now()
 	claims := struct {
 		josejwt.Claims
@@ -103,10 +109,10 @@ func (p *idp) token(t *testing.T, subject string, scopes ...string) string {
 		jose.SigningKey{Algorithm: jose.ES256, Key: jose.JSONWebKey{Key: p.key, KeyID: p.kid}},
 		(&jose.SignerOptions{}).WithType("JWT"),
 	)
-	require.NoError(t, err)
-	raw, err := josejwt.Signed(sig).Claims(claims).Serialize()
-	require.NoError(t, err)
-	return raw
+	if err != nil {
+		return "", err
+	}
+	return josejwt.Signed(sig).Claims(claims).Serialize()
 }
 
 func (p *idp) serve(t *testing.T, host humus.Host, addr string, cert *humustest.Certificate) (stop func()) {

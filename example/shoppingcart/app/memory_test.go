@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/z5labs/humus"
+	catalogendpoint "github.com/z5labs/humus/example/shoppingcart/catalog/endpoint"
 	"github.com/z5labs/humus/example/shoppingcart/endpoint"
 )
 
@@ -136,4 +137,34 @@ func clone(c *ownedCart) endpoint.Cart {
 		out.Items = []endpoint.CartItem{}
 	}
 	return out
+}
+
+type productMemory struct {
+	mu       sync.Mutex
+	products map[string]catalogendpoint.Product
+}
+
+func productsInMemory() *productMemory {
+	return &productMemory{products: map[string]catalogendpoint.Product{}}
+}
+
+func (m *productMemory) open(context.Context, *humus.Setup, *pgxpool.Config) (catalogendpoint.Store, func(context.Context) error, error) {
+	return m, func(context.Context) error { return nil }, nil
+}
+
+func (m *productMemory) GetProduct(_ context.Context, productID string) (catalogendpoint.Product, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.products[productID]
+	if !ok {
+		return catalogendpoint.Product{}, catalogendpoint.ErrProductNotFound
+	}
+	return p, nil
+}
+
+func (m *productMemory) PutProduct(_ context.Context, p catalogendpoint.Product) (catalogendpoint.Product, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.products[p.ProductID] = p
+	return p, nil
 }

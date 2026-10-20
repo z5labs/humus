@@ -103,7 +103,7 @@ func (db *fakeDatabase) PutProduct(_ context.Context, p endpoint.Product) (endpo
 
 func onFake(db *fakeDatabase) func(context.Context, *humus.Setup) ([]humus.Service, error) {
 	return func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-		return initWith(ctx, s, db.open)
+		return InitWith(ctx, s, db.open)
 	}
 }
 
