@@ -866,8 +866,10 @@ jobs:
   # and verify against the overlay's PostgreSQL with the admin password up.sh
   # generates, and find a reconcile's trace, the controller's records, its
   # humus.kube.controller.* instruments and the containers' restarts in the
-  # LGTM stack. The ruleset doesn't require this job, and Build doesn't wait
-  # on it; Vet the functional tests vets them.
+  # LGTM stack. They also show that Grafana loaded the alert rules and the
+  # dashboard, that Mimir holds every series the rules read, and that each
+  # rule evaluates without error. The ruleset doesn't require this job, and
+  # Build doesn't wait on it; Vet the functional tests vets them.
   databases-kind:
     name: Databases walkthrough (kind)
     runs-on: ubuntu-latest
