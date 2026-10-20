@@ -90,7 +90,6 @@ func (s *Server) ensureDatabase(ctx context.Context, name string) error {
 		if !hasCode(err, "42P04") {
 			return err
 		}
-		owner = ""
 	} else if err != nil {
 		return err
 	}
