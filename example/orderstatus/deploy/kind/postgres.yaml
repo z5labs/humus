@@ -1,0 +1,117 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: docker.io/library/postgres:18.0
+          args:
+            - -c
+            - ssl=on
+            - -c
+            - ssl_cert_file=/etc/postgres-tls/tls.crt
+            - -c
+            - ssl_key_file=/etc/postgres-tls/tls.key
+            - -c
+            - ssl_min_protocol_version=TLSv1.2
+            - -c
+            - hba_file=/etc/postgres-config/pg_hba.conf
+          env:
+            - name: POSTGRES_USER
+              value: postgres
+            - name: POSTGRES_DB
+              value: orders
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres
+                  key: password
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: [pg_isready, -h, 127.0.0.1, -U, postgres, -d, orders]
+            periodSeconds: 2
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql
+            - name: run
+              mountPath: /var/run/postgresql
+            - name: tmp
+              mountPath: /tmp
+            - name: config
+              mountPath: /etc/postgres-config
+              readOnly: true
+            - name: tls
+              mountPath: /etc/postgres-tls
+              readOnly: true
+            - name: schema
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: postgres-config
+        - name: tls
+          secret:
+            secretName: postgres-tls
+            defaultMode: 0440
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: schema
+          configMap:
+            name: postgres-schema
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres

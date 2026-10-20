@@ -1,0 +1,41 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: orderstatus
+resources:
+  - namespace.yaml
+  - ../base
+  - kafka.yaml
+  - topics.yaml
+  - postgres.yaml
+configMapGenerator:
+  - name: orderstatus
+    behavior: merge
+    literals:
+      - RETRY_MIN_DELAY=100ms
+      - RETRY_MAX_DELAY=400ms
+      - FAULT_TRUSTED_TOPICS=orders.events,orders.retry
+  - name: kafka-admin
+    files:
+      - kafka/admin.properties
+      - kafka/topics.sh
+  - name: postgres-config
+    files:
+      - postgres/pg_hba.conf
+  - name: postgres-schema
+    files:
+      - ../../store/schema.sql
+patches:
+  - target:
+      kind: Deployment
+      name: orderstatus
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: orderstatus
+      spec:
+        template:
+          spec:
+            containers:
+              - name: orderstatus
+                imagePullPolicy: Never
