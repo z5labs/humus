@@ -189,10 +189,10 @@ func TestClient_metrics_count_a_throttled_retry(t *testing.T) {
 }
 
 func TestClient_metrics_count_streams(t *testing.T) {
-	t.Run("a server-streaming RPC that ends with Unavailable after a message counts one failure, once it has ended", func(t *testing.T) {
+	t.Run("a server-streaming RPC that ends with Internal after a message counts one failure, once it has ended", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			tel := humustest.NewTelemetry()
-			b := &backend{streamErr: status.Error(codes.Unavailable, "going away")}
+			b := &backend{streamErr: status.Error(codes.Internal, "lost its state")}
 			_, err := traced(t, tel, b, func(ctx context.Context, c testpb.TestServiceClient) error {
 				stream, err := c.StreamingOutputCall(ctx, &testpb.StreamingOutputCallRequest{
 					ResponseParameters: []*testpb.ResponseParameters{{}},
@@ -207,10 +207,25 @@ func TestClient_metrics_count_streams(t *testing.T) {
 				_, err = stream.Recv()
 				return err
 			}).run(t)
-			require.Equal(t, codes.Unavailable, status.Code(err), "err = %v", err)
+			require.Equal(t, codes.Internal, status.Code(err), "err = %v", err)
 
 			rm := collect(t, context.Background(), tel)
 			require.Equal(t, map[string]int64{"humus.circuit.outcome=failure": 1}, points(t, rm, "humus.circuit.calls"))
+			require.Equal(t, map[string]int64{"humus.retry.decision=succeeded": 1}, points(t, rm, "humus.retry.decisions"), "the stream's open is one decision")
+		})
+	})
+
+	t.Run("a server-streaming RPC that ends with Unavailable after a message counts one ignored", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			tel := humustest.NewTelemetry()
+			b := &backend{streamErr: status.Error(codes.Unavailable, "going away")}
+			var got int
+			_, err := traced(t, tel, b, streamOne(&got)).run(t)
+			require.Equal(t, codes.Unavailable, status.Code(err), "err = %v", err)
+			require.Equal(t, 1, got)
+
+			rm := collect(t, context.Background(), tel)
+			require.Equal(t, map[string]int64{"humus.circuit.outcome=ignored": 1}, points(t, rm, "humus.circuit.calls"))
 			require.Equal(t, map[string]int64{"humus.retry.decision=succeeded": 1}, points(t, rm, "humus.retry.decisions"), "the stream's open is one decision")
 		})
 	})

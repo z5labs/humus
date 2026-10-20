@@ -64,11 +64,11 @@ func (b *backend) StreamingInputCall(stream grpc.ClientStreamingServer[testpb.St
 // reasonKey is the trailer FullDuplexCall sends.
 const reasonKey = "x-reason"
 
-// FullDuplexCall sends the trailer x-reason: draining, and ends with
+// FullDuplexCall sends the trailer x-reason: overloaded, and ends with
 // streamErr.
 func (b *backend) FullDuplexCall(stream grpc.BidiStreamingServer[testpb.StreamingOutputCallRequest, testpb.StreamingOutputCallResponse]) error {
 	b.record(stream.Context())
-	stream.SetTrailer(metadata.Pairs(reasonKey, "draining"))
+	stream.SetTrailer(metadata.Pairs(reasonKey, "overloaded"))
 	return b.streamErr
 }
 
@@ -369,20 +369,105 @@ func TestClient_breaker_counts_deadlines(t *testing.T) {
 	})
 }
 
+func TestClient_breaker_opens_when_streams_fail_to_open(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		tel := humustest.NewTelemetry()
+		settings := grpcclient.DefaultSettings()
+		settings.Addr = "nowhere:9090"
+		settings.MaxAttempts = 1
+
+		var (
+			failures []error
+			rejected error
+		)
+		_, err := app{
+			host:     humustest.NewHost(t).Host(),
+			tel:      tel.Builder(),
+			settings: settings,
+			work: func(ctx context.Context, c testpb.TestServiceClient) error {
+				for range 5 {
+					_, err := c.StreamingOutputCall(ctx, &testpb.StreamingOutputCallRequest{})
+					failures = append(failures, err)
+				}
+				_, rejected = c.StreamingOutputCall(ctx, &testpb.StreamingOutputCallRequest{})
+				return nil
+			},
+		}.run(t)
+		require.NoError(t, err)
+
+		for i, err := range failures {
+			require.Equal(t, codes.Unavailable, status.Code(err), "open %d, err = %v", i+1, err)
+			require.NotErrorIs(t, err, circuit.ErrRejected)
+		}
+		require.ErrorIs(t, rejected, circuit.ErrRejected, "a dependency that is down opens the breaker through its streams' opens")
+
+		records := breakerRecords(tel)
+		require.Equal(t, []string{breakerOpen}, bodies(records))
+		require.EqualValues(t, 5, recordAttrs(records[0])["humus.circuit.consecutive_failures"])
+	})
+}
+
 func TestClient_breaker_counts_a_streams_end(t *testing.T) {
-	t.Run("a server-streaming RPC that ends with Unavailable after a message is one failure", func(t *testing.T) {
+	t.Run("a server-streaming RPC that ends with Internal after a message is one failure", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			var (
 				mu      sync.Mutex
 				counted []circuit.Counts
 				got     int
 			)
-			b := &backend{streamErr: status.Error(codes.Unavailable, "going away")}
+			b := &backend{streamErr: status.Error(codes.Internal, "lost its state")}
 			_, err := withBackend(t, b, countingTrips(&mu, &counted), streamOne(&got)).run(t)
-			require.Equal(t, codes.Unavailable, status.Code(err), "err = %v", err)
+			require.Equal(t, codes.Internal, status.Code(err), "err = %v", err)
 			require.Equal(t, 1, got)
 
 			require.Equal(t, []circuit.Counts{{Failures: 1, ConsecutiveFailures: 1}}, counted)
+		})
+	})
+
+	t.Run("a server-streaming RPC that ends with Unavailable after a message is ignored", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			var (
+				mu      sync.Mutex
+				counted []circuit.Counts
+				asked   atomic.Int32
+				got     int
+			)
+			b := &backend{streamErr: status.Error(codes.Unavailable, "going away")}
+			_, err := withBackend(t, b, func(s *grpcclient.Settings) {
+				countingTrips(&mu, &counted)(s)
+				classify := s.Classify
+				s.Classify = func(method string, err error, trailer metadata.MD) grpcclient.Classification {
+					asked.Add(1)
+					return classify(method, err, trailer)
+				}
+			}, streamOne(&got)).run(t)
+			require.Equal(t, codes.Unavailable, status.Code(err), "err = %v", err)
+			require.Equal(t, 1, got)
+
+			require.Empty(t, counted, "the breaker counted nothing")
+			require.Zero(t, asked.Load(), "Classify isn't asked about an open stream that ends with Unavailable")
+		})
+	})
+
+	t.Run("a server-streaming RPC that ends with Unavailable before a message is ignored", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			var (
+				mu      sync.Mutex
+				counted []circuit.Counts
+			)
+			b := &backend{streamErr: status.Error(codes.Unavailable, "going away")}
+			_, err := withBackend(t, b, countingTrips(&mu, &counted), func(ctx context.Context, c testpb.TestServiceClient) error {
+				// No ResponseParameters, so the backend sends no message.
+				stream, err := c.StreamingOutputCall(ctx, &testpb.StreamingOutputCallRequest{})
+				if err != nil {
+					return err
+				}
+				_, err = stream.Recv()
+				return err
+			}).run(t)
+			require.Equal(t, codes.Unavailable, status.Code(err), "err = %v", err)
+
+			require.Empty(t, counted, "the breaker counted nothing")
 		})
 	})
 
@@ -475,7 +560,7 @@ func TestClient_breaker_Classify_sees_a_streams_trailer(t *testing.T) {
 			mu  sync.Mutex
 			all []asked
 		)
-		b := &backend{streamErr: status.Error(codes.Unavailable, "going away")}
+		b := &backend{streamErr: status.Error(codes.ResourceExhausted, "shedding load")}
 		_, err := withBackend(t, b, func(s *grpcclient.Settings) {
 			classify := s.Classify
 			s.Classify = func(method string, err error, trailer metadata.MD) grpcclient.Classification {
@@ -498,13 +583,13 @@ func TestClient_breaker_Classify_sees_a_streams_trailer(t *testing.T) {
 				}
 			}
 		}).run(t)
-		require.Equal(t, codes.Unavailable, status.Code(err), "err = %v", err)
+		require.Equal(t, codes.ResourceExhausted, status.Code(err), "err = %v", err)
 
 		require.Len(t, all, 1, "Classify is asked once, about the stream's end")
 		require.Equal(t, "/grpc.testing.TestService/FullDuplexCall", all[0].method)
-		require.Equal(t, codes.Unavailable, status.Code(all[0].err))
-		require.Equal(t, "going away", status.Convert(all[0].err).Message())
-		require.Equal(t, []string{"draining"}, all[0].trailer.Get(reasonKey))
+		require.Equal(t, codes.ResourceExhausted, status.Code(all[0].err))
+		require.Equal(t, "shedding load", status.Convert(all[0].err).Message())
+		require.Equal(t, []string{"overloaded"}, all[0].trailer.Get(reasonKey))
 	})
 }
 

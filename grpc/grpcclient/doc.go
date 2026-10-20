@@ -109,6 +109,13 @@
 // kube-proxy picks, or, behind a headless Service, whichever pod accepts
 // first. gRFC A9 added MaxConnectionAge for this kind of rebalancing.
 //
+// Either one may end the streams open on the old connection. Shutdown ends
+// each with Unavailable, and so does grpc-go when the server's
+// MaxConnectionAgeGrace closes the connection under them. The circuit
+// breaker ignores a stream that ends with Unavailable, however many end at
+// once (see Streams, below), so the end user's code opens them again, and
+// they land on the next pod.
+//
 // # :authority and the certificate
 //
 // grpc-go takes the authority from the target's endpoint, so every RPC's
@@ -203,7 +210,9 @@
 //     The breaker ignores it;
 //   - an error once the call's deadline passed: Settings.Timeout, or a
 //     deadline the caller set or inherited. The breaker counts it as a
-//     failure.
+//     failure;
+//   - the end of a stream that opened, with Unavailable: its server or its
+//     connection went away. The breaker ignores it (see Streams, below).
 //
 // And whatever Classify returns:
 //
@@ -232,8 +241,9 @@
 // tried again.
 //
 //   - Unavailable is gRPC's code for "try again". It is what grpc-go returns
-//     when it can't reach the server, and what grpcserver ends streams with
-//     at shutdown.
+//     when it can't reach the server. It is also what grpcserver ends
+//     streams with at shutdown, but Classify isn't asked about a stream
+//     that opened and ended with it: the Client decides that, as above.
 //   - ResourceExhausted is retried only when the server says when. Without
 //     a pushback it is as likely to be a quota as an overload, and a quota
 //     isn't fixed by trying again a few hundred milliseconds later. Either
@@ -337,7 +347,11 @@
 // deadline counts as a failure, whether it is Settings.Timeout or a
 // deadline the caller set or inherited from the request it serves: a
 // dependency that hangs ends every call that way, so a breaker that
-// ignored deadlines would never open on the outage it exists for.
+// ignored deadlines would never open on the outage it exists for. A stream
+// that opened and ended with Unavailable is ignored: a rollout of the
+// dependency, or its connection's age, ends every stream on a connection
+// that way at once, and the breaker would open on a dependency whose other
+// pods are healthy (see Streams, below).
 //
 // The default policy opens the breaker after 5 failures in a row, or once
 // half of the last 20 or more results failed. While open, the breaker
@@ -404,13 +418,31 @@
 //     A stream that fails after it opened ends with that error.
 //
 // A stream that opens takes its attempt's ticket, and the breaker counts
-// it once, when it ends, with the Breaker of Classify's answer: when
-// RecvMsg returns an error, which Classify gets with the stream's
-// Trailer(), and io.EOF given as nil; or, for a client-streaming RPC, when
-// RecvMsg returns its one response, given as nil. A stream whose caller
-// cancelled its context is ignored, without asking Classify. One whose
-// context reached its deadline counts as a failure, as a unary call's
-// does.
+// it once, when it ends: when RecvMsg returns an error, io.EOF given as
+// nil, or, for a client-streaming RPC, when RecvMsg returns its one
+// response, given as nil. How it counts:
+//
+//   - a stream whose caller cancelled its context is ignored, without
+//     asking Classify;
+//   - one whose context reached its deadline counts as a failure, as a
+//     unary call's does;
+//   - one that ends with Unavailable is ignored, without asking Classify;
+//   - any other end counts with the Breaker of Classify's answer, which
+//     gets the stream's Trailer().
+//
+// Unavailable is how a stream ends when its server or its connection goes
+// away. grpcserver's Shutdown ends every stream with it, so a rollout of
+// the dependency ends each stream on a pod it replaces that way, and
+// grpc-go ends with it every stream on a connection that closes, such as
+// one the server's MaxConnectionAgeGrace closes. A connection's streams end
+// together, and a stream opened again on the next pod counts nothing until
+// it ends, so counting each would open the breaker after a rollout of a
+// few pods, or a connection with five streams, on a dependency whose other
+// pods are healthy. Whether the dependency is down is told by the next
+// open instead: it goes through the breaker, and while the dependency is
+// down it fails, and counts as a failure. A dependency that ends a stream
+// with Unavailable as an error of its own, before or after a message, is
+// ignored the same way.
 //
 // A stream its caller abandons, without reading it to its end or
 // cancelling its context, never settles its ticket. While the breaker is
@@ -419,6 +451,9 @@
 // frees the slot, so that another probe can be admitted, and counts the
 // probe as timed out, which the default policy reads as neither a success
 // nor a failure. So one leaked stream can't keep the breaker from closing.
+// A stream that is still open holds its slot the same way: one opened
+// while the breaker is half-open, such as a subscription opened again,
+// holds a probe's slot until it ends, or for at most Breaker.ProbeTimeout.
 //
 // # opts
 //

@@ -9,6 +9,8 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
+	"net"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -17,6 +19,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/circuit"
 	"github.com/z5labs/bedrock/retry"
 	"google.golang.org/grpc"
@@ -45,6 +48,15 @@ import (
 // with two Clients of one address, a dependency whose server sets
 // MaxConnectionAge, an Init that puts Connected in its readiness, and a
 // monitor of a dependency's grpc.health.v1.
+//
+// The rest run a dependency's rollout, and its MaxConnectionAgeGrace, under
+// a Client with streams open, as #1176 reported them. The dependency's pods
+// run in Apps of their own on the test Host, on grpcserver's defaults, as
+// grpcservertest.Start runs them, and the end user's App calls them through
+// a Client on DefaultSettings. The end user's job keeps subscriptions open,
+// streams on which the dependency sends a message a second, and subscribes
+// again whenever one ends with Unavailable, as the gRPC services page's
+// Streams at shutdown tells a client to.
 
 // startServing runs a dependency on h, in an App of its own, with a
 // certificate for name from ca, serving b at addr, and passing opts to
@@ -324,5 +336,497 @@ func TestClient_a_monitor_of_the_dependencys_grpc_health_v1(t *testing.T) {
 		require.True(t, before.connected)
 		require.False(t, after.monitor, "the monitor turns unhealthy in an outage of carts")
 		require.True(t, after.connected, "Connected latches")
+	})
+}
+
+// pod is one pod of the dependency. Its StreamingOutputCall and
+// FullDuplexCall send a message a second, naming the pod, until their
+// context ends, as a subscription does. Its EmptyCall answers OK.
+type pod struct {
+	testpb.UnimplementedTestServiceServer
+
+	name string
+}
+
+func (p *pod) EmptyCall(context.Context, *testpb.Empty) (*testpb.Empty, error) {
+	return &testpb.Empty{}, nil
+}
+
+func (p *pod) StreamingOutputCall(_ *testpb.StreamingOutputCallRequest, stream grpc.ServerStreamingServer[testpb.StreamingOutputCallResponse]) error {
+	return p.publish(stream.Context(), stream.Send)
+}
+
+func (p *pod) FullDuplexCall(stream grpc.BidiStreamingServer[testpb.StreamingOutputCallRequest, testpb.StreamingOutputCallResponse]) error {
+	return p.publish(stream.Context(), stream.Send)
+}
+
+// publish sends a message a second until ctx ends, and then returns ctx's
+// error, as a handler that ends on its context does.
+func (p *pod) publish(ctx context.Context, send func(*testpb.StreamingOutputCallResponse) error) error {
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := send(&testpb.StreamingOutputCallResponse{Payload: &testpb.Payload{Body: []byte(p.name)}}); err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-tick.C:
+		}
+	}
+}
+
+// startPod runs the dependency's pod name at name:9090 on h, in an App of
+// its own on grpcserver's defaults, with a certificate for ledger from ca,
+// passing opts to grpcserver.NewService. It returns a function that sends
+// the pod SIGTERM, and returns its exit status once it has exited.
+func startPod(t *testing.T, h *humustest.Host, ca *humustest.CA, name string, opts ...grpc.ServerOption) (stop func() bedrock.ExitStatus) {
+	t.Helper()
+	addr := name + ":9090"
+	cert := ca.Issue(t, "ledger")
+	p, exit := grpcservertest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		settings := grpcserver.Settings{
+			Addr: addr,
+			TLS:  &tls.Config{Certificates: []tls.Certificate{cert.TLS()}},
+		}
+		svc, err := grpcserver.NewService(s, settings, opts...)
+		if err != nil {
+			return nil, err
+		}
+		testpb.RegisterTestServiceServer(svc, &pod{name: name})
+		return []humus.Service{svc}, nil
+	}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+	<-h.Listening(addr)
+	return func() bedrock.ExitStatus {
+		<-p.Notified(syscall.SIGTERM)
+		p.Signal(syscall.SIGTERM)
+		return <-exit
+	}
+}
+
+// service is the dependency's Kubernetes ClusterIP Service. A Dial of
+// ledger:9090, through the Host that host returns, reaches the pod in its
+// endpoints at the time, as kube-proxy picks a pod for each connection.
+type service struct {
+	mu  sync.Mutex
+	pod string
+}
+
+// route puts pod alone in the Service's endpoints.
+func (s *service) route(pod string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pod = pod
+}
+
+func (s *service) host(h *humustest.Host) humus.Host {
+	host := h.Host()
+	dial := host.Dial
+	host.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		if address == "ledger:9090" {
+			s.mu.Lock()
+			address = s.pod + ":9090"
+			s.mu.Unlock()
+		}
+		return dial(ctx, network, address)
+	}
+	return host
+}
+
+// opener opens one stream of a subscription, and returns its Recv.
+type opener func(ctx context.Context, c testpb.TestServiceClient) (func() (*testpb.StreamingOutputCallResponse, error), error)
+
+func serverStream(ctx context.Context, c testpb.TestServiceClient) (func() (*testpb.StreamingOutputCallResponse, error), error) {
+	stream, err := c.StreamingOutputCall(ctx, &testpb.StreamingOutputCallRequest{})
+	if err != nil {
+		return nil, err
+	}
+	return stream.Recv, nil
+}
+
+func bidiStream(ctx context.Context, c testpb.TestServiceClient) (func() (*testpb.StreamingOutputCallResponse, error), error) {
+	stream, err := c.FullDuplexCall(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return stream.Recv, nil
+}
+
+// subscriptions are the end user's: streams opened with open, each opened
+// again whenever it ends with Unavailable. A subscription whose open fails
+// tries again after reopen, or gives up if reopen is 0. They record what
+// happens to each, with the time since start.
+type subscriptions struct {
+	open   opener
+	reopen time.Duration
+	start  time.Time
+
+	mu     sync.Mutex
+	from   []string // the pod each subscription last heard from
+	ended  []int    // how many times each subscription's stream has ended
+	heard  []bool   // whether each subscription has heard a message since its stream last ended
+	failed []error  // every open that failed
+	events []string
+}
+
+func newSubscriptions(n int, open opener) *subscriptions {
+	return &subscriptions{
+		open:  open,
+		start: time.Now(),
+		from:  make([]string, n),
+		ended: make([]int, n),
+		heard: make([]bool, n),
+	}
+}
+
+// event records what happened, with the time since start. Its caller holds
+// s.mu, or is the test's goroutine.
+func (s *subscriptions) event(format string, args ...any) {
+	s.events = append(s.events, fmt.Sprintf("+%07.3fs ", time.Since(s.start).Seconds())+fmt.Sprintf(format, args...))
+}
+
+func (s *subscriptions) note(format string, args ...any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.event(format, args...)
+}
+
+// run runs every subscription through c until ctx ends, and waits for
+// each to return.
+func (s *subscriptions) run(ctx context.Context, c testpb.TestServiceClient) {
+	var wg sync.WaitGroup
+	for i := range s.from {
+		wg.Go(func() { s.subscribe(ctx, c, i) })
+	}
+	wg.Wait()
+}
+
+func (s *subscriptions) subscribe(ctx context.Context, c testpb.TestServiceClient, i int) {
+	for {
+		recv, err := s.open(ctx, c)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			s.mu.Lock()
+			s.failed = append(s.failed, err)
+			s.event("subscription %d failed to open: %v", i, err)
+			s.mu.Unlock()
+			if s.reopen == 0 {
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(s.reopen):
+			}
+			continue
+		}
+		for {
+			resp, err := recv()
+			if ctx.Err() != nil {
+				return
+			}
+			if err != nil {
+				s.mu.Lock()
+				s.ended[i]++
+				s.heard[i] = false
+				s.event("subscription %d, on %s, ended: %v", i, s.from[i], err)
+				s.mu.Unlock()
+				if status.Code(err) != codes.Unavailable {
+					return
+				}
+				break
+			}
+			s.mu.Lock()
+			if !s.heard[i] {
+				s.event("subscription %d heard from %s", i, resp.GetPayload().GetBody())
+			}
+			s.from[i] = string(resp.GetPayload().GetBody())
+			s.heard[i] = true
+			s.mu.Unlock()
+		}
+	}
+}
+
+// allOn reports whether every subscription has heard from pod since its
+// stream last ended.
+func (s *subscriptions) allOn(pod string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.from {
+		if s.from[i] != pod || !s.heard[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// allEnded reports whether every subscription's stream has ended once.
+func (s *subscriptions) allEnded() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, n := range s.ended {
+		if n == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// allResubscribed reports whether every subscription's stream has ended,
+// and every subscription has heard a message since.
+func (s *subscriptions) allResubscribed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.from {
+		if s.ended[i] == 0 || !s.heard[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *subscriptions) failedOpens() []error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]error(nil), s.failed...)
+}
+
+// log logs every event, and the Client's breaker records in tel, with
+// their times since start.
+func (s *subscriptions) log(t *testing.T, tel *humustest.Telemetry) {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, e := range s.events {
+		t.Log(e)
+	}
+	for _, r := range breakerRecords(tel) {
+		a := recordAttrs(r)
+		t.Logf("+%07.3fs breaker record %q: previous_state=%v consecutive_failures=%v failures=%v successes=%v",
+			r.Timestamp().Sub(s.start).Seconds(), r.Body().AsString(), a["humus.circuit.previous_state"],
+			a["humus.circuit.consecutive_failures"], a["humus.circuit.failures"], a["humus.circuit.successes"])
+	}
+}
+
+// subscriber runs the end user's App on host: a Client of ledger:9090 on
+// DefaultSettings, trusting ca, with tel's telemetry, and a job that runs
+// subs through it until done is closed. It returns the Client, once Init
+// has built it, and the App's exit status.
+func subscriber(t *testing.T, host humus.Host, tel *humustest.Telemetry, ca *humustest.CA, subs *subscriptions, done <-chan struct{}) (*grpcclient.Client, <-chan bedrock.ExitStatus) {
+	t.Helper()
+	built := make(chan *grpcclient.Client, 1)
+	_, exit := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		ledger, err := grpcclient.NewClient(s, settingsFor(ca, "ledger:9090"))
+		if err != nil {
+			return nil, err
+		}
+		built <- ledger
+		return []humus.Service{job.NewService(s, func(ctx context.Context) error {
+			ctx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			ran := make(chan struct{})
+			go func() {
+				defer close(ran)
+				subs.run(ctx, testpb.NewTestServiceClient(ledger))
+			}()
+			select {
+			case <-done:
+			case <-ctx.Done():
+			}
+			cancel()
+			<-ran
+			return nil
+		})}, nil
+	}, humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(tel.Builder())))
+	return <-built, exit
+}
+
+// within polls cond every 100ms until it holds or d has passed, and
+// reports whether it held.
+func within(d time.Duration, cond func() bool) bool {
+	deadline := time.Now().Add(d)
+	for !cond() {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return true
+}
+
+func TestClient_a_rollout_of_the_dependency_leaves_the_breaker_closed(t *testing.T) {
+	testCases := []struct {
+		name    string
+		streams int
+		open    opener
+		// pods are the pods the subscriptions move through, in order. The
+		// rollout replaces every one of them but the last.
+		pods []string
+	}{
+		{name: "4 server streams on the pod it replaces", streams: 4, open: serverStream, pods: []string{"ledger-a", "ledger-b"}},
+		{name: "5 server streams on the pod it replaces", streams: 5, open: serverStream, pods: []string{"ledger-a", "ledger-b"}},
+		{name: "5 bidirectional streams on the pod it replaces", streams: 5, open: bidiStream, pods: []string{"ledger-a", "ledger-b"}},
+		{name: "3 server streams on two pods it replaces in turn", streams: 3, open: serverStream, pods: []string{"ledger-a", "ledger-b", "ledger-c"}},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ca := humustest.NewCA(t)
+				h := humustest.NewHost(t)
+				tel := humustest.NewTelemetry()
+				svc := &service{}
+				svc.route(tc.pods[0])
+				var stops []func() bedrock.ExitStatus
+				for _, name := range tc.pods {
+					stops = append(stops, startPod(t, h, ca, name))
+				}
+
+				subs := newSubscriptions(tc.streams, tc.open)
+				done := make(chan struct{})
+				ledger, exit := subscriber(t, svc.host(h), tel, ca, subs, done)
+				opened := within(10*time.Second, func() bool { return subs.allOn(tc.pods[0]) })
+
+				// The rollout: each pod but the last leaves the endpoints and
+				// is sent SIGTERM, once the subscriptions are on it.
+				var podExits []int
+				moved := true
+				last := len(tc.pods) - 1
+				for i := range last {
+					next := tc.pods[i+1]
+					svc.route(next)
+					subs.note("%s leaves the endpoints, and is sent SIGTERM", tc.pods[i])
+					st := stops[i]()
+					podExits = append(podExits, st.Code())
+					subs.note("%s exited %d", tc.pods[i], st.Code())
+					if i+1 < last {
+						moved = moved && within(30*time.Second, func() bool { return subs.allOn(next) })
+					}
+				}
+
+				time.Sleep(time.Second)
+				_, unary := testpb.NewTestServiceClient(ledger).EmptyCall(context.Background(), &testpb.Empty{})
+				subs.note("EmptyCall: %v", unary)
+				resubscribed := within(30*time.Second, func() bool { return subs.allOn(tc.pods[last]) })
+
+				close(done)
+				st := <-exit
+				podExits = append(podExits, stops[last]().Code())
+				subs.log(t, tel)
+
+				require.True(t, opened, "every subscription opened on %s", tc.pods[0])
+				require.True(t, moved, "every subscription moved through the pods")
+				require.Zero(t, st.Code(), "cause: %v", st.Cause())
+				require.Equal(t, make([]int, len(tc.pods)), podExits, "every pod exited 0")
+
+				require.NotContains(t, bodies(breakerRecords(tel)), breakerOpen, "the breaker stays closed: the rollout ended the streams, and every other pod is healthy")
+				require.NoError(t, unary, "a call a second after the pod exited reaches the next pod")
+				require.Empty(t, subs.failedOpens(), "every subscription opens again")
+				require.True(t, resubscribed, "every subscription is on %s", tc.pods[last])
+			})
+		})
+	}
+}
+
+func TestClient_a_rollout_of_the_dependency_leaves_unary_calls_answered(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ca := humustest.NewCA(t)
+		h := humustest.NewHost(t)
+		tel := humustest.NewTelemetry()
+		svc := &service{}
+		svc.route("ledger-a")
+		stopA := startPod(t, h, ca, "ledger-a")
+		stopB := startPod(t, h, ca, "ledger-b")
+
+		// The end user's subscriptions try again a second after an open
+		// fails.
+		subs := newSubscriptions(5, serverStream)
+		subs.reopen = time.Second
+		done := make(chan struct{})
+		ledger, exit := subscriber(t, svc.host(h), tel, ca, subs, done)
+		opened := within(10*time.Second, func() bool { return subs.allOn("ledger-a") })
+
+		svc.route("ledger-b")
+		subs.note("ledger-a leaves the endpoints, and is sent SIGTERM")
+		stA := stopA()
+		subs.note("ledger-a exited %d", stA.Code())
+
+		// The end user's App also calls the ledger, once a second, for a
+		// minute after ledger-a exited.
+		time.Sleep(500 * time.Millisecond)
+		var unary []error
+		answered := true
+		for range 60 {
+			_, err := testpb.NewTestServiceClient(ledger).EmptyCall(context.Background(), &testpb.Empty{})
+			if err != nil || !answered {
+				subs.note("EmptyCall: %v", err)
+			}
+			answered = err == nil
+			if err != nil {
+				unary = append(unary, err)
+			}
+			time.Sleep(time.Second)
+		}
+		resubscribed := within(30*time.Second, func() bool { return subs.allOn("ledger-b") })
+
+		close(done)
+		st := <-exit
+		stB := stopB()
+		subs.log(t, tel)
+
+		require.True(t, opened, "every subscription opened on ledger-a")
+		require.Zero(t, st.Code(), "cause: %v", st.Cause())
+		require.Zero(t, stA.Code())
+		require.Zero(t, stB.Code())
+
+		require.Zero(t, len(unary), "every call after the rollout reaches ledger-b; the calls rejected are logged above")
+		require.True(t, resubscribed, "every subscription is on ledger-b")
+	})
+}
+
+func TestClient_the_dependencys_MaxConnectionAgeGrace_leaves_the_breaker_closed(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ca := humustest.NewCA(t)
+		h := humustest.NewHost(t)
+		tel := humustest.NewTelemetry()
+		svc := &service{}
+		svc.route("ledger-a")
+		stop := startPod(t, h, ca, "ledger-a",
+			grpc.KeepaliveParams(keepalive.ServerParameters{
+				MaxConnectionAge:      time.Minute,
+				MaxConnectionAgeGrace: 10 * time.Second,
+			}),
+		)
+
+		subs := newSubscriptions(5, serverStream)
+		done := make(chan struct{})
+		ledger, exit := subscriber(t, svc.host(h), tel, ca, subs, done)
+		opened := within(10*time.Second, func() bool { return subs.allOn("ledger-a") })
+		ended := within(3*time.Minute, subs.allEnded)
+
+		time.Sleep(time.Second)
+		_, unary := testpb.NewTestServiceClient(ledger).EmptyCall(context.Background(), &testpb.Empty{})
+		subs.note("EmptyCall: %v", unary)
+		resubscribed := within(30*time.Second, subs.allResubscribed)
+
+		close(done)
+		st := <-exit
+		podExit := stop().Code()
+		subs.log(t, tel)
+
+		require.True(t, opened, "every subscription opened on ledger-a")
+		require.True(t, ended, "MaxConnectionAgeGrace ended every stream")
+		require.Zero(t, st.Code(), "cause: %v", st.Cause())
+		require.Zero(t, podExit)
+
+		require.NotContains(t, bodies(breakerRecords(tel)), breakerOpen, "the breaker stays closed: the server's connection age ended the streams")
+		require.NoError(t, unary, "a call a second after the streams ended reaches the dependency")
+		require.Empty(t, subs.failedOpens(), "every subscription opens again")
+		require.True(t, resubscribed, "every subscription is open again")
 	})
 }
