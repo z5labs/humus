@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/z5labs/bedrock"
@@ -33,6 +34,8 @@ import (
 	"github.com/z5labs/humus/example/shoppingcart/endpoint"
 	"github.com/z5labs/humus/example/shoppingcart/internal/certfile"
 	"github.com/z5labs/humus/example/shoppingcart/internal/latch"
+	"github.com/z5labs/humus/fault"
+	"github.com/z5labs/humus/fault/jsonscenario"
 	"github.com/z5labs/humus/health"
 	"github.com/z5labs/humus/httpclient"
 	"github.com/z5labs/humus/httphealth"
@@ -44,6 +47,22 @@ import (
 )
 
 const maxBodyBytes = 64 << 10
+
+const scenarioKey = "acme.fault"
+
+func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
+	codec, err := jsonscenario.New(scenarioKey)
+	if err != nil {
+		return fault.Settings{}, err
+	}
+	d := fault.DefaultSettings()
+	return config.Struct(func(r *config.Resolver) fault.Settings {
+		f := d
+		f.Decoder = codec
+		f.MaxDelay = r.Get(config.Env(s.Process.Environment, "FAULT_MAX_DELAY").Parse(time.ParseDuration).Default(d.MaxDelay).Validate(fault.CheckMaxDelay))
+		return f
+	}).Read(ctx)
+}
 
 func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	return initWith(ctx, s, openPostgres, openCatalog)
@@ -80,6 +99,9 @@ func initWith(ctx context.Context, s *humus.Setup, open openStore, newCatalog ne
 	tokens, err := jwt.NewVerifier[endpoint.Claims](s, settings.JWT, keys)
 	if err != nil {
 		return nil, err
+	}
+	if settings.FaultTrustScope != "" {
+		settings.HTTP.TrustScenario = trustTokens(s.Faults, tokens.Verify, settings.FaultTrustScope)
 	}
 	bearer := auth.Bearer("bearer", endpoint.KeysUnavailable(withSubject(tokens.Verify))).
 		Format("JWT").
@@ -135,6 +157,18 @@ func withSubject(verify func(context.Context, string) (endpoint.Claims, error)) 
 	}
 }
 
+func trustTokens(faults fault.Injector, verify func(context.Context, string) (endpoint.Claims, error), scope string) func(*http.Request) bool {
+	return func(r *http.Request) bool {
+		scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+		if !ok || !strings.EqualFold(scheme, "Bearer") {
+			return false
+		}
+		ctx, _ := faults.Strip(r.Context())
+		claims, err := verify(ctx, strings.TrimSpace(token))
+		return err == nil && claims.HasScope(scope)
+	}
+}
+
 func openCatalog(s *humus.Setup, settings httpclient.Settings) (endpoint.Catalog, func(context.Context) error, error) {
 	client, err := httpclient.NewClient(s, settings)
 	if err != nil {
@@ -165,11 +199,12 @@ func readiness(client *http.Client, u *url.URL) func(context.Context) error {
 }
 
 type settings struct {
-	HTTP     httpserver.Settings
-	Database *pgxpool.Config
-	Catalog  httpclient.Settings
-	KeySet   keySetSettings
-	JWT      jwt.Settings
+	HTTP            httpserver.Settings
+	Database        *pgxpool.Config
+	Catalog         httpclient.Settings
+	KeySet          keySetSettings
+	JWT             jwt.Settings
+	FaultTrustScope string
 }
 
 type keySetSettings struct {
@@ -247,7 +282,8 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 				URL:    r.Get(env("JWKS_URL").Parse(url.Parse).Validate(checkKeySetURL)),
 				Client: client,
 			},
-			JWT: tokens,
+			JWT:             tokens,
+			FaultTrustScope: r.Get(env("FAULT_TRUST_SCOPE").Default("").Validate(checkScope)),
 		}
 	}).Read(ctx)
 	if err != nil {
@@ -308,6 +344,13 @@ func checkKeySetURL(u *url.URL) error {
 	return nil
 }
 
+func checkScope(scope string) error {
+	if strings.ContainsFunc(scope, unicode.IsSpace) {
+		return errors.New("must be one scope, with no white space")
+	}
+	return nil
+}
+
 func parseAlgorithms(s string) ([]jwt.Algorithm, error) {
 	var algs []jwt.Algorithm
 	for name := range strings.SplitSeq(s, ",") {
@@ -337,7 +380,7 @@ func openPostgres(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (end
 		pool.Close()
 		return nil
 	})
-	return database.New(pool), pool.Ping, nil
+	return database.New(pool, s.Faults), pool.Ping, nil
 }
 
 func readFile(fsys humus.FS) func(name string) ([]byte, error) {

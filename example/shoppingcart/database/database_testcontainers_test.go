@@ -19,6 +19,7 @@ import (
 	"github.com/z5labs/humus/example/shoppingcart/database"
 	"github.com/z5labs/humus/example/shoppingcart/endpoint"
 	"github.com/z5labs/humus/example/shoppingcart/internal/postgrestest"
+	"github.com/z5labs/humus/fault"
 )
 
 const shopper = "shopper"
@@ -35,7 +36,7 @@ func store(t *testing.T) *database.Store {
 	pool, err := pgxpool.New(t.Context(), db.AppURL)
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
-	return database.New(pool)
+	return database.New(pool, fault.Injector{})
 }
 
 func TestStore_keeps_a_cart_and_its_items(t *testing.T) {
