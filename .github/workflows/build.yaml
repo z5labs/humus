@@ -663,11 +663,14 @@ jobs:
   # queue/kafka with paths under ../.., and its base kustomization, rendered.
   # up.sh then creates a kind cluster, loads the image and applies the kind
   # overlay, with Kafka over mTLS with ACLs, its topics, and PostgreSQL over
-  # TLS, and the processor's Deployment has to become ready. The tests behind
-  # the functional tag then run the shared cases against it, the failure
-  # injection cases included, as a client whose certificate up.sh issues. The
-  # ruleset doesn't require this job, and Build doesn't wait on it; Vet the
-  # functional tests vets them.
+  # TLS, and the LGTM stack behind an OpenTelemetry Collector, and the
+  # processor's Deployment has to become ready. The tests behind the
+  # functional tag then run the shared cases against it, the failure
+  # injection cases included, as a client whose certificate up.sh issues, and
+  # find an order's trace, the processor's logs and metrics, the group's lag
+  # and the containers' restarts in the LGTM stack. The ruleset doesn't
+  # require this job, and Build doesn't wait on it; Vet the functional tests
+  # vets them.
   orderstatus-kind:
     name: Order status walkthrough (kind)
     runs-on: ubuntu-latest
@@ -713,6 +716,7 @@ jobs:
             kubectl --namespace orderstatus logs job/kafka-topics --tail 200 || true
             kubectl --namespace orderstatus logs deployment/postgres --tail 200 || true
             kubectl --namespace orderstatus logs deployment/orderstatus --all-containers --tail 200 || true
+            kubectl --namespace orderstatus logs deployment/otel-collector --tail 200 || true
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache

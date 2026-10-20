@@ -7,6 +7,11 @@ resources:
   - kafka.yaml
   - topics.yaml
   - postgres.yaml
+  - otel-collector.yaml
+  - loki.yaml
+  - tempo.yaml
+  - mimir.yaml
+  - grafana.yaml
 configMapGenerator:
   - name: orderstatus
     behavior: merge
@@ -24,6 +29,21 @@ configMapGenerator:
   - name: postgres-schema
     files:
       - ../../store/schema.sql
+  - name: otel-collector-config
+    files:
+      - otel-collector/config.yaml
+  - name: loki-config
+    files:
+      - loki/config.yaml
+  - name: tempo-config
+    files:
+      - tempo/config.yaml
+  - name: mimir-config
+    files:
+      - mimir/config.yaml
+  - name: grafana-datasources
+    files:
+      - grafana/datasources.yaml
 patches:
   - target:
       kind: Deployment

@@ -14,6 +14,7 @@ fi
 
 postgres_password=$(openssl rand -hex 24)
 orderstatus_password=$(openssl rand -hex 24)
+grafana_password=$(openssl rand -hex 24)
 
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 30 \
   -subj "/CN=orderstatus kind CA" \
@@ -43,9 +44,11 @@ issue admin
 issue postgres
 issue orderstatus
 issue cases
+issue otel-collector
 
 printf '%s' "$postgres_password" >"$tmp/postgres-password"
 printf '%s' "$orderstatus_password" >"$tmp/orderstatus-password"
+printf '%s' "$grafana_password" >"$tmp/grafana-password"
 
 k() {
   kubectl --context "kind-$cluster" --namespace "$namespace" "$@"
@@ -73,6 +76,11 @@ secret() {
   secret orderstatus-probes --from-file=tls.pem="$tmp/orderstatus.pem"
   echo ---
   secret cases-kafka --from-file=tls.pem="$tmp/cases.pem" --from-file=ca.crt="$tmp/ca.crt"
+  echo ---
+  secret otel-collector-kafka --from-file=tls.crt="$tmp/otel-collector.crt" --from-file=tls.key="$tmp/otel-collector.key" \
+    --from-file=ca.crt="$tmp/ca.crt"
+  echo ---
+  secret grafana-admin --from-literal=username=admin --from-file=password="$tmp/grafana-password"
 } >"$tmp/orderstatus.yaml"
 
 kind load docker-image orderstatus --name "$cluster"
@@ -92,5 +100,7 @@ SQL
 
 k wait job/kafka-topics --for=condition=Complete --timeout 5m
 
-k rollout restart deployment/orderstatus
-k rollout status deployment/orderstatus --timeout 5m
+k rollout restart deployment/otel-collector deployment/grafana deployment/orderstatus
+for d in loki tempo mimir otel-collector grafana orderstatus; do
+  k rollout status "deployment/$d" --timeout 5m
+done
