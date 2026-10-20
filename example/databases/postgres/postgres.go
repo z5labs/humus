@@ -86,13 +86,12 @@ func end(span trace.Span, err error) {
 	if err == nil {
 		return
 	}
-	errorType := "_OTHER"
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
-		errorType = pgErr.Code
-		span.SetAttributes(semconv.DBResponseStatusCode(pgErr.Code))
+		span.SetAttributes(semconv.DBResponseStatusCode(pgErr.Code), semconv.ErrorTypeKey.String(pgErr.Code))
+	} else {
+		span.SetAttributes(semconv.ErrorType(err))
 	}
-	span.SetAttributes(semconv.ErrorTypeKey.String(errorType))
 	span.SetStatus(codes.Error, err.Error())
 }
 
