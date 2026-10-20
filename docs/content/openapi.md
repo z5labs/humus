@@ -893,9 +893,6 @@ the test's identity provider, which serves a JSON Web Key Set from a handler
 of the test's own and signs the tokens the test sends:
 
 ```go
-// start runs initWith on open, with every setting it needs, on a new
-// humustest Host, beside the test's identity provider, and waits for both
-// to listen. Call it inside the bubble that uses it.
 func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error), hostOpts ...humustest.HostOption) *service {
 	t.Helper()
 	ca := humustest.NewCA(t)
@@ -916,15 +913,11 @@ func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Servi
 			"ADDR":                ":8443",
 			"TLS_PKCS12_FILE":     "tls.p12",
 			"TLS_PKCS12_PASSWORD": password,
-			// Every field pgx uses is in the URL, so it reads nothing from
-			// the real environment or ~/.pgpass. The password is new for
-			// each test.
-			"DATABASE_URL": "postgres://carts:" + rand.Text() + "@" + dbHost + "/carts?sslmode=disable",
-			// The key set is the test's, trusted through the test's CA.
-			"JWKS_URL":     "https://" + idpHost + jwksPath,
-			"JWKS_CA_FILE": "idp-ca.pem",
-			"JWT_ISSUER":   issuer,
-			"JWT_AUDIENCE": audience,
+			"DATABASE_URL":        "postgres://carts:" + rand.Text() + "@" + dbHost + "/carts?sslmode=disable",
+			"JWKS_URL":            "https://" + idpHost + jwksPath,
+			"JWKS_CA_FILE":        "idp-ca.pem",
+			"JWT_ISSUER":          issuer,
+			"JWT_AUDIENCE":        audience,
 		}),
 	)
 	<-h.Listening("localhost:8443")
@@ -935,7 +928,7 @@ func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Servi
 		status:  status,
 		idp:     provider,
 		stopIdP: stopIdP,
-		token:   provider.token(t, endpoint.ScopeWrite),
+		token:   provider.token(t, shopper, endpoint.ScopeWrite),
 	}
 }
 ```
@@ -1006,8 +999,7 @@ and tested against the humus in the same commit. It has three packages:
 - **`database`**, the `Store` on a `pgxpool.Pool`, and the schema.
 - **`app`**, the `Init`. It sources its settings with `config.Struct`,
   opens its pool through the Host and closes it with `OnStop`, builds the API
-  with `NewAPI`, and serves it with `httpserver.NewService`. Its package doc
-  lists every variable the service reads.
+  with `NewAPI`, and serves it with `httpserver.NewService`.
 
 Every operation requires a JWT bearer token, which `auth/jwt`'s `Verifier`
 checks against the identity provider's key set, fetched by a
@@ -1017,10 +1009,10 @@ claims, a type of the service's own, report through `auth.Scoped`. The
 document is public, served with `Document(path,
 openapi.Security(auth.Disabled()))`, and a `*jwt.KeySetError`, a key set
 that is down before any key was fetched, is answered with a 503 by an
-`openapi.Error`. The `app` package doc says how it authenticates, and how its
-tests get their tokens, and
-[Authentication and authorization]({{< relref "auth" >}}) describes each
-piece.
+`openapi.Error`. A cart belongs to the subject of the token that created it:
+a token with no `sub` is a 401, and another subject's token gets a 404 for
+the cart. [Authentication and authorization]({{< relref "auth" >}})
+describes each piece.
 
 Its tests run the whole service as [Testing](#testing) shows, its golden
 document is `app/testdata/openapi.json`, and a test behind the

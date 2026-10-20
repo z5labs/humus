@@ -1,8 +1,6 @@
--- The shoppingcart's schema. The service applies no migrations: the schema
--- is applied before it starts, as the container tests apply this file.
-
 CREATE TABLE IF NOT EXISTS carts (
     id          UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
+    owner       TEXT            NOT NULL CHECK (owner <> ''),
     created_at  TIMESTAMPTZ     NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ     NOT NULL DEFAULT now()
 );
