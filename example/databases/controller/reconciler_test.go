@@ -30,16 +30,16 @@ type provision struct {
 }
 
 type fakeAdmin struct {
-	provisions []provision
-	err        error
-	databases  map[string]bool
-	drops      []string
-	dropErr    error
+	provisions   []provision
+	provisionErr error
+	databases    map[string]bool
+	drops        []string
+	dropErr      error
 }
 
 func (a *fakeAdmin) Provision(_ context.Context, name, password string) error {
 	a.provisions = append(a.provisions, provision{name: name, password: password})
-	return a.err
+	return a.provisionErr
 }
 
 func (a *fakeAdmin) Drop(_ context.Context, name string) error {
@@ -168,7 +168,7 @@ func TestReconciler_each_failure_sets_its_reason_and_returns_an_error(t *testing
 	}{
 		{
 			name:    "PostgreSQL fails",
-			setup:   func(_ *kubefake.Clientset, admin *fakeAdmin) { admin.err = cause },
+			setup:   func(_ *kubefake.Clientset, admin *fakeAdmin) { admin.provisionErr = cause },
 			reason:  "PostgresUnavailable",
 			message: "The role and the database could not be provisioned in PostgreSQL.",
 		},
@@ -226,7 +226,7 @@ func TestReconciler_a_failure_after_Ready_turns_it_False_and_keeps_the_Secret_na
 	first, err := r.Reconcile(t.Context(), db)
 	require.NoError(t, err)
 	db.Status = *first.Status
-	admin.err = errors.New("connection refused")
+	admin.provisionErr = errors.New("connection refused")
 
 	res, err := r.Reconcile(t.Context(), db)
 
