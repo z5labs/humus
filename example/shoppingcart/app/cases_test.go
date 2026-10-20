@@ -65,10 +65,10 @@ type shoppingcart struct {
 
 func startShoppingcart(t *testing.T) *shoppingcart {
 	t.Helper()
-	return startShoppingcartWith(t, map[string]string{"FAULT_TRUST_SCOPE": trustScope}, telemetry.NoopBuilder)
+	return startShoppingcartWith(t, map[string]string{"FAULT_TRUST_SCOPE": trustScope}, telemetry.NoopBuilder, telemetry.NoopBuilder)
 }
 
-func startShoppingcartWith(t *testing.T, cartEnv map[string]string, cartTelemetry telemetry.Builder) *shoppingcart {
+func startShoppingcartWith(t *testing.T, cartEnv map[string]string, cartTelemetry, catalogTelemetry telemetry.Builder) *shoppingcart {
 	t.Helper()
 	ca := humustest.NewCA(t)
 	idpCert := ca.Issue(t, "idp.internal")
@@ -101,7 +101,7 @@ func startShoppingcartWith(t *testing.T, cartEnv map[string]string, cartTelemetr
 	products := productsInMemory()
 	catalog := run(t, "catalog", h, func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		return catalogapp.InitWith(ctx, s, products.open)
-	}, []humus.Option{humus.WithFaults(catalogapp.Faults)}, tokens, map[string]string{
+	}, []humus.Option{humus.WithFaults(catalogapp.Faults), humus.WithTelemetry(catalogTelemetry)}, tokens, map[string]string{
 		"ADDR":              ":10443",
 		"TLS_CERT_FILE":     "catalog/tls.crt",
 		"TLS_KEY_FILE":      "catalog/tls.key",
