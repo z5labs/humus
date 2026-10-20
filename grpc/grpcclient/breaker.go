@@ -227,8 +227,9 @@ func (s *stream) RecvMsg(m any) error {
 // err, nil for io.EOF. A stream that failed once its caller cancelled ctx
 // is released, counting nothing, as watch releases it, whichever of the
 // two runs first. Any other error once ctx has ended is the Client's to
-// classify, as for a unary attempt, and so is Unavailable, as goneAway
-// describes. Classify is asked about the rest, with the stream's trailer.
+// classify, as for a unary attempt, and so is Unavailable while ctx is
+// live, as goneAway describes. Classify is asked about the rest, with the
+// stream's trailer.
 // A panic in Classify passes to the caller of RecvMsg, and the ticket is
 // released.
 func (s *stream) settle(err error) {
