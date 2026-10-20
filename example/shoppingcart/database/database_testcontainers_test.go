@@ -8,73 +8,34 @@
 package database_test
 
 import (
-	"context"
-	"crypto/rand"
-	"errors"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	"github.com/z5labs/humus/example/shoppingcart/database"
 	"github.com/z5labs/humus/example/shoppingcart/endpoint"
+	"github.com/z5labs/humus/example/shoppingcart/internal/postgrestest"
 )
 
-const (
-	postgresImage = "docker.io/library/postgres:18.0"
-	shopper       = "shopper"
-)
-
-var postgres struct {
-	once      sync.Once
-	url       string
-	container *tcpostgres.PostgresContainer
-	err       error
-}
+const shopper = "shopper"
 
 func TestMain(m *testing.M) {
-	m.Run()
-	if postgres.container != nil {
-		_ = postgres.container.Terminate(context.Background())
-	}
+	postgrestest.Run(m)
 }
 
 func store(t *testing.T) *database.Store {
 	t.Helper()
-	postgres.once.Do(func() {
-		postgres.err = errors.New("starting Postgres did not finish")
-		postgres.err = startPostgres()
-	})
-	require.NoError(t, postgres.err, "starting Postgres in a container")
+	db := postgrestest.NewDatabase(t)
+	db.Migrated(t, "carts")
 
-	pool, err := pgxpool.New(t.Context(), postgres.url)
+	pool, err := pgxpool.New(t.Context(), db.AppURL)
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
 	return database.New(pool)
-}
-
-func startPostgres() error {
-	ctx := context.Background()
-	c, err := tcpostgres.Run(ctx, postgresImage,
-		tcpostgres.WithDatabase("carts"),
-		tcpostgres.WithUsername("carts"),
-		tcpostgres.WithPassword(rand.Text()),
-		tcpostgres.WithInitScripts("schema.sql"),
-		tcpostgres.BasicWaitStrategies(),
-	)
-	if c != nil {
-		postgres.container = c
-	}
-	if err != nil {
-		return err
-	}
-	postgres.url, err = c.ConnectionString(ctx, "sslmode=disable")
-	return err
 }
 
 func TestStore_keeps_a_cart_and_its_items(t *testing.T) {
