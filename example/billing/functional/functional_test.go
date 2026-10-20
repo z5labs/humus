@@ -417,6 +417,36 @@ func TestBilling_passes_the_shared_cases_as_deployed(t *testing.T) {
 	})
 }
 
+func TestPostgres_stays_reachable_while_cases_drop_their_databases(t *testing.T) {
+	require.NotEmpty(t, *postgresURL, "-postgres")
+	target := deployed(t).target(t)
+
+	const workers, cycles = 8, 100
+	t.Run("in parallel", func(t *testing.T) {
+		for w := range workers {
+			t.Run(strconv.Itoa(w), func(t *testing.T) {
+				t.Parallel()
+				for c := range cycles {
+					completed := t.Run(strconv.Itoa(c), func(t *testing.T) {
+						ctx, cancel := context.WithTimeout(t.Context(), *caseTimeout)
+						defer cancel()
+						subscribe(ctx, t, cases.NewDatabase(ctx, t, target, "cycled-"))
+					})
+					if !completed {
+						return
+					}
+				}
+			})
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(t.Context(), *caseTimeout)
+	defer cancel()
+	conn, err := pgx.Connect(ctx, *postgresURL)
+	require.NoError(t, err, "connecting to PostgreSQL after the cycles")
+	require.NoError(t, conn.Close(ctx))
+}
+
 func TestCronJob_fails_a_bad_setting_after_one_pod_by_its_pod_failure_policy(t *testing.T) {
 	d := deployed(t)
 	ctx, cancel := context.WithTimeout(t.Context(), *caseTimeout)
@@ -707,42 +737,26 @@ func failingAnInvoice(t *testing.T, d deployment, target cases.Target) {
 	ctx, cancel := context.WithTimeout(t.Context(), *caseTimeout)
 	defer cancel()
 
-	admin, err := pgx.Connect(ctx, target.Postgres)
-	require.NoError(t, err, "connecting to PostgreSQL")
-	defer func() { _ = admin.Close(context.WithoutCancel(ctx)) }()
-	name := "failed-" + strings.ToLower(rand.Text())
-	ident := pgx.Identifier{name}.Sanitize()
-	_, err = admin.Exec(ctx, "CREATE DATABASE "+ident)
-	require.NoError(t, err)
-	defer func() {
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
-		defer cancel()
-		_, err := admin.Exec(ctx, "DROP DATABASE "+ident+" WITH (FORCE)")
-		require.NoError(t, err)
-	}()
+	db := cases.NewDatabase(ctx, t, target, "failed-")
+	subscribe(ctx, t, db)
 
-	u, err := url.Parse(target.Postgres)
-	require.NoError(t, err)
-	u.Path = "/" + name
-	conn, err := pgx.Connect(ctx, u.String())
-	require.NoError(t, err)
-	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
-	_, err = conn.Exec(ctx, target.Schema)
-	require.NoError(t, err)
-	_, err = conn.Exec(ctx,
-		`INSERT INTO subscriptions (account_id, amount_cents, currency, active) VALUES ($1, $2, $3, $4)`,
-		name+"-a", 4999, "USD", true,
-	)
-	require.NoError(t, err)
+	unprocessable(ctx, t, target, db.Name)
 
-	unprocessable(ctx, t, target, name)
-
-	code, err := d.run(ctx, u.String(), map[string]string{"BILLING_PERIOD": "2025-12"})
+	code, err := d.run(ctx, db.URL, map[string]string{"BILLING_PERIOD": "2025-12"})
 	require.NoError(t, err)
 	require.Zero(t, code)
 	var state string
-	require.NoError(t, conn.QueryRow(ctx, `SELECT state FROM invoices`).Scan(&state))
+	require.NoError(t, db.Conn.QueryRow(ctx, `SELECT state FROM invoices`).Scan(&state))
 	require.Equal(t, "failed", state)
+}
+
+func subscribe(ctx context.Context, t *testing.T, db cases.Database) {
+	t.Helper()
+	_, err := db.Conn.Exec(ctx,
+		`INSERT INTO subscriptions (account_id, amount_cents, currency, active) VALUES ($1, $2, $3, $4)`,
+		db.Name+"-a", 4999, "USD", true,
+	)
+	require.NoError(t, err)
 }
 
 func unprocessable(ctx context.Context, t *testing.T, target cases.Target, prefix string) {

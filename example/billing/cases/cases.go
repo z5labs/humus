@@ -62,7 +62,7 @@ var All = []Case{
 
 func BillingAMonth(t testing.TB, target Target) {
 	ctx := bounded(t, target)
-	db := newDatabase(ctx, t, target, "billing-")
+	db := NewDatabase(ctx, t, target, "billing-")
 	active := db.subscribe(ctx, t, "a", "b", "c")
 	inactive := db.unsubscribed(ctx, t, "gone")
 
@@ -84,7 +84,7 @@ func BillingAMonth(t testing.TB, target Target) {
 
 func RunningAgain(t testing.TB, target Target) {
 	ctx := bounded(t, target)
-	db := newDatabase(ctx, t, target, "billing-")
+	db := NewDatabase(ctx, t, target, "billing-")
 	db.subscribe(ctx, t, "a", "b", "c")
 	require.Equal(t, 0, db.run(ctx, t, target, period))
 	billed := db.invoices(ctx, t)
@@ -98,7 +98,7 @@ func RunningAgain(t testing.TB, target Target) {
 
 func ADeclinedCard(t testing.TB, target Target) {
 	ctx := bounded(t, target)
-	db := newDatabase(ctx, t, target, "declined-")
+	db := NewDatabase(ctx, t, target, "declined-")
 	db.subscribe(ctx, t, "a")
 
 	require.Equal(t, 0, db.run(ctx, t, target, period))
@@ -118,7 +118,7 @@ func ADeclinedCard(t testing.TB, target Target) {
 
 func ABadSetting(t testing.TB, target Target) {
 	ctx := bounded(t, target)
-	db := newDatabase(ctx, t, target, "billing-")
+	db := NewDatabase(ctx, t, target, "billing-")
 	db.subscribe(ctx, t, "a", "b")
 	now := time.Now().UTC()
 	unended := time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC).Format("2006-01")
@@ -132,7 +132,7 @@ func ABadSetting(t testing.TB, target Target) {
 
 func ThePaymentsAPIIsDown(t testing.TB, target Target) {
 	ctx := bounded(t, target)
-	db := newDatabase(ctx, t, target, "billing-")
+	db := NewDatabase(ctx, t, target, "billing-")
 	db.subscribe(ctx, t, "a", "b", "c")
 
 	require.Equal(t, exitFailure, db.runWith(ctx, t, target, rehearsing(t, fit.Rule{Point: "http:*", Fault: fit.Fault{Abort: true}})))
@@ -153,7 +153,7 @@ func ThePaymentsAPIIsDown(t testing.TB, target Target) {
 
 func ThePaymentsAPIIsSlow(t testing.TB, target Target) {
 	ctx := bounded(t, target)
-	db := newDatabase(ctx, t, target, "billing-")
+	db := NewDatabase(ctx, t, target, "billing-")
 	db.subscribe(ctx, t, "a", "b", "c")
 
 	require.Equal(t, 0, db.runWith(ctx, t, target, rehearsing(t, fit.Rule{Point: "http:*", Fault: fit.Fault{Delay: 2 * time.Second}})))
@@ -166,7 +166,7 @@ func ThePaymentsAPIIsSlow(t testing.TB, target Target) {
 
 func ChargedButNotRecorded(t testing.TB, target Target) {
 	ctx := bounded(t, target)
-	db := newDatabase(ctx, t, target, "billing-")
+	db := NewDatabase(ctx, t, target, "billing-")
 	db.subscribe(ctx, t, "a", "b", "c")
 	env := rehearsing(t, fit.Rule{Point: "postgresql:settle", Fault: fit.Fault{Abort: true}})
 	env["BILLING_CONCURRENCY"] = "1"
@@ -197,7 +197,7 @@ func ChargedButNotRecorded(t testing.TB, target Target) {
 
 func TheMonthCantBeIssued(t testing.TB, target Target) {
 	ctx := bounded(t, target)
-	db := newDatabase(ctx, t, target, "billing-")
+	db := NewDatabase(ctx, t, target, "billing-")
 	active := db.subscribe(ctx, t, "a", "b", "c")
 
 	require.Equal(t, exitFailure, db.runWith(ctx, t, target, rehearsing(t, fit.Rule{Point: "postgresql:issue", Fault: fit.Fault{Abort: true}})))
@@ -229,13 +229,13 @@ func bounded(t testing.TB, target Target) context.Context {
 	return ctx
 }
 
-type database struct {
-	name string
-	url  string
-	conn *pgx.Conn
+type Database struct {
+	Name string
+	URL  string
+	Conn *pgx.Conn
 }
 
-func newDatabase(ctx context.Context, t testing.TB, target Target, prefix string) database {
+func NewDatabase(ctx context.Context, t testing.TB, target Target, prefix string) Database {
 	t.Helper()
 	server, err := url.Parse(target.Postgres)
 	require.NoError(t, err, "Target.Postgres")
@@ -259,33 +259,53 @@ func newDatabase(ctx context.Context, t testing.TB, target Target, prefix string
 	own.Path = "/" + name
 	conn, err := pgx.Connect(ctx, own.String())
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = conn.Close(context.Background()) })
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), target.Timeout)
+		defer cancel()
+		pid := conn.PgConn().PID()
+		_ = conn.Close(ctx)
+		require.NoError(t, disconnected(ctx, admin, name, pid), "waiting for PostgreSQL to end the connection to %s", name)
+	})
 	_, err = conn.Exec(ctx, target.Schema)
 	require.NoError(t, err, "applying Target.Schema")
 
-	return database{name: name, url: own.String(), conn: conn}
+	return Database{Name: name, URL: own.String(), Conn: conn}
 }
 
-func (db database) account(suffix string) string {
-	return db.name + "-" + suffix
+func disconnected(ctx context.Context, admin *pgx.Conn, name string, pid uint32) error {
+	for {
+		var connected bool
+		err := admin.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = $1 AND datname = $2)`,
+			pid, name,
+		).Scan(&connected)
+		if err != nil || !connected {
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
-func (db database) subscribe(ctx context.Context, t testing.TB, suffixes ...string) []string {
+func (db Database) account(suffix string) string {
+	return db.Name + "-" + suffix
+}
+
+func (db Database) subscribe(ctx context.Context, t testing.TB, suffixes ...string) []string {
 	t.Helper()
 	return db.insert(ctx, t, true, suffixes)
 }
 
-func (db database) unsubscribed(ctx context.Context, t testing.TB, suffix string) string {
+func (db Database) unsubscribed(ctx context.Context, t testing.TB, suffix string) string {
 	t.Helper()
 	return db.insert(ctx, t, false, []string{suffix})[0]
 }
 
-func (db database) insert(ctx context.Context, t testing.TB, active bool, suffixes []string) []string {
+func (db Database) insert(ctx context.Context, t testing.TB, active bool, suffixes []string) []string {
 	t.Helper()
 	var ids []string
 	for _, suffix := range suffixes {
 		id := db.account(suffix)
-		_, err := db.conn.Exec(ctx,
+		_, err := db.Conn.Exec(ctx,
 			`INSERT INTO subscriptions (account_id, amount_cents, currency, active) VALUES ($1, $2, $3, $4)`,
 			id, 4999, "USD", active,
 		)
@@ -295,14 +315,14 @@ func (db database) insert(ctx context.Context, t testing.TB, active bool, suffix
 	return ids
 }
 
-func (db database) run(ctx context.Context, t testing.TB, target Target, billingPeriod string) int {
+func (db Database) run(ctx context.Context, t testing.TB, target Target, billingPeriod string) int {
 	t.Helper()
 	return db.runWith(ctx, t, target, map[string]string{"BILLING_PERIOD": billingPeriod})
 }
 
-func (db database) runWith(ctx context.Context, t testing.TB, target Target, env map[string]string) int {
+func (db Database) runWith(ctx context.Context, t testing.TB, target Target, env map[string]string) int {
 	t.Helper()
-	code, err := target.Run(ctx, db.url, env)
+	code, err := target.Run(ctx, db.URL, env)
 	require.NoError(t, err, "running the billing job")
 	return code
 }
@@ -316,9 +336,9 @@ type invoice struct {
 	DeclineCode string
 }
 
-func (db database) invoices(ctx context.Context, t testing.TB) []invoice {
+func (db Database) invoices(ctx context.Context, t testing.TB) []invoice {
 	t.Helper()
-	rows, err := db.conn.Query(ctx, `
+	rows, err := db.Conn.Query(ctx, `
 		SELECT id::text, account_id, to_char(period, 'YYYY-MM'), state, coalesce(charge_id, ''), coalesce(decline_code, '')
 		FROM invoices ORDER BY account_id, period`,
 	)
@@ -404,13 +424,13 @@ func requireSent(t testing.TB, target Target, invoices []invoice, charges []sent
 	require.Equal(t, want, got, "charges sent, by Idempotency-Key")
 }
 
-func (db database) journal(ctx context.Context, t testing.TB, target Target) []sent {
+func (db Database) journal(ctx context.Context, t testing.TB, target Target) []sent {
 	t.Helper()
 	query, err := json.Marshal(map[string]any{
 		"method": http.MethodPost,
 		"url":    "/v1/charges",
 		"bodyPatterns": []any{
-			map[string]any{"matchesJsonPath": map[string]any{"expression": "$.account", "matches": "^" + db.name + "-.*"}},
+			map[string]any{"matchesJsonPath": map[string]any{"expression": "$.account", "matches": "^" + db.Name + "-.*"}},
 		},
 	})
 	require.NoError(t, err)
