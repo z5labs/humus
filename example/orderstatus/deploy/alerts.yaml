@@ -1,0 +1,224 @@
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: orderstatus
+    folder: Order status
+    interval: 1m
+    rules:
+      - uid: order-status-lag-high
+        title: OrderStatusLagHigh
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: sum(clamp_min(kafka_consumer_group_lag{group="orderstatus", topic="orders.events"}, 0)) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [1000]
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: The group orderstatus has been {{ $values.A.Value }} records behind on orders.events for 10 minutes.
+          description: The processor isn't keeping up. Look at its processing time, its Producers' breakers, and whether every replica is running.
+      - uid: order-status-stalled
+        title: OrderStatusStalled
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: count(kafka_consumer_group_lag{group="orderstatus", topic="orders.events"} > 0 and on (group, topic, partition) changes(kafka_consumer_group_offset{group="orderstatus", topic="orders.events"}[5m]) == 0) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: page
+        annotations:
+          summary: The group orderstatus has records waiting on {{ $values.A.Value }} partitions of orders.events, and has committed none of them in 5 minutes.
+          description: Nothing is processing those partitions. Look at whether the processor's pods are running, and at their logs.
+      - uid: order-status-crash-looping
+        title: OrderStatusCrashLooping
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 1200
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: max(delta(k8s_container_restarts{k8s_container_name="orderstatus"}[15m])) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [3]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: page
+        annotations:
+          summary: An orderstatus container restarted more than 3 times in 15 minutes.
+          description: A record that can be produced to neither orders.retry nor orders.dlq stops the processor that takes it, on every restart. Look at the logs of the pod for the record it names.
+      - uid: order-status-dead-letters
+        title: OrderStatusDeadLetters
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 1200
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: sum by (orderstatus_reason) ((increase(orderstatus_dead_letters{job="orderstatus"}[15m]) > 0) or (orderstatus_dead_letters{job="orderstatus"} unless orderstatus_dead_letters{job="orderstatus"} offset 15m)) or on () vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: ticket
+        annotations:
+          summary: The processor dead-lettered records to orders.dlq in the last 15 minutes, as {{ $labels.orderstatus_reason }}.
+          description: Each dead letter's dlq. headers name the record it came from and why it was given up on. What to do with them is yours to plan.
+      - uid: order-status-retrying
+        title: OrderStatusRetrying
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: sum(rate(orderstatus_retries{job="orderstatus"}[5m])) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: The processor has been sending records to orders.retry for 10 minutes.
+          description: Records are failing their attempts for a while. The dashboard shows the reasons, and each retried record's retry. headers name its reason.
+      - uid: order-status-breaker-open
+        title: OrderStatusBreakerOpen
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: max(humus_circuit_state{job="orderstatus", humus_circuit_state="open"}) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: page
+        annotations:
+          summary: A Producer's breaker is open.
+          description: The cluster has been failing the processor's records, so the breaker turns them away without sending them. Look at the cluster's health.
+      - uid: order-status-slow-processing
+        title: OrderStatusSlowProcessing
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: (histogram_quantile(0.99, sum by (le) (rate(messaging_process_duration_bucket{job="orderstatus", messaging_destination_name="orders.events"}[5m]))) >= 0) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [5]
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: The p99 of processing a record of orders.events has been {{ $values.A.Value }}s for 10 minutes.
+          description: Look at a slow record's trace in Tempo, for whether PostgreSQL or the cluster is slow.

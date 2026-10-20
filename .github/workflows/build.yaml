@@ -668,9 +668,10 @@ jobs:
   # functional tag then run the shared cases against it, the failure
   # injection cases included, as a client whose certificate up.sh issues, and
   # find an order's trace, the processor's logs and metrics, the group's lag
-  # and the containers' restarts in the LGTM stack. The ruleset doesn't
-  # require this job, and Build doesn't wait on it; Vet the functional tests
-  # vets them.
+  # and the containers' restarts in the LGTM stack. They also show that
+  # Grafana loaded the alert rules and the dashboard, and that each rule
+  # evaluates without error. The ruleset doesn't require this job, and Build
+  # doesn't wait on it; Vet the functional tests vets them.
   orderstatus-kind:
     name: Order status walkthrough (kind)
     runs-on: ubuntu-latest
