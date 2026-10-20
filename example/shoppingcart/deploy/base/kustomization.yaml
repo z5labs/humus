@@ -1,0 +1,46 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: shoppingcart
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - cart.yaml
+  - catalog.yaml
+  - service.yaml
+  - poddisruptionbudget.yaml
+configMapGenerator:
+  - name: cart
+    literals:
+      - ADDR=:8443
+      - TLS_CERT_FILE=/etc/cart/tls/tls.crt
+      - TLS_KEY_FILE=/etc/cart/tls/tls.key
+      - DATABASE_URL_FILE=/etc/cart/database/url
+      - CATALOG_URL=https://catalog:8443
+      - CATALOG_CA_FILE=/etc/cart/ca/ca.crt
+      - CATALOG_CLIENT_CERT_FILE=/etc/cart/catalog-client/tls.crt
+      - CATALOG_CLIENT_KEY_FILE=/etc/cart/catalog-client/tls.key
+      - JWKS_URL=https://idp.example.com/.well-known/jwks.json
+      - JWKS_CA_FILE=/etc/cart/ca/ca.crt
+      - JWT_ISSUER=https://idp.example.com
+      - JWT_AUDIENCE=shoppingcart
+      - OTEL_SERVICE_NAME=cart
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
+  - name: catalog
+    literals:
+      - ADDR=:8443
+      - TLS_CERT_FILE=/etc/catalog/tls/tls.crt
+      - TLS_KEY_FILE=/etc/catalog/tls/tls.key
+      - CLIENT_CA_FILE=/etc/catalog/client-ca/ca.crt
+      - DATABASE_URL_FILE=/etc/catalog/database/url
+      - JWKS_URL=https://idp.example.com/.well-known/jwks.json
+      - JWKS_CA_FILE=/etc/catalog/ca/ca.crt
+      - JWT_ISSUER=https://idp.example.com
+      - JWT_AUDIENCE=catalog
+      - OTEL_SERVICE_NAME=catalog
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
