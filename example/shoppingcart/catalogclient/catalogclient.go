@@ -46,7 +46,10 @@ func (c *Client) Price(ctx context.Context, productID string) (float64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("getting product %s: %w: %w", productID, endpoint.ErrCatalogUnavailable, err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxBody))
+		_ = resp.Body.Close()
+	}()
 
 	switch resp.StatusCode {
 	case http.StatusOK:
