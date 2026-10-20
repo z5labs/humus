@@ -890,40 +890,27 @@ parameters, codecs, answers and the document.
 The shoppingcart's `app_test.go` does it this way. Its `start` helper runs
 the service's `Init`, with every variable it reads, on a new Host, beside
 the test's identity provider, which serves a JSON Web Key Set from a handler
-of the test's own and signs the tokens the test sends:
+of the test's own and signs the tokens the test sends. A `newFixture` helper
+makes the Host, its files and the variables:
 
 ```go
 func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error), hostOpts ...humustest.HostOption) *service {
 	t.Helper()
-	ca := humustest.NewCA(t)
-	bundle, password := ca.Issue(t, "localhost").PKCS12(t)
-	idpCert := ca.Issue(t, "idp.internal")
-	h := humustest.NewHost(t, append(hostOpts, humustest.WithFiles(map[string][]byte{
-		"tls.p12":    bundle,
-		"idp-ca.pem": caPEM(idpCert),
-	}))...)
+	f := newFixture(t, hostOpts...)
 
 	provider := newIdP(t)
-	stopIdP := provider.serve(t, h.Host(), idpHost, idpCert)
-	<-h.Listening(idpHost)
+	stopIdP := provider.serve(t, f.h.Host(), idpHost, f.idpCert)
+	<-f.h.Listening(idpHost)
 
 	p, status := httpservertest.Start(t, init,
-		humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
-		humustest.WithEnv(map[string]string{
-			"ADDR":                ":8443",
-			"TLS_PKCS12_FILE":     "tls.p12",
-			"TLS_PKCS12_PASSWORD": password,
-			"DATABASE_URL":        "postgres://carts:" + rand.Text() + "@" + dbHost + "/carts?sslmode=disable",
-			"JWKS_URL":            "https://" + idpHost + jwksPath,
-			"JWKS_CA_FILE":        "idp-ca.pem",
-			"JWT_ISSUER":          issuer,
-			"JWT_AUDIENCE":        audience,
-		}),
+		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		humustest.WithEnv(f.env),
 	)
-	<-h.Listening("localhost:8443")
+	<-f.h.Listening("localhost:8443")
 	return &service{
-		h:       h,
-		client:  httpservertest.NewClient(h, ca.Pool()),
+		h:       f.h,
+		ca:      f.ca,
+		client:  httpservertest.NewClient(f.h, f.ca.Pool()),
 		p:       p,
 		status:  status,
 		idp:     provider,
@@ -934,17 +921,16 @@ func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Servi
 ```
 
 Postgres can't run on humustest's Host, so most tests swap an in-memory
-store in for it: the service's `Init` calls an unexported `initWith` with
-the function that opens its store, and the tests pass one that opens a map.
+store in for it, and a catalog of fixed prices in for the catalog's client:
+the service's `Init` calls an unexported `initWith` with the functions that
+open its store and its catalog, and the tests pass ones that open a map.
 Each test then sends requests and checks the answers, and stops the service
 with SIGTERM, checking that it exits 0:
 
 ```go
 func TestInit_answers_unmatched_requests_with_a_problem(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
-			return initWith(ctx, setup, inMemory)
-		})
+		s := start(t, onFakes(fakePrices()))
 
 		isProblem(t, s.do(t, http.MethodGet, "/orders", "", ""), http.StatusNotFound)
 
@@ -1007,9 +993,10 @@ checks against the identity provider's key set, fetched by a
 Changing a cart requires the scope `carts:write` too, which the token's
 claims, a type of the service's own, report through `auth.Scoped`. The
 document is public, served with `Document(path,
-openapi.Security(auth.Disabled()))`, and a `*jwt.KeySetError`, a key set
-that is down before any key was fetched, is answered with a 503 by an
-`openapi.Error`. A cart belongs to the subject of the token that created it:
+openapi.Security(auth.Disabled()))`. A `*jwt.KeySetError`, a key set
+that is down before any key was fetched, is answered with a 503
+`Unavailable` by an `openapi.Error`, as a catalog or a database that is
+down is. A cart belongs to the subject of the token that created it:
 a token with no `sub` is a 401, and another subject's token gets a 404 for
 the cart. [Authentication and authorization]({{< relref "auth" >}})
 describes each piece.

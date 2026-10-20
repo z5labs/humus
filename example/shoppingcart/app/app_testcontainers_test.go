@@ -82,17 +82,33 @@ func TestInit_serves_carts_from_Postgres_on_the_OS_Host(t *testing.T) {
 	stopIdP := provider.serve(t, humus.OSHost(), idpAddr, idpCert)
 	waitListening(t, idpAddr)
 
+	catalog := &catalogServer{prices: map[string]float64{"sku-1": 4.5}}
+	catalogAddr := freeAddr(t)
+	stopCatalog := catalog.serve(t, humus.OSHost(), catalogAddr, ca.Issue(t, "127.0.0.1"), ca.Pool())
+	waitListening(t, catalogAddr)
+	clientCert, clientKey := pemPair(t, ca.Issue(t, "shoppingcart"))
+	catalogCAFile := filepath.Join(dir, "catalog-ca.pem")
+	require.NoError(t, os.WriteFile(catalogCAFile, caPEM(idpCert), 0o600))
+	clientCertFile := filepath.Join(dir, "catalog.crt")
+	require.NoError(t, os.WriteFile(clientCertFile, clientCert, 0o600))
+	clientKeyFile := filepath.Join(dir, "catalog.key")
+	require.NoError(t, os.WriteFile(clientKeyFile, clientKey, 0o600))
+
 	p, status := httpservertest.Start(t, Init,
 		humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(telemetry.NoopBuilder)),
 		humustest.WithEnv(map[string]string{
-			"ADDR":                addr,
-			"TLS_PKCS12_FILE":     certFile,
-			"TLS_PKCS12_PASSWORD": password,
-			"DATABASE_URL":        url,
-			"JWKS_URL":            "https://" + idpAddr + jwksPath,
-			"JWKS_CA_FILE":        idpCAFile,
-			"JWT_ISSUER":          issuer,
-			"JWT_AUDIENCE":        audience,
+			"ADDR":                     addr,
+			"TLS_PKCS12_FILE":          certFile,
+			"TLS_PKCS12_PASSWORD":      password,
+			"DATABASE_URL":             url,
+			"CATALOG_URL":              "https://" + catalogAddr,
+			"CATALOG_CA_FILE":          catalogCAFile,
+			"CATALOG_CLIENT_CERT_FILE": clientCertFile,
+			"CATALOG_CLIENT_KEY_FILE":  clientKeyFile,
+			"JWKS_URL":                 "https://" + idpAddr + jwksPath,
+			"JWKS_CA_FILE":             idpCAFile,
+			"JWT_ISSUER":               issuer,
+			"JWT_AUDIENCE":             audience,
 		}),
 	)
 
@@ -136,7 +152,7 @@ func TestInit_serves_carts_from_Postgres_on_the_OS_Host(t *testing.T) {
 	var cart endpoint.Cart
 	require.NoError(t, json.Unmarshal(body, &cart))
 
-	code, body = do(http.MethodPost, "/carts/"+cart.CartID.String()+"/items", `{"productId":"sku-1","quantity":3,"unitPrice":4.5}`)
+	code, body = do(http.MethodPost, "/carts/"+cart.CartID.String()+"/items", `{"productId":"sku-1","quantity":3}`)
 	require.Equal(t, http.StatusCreated, code, "%s", body)
 
 	code, body = do(http.MethodGet, "/carts/"+cart.CartID.String(), "")
@@ -163,6 +179,8 @@ func TestInit_serves_carts_from_Postgres_on_the_OS_Host(t *testing.T) {
 	case <-time.After(waitLimit):
 		t.Fatal("the service didn't exit")
 	}
+	require.Equal(t, []string{"shoppingcart"}, catalog.clients())
+	stopCatalog()
 	stopIdP()
 }
 

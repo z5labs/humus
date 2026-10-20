@@ -709,8 +709,7 @@
               "schema": {
                 "required": [
                   "productId",
-                  "quantity",
-                  "unitPrice"
+                  "quantity"
                 ],
                 "properties": {
                   "productId": {
@@ -720,11 +719,6 @@
                   "quantity": {
                     "minimum": 1,
                     "type": "integer"
-                  },
-                  "unitPrice": {
-                    "minimum": 0,
-                    "type": "number",
-                    "format": "double"
                   }
                 },
                 "type": "object"

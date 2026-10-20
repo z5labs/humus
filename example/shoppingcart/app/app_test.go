@@ -11,8 +11,10 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,8 +30,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/bedrocktest"
+	"github.com/z5labs/bedrock/circuit"
 
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/example/shoppingcart/database"
 	"github.com/z5labs/humus/example/shoppingcart/endpoint"
 	"github.com/z5labs/humus/httpserver/httpservertest"
 	"github.com/z5labs/humus/humustest"
@@ -37,13 +41,15 @@ import (
 )
 
 const (
-	base    = "https://localhost:8443"
-	dbHost  = "db.internal:5432"
-	idpHost = "idp.internal:9443"
+	base        = "https://localhost:8443"
+	dbHost      = "db.internal:5432"
+	idpHost     = "idp.internal:9443"
+	catalogHost = "catalog.internal:10443"
 )
 
 type service struct {
 	h       *humustest.Host
+	ca      *humustest.CA
 	client  *http.Client
 	p       *bedrocktest.Process
 	status  <-chan bedrock.ExitStatus
@@ -52,37 +58,66 @@ type service struct {
 	token   string
 }
 
-func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error), hostOpts ...humustest.HostOption) *service {
+type fixture struct {
+	h        *humustest.Host
+	ca       *humustest.CA
+	idpCert  *humustest.Certificate
+	password string
+	env      map[string]string
+}
+
+func newFixture(t *testing.T, hostOpts ...humustest.HostOption) fixture {
 	t.Helper()
 	ca := humustest.NewCA(t)
 	bundle, password := ca.Issue(t, "localhost").PKCS12(t)
 	idpCert := ca.Issue(t, "idp.internal")
+	clientCert, clientKey := pemPair(t, ca.Issue(t, "shoppingcart"))
 	h := humustest.NewHost(t, append(hostOpts, humustest.WithFiles(map[string][]byte{
-		"tls.p12":    bundle,
-		"idp-ca.pem": caPEM(idpCert),
+		"tls.p12":        bundle,
+		"idp-ca.pem":     caPEM(idpCert),
+		"catalog-ca.pem": caPEM(idpCert),
+		"catalog.crt":    clientCert,
+		"catalog.key":    clientKey,
 	}))...)
+	return fixture{
+		h:        h,
+		ca:       ca,
+		idpCert:  idpCert,
+		password: password,
+		env: map[string]string{
+			"ADDR":                     ":8443",
+			"TLS_PKCS12_FILE":          "tls.p12",
+			"TLS_PKCS12_PASSWORD":      password,
+			"DATABASE_URL":             "postgres://carts:" + rand.Text() + "@" + dbHost + "/carts?sslmode=disable",
+			"CATALOG_URL":              "https://" + catalogHost,
+			"CATALOG_CA_FILE":          "catalog-ca.pem",
+			"CATALOG_CLIENT_CERT_FILE": "catalog.crt",
+			"CATALOG_CLIENT_KEY_FILE":  "catalog.key",
+			"JWKS_URL":                 "https://" + idpHost + jwksPath,
+			"JWKS_CA_FILE":             "idp-ca.pem",
+			"JWT_ISSUER":               issuer,
+			"JWT_AUDIENCE":             audience,
+		},
+	}
+}
+
+func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error), hostOpts ...humustest.HostOption) *service {
+	t.Helper()
+	f := newFixture(t, hostOpts...)
 
 	provider := newIdP(t)
-	stopIdP := provider.serve(t, h.Host(), idpHost, idpCert)
-	<-h.Listening(idpHost)
+	stopIdP := provider.serve(t, f.h.Host(), idpHost, f.idpCert)
+	<-f.h.Listening(idpHost)
 
 	p, status := httpservertest.Start(t, init,
-		humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
-		humustest.WithEnv(map[string]string{
-			"ADDR":                ":8443",
-			"TLS_PKCS12_FILE":     "tls.p12",
-			"TLS_PKCS12_PASSWORD": password,
-			"DATABASE_URL":        "postgres://carts:" + rand.Text() + "@" + dbHost + "/carts?sslmode=disable",
-			"JWKS_URL":            "https://" + idpHost + jwksPath,
-			"JWKS_CA_FILE":        "idp-ca.pem",
-			"JWT_ISSUER":          issuer,
-			"JWT_AUDIENCE":        audience,
-		}),
+		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		humustest.WithEnv(f.env),
 	)
-	<-h.Listening("localhost:8443")
+	<-f.h.Listening("localhost:8443")
 	return &service{
-		h:       h,
-		client:  httpservertest.NewClient(h, ca.Pool()),
+		h:       f.h,
+		ca:      f.ca,
+		client:  httpservertest.NewClient(f.h, f.ca.Pool()),
 		p:       p,
 		status:  status,
 		idp:     provider,
@@ -161,9 +196,7 @@ func isProblem(t *testing.T, r response, code int) problemDetail {
 
 func TestInit_serves_every_operation(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
-			return initWith(ctx, setup, inMemory)
-		})
+		s := start(t, onFakes(fakePrices()))
 
 		created := decode[endpoint.Cart](t, s.do(t, http.MethodPost, "/carts", "", ""), http.StatusCreated, "application/json")
 		require.NotEqual(t, uuid.Nil, created.CartID)
@@ -175,7 +208,7 @@ func TestInit_serves_every_operation(t *testing.T) {
 		require.Equal(t, created.CartID, decode[endpoint.Cart](t, r, http.StatusOK, "application/json").CartID)
 
 		added := decode[endpoint.CartItem](t,
-			s.do(t, http.MethodPost, cart+"/items", "application/json", `{"productId":"sku-1","quantity":2,"unitPrice":9.99}`),
+			s.do(t, http.MethodPost, cart+"/items", "application/json", `{"productId":"sku-1","quantity":2}`),
 			http.StatusCreated, "application/json")
 		require.Equal(t, created.CartID, added.CartID)
 		require.Equal(t, "sku-1", added.ProductID)
@@ -205,7 +238,7 @@ func TestInit_serves_every_operation(t *testing.T) {
 		gone := "There is no cart " + created.CartID.String() + "."
 		require.Equal(t, gone, isProblem(t, s.do(t, http.MethodGet, cart, "", ""), http.StatusNotFound).Detail)
 		require.Equal(t, gone, isProblem(t, s.do(t, http.MethodDelete, cart, "", ""), http.StatusNotFound).Detail)
-		require.Equal(t, gone, isProblem(t, s.do(t, http.MethodPost, cart+"/items", "application/json", `{"productId":"sku-1","quantity":1,"unitPrice":1}`), http.StatusNotFound).Detail)
+		require.Equal(t, gone, isProblem(t, s.do(t, http.MethodPost, cart+"/items", "application/json", `{"productId":"sku-1","quantity":1}`), http.StatusNotFound).Detail)
 		require.Equal(t, gone, isProblem(t, s.do(t, http.MethodPatch, item, "application/json", `{"quantity":1}`), http.StatusNotFound).Detail)
 		require.Equal(t, gone, isProblem(t, s.do(t, http.MethodDelete, item, "", ""), http.StatusNotFound).Detail)
 
@@ -215,22 +248,19 @@ func TestInit_serves_every_operation(t *testing.T) {
 
 func TestInit_answers_a_body_it_wont_accept_with_422(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
-			return initWith(ctx, setup, inMemory)
-		})
+		s := start(t, onFakes(fakePrices()))
 		cart := "/carts/" + decode[endpoint.Cart](t, s.do(t, http.MethodPost, "/carts", "", ""), http.StatusCreated, "application/json").CartID.String()
 
 		for body, detail := range map[string]string{
-			`{"quantity":1,"unitPrice":1}`:                      "productId is required",
-			`{"productId":"sku-1","quantity":0,"unitPrice":1}`:  "quantity must be at least 1",
-			`{"productId":"sku-1","quantity":1,"unitPrice":-1}`: "unitPrice must not be negative",
+			`{"quantity":1}`:                     "productId is required",
+			`{"productId":"sku-1","quantity":0}`: "quantity must be at least 1",
 		} {
 			d := isProblem(t, s.do(t, http.MethodPost, cart+"/items", "application/json", body), http.StatusUnprocessableEntity)
 			require.Equal(t, detail, d.Detail, body)
 		}
 
 		added := decode[endpoint.CartItem](t,
-			s.do(t, http.MethodPost, cart+"/items", "application/json", `{"productId":"sku-1","quantity":1,"unitPrice":1}`),
+			s.do(t, http.MethodPost, cart+"/items", "application/json", `{"productId":"sku-1","quantity":1}`),
 			http.StatusCreated, "application/json")
 		d := isProblem(t, s.do(t, http.MethodPatch, cart+"/items/"+added.ItemID.String(), "application/json", `{"quantity":0}`), http.StatusUnprocessableEntity)
 		require.Equal(t, "quantity must be at least 1", d.Detail)
@@ -241,16 +271,14 @@ func TestInit_answers_a_body_it_wont_accept_with_422(t *testing.T) {
 
 func TestInit_answers_a_request_it_rejects_with_a_problem(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
-			return initWith(ctx, setup, inMemory)
-		})
+		s := start(t, onFakes(fakePrices()))
 		cart := "/carts/" + decode[endpoint.Cart](t, s.do(t, http.MethodPost, "/carts", "", ""), http.StatusCreated, "application/json").CartID.String()
 
 		d := isProblem(t, s.do(t, http.MethodGet, "/carts/not-a-uuid", "", ""), http.StatusBadRequest)
 		require.Contains(t, d.Detail, "cartId")
 
 		isProblem(t, s.do(t, http.MethodPost, cart+"/items", "application/json", `{"productId":`), http.StatusBadRequest)
-		isProblem(t, s.do(t, http.MethodPost, cart+"/items", "text/plain", `{"productId":"sku-1","quantity":1,"unitPrice":1}`), http.StatusUnsupportedMediaType)
+		isProblem(t, s.do(t, http.MethodPost, cart+"/items", "text/plain", `{"productId":"sku-1","quantity":1}`), http.StatusUnsupportedMediaType)
 
 		s.stop(t)
 	})
@@ -258,9 +286,7 @@ func TestInit_answers_a_request_it_rejects_with_a_problem(t *testing.T) {
 
 func TestInit_answers_unmatched_requests_with_a_problem(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
-			return initWith(ctx, setup, inMemory)
-		})
+		s := start(t, onFakes(fakePrices()))
 
 		isProblem(t, s.do(t, http.MethodGet, "/orders", "", ""), http.StatusNotFound)
 
@@ -274,9 +300,7 @@ func TestInit_answers_unmatched_requests_with_a_problem(t *testing.T) {
 
 func TestInit_answers_a_request_without_a_valid_token_with_401(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
-			return initWith(ctx, setup, inMemory)
-		})
+		s := start(t, onFakes(fakePrices()))
 		cart := "/carts/" + decode[endpoint.Cart](t, s.do(t, http.MethodPost, "/carts", "", ""), http.StatusCreated, "application/json").CartID.String()
 		item := cart + "/items/" + uuid.NewString()
 
@@ -285,7 +309,7 @@ func TestInit_answers_a_request_without_a_valid_token_with_401(t *testing.T) {
 			{http.MethodPost, "/carts", ""},
 			{http.MethodGet, cart, ""},
 			{http.MethodDelete, cart, ""},
-			{http.MethodPost, cart + "/items", `{"productId":"sku-1","quantity":1,"unitPrice":1}`},
+			{http.MethodPost, cart + "/items", `{"productId":"sku-1","quantity":1}`},
 			{http.MethodPatch, item, `{"quantity":1}`},
 			{http.MethodDelete, item, ""},
 		} {
@@ -304,13 +328,11 @@ func TestInit_answers_a_request_without_a_valid_token_with_401(t *testing.T) {
 
 func TestInit_needs_carts_write_to_change_a_cart(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
-			return initWith(ctx, setup, inMemory)
-		})
+		s := start(t, onFakes(fakePrices()))
 		created := decode[endpoint.Cart](t, s.do(t, http.MethodPost, "/carts", "", ""), http.StatusCreated, "application/json")
 		cart := "/carts/" + created.CartID.String()
 		added := decode[endpoint.CartItem](t,
-			s.do(t, http.MethodPost, cart+"/items", "application/json", `{"productId":"sku-1","quantity":1,"unitPrice":1}`),
+			s.do(t, http.MethodPost, cart+"/items", "application/json", `{"productId":"sku-1","quantity":1}`),
 			http.StatusCreated, "application/json")
 		item := cart + "/items/" + added.ItemID.String()
 
@@ -322,7 +344,7 @@ func TestInit_needs_carts_write_to_change_a_cart(t *testing.T) {
 		for _, op := range []struct{ method, path, body string }{
 			{http.MethodPost, "/carts", ""},
 			{http.MethodDelete, cart, ""},
-			{http.MethodPost, cart + "/items", `{"productId":"sku-2","quantity":1,"unitPrice":1}`},
+			{http.MethodPost, cart + "/items", `{"productId":"sku-2","quantity":1}`},
 			{http.MethodPatch, item, `{"quantity":2}`},
 			{http.MethodDelete, item, ""},
 		} {
@@ -349,13 +371,11 @@ func TestInit_needs_carts_write_to_change_a_cart(t *testing.T) {
 
 func TestInit_keeps_a_cart_to_its_owner(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
-			return initWith(ctx, setup, inMemory)
-		})
+		s := start(t, onFakes(fakePrices()))
 		created := decode[endpoint.Cart](t, s.do(t, http.MethodPost, "/carts", "", ""), http.StatusCreated, "application/json")
 		cart := "/carts/" + created.CartID.String()
 		added := decode[endpoint.CartItem](t,
-			s.do(t, http.MethodPost, cart+"/items", "application/json", `{"productId":"sku-1","quantity":1,"unitPrice":1}`),
+			s.do(t, http.MethodPost, cart+"/items", "application/json", `{"productId":"sku-1","quantity":1}`),
 			http.StatusCreated, "application/json")
 		item := cart + "/items/" + added.ItemID.String()
 		before := decode[endpoint.Cart](t, s.do(t, http.MethodGet, cart, "", ""), http.StatusOK, "application/json")
@@ -366,7 +386,7 @@ func TestInit_keeps_a_cart_to_its_owner(t *testing.T) {
 		for _, op := range []struct{ method, path, body string }{
 			{http.MethodGet, cart, ""},
 			{http.MethodDelete, cart, ""},
-			{http.MethodPost, cart + "/items", `{"productId":"sku-2","quantity":1,"unitPrice":1}`},
+			{http.MethodPost, cart + "/items", `{"productId":"sku-2","quantity":1}`},
 			{http.MethodPatch, item, `{"quantity":2}`},
 			{http.MethodDelete, item, ""},
 		} {
@@ -383,9 +403,7 @@ func TestInit_keeps_a_cart_to_its_owner(t *testing.T) {
 
 func TestInit_answers_a_token_without_a_subject_with_401(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
-			return initWith(ctx, setup, inMemory)
-		})
+		s := start(t, onFakes(fakePrices()))
 		cart := "/carts/" + decode[endpoint.Cart](t, s.do(t, http.MethodPost, "/carts", "", ""), http.StatusCreated, "application/json").CartID.String()
 		item := cart + "/items/" + uuid.NewString()
 
@@ -394,7 +412,7 @@ func TestInit_answers_a_token_without_a_subject_with_401(t *testing.T) {
 			{http.MethodPost, "/carts", ""},
 			{http.MethodGet, cart, ""},
 			{http.MethodDelete, cart, ""},
-			{http.MethodPost, cart + "/items", `{"productId":"sku-1","quantity":1,"unitPrice":1}`},
+			{http.MethodPost, cart + "/items", `{"productId":"sku-1","quantity":1}`},
 			{http.MethodPatch, item, `{"quantity":1}`},
 			{http.MethodDelete, item, ""},
 		} {
@@ -411,9 +429,7 @@ func TestInit_answers_a_token_without_a_subject_with_401(t *testing.T) {
 
 func TestInit_answers_a_token_it_has_no_keys_for_with_503(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
-			return initWith(ctx, setup, inMemory)
-		})
+		s := start(t, onFakes(fakePrices()))
 
 		s.idp.setDown(true)
 		r := s.do(t, http.MethodPost, "/carts", "", "")
@@ -442,7 +458,7 @@ func (f failingStore) GetCart(context.Context, string, uuid.UUID) (endpoint.Cart
 
 func (f failingStore) DeleteCart(context.Context, string, uuid.UUID) error { return f.err }
 
-func (f failingStore) AddItem(context.Context, string, uuid.UUID, endpoint.AddItemRequest) (endpoint.CartItem, error) {
+func (f failingStore) AddItem(context.Context, string, uuid.UUID, endpoint.NewItem) (endpoint.CartItem, error) {
 	return endpoint.CartItem{}, f.err
 }
 
@@ -458,7 +474,7 @@ func TestInit_answers_a_failure_without_its_text(t *testing.T) {
 		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
 			return initWith(ctx, setup, func(context.Context, *humus.Setup, *pgxpool.Config) (endpoint.Store, error) {
 				return failingStore{err: errors.New("the database said " + secret)}, nil
-			})
+			}, fakePrices().open)
 		})
 
 		r := s.do(t, http.MethodPost, "/carts", "", "")
@@ -468,6 +484,209 @@ func TestInit_answers_a_failure_without_its_text(t *testing.T) {
 
 		s.stop(t)
 	})
+}
+
+func TestInit_keeps_the_catalogs_price_with_an_item(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		catalog := fakePrices()
+		s := start(t, onFakes(catalog))
+		cart := "/carts/" + decode[endpoint.Cart](t, s.do(t, http.MethodPost, "/carts", "", ""), http.StatusCreated, "application/json").CartID.String()
+
+		r := s.do(t, http.MethodPost, cart+"/items", "application/json", `{"productId":"sku-1","quantity":2,"unitPrice":0.01}`)
+		first := decode[endpoint.CartItem](t, r, http.StatusCreated, "application/json")
+		require.InDelta(t, 9.99, first.UnitPrice, 1e-9)
+
+		catalog.set("sku-1", 12.5)
+		got := decode[endpoint.Cart](t, s.do(t, http.MethodGet, cart, "", ""), http.StatusOK, "application/json")
+		require.Len(t, got.Items, 1)
+		require.InDelta(t, 9.99, got.Items[0].UnitPrice, 1e-9)
+
+		second := decode[endpoint.CartItem](t,
+			s.do(t, http.MethodPost, cart+"/items", "application/json", `{"productId":"sku-1","quantity":1}`),
+			http.StatusCreated, "application/json")
+		require.InDelta(t, 12.5, second.UnitPrice, 1e-9)
+
+		got = decode[endpoint.Cart](t, s.do(t, http.MethodGet, cart, "", ""), http.StatusOK, "application/json")
+		require.Len(t, got.Items, 2)
+		require.InDelta(t, 9.99, got.Items[0].UnitPrice, 1e-9)
+		require.InDelta(t, 12.5, got.Items[1].UnitPrice, 1e-9)
+
+		s.stop(t)
+	})
+}
+
+func TestInit_answers_a_product_the_catalog_doesnt_have_with_422(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := start(t, onFakes(fakePrices()))
+		cart := "/carts/" + decode[endpoint.Cart](t, s.do(t, http.MethodPost, "/carts", "", ""), http.StatusCreated, "application/json").CartID.String()
+
+		d := isProblem(t, s.do(t, http.MethodPost, cart+"/items", "application/json", `{"productId":"sku-404","quantity":1}`), http.StatusUnprocessableEntity)
+		require.Equal(t, "There is no product sku-404 in the catalog.", d.Detail)
+
+		got := decode[endpoint.Cart](t, s.do(t, http.MethodGet, cart, "", ""), http.StatusOK, "application/json")
+		require.Empty(t, got.Items)
+
+		s.stop(t)
+	})
+}
+
+func TestInit_answers_a_catalog_that_is_down_with_503(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err    error
+		detail string
+	}{
+		"the catalog failed": {
+			err:    fmt.Errorf("getting product sku-1: %w: the catalog answered 503", endpoint.ErrCatalogUnavailable),
+			detail: "The cart can't reach the catalog right now. Try again later.",
+		},
+		"the breaker shed the call": {
+			err:    fmt.Errorf("getting product sku-1: %w: %w", endpoint.ErrCatalogUnavailable, &url.Error{Op: "Get", URL: "https://" + catalogHost + "/products/sku-1", Err: circuit.ErrRejected}),
+			detail: "The cart isn't calling the catalog right now, since it has been failing. Try again later.",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				catalog := fakePrices()
+				s := start(t, onFakes(catalog))
+				cart := "/carts/" + decode[endpoint.Cart](t, s.do(t, http.MethodPost, "/carts", "", ""), http.StatusCreated, "application/json").CartID.String()
+
+				catalog.fail(tc.err)
+				r := s.do(t, http.MethodPost, cart+"/items", "application/json", `{"productId":"sku-1","quantity":1}`)
+				d := isProblem(t, r, http.StatusServiceUnavailable)
+				require.Equal(t, tc.detail, d.Detail)
+				require.NotContains(t, string(r.body), catalogHost)
+
+				got := decode[endpoint.Cart](t, s.do(t, http.MethodGet, cart, "", ""), http.StatusOK, "application/json")
+				require.Empty(t, got.Items)
+
+				s.stop(t)
+			})
+		})
+	}
+}
+
+func TestInit_answers_a_database_that_is_down_with_503(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
+			return initWith(ctx, setup, func(context.Context, *humus.Setup, *pgxpool.Config) (endpoint.Store, error) {
+				return failingStore{err: fmt.Errorf("creating a cart: %w: dial tcp %s: connection refused", database.ErrUnavailable, dbHost)}, nil
+			}, fakePrices().open)
+		})
+		cart := "/carts/" + uuid.NewString()
+		item := cart + "/items/" + uuid.NewString()
+
+		for _, op := range []struct{ method, path, body string }{
+			{http.MethodPost, "/carts", ""},
+			{http.MethodGet, cart, ""},
+			{http.MethodDelete, cart, ""},
+			{http.MethodPost, cart + "/items", `{"productId":"sku-1","quantity":1}`},
+			{http.MethodPatch, item, `{"quantity":1}`},
+			{http.MethodDelete, item, ""},
+		} {
+			r := s.do(t, op.method, op.path, "application/json", op.body)
+			d := isProblem(t, r, http.StatusServiceUnavailable)
+			require.Equal(t, "The cart can't reach its database right now. Try again later.", d.Detail, "%s %s", op.method, op.path)
+			require.NotContains(t, string(r.body), dbHost)
+		}
+
+		s.stop(t)
+	})
+}
+
+func TestInit_answers_a_body_over_64_KiB_with_413(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := start(t, onFakes(fakePrices()))
+		cart := "/carts/" + decode[endpoint.Cart](t, s.do(t, http.MethodPost, "/carts", "", ""), http.StatusCreated, "application/json").CartID.String()
+
+		body := `{"productId":"sku-1","quantity":1,"padding":"` + strings.Repeat("x", 64<<10) + `"}`
+		isProblem(t, s.do(t, http.MethodPost, cart+"/items", "application/json", body), http.StatusRequestEntityTooLarge)
+
+		got := decode[endpoint.Cart](t, s.do(t, http.MethodGet, cart, "", ""), http.StatusOK, "application/json")
+		require.Empty(t, got.Items)
+
+		s.stop(t)
+	})
+}
+
+func TestInit_gets_a_price_from_the_catalog_with_its_client_certificate(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
+			return initWith(ctx, setup, inMemory, openCatalog)
+		})
+		catalog := &catalogServer{prices: map[string]float64{"sku-1": 12.5}}
+		stopCatalog := catalog.serve(t, s.h.Host(), catalogHost, s.ca.Issue(t, "catalog.internal"), s.ca.Pool())
+		<-s.h.Listening(catalogHost)
+
+		cart := "/carts/" + decode[endpoint.Cart](t, s.do(t, http.MethodPost, "/carts", "", ""), http.StatusCreated, "application/json").CartID.String()
+		added := decode[endpoint.CartItem](t,
+			s.do(t, http.MethodPost, cart+"/items", "application/json", `{"productId":"sku-1","quantity":2}`),
+			http.StatusCreated, "application/json")
+		require.Equal(t, "sku-1", added.ProductID)
+		require.InDelta(t, 12.5, added.UnitPrice, 1e-9)
+
+		d := isProblem(t, s.do(t, http.MethodPost, cart+"/items", "application/json", `{"productId":"sku-404","quantity":1}`), http.StatusUnprocessableEntity)
+		require.Equal(t, "There is no product sku-404 in the catalog.", d.Detail)
+
+		require.Equal(t, []string{"shoppingcart", "shoppingcart"}, catalog.clients())
+
+		s.stop(t)
+		stopCatalog()
+	})
+}
+
+var catalogSettings = []string{"CATALOG_URL", "CATALOG_CA_FILE", "CATALOG_CLIENT_CERT_FILE", "CATALOG_CLIENT_KEY_FILE"}
+
+func TestInit_without_a_catalog_setting_exits_78(t *testing.T) {
+	for _, name := range catalogSettings {
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t)
+				delete(f.env, name)
+				_, status := httpservertest.Start(t, Init,
+					humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+					humustest.WithEnv(f.env),
+				)
+
+				st := <-status
+				require.Equal(t, humus.ExitConfig, st.Code())
+				require.ErrorContains(t, st.Cause(), "config "+name+": not found")
+				for _, other := range catalogSettings {
+					if other != name {
+						require.NotContains(t, st.Cause().Error(), "config "+other+":")
+					}
+				}
+			})
+		})
+	}
+}
+
+func TestInit_with_a_bad_catalog_setting_exits_78(t *testing.T) {
+	for _, tc := range []struct{ name, value, cause string }{
+		{"CATALOG_URL", "http://" + catalogHost, "must be an https URL"},
+		{"CATALOG_URL", "catalog.internal", "absolute"},
+		{"CATALOG_CA_FILE", "catalog.key", "no PEM certificate in the file"},
+		{"CATALOG_CA_FILE", "missing.pem", "missing.pem"},
+		{"CATALOG_CLIENT_KEY_FILE", "catalog-ca.pem", "catalog.crt"},
+		{"CATALOG_TIMEOUT", "0s", "positive"},
+		{"CATALOG_ATTEMPT_TIMEOUT", "5", "missing unit"},
+		{"CATALOG_MAX_ATTEMPTS", "0", "at least 1"},
+	} {
+		t.Run(tc.name+"="+tc.value, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t)
+				f.env[tc.name] = tc.value
+				_, status := httpservertest.Start(t, Init,
+					humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+					humustest.WithEnv(f.env),
+				)
+
+				st := <-status
+				require.Equal(t, humus.ExitConfig, st.Code())
+				require.ErrorContains(t, st.Cause(), "config "+tc.name+": ")
+				require.ErrorContains(t, st.Cause(), tc.cause)
+			})
+		})
+	}
 }
 
 func TestInit_dials_Postgres_through_the_Host(t *testing.T) {
@@ -486,8 +705,9 @@ func TestInit_dials_Postgres_through_the_Host(t *testing.T) {
 		})
 
 		r := s.do(t, http.MethodGet, "/carts/"+uuid.NewString(), "", "")
-		d := isProblem(t, r, http.StatusInternalServerError)
-		require.Equal(t, endpoint.InternalError(nil).Detail, d.Detail)
+		d := isProblem(t, r, http.StatusServiceUnavailable)
+		require.Equal(t, "The cart can't reach its database right now. Try again later.", d.Detail)
+		require.NotContains(t, string(r.body), dbHost)
 		wg.Wait()
 
 		require.NoError(t, db.Close())
@@ -503,7 +723,7 @@ func TestInit_without_its_settings_exits_78(t *testing.T) {
 
 		st := <-status
 		require.Equal(t, humus.ExitConfig, st.Code())
-		for _, name := range []string{"ADDR", "TLS_PKCS12_FILE", "DATABASE_URL", "JWKS_URL", "JWT_ISSUER", "JWT_AUDIENCE"} {
+		for _, name := range []string{"ADDR", "TLS_PKCS12_FILE", "DATABASE_URL", "CATALOG_URL", "CATALOG_CA_FILE", "CATALOG_CLIENT_CERT_FILE", "JWKS_URL", "JWT_ISSUER", "JWT_AUDIENCE"} {
 			require.ErrorContains(t, st.Cause(), "config "+name+": not found")
 		}
 	})
@@ -535,9 +755,7 @@ func TestInit_with_a_bad_key_set_URL_exits_78(t *testing.T) {
 func TestInit_serves_its_document(t *testing.T) {
 	var doc []byte
 	synctest.Test(t, func(t *testing.T) {
-		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
-			return initWith(ctx, setup, inMemory)
-		})
+		s := start(t, onFakes(fakePrices()))
 		r := s.as("").do(t, http.MethodGet, "/openapi.json", "", "")
 		require.Equal(t, http.StatusOK, r.code)
 		require.Equal(t, "application/json", r.header.Get("Content-Type"))
