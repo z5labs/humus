@@ -29,6 +29,8 @@ import (
 	"github.com/z5labs/humus/example/shoppingcart/catalog/endpoint"
 	"github.com/z5labs/humus/example/shoppingcart/internal/certfile"
 	"github.com/z5labs/humus/example/shoppingcart/internal/latch"
+	"github.com/z5labs/humus/fault"
+	"github.com/z5labs/humus/fault/jsonscenario"
 	"github.com/z5labs/humus/health"
 	"github.com/z5labs/humus/httpclient"
 	"github.com/z5labs/humus/httphealth"
@@ -36,6 +38,22 @@ import (
 )
 
 const maxBodyBytes = 64 << 10
+
+const scenarioKey = "acme.fault"
+
+func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
+	codec, err := jsonscenario.New(scenarioKey)
+	if err != nil {
+		return fault.Settings{}, err
+	}
+	d := fault.DefaultSettings()
+	return config.Struct(func(r *config.Resolver) fault.Settings {
+		f := d
+		f.Decoder = codec
+		f.MaxDelay = r.Get(config.Env(s.Process.Environment, "FAULT_MAX_DELAY").Parse(time.ParseDuration).Default(d.MaxDelay).Validate(fault.CheckMaxDelay))
+		return f
+	}).Read(ctx)
+}
 
 func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	return InitWith(ctx, s, openPostgres)
@@ -144,6 +162,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 				WriteTimeout:      r.Get(env("WRITE_TIMEOUT").Parse(time.ParseDuration).Default(d.WriteTimeout).Validate(httpserver.CheckWriteTimeout)),
 				IdleTimeout:       r.Get(env("IDLE_TIMEOUT").Parse(time.ParseDuration).Default(d.IdleTimeout).Validate(httpserver.CheckIdleTimeout)),
 				MaxHeaderBytes:    r.Get(env("MAX_HEADER_BYTES").Parse(strconv.Atoi).Default(d.MaxHeaderBytes).Validate(httpserver.CheckMaxHeaderBytes)),
+				TrustScenario:     issuedByTheCA,
 			},
 			Database: r.Get(file("DATABASE_URL_FILE").Parse(databaseURL)),
 			KeySet: keySetSettings{
@@ -158,6 +177,10 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 	}
 	read.KeySet.Client.BaseURL = &url.URL{Scheme: read.KeySet.URL.Scheme, Host: read.KeySet.URL.Host}
 	return read, nil
+}
+
+func issuedByTheCA(r *http.Request) bool {
+	return r.TLS != nil && len(r.TLS.VerifiedChains) > 0
 }
 
 func holdsCertificate(fsys humus.FS) func(name string) error {
@@ -239,5 +262,5 @@ func openPostgres(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (end
 		pool.Close()
 		return nil
 	})
-	return database.New(pool), pool.Ping, nil
+	return database.New(pool, s.Faults), pool.Ping, nil
 }

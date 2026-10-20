@@ -18,20 +18,38 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/z5labs/humus/example/shoppingcart/catalog/endpoint"
+	"github.com/z5labs/humus/fault"
 )
 
 //go:embed migrations/*.sql
 var Migrations embed.FS
 
+const Point = "postgresql:catalog"
+
 type Store struct {
-	pool *pgxpool.Pool
+	pool   *pgxpool.Pool
+	faults fault.Injector
 }
 
-func New(pool *pgxpool.Pool) *Store {
-	return &Store{pool: pool}
+func New(pool *pgxpool.Pool, faults fault.Injector) *Store {
+	return &Store{pool: pool, faults: faults}
+}
+
+func (s *Store) inject(ctx context.Context) error {
+	f := s.faults.Eval(ctx, Point)
+	if err := f.Wait(ctx); err != nil {
+		return &fault.InjectedError{Point: Point, Err: err}
+	}
+	if f.Abort {
+		return fmt.Errorf("%w: %w", endpoint.ErrUnavailable, &fault.InjectedError{Point: Point})
+	}
+	return nil
 }
 
 func (s *Store) GetProduct(ctx context.Context, productID string) (endpoint.Product, error) {
+	if err := s.inject(ctx); err != nil {
+		return endpoint.Product{}, wrap("getting product "+productID, err)
+	}
 	p := endpoint.Product{ProductID: productID}
 	err := s.pool.QueryRow(ctx, `SELECT unit_price::float8 FROM products WHERE id = $1`, productID).Scan(&p.UnitPrice)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -44,6 +62,9 @@ func (s *Store) GetProduct(ctx context.Context, productID string) (endpoint.Prod
 }
 
 func (s *Store) PutProduct(ctx context.Context, product endpoint.Product) (endpoint.Product, error) {
+	if err := s.inject(ctx); err != nil {
+		return endpoint.Product{}, wrap("putting product "+product.ProductID, err)
+	}
 	p := endpoint.Product{ProductID: product.ProductID}
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO products (id, unit_price) VALUES ($1, $2)

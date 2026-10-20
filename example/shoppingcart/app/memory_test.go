@@ -7,6 +7,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"sync"
 	"time"
@@ -15,11 +16,27 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/z5labs/humus"
+	catalogdatabase "github.com/z5labs/humus/example/shoppingcart/catalog/database"
 	catalogendpoint "github.com/z5labs/humus/example/shoppingcart/catalog/endpoint"
+	"github.com/z5labs/humus/example/shoppingcart/database"
 	"github.com/z5labs/humus/example/shoppingcart/endpoint"
+	"github.com/z5labs/humus/fault"
 )
 
+func inject(ctx context.Context, faults fault.Injector, point string, unavailable error) error {
+	f := faults.Eval(ctx, point)
+	if err := f.Wait(ctx); err != nil {
+		return fmt.Errorf("%w: %w", unavailable, &fault.InjectedError{Point: point, Err: err})
+	}
+	if f.Abort {
+		return fmt.Errorf("%w: %w", unavailable, &fault.InjectedError{Point: point})
+	}
+	return nil
+}
+
 type memoryStore struct {
+	faults fault.Injector
+
 	mu    sync.Mutex
 	carts map[uuid.UUID]*ownedCart
 }
@@ -29,11 +46,14 @@ type ownedCart struct {
 	endpoint.Cart
 }
 
-func inMemory(context.Context, *humus.Setup, *pgxpool.Config) (endpoint.Store, func(context.Context) error, error) {
-	return &memoryStore{carts: map[uuid.UUID]*ownedCart{}}, func(context.Context) error { return nil }, nil
+func inMemory(_ context.Context, s *humus.Setup, _ *pgxpool.Config) (endpoint.Store, func(context.Context) error, error) {
+	return &memoryStore{faults: s.Faults, carts: map[uuid.UUID]*ownedCart{}}, func(context.Context) error { return nil }, nil
 }
 
-func (m *memoryStore) CreateCart(_ context.Context, owner string) (endpoint.Cart, error) {
+func (m *memoryStore) CreateCart(ctx context.Context, owner string) (endpoint.Cart, error) {
+	if err := inject(ctx, m.faults, database.Point, database.ErrUnavailable); err != nil {
+		return endpoint.Cart{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now().UTC()
@@ -42,7 +62,10 @@ func (m *memoryStore) CreateCart(_ context.Context, owner string) (endpoint.Cart
 	return clone(c), nil
 }
 
-func (m *memoryStore) GetCart(_ context.Context, owner string, cartID uuid.UUID) (endpoint.Cart, error) {
+func (m *memoryStore) GetCart(ctx context.Context, owner string, cartID uuid.UUID) (endpoint.Cart, error) {
+	if err := inject(ctx, m.faults, database.Point, database.ErrUnavailable); err != nil {
+		return endpoint.Cart{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, err := m.cart(owner, cartID)
@@ -52,7 +75,10 @@ func (m *memoryStore) GetCart(_ context.Context, owner string, cartID uuid.UUID)
 	return clone(c), nil
 }
 
-func (m *memoryStore) DeleteCart(_ context.Context, owner string, cartID uuid.UUID) error {
+func (m *memoryStore) DeleteCart(ctx context.Context, owner string, cartID uuid.UUID) error {
+	if err := inject(ctx, m.faults, database.Point, database.ErrUnavailable); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, err := m.cart(owner, cartID); err != nil {
@@ -62,7 +88,10 @@ func (m *memoryStore) DeleteCart(_ context.Context, owner string, cartID uuid.UU
 	return nil
 }
 
-func (m *memoryStore) AddItem(_ context.Context, owner string, cartID uuid.UUID, req endpoint.NewItem) (endpoint.CartItem, error) {
+func (m *memoryStore) AddItem(ctx context.Context, owner string, cartID uuid.UUID, req endpoint.NewItem) (endpoint.CartItem, error) {
+	if err := inject(ctx, m.faults, database.Point, database.ErrUnavailable); err != nil {
+		return endpoint.CartItem{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, err := m.cart(owner, cartID)
@@ -84,7 +113,10 @@ func (m *memoryStore) AddItem(_ context.Context, owner string, cartID uuid.UUID,
 	return it, nil
 }
 
-func (m *memoryStore) UpdateItem(_ context.Context, owner string, cartID, itemID uuid.UUID, quantity int) (endpoint.CartItem, error) {
+func (m *memoryStore) UpdateItem(ctx context.Context, owner string, cartID, itemID uuid.UUID, quantity int) (endpoint.CartItem, error) {
+	if err := inject(ctx, m.faults, database.Point, database.ErrUnavailable); err != nil {
+		return endpoint.CartItem{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, i, err := m.item(owner, cartID, itemID)
@@ -98,7 +130,10 @@ func (m *memoryStore) UpdateItem(_ context.Context, owner string, cartID, itemID
 	return c.Items[i], nil
 }
 
-func (m *memoryStore) RemoveItem(_ context.Context, owner string, cartID, itemID uuid.UUID) error {
+func (m *memoryStore) RemoveItem(ctx context.Context, owner string, cartID, itemID uuid.UUID) error {
+	if err := inject(ctx, m.faults, database.Point, database.ErrUnavailable); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, i, err := m.item(owner, cartID, itemID)
@@ -141,18 +176,36 @@ func clone(c *ownedCart) endpoint.Cart {
 
 type productMemory struct {
 	mu       sync.Mutex
+	faults   fault.Injector
 	products map[string]catalogendpoint.Product
+	gets     int
 }
 
 func productsInMemory() *productMemory {
 	return &productMemory{products: map[string]catalogendpoint.Product{}}
 }
 
-func (m *productMemory) open(context.Context, *humus.Setup, *pgxpool.Config) (catalogendpoint.Store, func(context.Context) error, error) {
+func (m *productMemory) open(_ context.Context, s *humus.Setup, _ *pgxpool.Config) (catalogendpoint.Store, func(context.Context) error, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.faults = s.Faults
 	return m, func(context.Context) error { return nil }, nil
 }
 
-func (m *productMemory) GetProduct(_ context.Context, productID string) (catalogendpoint.Product, error) {
+func (m *productMemory) queried() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.gets
+}
+
+func (m *productMemory) GetProduct(ctx context.Context, productID string) (catalogendpoint.Product, error) {
+	m.mu.Lock()
+	m.gets++
+	faults := m.faults
+	m.mu.Unlock()
+	if err := inject(ctx, faults, catalogdatabase.Point, catalogendpoint.ErrUnavailable); err != nil {
+		return catalogendpoint.Product{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	p, ok := m.products[productID]
@@ -162,7 +215,13 @@ func (m *productMemory) GetProduct(_ context.Context, productID string) (catalog
 	return p, nil
 }
 
-func (m *productMemory) PutProduct(_ context.Context, p catalogendpoint.Product) (catalogendpoint.Product, error) {
+func (m *productMemory) PutProduct(ctx context.Context, p catalogendpoint.Product) (catalogendpoint.Product, error) {
+	m.mu.Lock()
+	faults := m.faults
+	m.mu.Unlock()
+	if err := inject(ctx, faults, catalogdatabase.Point, catalogendpoint.ErrUnavailable); err != nil {
+		return catalogendpoint.Product{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.products[p.ProductID] = p

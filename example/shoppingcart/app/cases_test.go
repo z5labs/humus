@@ -28,9 +28,8 @@ import (
 )
 
 const (
-	cartHost    = "localhost:8443"
-	scenarioKey = "acme.fault"
-	trustScope  = "faults:rehearse"
+	cartHost   = "localhost:8443"
+	trustScope = "faults:rehearse"
 )
 
 type running struct {
@@ -57,13 +56,19 @@ func (r running) stop(t *testing.T) {
 }
 
 type shoppingcart struct {
-	target  cases.Target
-	cart    running
-	catalog running
-	stopIdP func()
+	target   cases.Target
+	cart     running
+	catalog  running
+	products *productMemory
+	stopIdP  func()
 }
 
 func startShoppingcart(t *testing.T) *shoppingcart {
+	t.Helper()
+	return startShoppingcartWith(t, map[string]string{"FAULT_TRUST_SCOPE": trustScope}, telemetry.NoopBuilder)
+}
+
+func startShoppingcartWith(t *testing.T, cartEnv map[string]string, cartTelemetry telemetry.Builder) *shoppingcart {
 	t.Helper()
 	ca := humustest.NewCA(t)
 	idpCert := ca.Issue(t, "idp.internal")
@@ -93,9 +98,10 @@ func startShoppingcart(t *testing.T) *shoppingcart {
 		"JWT_ISSUER":   issuer,
 		"JWT_AUDIENCE": audience,
 	}
+	products := productsInMemory()
 	catalog := run(t, "catalog", h, func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-		return catalogapp.InitWith(ctx, s, productsInMemory().open)
-	}, tokens, map[string]string{
+		return catalogapp.InitWith(ctx, s, products.open)
+	}, []humus.Option{humus.WithFaults(catalogapp.Faults)}, tokens, map[string]string{
 		"ADDR":              ":10443",
 		"TLS_CERT_FILE":     "catalog/tls.crt",
 		"TLS_KEY_FILE":      "catalog/tls.key",
@@ -106,7 +112,7 @@ func startShoppingcart(t *testing.T) *shoppingcart {
 
 	cart := run(t, "cart", h, func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		return initWith(ctx, s, inMemory, openCatalog)
-	}, tokens, map[string]string{
+	}, []humus.Option{humus.WithFaults(Faults), humus.WithTelemetry(cartTelemetry)}, tokens, cartEnv, map[string]string{
 		"ADDR":                     ":8443",
 		"TLS_CERT_FILE":            "cart/tls.crt",
 		"TLS_KEY_FILE":             "cart/tls.key",
@@ -130,20 +136,21 @@ func startShoppingcart(t *testing.T) *shoppingcart {
 			TrustScope:    trustScope,
 			Timeout:       time.Minute,
 		},
-		cart:    cart,
-		catalog: catalog,
-		stopIdP: stopIdP,
+		cart:     cart,
+		catalog:  catalog,
+		products: products,
+		stopIdP:  stopIdP,
 	}
 }
 
-func run(t *testing.T, name string, h *humustest.Host, init func(context.Context, *humus.Setup) ([]humus.Service, error), envs ...map[string]string) running {
+func run(t *testing.T, name string, h *humustest.Host, init func(context.Context, *humus.Setup) ([]humus.Service, error), app []humus.Option, envs ...map[string]string) running {
 	t.Helper()
 	env := map[string]string{}
 	for _, e := range envs {
 		maps.Copy(env, e)
 	}
 	p, status := httpservertest.Start(t, init,
-		humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		humustest.WithApp(append([]humus.Option{humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)}, app...)...),
 		humustest.WithEnv(env),
 	)
 	return running{name: name, p: p, status: status}

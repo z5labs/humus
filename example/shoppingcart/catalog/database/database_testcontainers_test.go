@@ -18,6 +18,7 @@ import (
 	"github.com/z5labs/humus/example/shoppingcart/catalog/database"
 	"github.com/z5labs/humus/example/shoppingcart/catalog/endpoint"
 	"github.com/z5labs/humus/example/shoppingcart/internal/postgrestest"
+	"github.com/z5labs/humus/fault"
 )
 
 func TestMain(m *testing.M) {
@@ -32,7 +33,7 @@ func store(t *testing.T) *database.Store {
 	pool, err := pgxpool.New(t.Context(), db.AppURL)
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
-	return database.New(pool)
+	return database.New(pool, fault.Injector{})
 }
 
 func TestStore_gets_the_product_it_puts(t *testing.T) {

@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -29,7 +30,9 @@ import (
 	"github.com/z5labs/bedrock/bedrocktest"
 
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/example/shoppingcart/catalog/database"
 	"github.com/z5labs/humus/example/shoppingcart/catalog/endpoint"
+	"github.com/z5labs/humus/fault"
 	"github.com/z5labs/humus/httpserver/httpservertest"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/telemetry"
@@ -45,6 +48,7 @@ var requiredSettings = []string{"ADDR", "TLS_CERT_FILE", "TLS_KEY_FILE", "CLIENT
 
 type fakeDatabase struct {
 	mu       sync.Mutex
+	faults   fault.Injector
 	products map[string]endpoint.Product
 	down     bool
 	pings    int
@@ -55,10 +59,11 @@ func newFakeDatabase(down bool) *fakeDatabase {
 	return &fakeDatabase{products: map[string]endpoint.Product{}, down: down}
 }
 
-func (db *fakeDatabase) open(_ context.Context, _ *humus.Setup, cfg *pgxpool.Config) (endpoint.Store, func(context.Context) error, error) {
+func (db *fakeDatabase) open(_ context.Context, s *humus.Setup, cfg *pgxpool.Config) (endpoint.Store, func(context.Context) error, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	db.cfg = cfg
+	db.faults = s.Faults
 	return db, db.ping, nil
 }
 
@@ -84,7 +89,24 @@ func (db *fakeDatabase) pinged() int {
 	return db.pings
 }
 
-func (db *fakeDatabase) GetProduct(_ context.Context, productID string) (endpoint.Product, error) {
+func (db *fakeDatabase) inject(ctx context.Context) error {
+	db.mu.Lock()
+	faults := db.faults
+	db.mu.Unlock()
+	f := faults.Eval(ctx, database.Point)
+	if err := f.Wait(ctx); err != nil {
+		return fmt.Errorf("%w: %w", endpoint.ErrUnavailable, &fault.InjectedError{Point: database.Point, Err: err})
+	}
+	if f.Abort {
+		return fmt.Errorf("%w: %w", endpoint.ErrUnavailable, &fault.InjectedError{Point: database.Point})
+	}
+	return nil
+}
+
+func (db *fakeDatabase) GetProduct(ctx context.Context, productID string) (endpoint.Product, error) {
+	if err := db.inject(ctx); err != nil {
+		return endpoint.Product{}, err
+	}
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	p, ok := db.products[productID]
@@ -94,7 +116,10 @@ func (db *fakeDatabase) GetProduct(_ context.Context, productID string) (endpoin
 	return p, nil
 }
 
-func (db *fakeDatabase) PutProduct(_ context.Context, p endpoint.Product) (endpoint.Product, error) {
+func (db *fakeDatabase) PutProduct(ctx context.Context, p endpoint.Product) (endpoint.Product, error) {
+	if err := db.inject(ctx); err != nil {
+		return endpoint.Product{}, err
+	}
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	db.products[p.ProductID] = p
@@ -152,7 +177,7 @@ func newFixture(t *testing.T) fixture {
 func (f fixture) exit(t *testing.T) bedrock.ExitStatus {
 	t.Helper()
 	_, status := httpservertest.Start(t, Init,
-		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(Faults)),
 		humustest.WithEnv(f.env),
 	)
 	return <-status
@@ -177,7 +202,7 @@ func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Servi
 	<-f.h.Listening(idpHost)
 
 	p, status := httpservertest.Start(t, init,
-		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(Faults)),
 		humustest.WithEnv(f.env),
 	)
 	select {
@@ -435,6 +460,8 @@ func TestInit_with_a_bad_setting_exits_78(t *testing.T) {
 		{name: "WRITE_TIMEOUT", value: "-1s", cause: "negative"},
 		{name: "IDLE_TIMEOUT", value: "-1s", cause: "negative"},
 		{name: "MAX_HEADER_BYTES", value: "0", cause: "positive"},
+		{name: "FAULT_MAX_DELAY", value: "0s", cause: "positive"},
+		{name: "FAULT_MAX_DELAY", value: "10", cause: "missing unit"},
 	} {
 		t.Run(tc.name+"="+tc.value, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {

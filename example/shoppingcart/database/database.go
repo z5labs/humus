@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/z5labs/humus/example/shoppingcart/endpoint"
+	"github.com/z5labs/humus/fault"
 )
 
 //go:embed migrations/*.sql
@@ -26,17 +27,34 @@ var Migrations embed.FS
 
 var ErrUnavailable = endpoint.ErrDatabaseUnavailable
 
+const Point = "postgresql:carts"
+
 type Store struct {
-	pool *pgxpool.Pool
+	pool   *pgxpool.Pool
+	faults fault.Injector
 }
 
-func New(pool *pgxpool.Pool) *Store {
-	return &Store{pool: pool}
+func New(pool *pgxpool.Pool, faults fault.Injector) *Store {
+	return &Store{pool: pool, faults: faults}
+}
+
+func (s *Store) inject(ctx context.Context) error {
+	f := s.faults.Eval(ctx, Point)
+	if err := f.Wait(ctx); err != nil {
+		return &fault.InjectedError{Point: Point, Err: err}
+	}
+	if f.Abort {
+		return fmt.Errorf("%w: %w", ErrUnavailable, &fault.InjectedError{Point: Point})
+	}
+	return nil
 }
 
 const itemColumns = `id, cart_id, product_id, quantity, unit_price::float8, created_at, updated_at`
 
 func (s *Store) CreateCart(ctx context.Context, owner string) (endpoint.Cart, error) {
+	if err := s.inject(ctx); err != nil {
+		return endpoint.Cart{}, wrap("creating a cart", err)
+	}
 	c := endpoint.Cart{Items: []endpoint.CartItem{}}
 	err := s.pool.QueryRow(ctx,
 		`INSERT INTO carts (owner) VALUES ($1) RETURNING id, created_at, updated_at`, owner,
@@ -48,6 +66,9 @@ func (s *Store) CreateCart(ctx context.Context, owner string) (endpoint.Cart, er
 }
 
 func (s *Store) GetCart(ctx context.Context, owner string, cartID uuid.UUID) (endpoint.Cart, error) {
+	if err := s.inject(ctx); err != nil {
+		return endpoint.Cart{}, wrap(fmt.Sprintf("getting cart %s", cartID), err)
+	}
 	var c endpoint.Cart
 	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx,
@@ -78,6 +99,9 @@ func (s *Store) GetCart(ctx context.Context, owner string, cartID uuid.UUID) (en
 }
 
 func (s *Store) DeleteCart(ctx context.Context, owner string, cartID uuid.UUID) error {
+	if err := s.inject(ctx); err != nil {
+		return wrap(fmt.Sprintf("deleting cart %s", cartID), err)
+	}
 	tag, err := s.pool.Exec(ctx, `DELETE FROM carts WHERE id = $1 AND owner = $2`, cartID, owner)
 	if err != nil {
 		return wrap(fmt.Sprintf("deleting cart %s", cartID), err)
@@ -89,6 +113,9 @@ func (s *Store) DeleteCart(ctx context.Context, owner string, cartID uuid.UUID) 
 }
 
 func (s *Store) AddItem(ctx context.Context, owner string, cartID uuid.UUID, item endpoint.NewItem) (endpoint.CartItem, error) {
+	if err := s.inject(ctx); err != nil {
+		return endpoint.CartItem{}, wrap(fmt.Sprintf("adding an item to cart %s", cartID), err)
+	}
 	rows, err := s.pool.Query(ctx, `
 		WITH cart AS (
 			UPDATE carts SET updated_at = now() WHERE id = $1 AND owner = $2 RETURNING id
@@ -112,6 +139,9 @@ func (s *Store) AddItem(ctx context.Context, owner string, cartID uuid.UUID, ite
 }
 
 func (s *Store) UpdateItem(ctx context.Context, owner string, cartID, itemID uuid.UUID, quantity int) (endpoint.CartItem, error) {
+	if err := s.inject(ctx); err != nil {
+		return endpoint.CartItem{}, wrap(fmt.Sprintf("updating item %s of cart %s", itemID, cartID), err)
+	}
 	rows, err := s.pool.Query(ctx, `
 		WITH item AS (
 			UPDATE cart_items SET quantity = $4, updated_at = now()
@@ -137,6 +167,9 @@ func (s *Store) UpdateItem(ctx context.Context, owner string, cartID, itemID uui
 }
 
 func (s *Store) RemoveItem(ctx context.Context, owner string, cartID, itemID uuid.UUID) error {
+	if err := s.inject(ctx); err != nil {
+		return wrap(fmt.Sprintf("removing item %s from cart %s", itemID, cartID), err)
+	}
 	var removed int
 	err := s.pool.QueryRow(ctx, `
 		WITH item AS (
