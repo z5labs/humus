@@ -18,56 +18,55 @@ import (
 	"github.com/z5labs/humus/example/shoppingcart/endpoint"
 )
 
-// memoryStore is an endpoint.Store in memory, which the tests serve in
-// place of Postgres, since Postgres can't run on humustest's Host. It keeps
-// the contract database.Store keeps, which the container tests check
-// against Postgres itself.
 type memoryStore struct {
 	mu    sync.Mutex
-	carts map[uuid.UUID]*endpoint.Cart
+	carts map[uuid.UUID]*ownedCart
 }
 
-// inMemory is an openStore that opens a new memoryStore, and ignores the
-// pool's config.
+type ownedCart struct {
+	owner string
+	endpoint.Cart
+}
+
 func inMemory(context.Context, *humus.Setup, *pgxpool.Config) (endpoint.Store, error) {
-	return &memoryStore{carts: map[uuid.UUID]*endpoint.Cart{}}, nil
+	return &memoryStore{carts: map[uuid.UUID]*ownedCart{}}, nil
 }
 
-func (m *memoryStore) CreateCart(context.Context) (endpoint.Cart, error) {
+func (m *memoryStore) CreateCart(_ context.Context, owner string) (endpoint.Cart, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now().UTC()
-	c := &endpoint.Cart{CartID: uuid.New(), Items: []endpoint.CartItem{}, CreatedAt: now, UpdatedAt: now}
+	c := &ownedCart{owner: owner, Cart: endpoint.Cart{CartID: uuid.New(), Items: []endpoint.CartItem{}, CreatedAt: now, UpdatedAt: now}}
 	m.carts[c.CartID] = c
 	return clone(c), nil
 }
 
-func (m *memoryStore) GetCart(_ context.Context, cartID uuid.UUID) (endpoint.Cart, error) {
+func (m *memoryStore) GetCart(_ context.Context, owner string, cartID uuid.UUID) (endpoint.Cart, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	c, ok := m.carts[cartID]
-	if !ok {
-		return endpoint.Cart{}, endpoint.ErrCartNotFound
+	c, err := m.cart(owner, cartID)
+	if err != nil {
+		return endpoint.Cart{}, err
 	}
 	return clone(c), nil
 }
 
-func (m *memoryStore) DeleteCart(_ context.Context, cartID uuid.UUID) error {
+func (m *memoryStore) DeleteCart(_ context.Context, owner string, cartID uuid.UUID) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.carts[cartID]; !ok {
-		return endpoint.ErrCartNotFound
+	if _, err := m.cart(owner, cartID); err != nil {
+		return err
 	}
 	delete(m.carts, cartID)
 	return nil
 }
 
-func (m *memoryStore) AddItem(_ context.Context, cartID uuid.UUID, req endpoint.AddItemRequest) (endpoint.CartItem, error) {
+func (m *memoryStore) AddItem(_ context.Context, owner string, cartID uuid.UUID, req endpoint.AddItemRequest) (endpoint.CartItem, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	c, ok := m.carts[cartID]
-	if !ok {
-		return endpoint.CartItem{}, endpoint.ErrCartNotFound
+	c, err := m.cart(owner, cartID)
+	if err != nil {
+		return endpoint.CartItem{}, err
 	}
 	now := time.Now().UTC()
 	it := endpoint.CartItem{
@@ -84,10 +83,10 @@ func (m *memoryStore) AddItem(_ context.Context, cartID uuid.UUID, req endpoint.
 	return it, nil
 }
 
-func (m *memoryStore) UpdateItem(_ context.Context, cartID, itemID uuid.UUID, quantity int) (endpoint.CartItem, error) {
+func (m *memoryStore) UpdateItem(_ context.Context, owner string, cartID, itemID uuid.UUID, quantity int) (endpoint.CartItem, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	c, i, err := m.find(cartID, itemID)
+	c, i, err := m.item(owner, cartID, itemID)
 	if err != nil {
 		return endpoint.CartItem{}, err
 	}
@@ -98,10 +97,10 @@ func (m *memoryStore) UpdateItem(_ context.Context, cartID, itemID uuid.UUID, qu
 	return c.Items[i], nil
 }
 
-func (m *memoryStore) RemoveItem(_ context.Context, cartID, itemID uuid.UUID) error {
+func (m *memoryStore) RemoveItem(_ context.Context, owner string, cartID, itemID uuid.UUID) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	c, i, err := m.find(cartID, itemID)
+	c, i, err := m.item(owner, cartID, itemID)
 	if err != nil {
 		return err
 	}
@@ -110,12 +109,18 @@ func (m *memoryStore) RemoveItem(_ context.Context, cartID, itemID uuid.UUID) er
 	return nil
 }
 
-// find returns the cart cartID and the index of its item itemID. m.mu is
-// held.
-func (m *memoryStore) find(cartID, itemID uuid.UUID) (*endpoint.Cart, int, error) {
+func (m *memoryStore) cart(owner string, cartID uuid.UUID) (*ownedCart, error) {
 	c, ok := m.carts[cartID]
-	if !ok {
-		return nil, 0, endpoint.ErrCartNotFound
+	if !ok || c.owner != owner {
+		return nil, endpoint.ErrCartNotFound
+	}
+	return c, nil
+}
+
+func (m *memoryStore) item(owner string, cartID, itemID uuid.UUID) (*ownedCart, int, error) {
+	c, err := m.cart(owner, cartID)
+	if err != nil {
+		return nil, 0, err
 	}
 	i := slices.IndexFunc(c.Items, func(it endpoint.CartItem) bool { return it.ItemID == itemID })
 	if i < 0 {
@@ -124,9 +129,8 @@ func (m *memoryStore) find(cartID, itemID uuid.UUID) (*endpoint.Cart, int, error
 	return c, i, nil
 }
 
-// clone returns a copy of c that shares no items with it.
-func clone(c *endpoint.Cart) endpoint.Cart {
-	out := *c
+func clone(c *ownedCart) endpoint.Cart {
+	out := c.Cart
 	out.Items = slices.Clone(c.Items)
 	if out.Items == nil {
 		out.Items = []endpoint.CartItem{}

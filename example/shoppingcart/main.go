@@ -3,9 +3,7 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-// Command shoppingcart is humus's reference service: a REST API for shopping
-// carts, on Postgres. Its Init is in package app, which documents every
-// variable it reads.
+// Command shoppingcart serves the shoppingcart's API for shopping carts, on PostgreSQL.
 package main
 
 import (

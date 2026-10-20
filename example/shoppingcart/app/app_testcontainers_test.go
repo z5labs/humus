@@ -7,16 +7,6 @@
 
 package app
 
-// The test in this file runs the whole service once, Init as main runs it,
-// on humus.OSHost(), in real time, against Postgres in a container started
-// with testcontainers-go, with the schema applied from schema.sql. Beside
-// it, the test's identity provider serves its key set on the OS Host too,
-// which the service reaches through JWKS_URL and JWKS_CA_FILE. It opens
-// real sockets, so it sits behind the testcontainers build tag and runs in
-// a CI job of its own, outside the coverage gate:
-//
-//	go -C example/shoppingcart test -race -tags testcontainers ./...
-
 import (
 	"context"
 	"crypto/rand"
@@ -42,15 +32,10 @@ import (
 	"github.com/z5labs/humus/telemetry"
 )
 
-// postgresImage is the Postgres the test runs, the official image pinned to
-// an exact release.
 const postgresImage = "docker.io/library/postgres:18.0"
 
-// waitLimit bounds every wait of the test for the service.
 const waitLimit = 30 * time.Second
 
-// startPostgres starts Postgres with a password new for the test, applies
-// schema.sql, and returns its URL, which sets every field pgx uses.
 func startPostgres(t *testing.T) string {
 	t.Helper()
 	c, err := tcpostgres.Run(t.Context(), postgresImage,
@@ -69,7 +54,6 @@ func startPostgres(t *testing.T) string {
 	return url
 }
 
-// waitListening waits for something to listen on addr.
 func waitListening(t *testing.T, addr string) {
 	t.Helper()
 	require.Eventually(t, func() bool {
@@ -82,7 +66,6 @@ func waitListening(t *testing.T, addr string) {
 	}, waitLimit, 50*time.Millisecond)
 }
 
-// freeAddr returns a loopback address with a port nothing listens on.
 func freeAddr(t *testing.T) string {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -102,8 +85,6 @@ func TestInit_serves_carts_from_Postgres_on_the_OS_Host(t *testing.T) {
 	require.NoError(t, os.WriteFile(certFile, bundle, 0o600))
 	addr := freeAddr(t)
 
-	// The identity provider, on the OS Host, with a certificate from the
-	// same CA, which the service trusts through JWKS_CA_FILE.
 	provider := newIdP(t)
 	idpCert := ca.Issue(t, "127.0.0.1")
 	idpCAFile := filepath.Join(dir, "idp-ca.pem")
@@ -134,7 +115,7 @@ func TestInit_serves_carts_from_Postgres_on_the_OS_Host(t *testing.T) {
 		},
 	}
 	base := "https://" + addr
-	token := provider.token(t, endpoint.ScopeWrite)
+	token := provider.token(t, shopper, endpoint.ScopeWrite)
 
 	do := func(method, path, body string) (int, []byte) {
 		t.Helper()
@@ -181,12 +162,10 @@ func TestInit_serves_carts_from_Postgres_on_the_OS_Host(t *testing.T) {
 	code, body = do(http.MethodGet, "/carts/"+cart.CartID.String(), "")
 	require.Equal(t, http.StatusNotFound, code, "%s", body)
 
-	// Without a token, the service answers 401.
 	token = ""
 	code, body = do(http.MethodPost, "/carts", "")
 	require.Equal(t, http.StatusUnauthorized, code, "%s", body)
 
-	// The drain is httpserver.Main's 5s, so the exit takes that long.
 	<-p.Notified(syscall.SIGTERM)
 	p.Signal(syscall.SIGTERM)
 	select {
@@ -198,7 +177,6 @@ func TestInit_serves_carts_from_Postgres_on_the_OS_Host(t *testing.T) {
 	stopIdP()
 }
 
-// protocolsHTTP2 returns the protocols of a client that speaks HTTP/2 alone.
 func protocolsHTTP2() *http.Protocols {
 	var p http.Protocols
 	p.SetHTTP2(true)

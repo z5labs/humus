@@ -5,13 +5,6 @@
 
 package app
 
-// The tests in this file run the whole service, with httpservertest.Start,
-// inside synctest bubbles, on humustest Hosts, with certificates from a CA
-// generated for each test. All but one serve an in-memory Store, which
-// initWith swaps in for Postgres. Each one runs the test's identity
-// provider beside the service, on the same Host, and sends the tokens it
-// signs.
-
 import (
 	"bytes"
 	"context"
@@ -43,17 +36,12 @@ import (
 	"github.com/z5labs/humus/telemetry"
 )
 
-// base is where the service listens on its humustest Host.
-const base = "https://localhost:8443"
+const (
+	base    = "https://localhost:8443"
+	dbHost  = "db.internal:5432"
+	idpHost = "idp.internal:9443"
+)
 
-// dbHost is the database's address in the tests' DATABASE_URL.
-const dbHost = "db.internal:5432"
-
-// idpHost is where the identity provider listens on the Host.
-const idpHost = "idp.internal:9443"
-
-// service is the whole service, running on a humustest Host beside its
-// identity provider.
 type service struct {
 	h       *humustest.Host
 	client  *http.Client
@@ -61,15 +49,9 @@ type service struct {
 	status  <-chan bedrock.ExitStatus
 	idp     *idp
 	stopIdP func()
-
-	// token is what do sends as its bearer token, or nothing when it is
-	// "". start sets one with carts:write; as replaces it.
-	token string
+	token   string
 }
 
-// start runs initWith on open, with every setting it needs, on a new
-// humustest Host, beside the test's identity provider, and waits for both
-// to listen. Call it inside the bubble that uses it.
 func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error), hostOpts ...humustest.HostOption) *service {
 	t.Helper()
 	ca := humustest.NewCA(t)
@@ -90,15 +72,11 @@ func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Servi
 			"ADDR":                ":8443",
 			"TLS_PKCS12_FILE":     "tls.p12",
 			"TLS_PKCS12_PASSWORD": password,
-			// Every field pgx uses is in the URL, so it reads nothing from
-			// the real environment or ~/.pgpass. The password is new for
-			// each test.
-			"DATABASE_URL": "postgres://carts:" + rand.Text() + "@" + dbHost + "/carts?sslmode=disable",
-			// The key set is the test's, trusted through the test's CA.
-			"JWKS_URL":     "https://" + idpHost + jwksPath,
-			"JWKS_CA_FILE": "idp-ca.pem",
-			"JWT_ISSUER":   issuer,
-			"JWT_AUDIENCE": audience,
+			"DATABASE_URL":        "postgres://carts:" + rand.Text() + "@" + dbHost + "/carts?sslmode=disable",
+			"JWKS_URL":            "https://" + idpHost + jwksPath,
+			"JWKS_CA_FILE":        "idp-ca.pem",
+			"JWT_ISSUER":          issuer,
+			"JWT_AUDIENCE":        audience,
 		}),
 	)
 	<-h.Listening("localhost:8443")
@@ -109,20 +87,16 @@ func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Servi
 		status:  status,
 		idp:     provider,
 		stopIdP: stopIdP,
-		token:   provider.token(t, endpoint.ScopeWrite),
+		token:   provider.token(t, shopper, endpoint.ScopeWrite),
 	}
 }
 
-// as returns s, sending token as its bearer token, or no token when it is
-// "".
 func (s *service) as(token string) *service {
 	c := *s
 	c.token = token
 	return &c
 }
 
-// stop sends the service SIGTERM and checks that it exits 0, then stops its
-// identity provider.
 func (s *service) stop(t *testing.T) {
 	t.Helper()
 	<-s.p.Notified(syscall.SIGTERM)
@@ -132,15 +106,12 @@ func (s *service) stop(t *testing.T) {
 	s.stopIdP()
 }
 
-// response is what the client got back.
 type response struct {
 	code   int
 	header http.Header
 	body   []byte
 }
 
-// do sends method path, with body as contentType when body isn't "", and
-// s's token, and returns the response.
 func (s *service) do(t *testing.T, method, path, contentType, body string) response {
 	t.Helper()
 	var r io.Reader
@@ -164,7 +135,6 @@ func (s *service) do(t *testing.T, method, path, contentType, body string) respo
 	return response{code: resp.StatusCode, header: resp.Header, body: b}
 }
 
-// decode checks r's status and media type, and decodes its body as T.
 func decode[T any](t *testing.T, r response, code int, mediaType string) T {
 	t.Helper()
 	require.Equal(t, code, r.code, "%s", r.body)
@@ -174,7 +144,6 @@ func decode[T any](t *testing.T, r response, code int, mediaType string) T {
 	return v
 }
 
-// problemDetail is a problem detail as the client reads it.
 type problemDetail struct {
 	Type   string `json:"type"`
 	Title  string `json:"title"`
@@ -182,7 +151,6 @@ type problemDetail struct {
 	Detail string `json:"detail"`
 }
 
-// isProblem checks that r is a problem detail at code, and returns it.
 func isProblem(t *testing.T, r response, code int) problemDetail {
 	t.Helper()
 	d := decode[problemDetail](t, r, code, "application/problem+json")
@@ -197,18 +165,15 @@ func TestInit_serves_every_operation(t *testing.T) {
 			return initWith(ctx, setup, inMemory)
 		})
 
-		// createCart
 		created := decode[endpoint.Cart](t, s.do(t, http.MethodPost, "/carts", "", ""), http.StatusCreated, "application/json")
 		require.NotEqual(t, uuid.Nil, created.CartID)
 		require.Empty(t, created.Items)
 		cart := "/carts/" + created.CartID.String()
 
-		// getCart, of an empty cart: its items are [], never null.
 		r := s.do(t, http.MethodGet, cart, "", "")
 		require.Contains(t, string(r.body), `"items":[]`)
 		require.Equal(t, created.CartID, decode[endpoint.Cart](t, r, http.StatusOK, "application/json").CartID)
 
-		// addCartItem
 		added := decode[endpoint.CartItem](t,
 			s.do(t, http.MethodPost, cart+"/items", "application/json", `{"productId":"sku-1","quantity":2,"unitPrice":9.99}`),
 			http.StatusCreated, "application/json")
@@ -218,7 +183,6 @@ func TestInit_serves_every_operation(t *testing.T) {
 		require.InDelta(t, 9.99, added.UnitPrice, 1e-9)
 		item := cart + "/items/" + added.ItemID.String()
 
-		// updateCartItem
 		updated := decode[endpoint.CartItem](t,
 			s.do(t, http.MethodPatch, item, "application/json", `{"quantity":5}`),
 			http.StatusOK, "application/json")
@@ -229,14 +193,12 @@ func TestInit_serves_every_operation(t *testing.T) {
 		require.Len(t, got.Items, 1)
 		require.Equal(t, 5, got.Items[0].Quantity)
 
-		// removeCartItem, then again: the item is gone.
 		r = s.do(t, http.MethodDelete, item, "", "")
 		require.Equal(t, http.StatusNoContent, r.code)
 		require.Empty(t, r.body)
 		d := isProblem(t, s.do(t, http.MethodDelete, item, "", ""), http.StatusNotFound)
 		require.Equal(t, "Cart "+created.CartID.String()+" has no item "+added.ItemID.String()+".", d.Detail)
 
-		// deleteCart, then every operation on it is a 404.
 		r = s.do(t, http.MethodDelete, cart, "", "")
 		require.Equal(t, http.StatusNoContent, r.code)
 		require.Empty(t, r.body)
@@ -284,11 +246,9 @@ func TestInit_answers_a_request_it_rejects_with_a_problem(t *testing.T) {
 		})
 		cart := "/carts/" + decode[endpoint.Cart](t, s.do(t, http.MethodPost, "/carts", "", ""), http.StatusCreated, "application/json").CartID.String()
 
-		// A cartId that isn't a UUID breaks its Pattern.
 		d := isProblem(t, s.do(t, http.MethodGet, "/carts/not-a-uuid", "", ""), http.StatusBadRequest)
 		require.Contains(t, d.Detail, "cartId")
 
-		// A body that isn't JSON, and one that isn't application/json.
 		isProblem(t, s.do(t, http.MethodPost, cart+"/items", "application/json", `{"productId":`), http.StatusBadRequest)
 		isProblem(t, s.do(t, http.MethodPost, cart+"/items", "text/plain", `{"productId":"sku-1","quantity":1,"unitPrice":1}`), http.StatusUnsupportedMediaType)
 
@@ -320,8 +280,6 @@ func TestInit_answers_a_request_without_a_valid_token_with_401(t *testing.T) {
 		cart := "/carts/" + decode[endpoint.Cart](t, s.do(t, http.MethodPost, "/carts", "", ""), http.StatusCreated, "application/json").CartID.String()
 		item := cart + "/items/" + uuid.NewString()
 
-		// Every operation needs a token, reading a cart included. Without
-		// one, the challenge names the scheme.
 		anonymous := s.as("")
 		for _, op := range []struct{ method, path, body string }{
 			{http.MethodPost, "/carts", ""},
@@ -336,9 +294,7 @@ func TestInit_answers_a_request_without_a_valid_token_with_401(t *testing.T) {
 			require.Equal(t, "Bearer", r.header.Get("WWW-Authenticate"), "%s %s", op.method, op.path)
 		}
 
-		// A token the Verifier rejects, here one signed by a key the
-		// provider doesn't serve, is invalid_token.
-		r := s.as(newIdP(t).token(t, endpoint.ScopeWrite)).do(t, http.MethodGet, cart, "", "")
+		r := s.as(newIdP(t).token(t, shopper, endpoint.ScopeWrite)).do(t, http.MethodGet, cart, "", "")
 		isProblem(t, r, http.StatusUnauthorized)
 		require.Equal(t, `Bearer error="invalid_token"`, r.header.Get("WWW-Authenticate"))
 
@@ -351,7 +307,6 @@ func TestInit_needs_carts_write_to_change_a_cart(t *testing.T) {
 		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
 			return initWith(ctx, setup, inMemory)
 		})
-		// s's own token has carts:write.
 		created := decode[endpoint.Cart](t, s.do(t, http.MethodPost, "/carts", "", ""), http.StatusCreated, "application/json")
 		cart := "/carts/" + created.CartID.String()
 		added := decode[endpoint.CartItem](t,
@@ -359,14 +314,11 @@ func TestInit_needs_carts_write_to_change_a_cart(t *testing.T) {
 			http.StatusCreated, "application/json")
 		item := cart + "/items/" + added.ItemID.String()
 
-		// A token without carts:write reads the cart.
-		reader := s.as(s.idp.token(t, "carts:read"))
+		reader := s.as(s.idp.token(t, shopper, "carts:read"))
 		got := decode[endpoint.Cart](t, reader.do(t, http.MethodGet, cart, "", ""), http.StatusOK, "application/json")
 		require.Equal(t, created.CartID, got.CartID)
 		require.Len(t, got.Items, 1)
 
-		// Every operation that changes a cart is a 403 to it, which names
-		// the scope it lacks.
 		for _, op := range []struct{ method, path, body string }{
 			{http.MethodPost, "/carts", ""},
 			{http.MethodDelete, cart, ""},
@@ -379,12 +331,11 @@ func TestInit_needs_carts_write_to_change_a_cart(t *testing.T) {
 			require.Equal(t, `Bearer error="insufficient_scope", scope="carts:write"`, r.header.Get("WWW-Authenticate"), "%s %s", op.method, op.path)
 		}
 
-		// Nothing changed, and a token with carts:write changes it.
 		got = decode[endpoint.Cart](t, reader.do(t, http.MethodGet, cart, "", ""), http.StatusOK, "application/json")
 		require.Len(t, got.Items, 1)
 		require.Equal(t, 1, got.Items[0].Quantity)
 
-		writer := s.as(s.idp.token(t, "carts:read", endpoint.ScopeWrite))
+		writer := s.as(s.idp.token(t, shopper, "carts:read", endpoint.ScopeWrite))
 		updated := decode[endpoint.CartItem](t,
 			writer.do(t, http.MethodPatch, item, "application/json", `{"quantity":2}`),
 			http.StatusOK, "application/json")
@@ -396,14 +347,74 @@ func TestInit_needs_carts_write_to_change_a_cart(t *testing.T) {
 	})
 }
 
+func TestInit_keeps_a_cart_to_its_owner(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
+			return initWith(ctx, setup, inMemory)
+		})
+		created := decode[endpoint.Cart](t, s.do(t, http.MethodPost, "/carts", "", ""), http.StatusCreated, "application/json")
+		cart := "/carts/" + created.CartID.String()
+		added := decode[endpoint.CartItem](t,
+			s.do(t, http.MethodPost, cart+"/items", "application/json", `{"productId":"sku-1","quantity":1,"unitPrice":1}`),
+			http.StatusCreated, "application/json")
+		item := cart + "/items/" + added.ItemID.String()
+		before := decode[endpoint.Cart](t, s.do(t, http.MethodGet, cart, "", ""), http.StatusOK, "application/json")
+
+		other := s.as(s.idp.token(t, "another-shopper", endpoint.ScopeWrite))
+		decode[endpoint.Cart](t, other.do(t, http.MethodPost, "/carts", "", ""), http.StatusCreated, "application/json")
+		gone := "There is no cart " + created.CartID.String() + "."
+		for _, op := range []struct{ method, path, body string }{
+			{http.MethodGet, cart, ""},
+			{http.MethodDelete, cart, ""},
+			{http.MethodPost, cart + "/items", `{"productId":"sku-2","quantity":1,"unitPrice":1}`},
+			{http.MethodPatch, item, `{"quantity":2}`},
+			{http.MethodDelete, item, ""},
+		} {
+			d := isProblem(t, other.do(t, op.method, op.path, "application/json", op.body), http.StatusNotFound)
+			require.Equal(t, gone, d.Detail, "%s %s", op.method, op.path)
+		}
+
+		after := decode[endpoint.Cart](t, s.do(t, http.MethodGet, cart, "", ""), http.StatusOK, "application/json")
+		require.Equal(t, before, after)
+
+		s.stop(t)
+	})
+}
+
+func TestInit_answers_a_token_without_a_subject_with_401(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
+			return initWith(ctx, setup, inMemory)
+		})
+		cart := "/carts/" + decode[endpoint.Cart](t, s.do(t, http.MethodPost, "/carts", "", ""), http.StatusCreated, "application/json").CartID.String()
+		item := cart + "/items/" + uuid.NewString()
+
+		nobody := s.as(s.idp.token(t, "", endpoint.ScopeWrite))
+		for _, op := range []struct{ method, path, body string }{
+			{http.MethodPost, "/carts", ""},
+			{http.MethodGet, cart, ""},
+			{http.MethodDelete, cart, ""},
+			{http.MethodPost, cart + "/items", `{"productId":"sku-1","quantity":1,"unitPrice":1}`},
+			{http.MethodPatch, item, `{"quantity":1}`},
+			{http.MethodDelete, item, ""},
+		} {
+			r := nobody.do(t, op.method, op.path, "application/json", op.body)
+			isProblem(t, r, http.StatusUnauthorized)
+			require.Equal(t, `Bearer error="invalid_token"`, r.header.Get("WWW-Authenticate"), "%s %s", op.method, op.path)
+		}
+
+		decode[endpoint.Cart](t, s.do(t, http.MethodGet, cart, "", ""), http.StatusOK, "application/json")
+
+		s.stop(t)
+	})
+}
+
 func TestInit_answers_a_token_it_has_no_keys_for_with_503(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
 			return initWith(ctx, setup, inMemory)
 		})
 
-		// The key set is down before the service has fetched a key, so it
-		// can't tell whether the token is valid: an outage, not a 401.
 		s.idp.setDown(true)
 		r := s.do(t, http.MethodPost, "/carts", "", "")
 		d := isProblem(t, r, http.StatusServiceUnavailable)
@@ -411,8 +422,6 @@ func TestInit_answers_a_token_it_has_no_keys_for_with_503(t *testing.T) {
 		require.Empty(t, r.header.Get("WWW-Authenticate"))
 		require.NotContains(t, string(r.body), idpHost)
 
-		// Once the key set is back, the next token past the Verifier's
-		// MinRefreshInterval fetches it, and is served.
 		s.idp.setDown(false)
 		time.Sleep(time.Minute)
 		decode[endpoint.Cart](t, s.do(t, http.MethodPost, "/carts", "", ""), http.StatusCreated, "application/json")
@@ -421,28 +430,27 @@ func TestInit_answers_a_token_it_has_no_keys_for_with_503(t *testing.T) {
 	})
 }
 
-// failingStore is an endpoint.Store whose every method fails with err.
 type failingStore struct{ err error }
 
-func (f failingStore) CreateCart(context.Context) (endpoint.Cart, error) {
+func (f failingStore) CreateCart(context.Context, string) (endpoint.Cart, error) {
 	return endpoint.Cart{}, f.err
 }
 
-func (f failingStore) GetCart(context.Context, uuid.UUID) (endpoint.Cart, error) {
+func (f failingStore) GetCart(context.Context, string, uuid.UUID) (endpoint.Cart, error) {
 	return endpoint.Cart{}, f.err
 }
 
-func (f failingStore) DeleteCart(context.Context, uuid.UUID) error { return f.err }
+func (f failingStore) DeleteCart(context.Context, string, uuid.UUID) error { return f.err }
 
-func (f failingStore) AddItem(context.Context, uuid.UUID, endpoint.AddItemRequest) (endpoint.CartItem, error) {
+func (f failingStore) AddItem(context.Context, string, uuid.UUID, endpoint.AddItemRequest) (endpoint.CartItem, error) {
 	return endpoint.CartItem{}, f.err
 }
 
-func (f failingStore) UpdateItem(context.Context, uuid.UUID, uuid.UUID, int) (endpoint.CartItem, error) {
+func (f failingStore) UpdateItem(context.Context, string, uuid.UUID, uuid.UUID, int) (endpoint.CartItem, error) {
 	return endpoint.CartItem{}, f.err
 }
 
-func (f failingStore) RemoveItem(context.Context, uuid.UUID, uuid.UUID) error { return f.err }
+func (f failingStore) RemoveItem(context.Context, string, uuid.UUID, uuid.UUID) error { return f.err }
 
 func TestInit_answers_a_failure_without_its_text(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -466,8 +474,6 @@ func TestInit_dials_Postgres_through_the_Host(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s := start(t, Init)
 
-		// The database's name reaches the Host's Dial unresolved: nothing
-		// resolves db.internal, and the Host's listener accepts it.
 		db, err := s.h.Listen("tcp", dbHost)
 		require.NoError(t, err)
 		var wg sync.WaitGroup
@@ -476,8 +482,6 @@ func TestInit_dials_Postgres_through_the_Host(t *testing.T) {
 			if err != nil {
 				return
 			}
-			// Hang up before the startup message is answered, so the
-			// request fails, and the catch-all answers it.
 			_ = conn.Close()
 		})
 
@@ -534,7 +538,6 @@ func TestInit_serves_its_document(t *testing.T) {
 		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
 			return initWith(ctx, setup, inMemory)
 		})
-		// The document is public: it is served without a token.
 		r := s.as("").do(t, http.MethodGet, "/openapi.json", "", "")
 		require.Equal(t, http.StatusOK, r.code)
 		require.Equal(t, "application/json", r.header.Get("Content-Type"))
@@ -556,18 +559,10 @@ func TestInit_serves_its_document(t *testing.T) {
 	})
 }
 
-// oas32 is the directory of the OpenAPI Initiative's 3.2 schema-base, with
-// the schema, the dialect and the meta-schema it refers to, which
-// openapi/v3's tests keep. The shoppingcart's module replaces humus with the
-// one in the same commit, so the files are always beside it.
 var oas32 = filepath.Join("..", "..", "..", "openapi", "v3", "testdata", "oas3.2")
 
-// schemaBaseID is the $id of the 3.2 schema-base, which checks each Schema
-// Object against the 3.2 dialect too.
 const schemaBaseID = "https://spec.openapis.org/oas/3.2/schema-base/2025-09-17"
 
-// validate validates doc against the 3.2 schema-base, reading nothing from
-// the network.
 func validate(doc []byte) error {
 	files, err := filepath.Glob(filepath.Join(oas32, "*.json"))
 	if err != nil {
