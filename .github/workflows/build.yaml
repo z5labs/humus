@@ -792,8 +792,8 @@ jobs:
             path: ${{ steps.go-cache.outputs.path }}
 
   # The databases walkthrough's tests behind the testcontainers build tag run
-  # against PostgreSQL in a container. The ruleset doesn't require this job,
-  # and Build doesn't wait on it; Vet the testcontainers tests vets them.
+  # against k3s and PostgreSQL in containers. The ruleset doesn't require this
+  # job, and Build doesn't wait on it; Vet the testcontainers tests vets them.
   databases-testcontainers:
     name: Databases walkthrough (testcontainers)
     runs-on: ubuntu-latest
