@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - serviceaccount.yaml
+  - deployment.yaml
+  - poddisruptionbudget.yaml
+configMapGenerator:
+  - name: orderstatus
+    literals:
+      - KAFKA_BROKERS=kafka:9093
+      - KAFKA_GROUP_ID=orderstatus
+      - KAFKA_EVENTS_TOPIC=orders.events
+      - KAFKA_STATUS_TOPIC=orders.status
+      - KAFKA_RETRY_TOPIC=orders.retry
+      - KAFKA_DEAD_LETTER_TOPIC=orders.dlq
+      - KAFKA_TLS_CA_FILE=/etc/orderstatus/kafka/ca.crt
+      - KAFKA_TLS_CERT_FILE=/etc/orderstatus/kafka/tls.pem
+      - RETRY_ATTEMPTS=10
+      - RETRY_MIN_DELAY=1s
+      - RETRY_MAX_DELAY=5m
+      - POSTGRES_URL=postgres://orderstatus@postgres:5432/orders
+      - POSTGRES_PASSWORD_FILE=/etc/orderstatus/postgres/password
+      - POSTGRES_TLS_CA_FILE=/etc/orderstatus/postgres/ca.crt
+      - PROBES_ADDR=:8443
+      - PROBES_TLS_PEM_FILE=/etc/orderstatus/probes/tls.pem
+      - OTEL_SERVICE_NAME=orderstatus
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317

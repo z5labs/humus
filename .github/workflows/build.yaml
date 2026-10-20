@@ -658,6 +658,26 @@ jobs:
             key: ${{ steps.go-cache.outputs.key }}
             path: ${{ steps.go-cache.outputs.path }}
 
+  # The order status walkthrough's image, built from its Dockerfile with the
+  # repository as the context, since its module replaces humus and
+  # queue/kafka with paths under ../.., and its kustomization, rendered. The
+  # ruleset doesn't require this job, and Build doesn't wait on it.
+  orderstatus-kind:
+    name: Order status walkthrough (kind)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+        - name: Checkout
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+        - name: Build the image
+          run: docker build --file example/orderstatus/Dockerfile --tag orderstatus .
+
+        - name: Render the kustomization
+          run: kubectl kustomize example/orderstatus/deploy
+
   # The mailer walkthrough's tests behind the testcontainers build tag run
   # the shared cases against RabbitMQ and WireMock in containers. The ruleset
   # doesn't require this job, and Build doesn't wait on it; Vet the
