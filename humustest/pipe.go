@@ -138,6 +138,11 @@ func (p *pipeEnd) Write(b []byte) (int, error) {
 			n += k
 			s.notifyLocked()
 			s.mu.Unlock()
+			// Once every byte is buffered, the Write has succeeded, even
+			// if the peer reads them and closes before it returns.
+			if len(b) == 0 {
+				return n, nil
+			}
 			continue
 		}
 		changed := s.changed
