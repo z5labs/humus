@@ -9,6 +9,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -36,8 +37,13 @@ type Server struct {
 	watchInterval time.Duration
 }
 
-func New(st Store, watchInterval time.Duration) *Server {
-	return &Server{store: st, watchInterval: watchInterval}
+var ErrWatchInterval = errors.New("watch interval isn't positive")
+
+func New(st Store, watchInterval time.Duration) (*Server, error) {
+	if watchInterval <= 0 {
+		return nil, fmt.Errorf("%w: %s", ErrWatchInterval, watchInterval)
+	}
+	return &Server{store: st, watchInterval: watchInterval}, nil
 }
 
 func (s *Server) OpenAccount(ctx context.Context, req *ledgerpb.OpenAccountRequest) (*ledgerpb.OpenAccountResponse, error) {

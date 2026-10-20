@@ -147,7 +147,9 @@ func serve(t *testing.T, st server.Store) ledgerpb.LedgerClient {
 	srv := grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{
 		Certificates: []tls.Certificate{ca.Issue(t, "ledger").TLS()},
 	})))
-	ledgerpb.RegisterLedgerServer(srv, server.New(st, watchInterval))
+	svc, err := server.New(st, watchInterval)
+	require.NoError(t, err)
+	ledgerpb.RegisterLedgerServer(srv, svc)
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(l) }()
 	t.Cleanup(func() {
@@ -199,6 +201,13 @@ func open(t *testing.T, c ledgerpb.LedgerClient, ids ...string) {
 	for _, id := range ids {
 		_, err := c.OpenAccount(t.Context(), &ledgerpb.OpenAccountRequest{AccountId: id})
 		require.NoError(t, err)
+	}
+}
+
+func TestNew_refuses_a_watch_interval_that_isnt_positive(t *testing.T) {
+	for _, interval := range []time.Duration{0, -time.Second} {
+		_, err := server.New(newFakeStore(), interval)
+		require.ErrorIs(t, err, server.ErrWatchInterval, interval)
 	}
 }
 
