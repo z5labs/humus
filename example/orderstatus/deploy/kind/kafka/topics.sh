@@ -24,3 +24,6 @@ acl orderstatus --operation Write --topic orders.status --topic orders.retry --t
 acl cases --operation Write --topic orders.events
 acl cases --operation Read --topic orders.status --topic orders.retry --topic orders.dlq
 acl cases --operation Describe --group orderstatus
+
+acl otel-collector --operation Describe --group orderstatus
+acl otel-collector --operation Describe --operation DescribeConfigs --topic orders.events --topic orders.retry
