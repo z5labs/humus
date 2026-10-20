@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: databases
+resources:
+  - crd.yaml
+  - namespace.yaml
+  - serviceaccount.yaml
+  - clusterrole.yaml
+  - clusterrolebinding.yaml
+  - role.yaml
+  - rolebinding.yaml
+  - deployment.yaml
+  - poddisruptionbudget.yaml
+configMapGenerator:
+  - name: databases
+    literals:
+      - CONTROLLER_NAME=databases-controller
+      - POSTGRES_ADMIN_DSN_FILE=/etc/databases/postgres/dsn
+      - POSTGRES_HOST=postgres.databases.svc
+      - POSTGRES_PORT=5432
+      - PROBES_ADDR=:8443
+      - PROBES_TLS_PEM_FILE=/etc/databases/probes/tls.pem
+      - OTEL_SERVICE_NAME=databases
