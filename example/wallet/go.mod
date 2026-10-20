@@ -71,6 +71,8 @@ require (
 	github.com/tklauser/numcpus v0.12.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	github.com/z5labs/bedrock v0.25.0 // indirect
+	github.com/z5labs/bedrock/circuit v0.25.0 // indirect
+	github.com/z5labs/bedrock/retry v0.25.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.72.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0 // indirect
