@@ -38,12 +38,12 @@ import (
 const maxBodyBytes = 64 << 10
 
 func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	return initWith(ctx, s, openPostgres)
+	return InitWith(ctx, s, openPostgres)
 }
 
-type openStore func(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (store endpoint.Store, ping func(context.Context) error, err error)
+type OpenStore func(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (store endpoint.Store, ping func(context.Context) error, err error)
 
-func initWith(ctx context.Context, s *humus.Setup, open openStore) ([]humus.Service, error) {
+func InitWith(ctx context.Context, s *humus.Setup, open OpenStore) ([]humus.Service, error) {
 	settings, err := readSettings(ctx, s)
 	if err != nil {
 		return nil, err
