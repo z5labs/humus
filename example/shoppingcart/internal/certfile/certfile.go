@@ -54,14 +54,22 @@ type pair struct {
 
 func (f *files) certificate() *tls.Certificate {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	if time.Since(f.checked) >= interval {
-		f.checked = time.Now()
-		if p, err := f.read(f.last); err == nil {
-			f.last = p
-		}
+	last := f.last
+	if time.Since(f.checked) < interval {
+		f.mu.Unlock()
+		return last.cert
 	}
-	return f.last.cert
+	f.checked = time.Now()
+	f.mu.Unlock()
+
+	p, err := f.read(last)
+	if err != nil {
+		return last.cert
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.last = p
+	return p.cert
 }
 
 func (f *files) read(last *pair) (*pair, error) {
