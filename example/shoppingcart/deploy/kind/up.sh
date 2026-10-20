@@ -87,7 +87,7 @@ configmap() {
 }
 
 {
-  kubectl kustomize "$dir"
+  kubectl kustomize --load-restrictor LoadRestrictionsNone "$dir"
   echo ---
   tls cart-tls cart
   echo ---

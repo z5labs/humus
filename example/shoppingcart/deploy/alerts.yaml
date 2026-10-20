@@ -1,0 +1,317 @@
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: shoppingcart
+    folder: Shoppingcart
+    interval: 1m
+    rules:
+      - uid: cart-errors
+        title: CartErrors
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: ((sum(rate(http_server_request_duration_count{job="cart", http_response_status_code=~"5.."}[5m])) or vector(0)) / sum(rate(http_server_request_duration_count{job="cart"}[5m])) >= 0) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.01]
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: The cart has answered 5xx to {{ humanizePercentage $values.A.Value }} of its requests for 10 minutes.
+          description: Look at the cart's logs and traces for the failing operations, and at the catalog's breaker and the cart's database.
+      - uid: cart-slow
+        title: CartSlow
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: (histogram_quantile(0.99, sum by (le) (rate(http_server_request_duration_bucket{job="cart"}[5m]))) >= 0) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [1]
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: The cart's p99 latency has been {{ $values.A.Value }}s for 10 minutes.
+          description: Look at the cart's slowest traces to see which span takes the time, the catalog's, the key set's or the database's.
+      - uid: catalog-errors
+        title: CatalogErrors
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: ((sum(rate(http_server_request_duration_count{job="catalog", http_response_status_code=~"5.."}[5m])) or vector(0)) / sum(rate(http_server_request_duration_count{job="catalog"}[5m])) >= 0) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.01]
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: The catalog has answered 5xx to {{ humanizePercentage $values.A.Value }} of its requests for 10 minutes.
+          description: Look at the catalog's logs and traces for the failing operations, and at its database.
+      - uid: cart-breaker-open
+        title: CartBreakerOpen
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: max by (server_address) (humus_circuit_state{job="cart", otel_scope_name="github.com/z5labs/humus/httpclient", humus_circuit_state="open"}) or on () vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: page
+        annotations:
+          summary: The cart's breaker for {{ $labels.server_address }} is open.
+          description: The cart doesn't call that dependency while the breaker is open, and answers 503. Look at the dependency.
+      - uid: cart-breaker-opened
+        title: CartBreakerOpened
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: (sum by (server_address) (increase(humus_circuit_transitions{job="cart", otel_scope_name="github.com/z5labs/humus/httpclient", humus_circuit_state="open"}[5m]) or (humus_circuit_transitions{job="cart", otel_scope_name="github.com/z5labs/humus/httpclient", humus_circuit_state="open"} unless humus_circuit_transitions{job="cart", otel_scope_name="github.com/z5labs/humus/httpclient", humus_circuit_state="open"} offset 5m))) or on () vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: ticket
+        annotations:
+          summary: The cart's breaker for {{ $labels.server_address }} opened in the last 5 minutes.
+          description: Calls to that dependency failed often enough to open the breaker, however briefly. Look at the dependency's errors and latency on the dashboard.
+      - uid: cart-retries-throttled
+        title: CartRetriesThrottled
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: (sum by (server_address) (increase(humus_retry_decisions{job="cart", otel_scope_name="github.com/z5labs/humus/httpclient", humus_retry_decision="throttled"}[5m]) or (humus_retry_decisions{job="cart", otel_scope_name="github.com/z5labs/humus/httpclient", humus_retry_decision="throttled"} unless humus_retry_decisions{job="cart", otel_scope_name="github.com/z5labs/humus/httpclient", humus_retry_decision="throttled"} offset 5m))) or on () vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: page
+        annotations:
+          summary: The cart's retries to {{ $labels.server_address }} were throttled in the last 5 minutes.
+          description: The client's retry budget ran out, so its calls failed without another attempt. Look at that dependency.
+      - uid: cart-unavailable
+        title: CartUnavailable
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: min(k8s_deployment_available{k8s_namespace_name="shoppingcart", k8s_deployment_name="cart"}) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: The cart's Deployment has had no available replica for 5 minutes.
+          description: Nothing answers the cart's requests. Look at the Deployment's pods, their events and their logs.
+      - uid: catalog-unavailable
+        title: CatalogUnavailable
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: min(k8s_deployment_available{k8s_namespace_name="shoppingcart", k8s_deployment_name="catalog"}) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: The catalog's Deployment has had no available replica for 5 minutes.
+          description: The cart can't price an item while the catalog is down. Look at the Deployment's pods, their events and their logs.
+      - uid: cart-crash-looping
+        title: CartCrashLooping
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 1200
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: max(delta(k8s_container_restarts{k8s_namespace_name="shoppingcart", k8s_container_name="cart"}[15m])) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [3]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: page
+        annotations:
+          summary: A cart container restarted more than 3 times in 15 minutes.
+          description: Look at the previous container's logs, and at the pod's events.
+      - uid: catalog-crash-looping
+        title: CatalogCrashLooping
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 1200
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: max(delta(k8s_container_restarts{k8s_namespace_name="shoppingcart", k8s_container_name="catalog"}[15m])) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [3]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: page
+        annotations:
+          summary: A catalog container restarted more than 3 times in 15 minutes.
+          description: Look at the previous container's logs, and at the pod's events.
