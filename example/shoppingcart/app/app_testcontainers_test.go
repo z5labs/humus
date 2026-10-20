@@ -143,14 +143,14 @@ type started struct {
 	status <-chan bedrock.ExitStatus
 }
 
-func startApp(t *testing.T, name string, init func(context.Context, *humus.Setup) ([]humus.Service, error), envs ...map[string]string) started {
+func startApp(t *testing.T, name string, init func(context.Context, *humus.Setup) ([]humus.Service, error), faults humus.Option, envs ...map[string]string) started {
 	t.Helper()
 	env := map[string]string{}
 	for _, e := range envs {
 		maps.Copy(env, e)
 	}
 	p, status := humustest.Start(t, init,
-		humustest.WithApp(httpserver.Defaults(), humus.WithHost(humus.OSHost()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		humustest.WithApp(httpserver.Defaults(), humus.WithHost(humus.OSHost()), humus.WithTelemetry(telemetry.NoopBuilder), faults),
 		humustest.WithEnv(env),
 	)
 	return started{
@@ -210,14 +210,15 @@ func TestInit_passes_the_shared_cases_against_PostgreSQL_and_WireMock(t *testing
 		"JWT_ISSUER":   issuer,
 		"JWT_AUDIENCE": audience,
 	}
-	catalog := startApp(t, "catalog", catalogapp.Init, tokens, map[string]string{
+	catalog := startApp(t, "catalog", catalogapp.Init, humus.WithFaults(catalogapp.Faults), tokens, map[string]string{
 		"ADDR":              catalogAddr,
 		"TLS_CERT_FILE":     writeFile(t, dir, "catalog.crt", catalogCert),
 		"TLS_KEY_FILE":      writeFile(t, dir, "catalog.key", catalogKey),
 		"CLIENT_CA_FILE":    caFile,
 		"DATABASE_URL_FILE": writeFile(t, dir, "catalog-database-url", []byte(catalogDB.AppURL+"\n")),
 	})
-	cart := startApp(t, "cart", Init, tokens, map[string]string{
+	cart := startApp(t, "cart", Init, humus.WithFaults(Faults), tokens, map[string]string{
+		"FAULT_TRUST_SCOPE":        trustScope,
 		"ADDR":                     cartAddr,
 		"TLS_CERT_FILE":            writeFile(t, dir, "cart.crt", cartCert),
 		"TLS_KEY_FILE":             writeFile(t, dir, "cart.key", cartKey),
