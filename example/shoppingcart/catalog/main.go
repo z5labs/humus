@@ -13,5 +13,5 @@ import (
 )
 
 func main() {
-	httpserver.Main(app.Init, humus.WithFaults(app.Faults))
+	httpserver.Main(app.Init, humus.WithTelemetry(app.BuildTelemetry), humus.WithFaults(app.Faults))
 }

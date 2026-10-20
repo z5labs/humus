@@ -172,7 +172,7 @@ func TestInit_strips_a_scenario_it_does_not_trust(t *testing.T) {
 	t.Run("from a token without the trust scope", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			tel := humustest.NewTelemetry()
-			s := startShoppingcartWith(t, map[string]string{"FAULT_TRUST_SCOPE": trustScope}, tel.Builder())
+			s := startShoppingcartWith(t, map[string]string{"FAULT_TRUST_SCOPE": trustScope}, tel.Builder(), telemetry.NoopBuilder)
 			s.stock(t)
 			token := s.token(t, endpoint.ScopeWrite)
 			cartID := s.createCart(t, token)
@@ -189,7 +189,7 @@ func TestInit_strips_a_scenario_it_does_not_trust(t *testing.T) {
 	t.Run("with no token", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			tel := humustest.NewTelemetry()
-			s := startShoppingcartWith(t, map[string]string{"FAULT_TRUST_SCOPE": trustScope}, tel.Builder())
+			s := startShoppingcartWith(t, map[string]string{"FAULT_TRUST_SCOPE": trustScope}, tel.Builder(), telemetry.NoopBuilder)
 			cartID := s.createCart(t, s.token(t, endpoint.ScopeWrite, trustScope))
 
 			a := s.addItem(t, cartID, "", abort(s.target.CatalogPoint))
@@ -204,7 +204,7 @@ func TestInit_strips_a_scenario_it_does_not_trust(t *testing.T) {
 func TestInit_trusts_no_scenario_without_a_trust_scope(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		tel := humustest.NewTelemetry()
-		s := startShoppingcartWith(t, nil, tel.Builder())
+		s := startShoppingcartWith(t, nil, tel.Builder(), telemetry.NoopBuilder)
 		s.stock(t)
 		token := s.token(t, endpoint.ScopeWrite, trustScope)
 		cartID := s.createCart(t, token)
