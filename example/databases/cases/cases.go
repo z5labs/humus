@@ -16,6 +16,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/fit"
+	"go.opentelemetry.io/otel/baggage"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,12 +27,20 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+
+	"github.com/z5labs/humus/fault/jsonscenario"
 )
 
 const (
 	retainPolicy = "Retain"
 	deletePolicy = "Delete"
 	poll         = 250 * time.Millisecond
+)
+
+const (
+	finalizer = "postgres.example.com/finalizer"
+	slowBy    = 2 * time.Second
+	held      = 3 * time.Second
 )
 
 var databases = schema.GroupVersionResource{Group: "postgres.example.com", Version: "v1alpha1", Resource: "databases"}
@@ -54,6 +64,10 @@ var All = []Case{
 	{Name: "Rotation", Run: Rotation},
 	{Name: "Deletion", Run: Deletion},
 	{Name: "Rules", Run: Rules},
+	{Name: "PostgreSQLDown", Run: PostgreSQLDown},
+	{Name: "SecretApplyFailing", Run: SecretApplyFailing},
+	{Name: "SlowPostgreSQL", Run: SlowPostgreSQL},
+	{Name: "DropFailing", Run: DropFailing},
 }
 
 func Provisioning(t testing.TB, target Target) {
@@ -136,6 +150,61 @@ func Rules(t testing.TB, target Target) {
 	require.ErrorContains(t, err, "name is immutable")
 }
 
+func PostgreSQLDown(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	c := newCluster(ctx, t, target)
+
+	c.rehearse(ctx, t, "orders", databaseName(), deletePolicy, abort("postgresql:*"))
+	c.awaitCondition(ctx, t, "orders", metav1.ConditionFalse, "PostgresUnavailable")
+
+	c.unannotate(ctx, t, "orders")
+	c.awaitReady(ctx, t, "orders")
+	requireLogsIn(ctx, t, target, c.secret(ctx, t, "orders"))
+}
+
+func SecretApplyFailing(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	c := newCluster(ctx, t, target)
+
+	c.rehearse(ctx, t, "orders", databaseName(), deletePolicy, abort("kube:secrets:patch"))
+	c.awaitCondition(ctx, t, "orders", metav1.ConditionFalse, "SecretApplyFailed")
+
+	c.unannotate(ctx, t, "orders")
+	c.awaitReady(ctx, t, "orders")
+	requireLogsIn(ctx, t, target, c.secret(ctx, t, "orders"))
+}
+
+func SlowPostgreSQL(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	c := newCluster(ctx, t, target)
+
+	c.rehearse(ctx, t, "orders", databaseName(), deletePolicy, delay("postgresql:*", slowBy))
+	c.awaitReady(ctx, t, "orders")
+	requireLogsIn(ctx, t, target, c.secret(ctx, t, "orders"))
+}
+
+func DropFailing(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	c := newCluster(ctx, t, target)
+	name := databaseName()
+
+	c.rehearse(ctx, t, "orders", name, deletePolicy, abort("postgresql:drop"))
+	c.awaitReady(ctx, t, "orders")
+	err := c.dynamic.Resource(databases).Namespace(c.namespace).Delete(ctx, "orders", metav1.DeleteOptions{})
+	require.NoError(t, err)
+
+	c.holds(ctx, t, "orders")
+	role, database := exists(ctx, t, target, name)
+	require.True(t, role, "the role of a Database whose drop fails")
+	require.True(t, database, "the database of a Database whose drop fails")
+
+	c.unannotate(ctx, t, "orders")
+	c.awaitGone(ctx, t, "orders")
+	role, database = exists(ctx, t, target, name)
+	require.False(t, role, "the role of a Database whose drop recovered")
+	require.False(t, database, "the database of a Database whose drop recovered")
+}
+
 func bounded(t testing.TB, target Target) context.Context {
 	require.Positive(t, target.Timeout, "Target.Timeout")
 	ctx, cancel := context.WithTimeout(t.Context(), target.Timeout)
@@ -157,6 +226,7 @@ func database(name, dbName, policy string) *unstructured.Unstructured {
 }
 
 type cluster struct {
+	target    Target
 	kube      kubernetes.Interface
 	dynamic   dynamic.Interface
 	namespace string
@@ -180,7 +250,7 @@ func newCluster(ctx context.Context, t testing.TB, target Target) cluster {
 		defer cancel()
 		deleteNamespace(ctx, t, kc, ns.Name)
 	})
-	return cluster{kube: kc, dynamic: dc, namespace: ns.Name}
+	return cluster{target: target, kube: kc, dynamic: dc, namespace: ns.Name}
 }
 
 func deleteNamespace(ctx context.Context, t testing.TB, kc kubernetes.Interface, name string) {
@@ -207,7 +277,16 @@ func (c cluster) create(ctx context.Context, t testing.TB, name, dbName, policy 
 
 func (c cluster) awaitReady(ctx context.Context, t testing.TB, name string) {
 	t.Helper()
-	await(ctx, t, "the Database "+c.namespace+"/"+name+" to be Ready", func(ctx context.Context) (bool, error) {
+	c.awaitCondition(ctx, t, name, metav1.ConditionTrue, "")
+}
+
+func (c cluster) awaitCondition(ctx context.Context, t testing.TB, name string, status metav1.ConditionStatus, reason string) {
+	t.Helper()
+	what := "the Database " + c.namespace + "/" + name + " to be Ready " + string(status)
+	if reason != "" {
+		what += " with " + reason
+	}
+	await(ctx, t, what, func(ctx context.Context) (bool, error) {
 		db, err := c.dynamic.Resource(databases).Namespace(c.namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return false, err
@@ -219,11 +298,67 @@ func (c cluster) awaitReady(ctx context.Context, t testing.TB, name string) {
 		for _, cond := range conditions {
 			m, ok := cond.(map[string]any)
 			if ok && m["type"] == "Ready" {
-				return m["status"] == string(metav1.ConditionTrue), nil
+				return m["status"] == string(status) && (reason == "" || m["reason"] == reason), nil
 			}
 		}
 		return false, nil
 	})
+}
+
+func (c cluster) rehearse(ctx context.Context, t testing.TB, name, dbName, policy string, rules ...fit.Rule) {
+	t.Helper()
+	require.NotEmpty(t, c.target.Annotation, "Target.Annotation")
+	require.NotEmpty(t, c.target.ScenarioKey, "Target.ScenarioKey")
+	codec, err := jsonscenario.New(c.target.ScenarioKey)
+	require.NoError(t, err, "Target.ScenarioKey")
+	b, err := codec.Encode(baggage.Baggage{}, fit.Scenario{Rules: rules})
+	require.NoError(t, err)
+
+	db := database(name, dbName, policy)
+	db.SetAnnotations(map[string]string{c.target.Annotation: b.String()})
+	_, err = c.dynamic.Resource(databases).Namespace(c.namespace).Create(ctx, db, metav1.CreateOptions{})
+	require.NoError(t, err, "creating the Database %s/%s", c.namespace, name)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), c.target.Timeout)
+		defer cancel()
+		c.unannotate(ctx, t, name)
+	})
+}
+
+func (c cluster) unannotate(ctx context.Context, t testing.TB, name string) {
+	t.Helper()
+	patch := `{"metadata":{"annotations":{"` + c.target.Annotation + `":null}}}`
+	_, err := c.dynamic.Resource(databases).Namespace(c.namespace).Patch(ctx, name, types.MergePatchType, []byte(patch), metav1.PatchOptions{})
+	if apierrors.IsNotFound(err) {
+		return
+	}
+	require.NoError(t, err, "removing the scenario from the Database %s/%s", c.namespace, name)
+}
+
+func (c cluster) holds(ctx context.Context, t testing.TB, name string) {
+	t.Helper()
+	until := time.After(held)
+	for {
+		db, err := c.dynamic.Resource(databases).Namespace(c.namespace).Get(ctx, name, metav1.GetOptions{})
+		require.NoError(t, err, "the Database %s/%s whose drop fails", c.namespace, name)
+		require.NotNil(t, db.GetDeletionTimestamp(), "the Database %s/%s isn't being deleted", c.namespace, name)
+		require.Contains(t, db.GetFinalizers(), finalizer, "the finalizers of the Database %s/%s", c.namespace, name)
+		select {
+		case <-ctx.Done():
+			require.FailNowf(t, "timed out", "holding the Database %s/%s: %v", c.namespace, name, context.Cause(ctx))
+		case <-until:
+			return
+		case <-time.After(poll):
+		}
+	}
+}
+
+func abort(point string) fit.Rule {
+	return fit.Rule{Point: point, Fault: fit.Fault{Abort: true}}
+}
+
+func delay(point string, d time.Duration) fit.Rule {
+	return fit.Rule{Point: point, Fault: fit.Fault{Delay: d}}
 }
 
 func (c cluster) awaitGone(ctx context.Context, t testing.TB, name string) {
