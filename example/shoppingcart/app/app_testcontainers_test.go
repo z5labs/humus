@@ -8,8 +8,6 @@
 package app
 
 import (
-	"context"
-	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
 	"io"
@@ -23,35 +21,26 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/example/shoppingcart/endpoint"
+	"github.com/z5labs/humus/example/shoppingcart/internal/postgrestest"
 	"github.com/z5labs/humus/httpserver/httpservertest"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/telemetry"
 )
 
-const postgresImage = "docker.io/library/postgres:18.0"
-
 const waitLimit = 30 * time.Second
+
+func TestMain(m *testing.M) {
+	postgrestest.Run(m)
+}
 
 func startPostgres(t *testing.T) string {
 	t.Helper()
-	c, err := tcpostgres.Run(t.Context(), postgresImage,
-		tcpostgres.WithDatabase("carts"),
-		tcpostgres.WithUsername("carts"),
-		tcpostgres.WithPassword(rand.Text()),
-		tcpostgres.WithInitScripts(filepath.Join("..", "database", "schema.sql")),
-		tcpostgres.BasicWaitStrategies(),
-	)
-	if c != nil {
-		t.Cleanup(func() { _ = c.Terminate(context.Background()) })
-	}
-	require.NoError(t, err, "starting Postgres in a container")
-	url, err := c.ConnectionString(t.Context(), "sslmode=disable")
-	require.NoError(t, err)
-	return url
+	db := postgrestest.NewDatabase(t)
+	db.Migrated(t, "carts")
+	return db.AppURL
 }
 
 func waitListening(t *testing.T, addr string) {

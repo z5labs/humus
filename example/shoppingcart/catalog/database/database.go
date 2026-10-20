@@ -8,6 +8,7 @@ package database
 
 import (
 	"context"
+	"embed"
 	"errors"
 	"fmt"
 	"net"
@@ -18,6 +19,9 @@ import (
 
 	"github.com/z5labs/humus/example/shoppingcart/catalog/endpoint"
 )
+
+//go:embed migrations/*.sql
+var Migrations embed.FS
 
 type Store struct {
 	pool *pgxpool.Pool
