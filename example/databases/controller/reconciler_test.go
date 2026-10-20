@@ -32,6 +32,9 @@ type provision struct {
 type fakeAdmin struct {
 	provisions []provision
 	err        error
+	databases  map[string]bool
+	drops      []string
+	dropErr    error
 }
 
 func (a *fakeAdmin) Provision(_ context.Context, name, password string) error {
@@ -39,8 +42,13 @@ func (a *fakeAdmin) Provision(_ context.Context, name, password string) error {
 	return a.err
 }
 
-func (a *fakeAdmin) Drop(context.Context, string) error {
-	return errors.New("not expected")
+func (a *fakeAdmin) Drop(_ context.Context, name string) error {
+	a.drops = append(a.drops, name)
+	if a.dropErr != nil {
+		return a.dropErr
+	}
+	delete(a.databases, name)
+	return nil
 }
 
 func newDatabase() kube.Object[v1alpha1.DatabaseSpec, v1alpha1.DatabaseStatus] {
