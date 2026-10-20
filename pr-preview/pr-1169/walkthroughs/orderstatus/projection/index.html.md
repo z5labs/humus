@@ -204,10 +204,12 @@ func (e *TransitionError) Error() string {
 
 ## Storing an event and its status
 
-`Apply` stores the event and the folded status in one transaction. It locks
-the order's status row first, so two replicas racing for a partition during
-a rebalance can't both apply one event: the second insert conflicts, and is
-`ErrApplied`:
+`Apply` stores the event and the folded status in one transaction. It
+inserts the order's status row if it has none, then locks it, so two
+replicas storing one order take turns. An event already in `order_events`
+conflicts on its partition and offset, inserts nothing, and is `ErrApplied`,
+so two replicas racing for a partition during a rebalance can't both apply
+it:
 
 ```go
 var ErrApplied = errors.New("event applied already")
