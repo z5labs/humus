@@ -14,12 +14,15 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/z5labs/bedrock/fit"
+	"go.opentelemetry.io/otel/baggage"
 
 	"github.com/z5labs/humus/fault/jsonscenario"
 )
@@ -34,6 +37,12 @@ const (
 	malformed         = "malformed"
 	unknownType       = "unknown-type"
 	invalidTransition = "invalid-transition"
+	unavailable       = "unavailable"
+)
+
+const (
+	storePoint = "postgresql:orders"
+	slowBy     = time.Second
 )
 
 const (
@@ -75,6 +84,9 @@ var All = []Case{
 	{Name: "OutOfOrder", Run: OutOfOrder},
 	{Name: "ALateEvent", Run: ALateEvent},
 	{Name: "Rollout", Run: Rollout},
+	{Name: "SlowPostgreSQL", Run: SlowPostgreSQL},
+	{Name: "SlowStatusTopic", Run: SlowStatusTopic},
+	{Name: "PostgreSQLDown", Run: PostgreSQLDown},
 }
 
 func Projection(t testing.TB, target Target) {
@@ -237,6 +249,58 @@ func Rollout(t testing.TB, target Target) {
 	}
 }
 
+func SlowPostgreSQL(t testing.TB, target Target) {
+	ctx, r := begin(t, target)
+	order := newOrderID()
+	at := r.at(0)
+
+	r.produce(ctx, t, r.rehearse(t, event(order, placed, at), delay(storePoint, slowBy)))
+	got := r.settle(ctx, t)
+
+	require.Equal(t, []change{{OrderID: order, Status: placed, At: at}}, got.statuses(t, order))
+	require.Empty(t, got.deadLetters(order))
+	for _, rec := range of(got.status, order) {
+		require.False(t, r.carriesScenario(t, rec), "the status event carries the scenario")
+	}
+}
+
+func SlowStatusTopic(t testing.TB, target Target) {
+	ctx, r := begin(t, target)
+	order := newOrderID()
+	at := r.at(0)
+
+	r.produce(ctx, t, r.rehearse(t, event(order, placed, at), delay("kafka:"+target.StatusTopic, slowBy)))
+	got := r.settle(ctx, t)
+
+	require.Equal(t, []change{{OrderID: order, Status: placed, At: at}}, got.statuses(t, order))
+	require.Empty(t, got.deadLetters(order))
+}
+
+func PostgreSQLDown(t testing.TB, target Target) {
+	ctx, r := begin(t, target)
+	down, next := newOrderID(), newOrderID()
+
+	failing := r.produce(ctx, t, r.rehearse(t, event(down, placed, r.at(0)), abort(storePoint)))[0]
+	following := r.produceTo(ctx, t, failing.Partition, event(next, placed, r.at(0)))[0]
+	require.Greater(t, following.Offset, failing.Offset)
+	got := r.settle(ctx, t)
+
+	require.Empty(t, got.statuses(t, down))
+	dead := got.deadLetters(down)
+	requireDeadLetter(t, dead, failing, unavailable, target.RetryAttempts)
+	require.False(t, r.carriesScenario(t, dead[0]), "the dead letter carries the scenario")
+	retried := got.retried(down)
+	require.Len(t, retried, target.RetryAttempts-1)
+	for i, rec := range retried {
+		require.Equal(t, strconv.Itoa(i+1), header(rec, "retry.attempt"))
+		require.Equal(t, unavailable, header(rec, "retry.reason"))
+		require.True(t, r.carriesScenario(t, rec), "retried copy %d has no scenario", i+1)
+	}
+
+	require.Equal(t, []change{{OrderID: next, Status: placed, At: r.at(0)}}, got.statuses(t, next))
+	require.Empty(t, got.deadLetters(next))
+}
+
 func requireDeadLetter(t testing.TB, dead []*kgo.Record, source *kgo.Record, reason string, attempts int) {
 	t.Helper()
 	require.Len(t, dead, 1, "dead letters of %s", source.Key)
@@ -265,6 +329,37 @@ func header(rec *kgo.Record, key string) string {
 
 func hasHeader(rec *kgo.Record, key string) bool {
 	return slices.ContainsFunc(rec.Headers, func(h kgo.RecordHeader) bool { return h.Key == key })
+}
+
+func abort(point string) fit.Rule {
+	return fit.Rule{Point: point, Fault: fit.Fault{Abort: true}}
+}
+
+func delay(point string, d time.Duration) fit.Rule {
+	return fit.Rule{Point: point, Fault: fit.Fault{Delay: d}}
+}
+
+func (r *run) rehearse(t testing.TB, rec *kgo.Record, rules ...fit.Rule) *kgo.Record {
+	t.Helper()
+	require.NotEmpty(t, r.target.ScenarioKey, "Target.ScenarioKey")
+	b, err := r.target.Scenario.Encode(baggage.Baggage{}, fit.Scenario{Rules: rules})
+	require.NoError(t, err, "Target.Scenario")
+	require.NotEmpty(t, b.Member(r.target.ScenarioKey).Key(), "Target.Scenario does not write Target.ScenarioKey")
+	rec.Headers = append(rec.Headers, kgo.RecordHeader{Key: "baggage", Value: []byte(b.String())})
+	return rec
+}
+
+func (r *run) carriesScenario(t testing.TB, rec *kgo.Record) bool {
+	t.Helper()
+	var members []string
+	for _, h := range rec.Headers {
+		if h.Key == "baggage" {
+			members = append(members, string(h.Value))
+		}
+	}
+	b, err := baggage.Parse(strings.Join(members, ","))
+	require.NoError(t, err, "the baggage of %s", rec.Key)
+	return b.Member(r.target.ScenarioKey).Key() != ""
 }
 
 func newOrderID() string {

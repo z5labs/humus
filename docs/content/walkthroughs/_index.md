@@ -22,6 +22,10 @@ from that code.
 - [Mailer]({{< relref "walkthroughs/mailer" >}}): a RabbitMQ worker that
   sends the emails other services ask for through a provider's API, retries
   what fails for now after a delay, and dead-letters what never will.
+- [Order status processor]({{< relref "walkthroughs/orderstatus" >}}): a
+  Kafka processor that projects orders' events into their statuses in
+  PostgreSQL, produces each change of status, retries what fails for now
+  through a retry topic, and dead-letters what never will.
 
 ## The bar
 

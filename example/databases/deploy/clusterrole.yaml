@@ -1,0 +1,14 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: databases-controller
+rules:
+  - apiGroups: [postgres.example.com]
+    resources: [databases]
+    verbs: [get, list, watch, patch]
+  - apiGroups: [postgres.example.com]
+    resources: [databases/status]
+    verbs: [patch]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, watch, create, patch]

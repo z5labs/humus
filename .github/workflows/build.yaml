@@ -658,6 +658,73 @@ jobs:
             key: ${{ steps.go-cache.outputs.key }}
             path: ${{ steps.go-cache.outputs.path }}
 
+  # The order status walkthrough's image, built from its Dockerfile with the
+  # repository as the context, since its module replaces humus and
+  # queue/kafka with paths under ../.., and its base kustomization, rendered.
+  # up.sh then creates a kind cluster, loads the image and applies the kind
+  # overlay, with Kafka over mTLS with ACLs, its topics, and PostgreSQL over
+  # TLS, and the LGTM stack behind an OpenTelemetry Collector, and the
+  # processor's Deployment has to become ready. The tests behind the
+  # functional tag then run the shared cases against it, the failure
+  # injection cases included, as a client whose certificate up.sh issues, and
+  # find an order's trace, the processor's logs and metrics, the group's lag
+  # and the containers' restarts in the LGTM stack. They also show that
+  # Grafana loaded the alert rules and the dashboard, and that each rule
+  # evaluates without error. The ruleset doesn't require this job, and Build
+  # doesn't wait on it; Vet the functional tests vets them.
+  orderstatus-kind:
+    name: Order status walkthrough (kind)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: write
+      contents: read
+    steps:
+        - name: Checkout
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+          with:
+            go-version: '1.27.2'
+            cache: false
+
+        - id: go-cache
+          uses: ./.github/actions/restore-go-cache
+          with:
+            name: orderstatus-kind
+
+        - name: Build the image
+          run: docker build --file example/orderstatus/Dockerfile --tag orderstatus .
+
+        - name: Render the kustomization
+          run: kubectl kustomize example/orderstatus/deploy/base
+
+        - name: Bring the order status processor up on kind
+          run: example/orderstatus/deploy/kind/up.sh
+
+        - name: Wait for the order status processor's Deployment
+          run: kubectl --namespace orderstatus rollout status deployment/orderstatus --timeout 5m
+
+        - name: Run the shared cases against kind
+          run: go -C example/orderstatus test -count=1 -race -tags functional ./functional/
+
+        - name: Show the orderstatus namespace
+          if: ${{ failure() }}
+          run: |
+            kubectl --namespace orderstatus get all
+            kubectl --namespace orderstatus describe pods
+            kubectl --namespace orderstatus logs deployment/kafka --tail 200 || true
+            kubectl --namespace orderstatus logs job/kafka-topics --tail 200 || true
+            kubectl --namespace orderstatus logs deployment/postgres --tail 200 || true
+            kubectl --namespace orderstatus logs deployment/orderstatus --all-containers --tail 200 || true
+            kubectl --namespace orderstatus logs deployment/otel-collector --tail 200 || true
+
+        - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
+          uses: ./.github/actions/save-go-cache
+          with:
+            key: ${{ steps.go-cache.outputs.key }}
+            path: ${{ steps.go-cache.outputs.path }}
+
   # The mailer walkthrough's tests behind the testcontainers build tag run
   # the shared cases against RabbitMQ and WireMock in containers. The ruleset
   # doesn't require this job, and Build doesn't wait on it; Vet the
@@ -745,6 +812,109 @@ jobs:
             kubectl --namespace mailer logs deployment/rabbitmq --tail 200 || true
             kubectl --namespace mailer logs deployment/mailer --all-containers --tail 200 || true
             kubectl --namespace mailer logs deployment/otel-collector --tail 200 || true
+
+        - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
+          uses: ./.github/actions/save-go-cache
+          with:
+            key: ${{ steps.go-cache.outputs.key }}
+            path: ${{ steps.go-cache.outputs.path }}
+
+  # The databases walkthrough's tests behind the testcontainers build tag run
+  # against k3s and PostgreSQL in containers. The ruleset doesn't require this
+  # job, and Build doesn't wait on it; Vet the testcontainers tests vets them.
+  databases-testcontainers:
+    name: Databases walkthrough (testcontainers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: write
+      contents: read
+    steps:
+        - name: Checkout
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+          with:
+            go-version: '1.27.2'
+            cache: false
+
+        - id: go-cache
+          uses: ./.github/actions/restore-go-cache
+          with:
+            name: databases-testcontainers
+
+        - name: Test
+          run: go -C example/databases test -count=1 -race -tags testcontainers ./...
+
+        - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
+          uses: ./.github/actions/save-go-cache
+          with:
+            key: ${{ steps.go-cache.outputs.key }}
+            path: ${{ steps.go-cache.outputs.path }}
+
+  # The databases walkthrough's image, built from its Dockerfile with the
+  # repository as the context, since its module replaces humus and kube with
+  # paths under ../.., and its kustomization, rendered. up.sh then creates a
+  # kind cluster, generates PostgreSQL's admin password, Grafana's admin
+  # password and the probes' certificate, loads the image and applies the
+  # kind overlay, with PostgreSQL beside the controller, the cases' namespace
+  # prefix trusted, and the LGTM stack behind an OpenTelemetry Collector, and
+  # the controller's Deployment has to become ready. The Database beside
+  # up.sh is then checked against the CRD with a server-side dry run. The
+  # tests behind the functional tag then run the shared cases against it, the
+  # failure injection cases included, through the kind cluster's kubeconfig,
+  # and verify against the overlay's PostgreSQL with the admin password up.sh
+  # generates, and find a reconcile's trace, the controller's records, its
+  # humus.kube.controller.* instruments and the containers' restarts in the
+  # LGTM stack. The ruleset doesn't require this job, and Build doesn't wait
+  # on it; Vet the functional tests vets them.
+  databases-kind:
+    name: Databases walkthrough (kind)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: write
+      contents: read
+    steps:
+        - name: Checkout
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+          with:
+            go-version: '1.27.2'
+            cache: false
+
+        - id: go-cache
+          uses: ./.github/actions/restore-go-cache
+          with:
+            name: databases-kind
+
+        - name: Build the image
+          run: docker build --file example/databases/Dockerfile --tag databases .
+
+        - name: Render the kustomization
+          run: kubectl kustomize example/databases/deploy
+
+        - name: Bring the databases controller up on kind
+          run: example/databases/deploy/kind/up.sh
+
+        - name: Wait for the databases controller's Deployment
+          run: kubectl --namespace databases rollout status deployment/databases --timeout 5m
+
+        - name: Check the Database beside up.sh against the CRD
+          run: kubectl apply --dry-run=server --namespace default --filename example/databases/deploy/kind/database.yaml
+
+        - name: Run the shared cases against kind
+          run: go -C example/databases test -count=1 -race -tags functional ./functional/
+
+        - name: Show the databases namespace
+          if: ${{ failure() }}
+          run: |
+            kubectl --namespace databases get all
+            kubectl --namespace databases describe pods
+            kubectl --namespace databases logs deployment/postgres --tail 200 || true
+            kubectl --namespace databases logs deployment/databases --all-containers --tail 200 || true
+            kubectl --namespace databases logs deployment/otel-collector --tail 200 || true
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache
