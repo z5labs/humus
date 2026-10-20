@@ -26,6 +26,10 @@ from that code.
   Kafka processor that projects orders' events into their statuses in
   PostgreSQL, produces each change of status, retries what fails for now
   through a retry topic, and dead-letters what never will.
+- [Databases controller]({{< relref "walkthroughs/databases" >}}): a
+  Kubernetes controller that provisions a database and the role that owns it
+  in PostgreSQL for each `Database`, writes the role's credentials to a
+  Secret, and drops both on delete, as the `Database` says.
 
 ## The bar
 
