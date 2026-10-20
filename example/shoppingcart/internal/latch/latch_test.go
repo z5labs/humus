@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -89,22 +91,61 @@ func TestMonitor_passes_the_callers_context_to_its_check(t *testing.T) {
 	require.Equal(t, "probe", got)
 }
 
-func TestMonitor_is_safe_for_concurrent_probes(t *testing.T) {
-	c := &check{err: errors.New("the database is down")}
-	m := latch.New(c.run)
+func TestMonitor_runs_one_check_at_a_time_and_is_healthy_to_every_probe_waiting_on_one_that_succeeds(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		var running, calls atomic.Int64
+		var overlapped atomic.Bool
+		m := latch.New(func(context.Context) error {
+			calls.Add(1)
+			if running.Add(1) > 1 {
+				overlapped.Store(true)
+			}
+			defer running.Add(-1)
+			<-release
+			return nil
+		})
 
-	var wg sync.WaitGroup
-	for i := range 16 {
-		if i == 8 {
-			c.fail(nil)
+		var wg sync.WaitGroup
+		results := make([]bool, 8)
+		for i := range results {
+			wg.Go(func() {
+				ok, err := m.Healthy(t.Context())
+				results[i] = ok && err == nil
+			})
 		}
+		synctest.Wait()
+		close(release)
+		wg.Wait()
+
+		require.False(t, overlapped.Load())
+		require.EqualValues(t, 1, calls.Load())
+		for i, ok := range results {
+			require.True(t, ok, "probe %d", i)
+		}
+	})
+}
+
+func TestMonitor_stops_waiting_for_another_probes_check_when_its_context_is_done(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		m := latch.New(func(context.Context) error {
+			<-release
+			return nil
+		})
+		var wg sync.WaitGroup
 		wg.Go(func() {
 			_, _ = m.Healthy(t.Context())
 		})
-	}
-	wg.Wait()
+		synctest.Wait()
 
-	ok, err := m.Healthy(t.Context())
-	require.NoError(t, err)
-	require.True(t, ok)
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		ok, err := m.Healthy(ctx)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.False(t, ok)
+
+		close(release)
+		wg.Wait()
+	})
 }

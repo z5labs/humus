@@ -13,14 +13,24 @@ import (
 
 type Monitor struct {
 	check   func(context.Context) error
+	turn    chan struct{}
 	reached atomic.Bool
 }
 
 func New(check func(ctx context.Context) error) *Monitor {
-	return &Monitor{check: check}
+	return &Monitor{check: check, turn: make(chan struct{}, 1)}
 }
 
 func (m *Monitor) Healthy(ctx context.Context) (bool, error) {
+	if m.reached.Load() {
+		return true, nil
+	}
+	select {
+	case m.turn <- struct{}{}:
+	case <-ctx.Done():
+		return false, ctx.Err()
+	}
+	defer func() { <-m.turn }()
 	if m.reached.Load() {
 		return true, nil
 	}
