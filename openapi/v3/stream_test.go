@@ -446,7 +446,14 @@ func TestAPI_records_a_failed_write_after_the_client_went_away_on_the_span_only(
 		name   string
 		client func(*server) *http.Client
 	}{
-		{"over HTTP/2", func(s *server) *http.Client { return s.client }},
+		// A client that keeps its connection resets only the stream, so
+		// the request's context is done before the write fails.
+		{"over HTTP/2", func(s *server) *http.Client {
+			tr := s.client.Transport.(*http.Transport).Clone()
+			tr.DisableKeepAlives = false
+			s.t.Cleanup(tr.CloseIdleConnections)
+			return &http.Client{Transport: tr}
+		}},
 		{"over HTTP/1.1", func(s *server) *http.Client { return s.http1 }},
 	} {
 		t.Run(p.name, func(t *testing.T) {

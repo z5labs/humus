@@ -716,10 +716,13 @@ fmt.Println("verified for:", client.ConnectionState().PeerCertificates[0].DNSNam
 // verified for: [api.internal]
 ```
 
-A connection on the Host's network is a `net.Pipe`, which has no buffer. When
-both ends of a TLS connection close at once, each waits to send its
-`close_notify` alert until crypto/tls's five-second write deadline passes.
-Inside a `synctest` bubble that wait takes no time; outside one, it is real.
+A connection on the Host's network buffers up to 256 KiB in each direction, as
+a real socket does, so a `Write` returns once its bytes are buffered, not once
+the peer reads them, and waits only while the buffer is full. So a TLS
+connection closes as it does on a real socket: its `close_notify` alert is
+buffered like any other write, and `Close` doesn't wait for a peer that isn't
+reading unless the buffer is full, whatever happens to the connection's write
+deadline meanwhile.
 
 ## Checking a Service
 
