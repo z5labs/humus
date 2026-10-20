@@ -52,6 +52,7 @@ const (
 const (
 	controllerNamespace = "databases"
 	controllerName      = "databases-controller"
+	casesPrefix         = "databases-cases-"
 	probesAddr          = "127.0.0.1:18443"
 	waitLimit           = 2 * time.Minute
 	startLimit          = 3 * time.Minute
@@ -168,19 +169,20 @@ func TestInit_passes_the_shared_cases_against_k3s_and_PostgreSQL(t *testing.T) {
 	dir := t.TempDir()
 	ca := humustest.NewCA(t)
 	p, status := humustest.Start(t, app.Init,
-		humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(app.Faults)),
 		humustest.WithEnv(map[string]string{
-			"KUBERNETES_SERVICE_HOST": server.Hostname(),
-			"KUBERNETES_SERVICE_PORT": server.Port(),
-			"KUBERNETES_CA_FILE":      writeFile(t, dir, "ca.crt", caData),
-			"KUBERNETES_TOKEN_FILE":   writeFile(t, dir, "token", []byte(token+"\n")),
-			"POD_NAMESPACE":           controllerNamespace,
-			"POD_NAME":                controllerName + "-0",
-			"POSTGRES_ADMIN_DSN_FILE": writeFile(t, dir, "admin-dsn", []byte(dsn+"\n")),
-			"POSTGRES_HOST":           pgHost,
-			"POSTGRES_PORT":           pgPort,
-			"PROBES_ADDR":             probesAddr,
-			"PROBES_TLS_PEM_FILE":     writeFile(t, dir, "probes.pem", pemOf(t, ca.Issue(t, "127.0.0.1"))),
+			"KUBERNETES_SERVICE_HOST":        server.Hostname(),
+			"KUBERNETES_SERVICE_PORT":        server.Port(),
+			"KUBERNETES_CA_FILE":             writeFile(t, dir, "ca.crt", caData),
+			"KUBERNETES_TOKEN_FILE":          writeFile(t, dir, "token", []byte(token+"\n")),
+			"POD_NAMESPACE":                  controllerNamespace,
+			"POD_NAME":                       controllerName + "-0",
+			"POSTGRES_ADMIN_DSN_FILE":        writeFile(t, dir, "admin-dsn", []byte(dsn+"\n")),
+			"POSTGRES_HOST":                  pgHost,
+			"POSTGRES_PORT":                  pgPort,
+			"PROBES_ADDR":                    probesAddr,
+			"PROBES_TLS_PEM_FILE":            writeFile(t, dir, "probes.pem", pemOf(t, ca.Issue(t, "127.0.0.1"))),
+			"FAULT_TRUSTED_NAMESPACE_PREFIX": casesPrefix,
 		}),
 	)
 
@@ -199,7 +201,7 @@ func TestInit_passes_the_shared_cases_against_k3s_and_PostgreSQL(t *testing.T) {
 
 	target := cases.Target{
 		Config:      rest.CopyConfig(cfg),
-		Prefix:      "databases-cases-",
+		Prefix:      casesPrefix,
 		Annotation:  "postgres.example.com/failure-scenario",
 		ScenarioKey: "acme.fault",
 		Postgres:    dsn,
@@ -210,6 +212,12 @@ func TestInit_passes_the_shared_cases_against_k3s_and_PostgreSQL(t *testing.T) {
 			t.Run(c.Name, func(t *testing.T) {
 				t.Parallel()
 				c.Run(t, target)
+			})
+		}
+		for name, run := range faultCases {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				run(t, target)
 			})
 		}
 	})

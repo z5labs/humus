@@ -22,6 +22,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/humustest"
@@ -90,7 +91,7 @@ func (c *target) start(t *testing.T, env map[string]string) (signal func(os.Sign
 		merged[name] = value
 	}
 	proc, st := humustest.Start(t, Init,
-		humustest.WithApp(humus.WithHost(c.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		humustest.WithApp(humus.WithHost(c.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(Faults)),
 		humustest.WithEnv(merged),
 	)
 	return proc.Signal, st
@@ -218,6 +219,8 @@ func TestInit_with_a_bad_setting_exits_78(t *testing.T) {
 		"a probes address with no port":          {name: "PROBES_ADDR", value: "localhost"},
 		"a probes PEM file that doesn't exist":   {name: "PROBES_TLS_PEM_FILE", value: "secrets/missing.pem"},
 		"a probes PEM file with no key":          {name: "PROBES_TLS_PEM_FILE", value: "serviceaccount/ca.crt"},
+		"a fault max delay of 0":                 {name: "FAULT_MAX_DELAY", value: "0s"},
+		"a fault max delay with no unit":         {name: "FAULT_MAX_DELAY", value: "10"},
 	}
 	for desc, tc := range testCases {
 		t.Run(desc, func(t *testing.T) {
@@ -352,4 +355,25 @@ func TestOpenPostgres_dials_through_the_Host(t *testing.T) {
 		require.Equal(t, humus.ExitFailure, st.Code(), "cause: %v", st.Cause())
 		require.NotContains(t, st.Cause().Error(), c.password)
 	})
+}
+
+func TestTrustPrefix(t *testing.T) {
+	testCases := map[string]struct {
+		prefix    string
+		namespace string
+		want      bool
+	}{
+		"a namespace with the prefix":           {prefix: "staging-", namespace: "staging-orders", want: true},
+		"a namespace that is the prefix":        {prefix: "staging-", namespace: "staging-", want: true},
+		"a namespace without the prefix":        {prefix: "staging-", namespace: "production-orders"},
+		"a namespace with the prefix inside it": {prefix: "staging-", namespace: "orders-staging-1"},
+		"an empty prefix":                       {prefix: "", namespace: "staging-orders"},
+		"an empty prefix and the default":       {prefix: "", namespace: "default"},
+	}
+	for desc, tc := range testCases {
+		t.Run(desc, func(t *testing.T) {
+			obj := &metav1.ObjectMeta{Name: "orders", Namespace: tc.namespace}
+			require.Equal(t, tc.want, trustPrefix(tc.prefix)(obj))
+		})
+	}
 }

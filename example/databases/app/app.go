@@ -15,11 +15,13 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/z5labs/bedrock/config"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/z5labs/humus"
@@ -27,15 +29,32 @@ import (
 	"github.com/z5labs/humus/example/databases/controller"
 	"github.com/z5labs/humus/example/databases/internal/certfile"
 	"github.com/z5labs/humus/example/databases/postgres"
+	"github.com/z5labs/humus/fault"
+	"github.com/z5labs/humus/fault/jsonscenario"
 	"github.com/z5labs/humus/health"
 	"github.com/z5labs/humus/httphealth"
 	"github.com/z5labs/humus/kube"
 )
 
 const (
-	serviceAccount = "/var/run/secrets/kubernetes.io/serviceaccount/"
-	finalizer      = "postgres.example.com/finalizer"
+	serviceAccount     = "/var/run/secrets/kubernetes.io/serviceaccount/"
+	finalizer          = "postgres.example.com/finalizer"
+	scenarioAnnotation = "postgres.example.com/failure-scenario"
 )
+
+func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
+	codec, err := jsonscenario.New("acme.fault")
+	if err != nil {
+		return fault.Settings{}, err
+	}
+	d := fault.DefaultSettings()
+	return config.Struct(func(r *config.Resolver) fault.Settings {
+		f := d
+		f.Decoder = codec
+		f.MaxDelay = r.Get(config.Env(s.Process.Environment, "FAULT_MAX_DELAY").Parse(time.ParseDuration).Default(d.MaxDelay).Validate(fault.CheckMaxDelay))
+		return f
+	}).Read(ctx)
+}
 
 func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	set, err := readSettings(ctx, s)
@@ -65,6 +84,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	ctrl, err := kube.NewController(s, client, set.Controller, v1alpha1.Database, rec,
 		kube.Owns(corev1.SchemeGroupVersion.WithResource("secrets")),
 		kube.Finalize(finalizer, rec.Finalize),
+		kube.TrustScenario(scenarioAnnotation, trustPrefix(set.TrustedPrefix)),
 	)
 	if err != nil {
 		return nil, err
@@ -77,12 +97,13 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 }
 
 type settings struct {
-	Connection kube.Connection
-	Controller kube.Settings
-	Admin      *pgxpool.Config
-	Host       string
-	Port       int
-	Probes     httphealth.Settings
+	Connection    kube.Connection
+	Controller    kube.Settings
+	Admin         *pgxpool.Config
+	Host          string
+	Port          int
+	Probes        httphealth.Settings
+	TrustedPrefix string
 }
 
 func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
@@ -122,8 +143,15 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 				Addr: r.Get(env("PROBES_ADDR").Validate(httphealth.CheckAddr)),
 				TLS:  r.Get(env("PROBES_TLS_PEM_FILE").Parse(pemTLS(s.Host.FS)).Validate(httphealth.CheckTLS)),
 			},
+			TrustedPrefix: r.Get(env("FAULT_TRUSTED_NAMESPACE_PREFIX").Default("")),
 		}
 	}).Read(ctx)
+}
+
+func trustPrefix(prefix string) func(obj metav1.Object) bool {
+	return func(obj metav1.Object) bool {
+		return prefix != "" && strings.HasPrefix(obj.GetNamespace(), prefix)
+	}
 }
 
 func checkAPIServerHost(host string) error {
