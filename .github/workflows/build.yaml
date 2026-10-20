@@ -19,9 +19,9 @@ on:
   merge_group:
 
 jobs:
-  # The default branch's ruleset requires five checks: Build, Kafka
-  # (testcontainers), RabbitMQ (testcontainers), Kubernetes (testcontainers)
-  # and Shoppingcart (testcontainers). Build is the job at the end of this
+  # The default branch's ruleset requires four checks: Build, Kafka
+  # (testcontainers), RabbitMQ (testcontainers) and Kubernetes
+  # (testcontainers). Build is the job at the end of this
   # file, which passes only when every job before it passed, so the jobs it
   # waits on can be added, split or renamed without changing the ruleset.
   #
@@ -487,13 +487,13 @@ jobs:
             key: ${{ steps.go-cache.outputs.key }}
             path: ${{ steps.go-cache.outputs.path }}
 
-  # The tests behind the testcontainers build tag run the shoppingcart's
-  # Store, and the whole service on humus.OSHost(), against Postgres in a
-  # container, so they run here rather than in Test: they don't slow the
-  # unit tests, example/ is outside the coverage gate anyway, and this job is
-  # a required check of its own.
+  # The shoppingcart walkthrough's tests behind the testcontainers build tag
+  # run its Stores and migrate, and the shared cases against both services
+  # on humus.OSHost(), against PostgreSQL and WireMock in containers. The
+  # ruleset doesn't require this job, and Build doesn't wait on it; Vet the
+  # testcontainers tests vets them.
   shoppingcart-testcontainers:
-    name: Shoppingcart (testcontainers)
+    name: Shoppingcart walkthrough (testcontainers)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
