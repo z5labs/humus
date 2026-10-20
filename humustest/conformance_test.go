@@ -148,11 +148,13 @@ func closeNotifyStandoff(t *testing.T, h humus.Host, reset bool) (time.Duration,
 	}()
 	defer func() {
 		unblock()
+		_ = ln.Close()
 		<-served
 	}()
 
 	conn, err := h.Dial(t.Context(), "tcp", ln.Addr().String())
 	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
 	w := &alertConn{Conn: conn, alert: make(chan struct{})}
 	client := tls.Client(w, &tls.Config{RootCAs: ca.Pool(), ServerName: "127.0.0.1"})
 	require.NoError(t, client.HandshakeContext(t.Context()))

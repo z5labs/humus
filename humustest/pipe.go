@@ -6,6 +6,7 @@
 package humustest
 
 import (
+	"bytes"
 	"io"
 	"net"
 	"os"
@@ -22,9 +23,10 @@ const pipeBuffer = 256 << 10
 // net.Pipe, each direction holds up to pipeBuffer bytes, as a real
 // socket's buffers do: a Write returns once its bytes are buffered, not
 // once the peer reads them, so a write the peer never reads, such as a TLS
-// close_notify alert, doesn't hold its writer. It starts no goroutines,
-// and every call waits on channels, so a connection made inside a
-// testing/synctest bubble blocks durably in it.
+// close_notify alert, doesn't hold its writer. It starts no goroutines of
+// its own; a deadline is a time.AfterFunc, as on a net.Pipe. Every call
+// waits on channels, so a connection made inside a testing/synctest bubble
+// blocks durably in it.
 func newPipe() (*pipeEnd, *pipeEnd) {
 	ab, ba := newStream(), newStream()
 	return newPipeEnd(ba, ab), newPipeEnd(ab, ba)
@@ -34,7 +36,7 @@ func newPipe() (*pipeEnd, *pipeEnd) {
 // and the other end has yet to read.
 type stream struct {
 	mu      sync.Mutex
-	buf     []byte
+	buf     bytes.Buffer
 	wclosed bool          // the writing end is closed: reads drain buf, then io.EOF
 	rclosed bool          // the reading end is closed: writes fail
 	changed chan struct{} // closed, and replaced, whenever any of the above changes
@@ -88,9 +90,8 @@ func (p *pipeEnd) Read(b []byte) (int, error) {
 		case isClosed(expired):
 			s.mu.Unlock()
 			return 0, os.ErrDeadlineExceeded
-		case len(s.buf) > 0 || len(b) == 0:
-			n := copy(b, s.buf)
-			s.buf = s.buf[:copy(s.buf, s.buf[n:])]
+		case s.buf.Len() > 0 || len(b) == 0:
+			n, _ := s.buf.Read(b)
 			if n > 0 {
 				s.notifyLocked()
 			}
@@ -131,9 +132,9 @@ func (p *pipeEnd) Write(b []byte) (int, error) {
 			s.mu.Unlock()
 			return n, nil
 		}
-		if space := pipeBuffer - len(s.buf); space > 0 {
+		if space := pipeBuffer - s.buf.Len(); space > 0 {
 			k := min(space, len(b))
-			s.buf = append(s.buf, b[:k]...)
+			s.buf.Write(b[:k])
 			b = b[k:]
 			n += k
 			s.notifyLocked()
@@ -169,7 +170,7 @@ func (p *pipeEnd) Close() error {
 
 		p.in.mu.Lock()
 		p.in.rclosed = true
-		p.in.buf = nil
+		p.in.buf = bytes.Buffer{}
 		p.in.notifyLocked()
 		p.in.mu.Unlock()
 	})
