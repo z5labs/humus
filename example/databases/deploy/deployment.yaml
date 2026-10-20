@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: databases
+  namespace: databases
+  labels:
+    app.kubernetes.io/name: databases
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: databases
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: databases
+    spec:
+      serviceAccountName: databases
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: databases
+          image: databases
+          envFrom:
+            - configMapRef:
+                name: databases
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: probes
+              containerPort: 8443
+          livenessProbe:
+            httpGet:
+              path: /health/liveness
+              port: probes
+              scheme: HTTPS
+          readinessProbe:
+            httpGet:
+              path: /health/readiness
+              port: probes
+              scheme: HTTPS
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: postgres
+              mountPath: /etc/databases/postgres
+              readOnly: true
+            - name: probes
+              mountPath: /etc/databases/probes
+              readOnly: true
+      volumes:
+        - name: postgres
+          secret:
+            secretName: databases-postgres-admin
+            defaultMode: 0440
+            items:
+              - key: dsn
+                path: dsn
+        - name: probes
+          secret:
+            secretName: databases-probes
+            defaultMode: 0440
+            items:
+              - key: tls.pem
+                path: tls.pem
