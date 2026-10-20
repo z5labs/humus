@@ -3,7 +3,7 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-// Package app is the shoppingcart's Init: its settings, its store, its bearer tokens, its API and its telemetry.
+// Package app is the shoppingcart's Init: its settings, its store, its catalog, its bearer tokens, its API and its telemetry.
 package app
 
 import (
@@ -27,8 +27,10 @@ import (
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/auth"
 	"github.com/z5labs/humus/auth/jwt"
+	"github.com/z5labs/humus/example/shoppingcart/catalogclient"
 	"github.com/z5labs/humus/example/shoppingcart/database"
 	"github.com/z5labs/humus/example/shoppingcart/endpoint"
+	"github.com/z5labs/humus/example/shoppingcart/internal/certfile"
 	"github.com/z5labs/humus/httpclient"
 	"github.com/z5labs/humus/httpserver"
 	"github.com/z5labs/humus/openapi/v3"
@@ -37,19 +39,28 @@ import (
 	"github.com/z5labs/humus/telemetry"
 )
 
+const maxBodyBytes = 64 << 10
+
 func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	return initWith(ctx, s, openPostgres)
+	return initWith(ctx, s, openPostgres, openCatalog)
 }
 
 type openStore func(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (endpoint.Store, error)
 
-func initWith(ctx context.Context, s *humus.Setup, open openStore) ([]humus.Service, error) {
+type newCatalog func(s *humus.Setup, settings httpclient.Settings) (endpoint.Catalog, error)
+
+func initWith(ctx context.Context, s *humus.Setup, open openStore, newCatalog newCatalog) ([]humus.Service, error) {
 	settings, err := readSettings(ctx, s)
 	if err != nil {
 		return nil, err
 	}
 
 	store, err := open(ctx, s, settings.Database)
+	if err != nil {
+		return nil, err
+	}
+
+	catalog, err := newCatalog(s, settings.Catalog)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +77,7 @@ func initWith(ctx context.Context, s *humus.Setup, open openStore) ([]humus.Serv
 	if err != nil {
 		return nil, err
 	}
-	bearer := auth.Bearer("bearer", withSubject(tokens.Verify)).
+	bearer := auth.Bearer("bearer", endpoint.KeysUnavailable(withSubject(tokens.Verify))).
 		Format("JWT").
 		Description("A JWT from the shoppingcart's identity provider. Changing a cart needs the scope carts:write.")
 
@@ -82,18 +93,18 @@ func initWith(ctx context.Context, s *humus.Setup, open openStore) ([]humus.Serv
 		},
 		openapi.RequestErrors(problem.FromRequestError, jsoncodec.Problem),
 		openapi.CatchAll(http.StatusInternalServerError, endpoint.InternalError, jsoncodec.Problem),
-		append(endpoint.Carts{Store: store, Bearer: bearer}.Operations(),
+		append(endpoint.Carts{Store: store, Catalog: catalog, Bearer: bearer}.Operations(),
 			openapi.Document(openapi.Root().Lit("openapi.json"), openapi.Security(auth.Disabled())),
 		),
 		openapi.Error[endpoint.NotFound](http.StatusNotFound, jsoncodec.Problem),
 		openapi.Security(auth.Require(bearer)),
-		openapi.Error[*jwt.KeySetError](http.StatusServiceUnavailable, endpoint.KeysUnavailable),
+		openapi.Error[endpoint.Unavailable](http.StatusServiceUnavailable, jsoncodec.Problem),
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	svc, err := httpserver.NewService(s, settings.HTTP, api)
+	svc, err := httpserver.NewService(s, settings.HTTP, http.MaxBytesHandler(api, maxBodyBytes))
 	if err != nil {
 		return nil, err
 	}
@@ -113,9 +124,18 @@ func withSubject(verify func(context.Context, string) (endpoint.Claims, error)) 
 	}
 }
 
+func openCatalog(s *humus.Setup, settings httpclient.Settings) (endpoint.Catalog, error) {
+	client, err := httpclient.NewClient(s, settings)
+	if err != nil {
+		return nil, err
+	}
+	return catalogclient.New(client, settings.BaseURL), nil
+}
+
 type settings struct {
 	HTTP     httpserver.Settings
 	Database *pgxpool.Config
+	Catalog  httpclient.Settings
 	KeySet   keySetSettings
 	JWT      jwt.Settings
 }
@@ -137,6 +157,25 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 		client.Timeout = r.Get(env("JWKS_TIMEOUT").Parse(time.ParseDuration).Default(client.Timeout).Validate(httpclient.CheckTimeout))
 		client.AttemptTimeout = r.Get(env("JWKS_ATTEMPT_TIMEOUT").Parse(time.ParseDuration).Default(client.AttemptTimeout).Validate(httpclient.CheckAttemptTimeout))
 		client.MaxAttempts = r.Get(env("JWKS_MAX_ATTEMPTS").Parse(strconv.Atoi).Default(client.MaxAttempts).Validate(httpclient.CheckMaxAttempts))
+
+		catalog := httpclient.DefaultSettings()
+		catalog.BaseURL = r.Get(env("CATALOG_URL").Parse(url.Parse).Validate(checkCatalogURL))
+		catalog.TLS = &tls.Config{
+			RootCAs: r.Get(env("CATALOG_CA_FILE").Parse(readFile(s.Host.FS)).Parse(certPool)),
+			GetClientCertificate: r.Get(env("CATALOG_CLIENT_CERT_FILE").FlatMap(func(certFile string) config.Value[clientCertificate] {
+				return env("CATALOG_CLIENT_KEY_FILE").Parse(func(keyFile string) (clientCertificate, error) {
+					cfg, err := certfile.Config(s.Host.FS, certFile, keyFile)
+					if err != nil {
+						return nil, err
+					}
+					return cfg.GetClientCertificate, nil
+				})
+			})),
+		}
+		catalog.Timeout = r.Get(env("CATALOG_TIMEOUT").Parse(time.ParseDuration).Default(catalog.Timeout).Validate(httpclient.CheckTimeout))
+		catalog.AttemptTimeout = r.Get(env("CATALOG_ATTEMPT_TIMEOUT").Parse(time.ParseDuration).Default(catalog.AttemptTimeout).Validate(httpclient.CheckAttemptTimeout))
+		catalog.MaxAttempts = r.Get(env("CATALOG_MAX_ATTEMPTS").Parse(strconv.Atoi).Default(catalog.MaxAttempts).Validate(httpclient.CheckMaxAttempts))
+		catalog.ForwardScenario = true
 
 		tokens := jwt.DefaultSettings()
 		tokens.Issuer = r.Get(env("JWT_ISSUER").Validate(jwt.CheckIssuer))
@@ -160,6 +199,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 				MaxHeaderBytes:    r.Get(env("MAX_HEADER_BYTES").Parse(strconv.Atoi).Default(d.MaxHeaderBytes).Validate(httpserver.CheckMaxHeaderBytes)),
 			},
 			Database: r.Get(env("DATABASE_URL").Parse(pgxpool.ParseConfig)),
+			Catalog:  catalog,
 			KeySet: keySetSettings{
 				URL:    r.Get(env("JWKS_URL").Parse(url.Parse).Validate(checkKeySetURL)),
 				Client: client,
@@ -172,6 +212,18 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 	}
 	read.KeySet.Client.BaseURL = &url.URL{Scheme: read.KeySet.URL.Scheme, Host: read.KeySet.URL.Host}
 	return read, nil
+}
+
+type clientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error)
+
+func checkCatalogURL(u *url.URL) error {
+	if err := httpclient.CheckBaseURL(u); err != nil {
+		return err
+	}
+	if u.Scheme != "https" {
+		return errors.New("must be an https URL")
+	}
+	return nil
 }
 
 func checkKeySetURL(u *url.URL) error {

@@ -61,7 +61,7 @@ func (m *memoryStore) DeleteCart(_ context.Context, owner string, cartID uuid.UU
 	return nil
 }
 
-func (m *memoryStore) AddItem(_ context.Context, owner string, cartID uuid.UUID, req endpoint.AddItemRequest) (endpoint.CartItem, error) {
+func (m *memoryStore) AddItem(_ context.Context, owner string, cartID uuid.UUID, req endpoint.NewItem) (endpoint.CartItem, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, err := m.cart(owner, cartID)

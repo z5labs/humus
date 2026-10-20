@@ -3,14 +3,13 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-// Package endpoint is the shoppingcart's API: its operations on carts, their answers and the Store they are served on.
+// Package endpoint is the shoppingcart's API: its operations on carts, their answers, and the Store and Catalog they are served on.
 package endpoint
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"regexp"
 	"slices"
@@ -18,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/z5labs/bedrock/circuit"
 
 	"github.com/z5labs/humus/auth"
 	"github.com/z5labs/humus/auth/jwt"
@@ -44,9 +44,14 @@ type CartItem struct {
 }
 
 type AddItemRequest struct {
-	ProductID string  `json:"productId" required:"true" minLength:"1"`
-	Quantity  int     `json:"quantity" required:"true" minimum:"1"`
-	UnitPrice float64 `json:"unitPrice" required:"true" minimum:"0"`
+	ProductID string `json:"productId" required:"true" minLength:"1"`
+	Quantity  int    `json:"quantity" required:"true" minimum:"1"`
+}
+
+type NewItem struct {
+	ProductID string
+	Quantity  int
+	UnitPrice float64
 }
 
 type UpdateItemRequest struct {
@@ -57,19 +62,28 @@ type Store interface {
 	CreateCart(ctx context.Context, owner string) (Cart, error)
 	GetCart(ctx context.Context, owner string, cartID uuid.UUID) (Cart, error)
 	DeleteCart(ctx context.Context, owner string, cartID uuid.UUID) error
-	AddItem(ctx context.Context, owner string, cartID uuid.UUID, item AddItemRequest) (CartItem, error)
+	AddItem(ctx context.Context, owner string, cartID uuid.UUID, item NewItem) (CartItem, error)
 	UpdateItem(ctx context.Context, owner string, cartID, itemID uuid.UUID, quantity int) (CartItem, error)
 	RemoveItem(ctx context.Context, owner string, cartID, itemID uuid.UUID) error
 }
 
+type Catalog interface {
+	Price(ctx context.Context, productID string) (float64, error)
+}
+
 var (
-	ErrCartNotFound = errors.New("cart not found")
-	ErrItemNotFound = errors.New("item not found")
+	ErrCartNotFound        = errors.New("cart not found")
+	ErrItemNotFound        = errors.New("item not found")
+	ErrProductNotFound     = errors.New("product not found")
+	ErrCatalogUnavailable  = errors.New("the catalog is unavailable")
+	ErrDatabaseUnavailable = errors.New("the database is unavailable")
 )
 
 type NotFound struct{ problem.Details }
 
 type Invalid struct{ problem.Details }
+
+type Unavailable struct{ problem.Details }
 
 func InternalError(err error) problem.Details {
 	return problem.Details{
@@ -91,21 +105,14 @@ func (c Claims) HasScope(scope string) bool {
 	return slices.Contains(strings.Fields(c.Scope), scope)
 }
 
-func KeysUnavailable() openapi.Encoder[*jwt.KeySetError] {
-	return keysUnavailable{jsoncodec.Problem[problem.Details]()}
-}
-
-type keysUnavailable struct {
-	openapi.Encoder[problem.Details]
-}
-
-func (e keysUnavailable) Encode(*jwt.KeySetError) (io.WriterTo, error) {
-	return e.Encoder.Encode(problem.Details{
-		Type:   "about:blank",
-		Title:  http.StatusText(http.StatusServiceUnavailable),
-		Status: http.StatusServiceUnavailable,
-		Detail: "The server can't verify tokens right now. Try again later.",
-	})
+func KeysUnavailable(verify func(context.Context, string) (Claims, error)) func(context.Context, string) (Claims, error) {
+	return func(ctx context.Context, token string) (Claims, error) {
+		claims, err := verify(ctx, token)
+		if _, ok := errors.AsType[*jwt.KeySetError](err); ok {
+			return Claims{}, unavailable("The server can't verify tokens right now. Try again later.")
+		}
+		return claims, err
+	}
 }
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -128,8 +135,9 @@ var (
 )
 
 type Carts struct {
-	Store  Store
-	Bearer auth.Scheme[Claims]
+	Store   Store
+	Catalog Catalog
+	Bearer  auth.Scheme[Claims]
 }
 
 func (c Carts) Operations() []openapi.Operation {
@@ -184,7 +192,7 @@ func (c Carts) createCart(ctx context.Context, _ openapi.Request[openapi.EmptyBo
 	}
 	created, err := c.Store.CreateCart(ctx, owner)
 	if err != nil {
-		return Cart{}, err
+		return Cart{}, answer(err, uuid.Nil, uuid.Nil)
 	}
 	return withItems(created), nil
 }
@@ -232,10 +240,15 @@ func (c Carts) addCartItem(ctx context.Context, req openapi.Request[AddItemReque
 		return CartItem{}, invalid("productId is required")
 	case body.Quantity < 1:
 		return CartItem{}, invalid("quantity must be at least 1")
-	case body.UnitPrice < 0:
-		return CartItem{}, invalid("unitPrice must not be negative")
 	}
-	added, err := c.Store.AddItem(ctx, owner, id, body)
+	price, err := c.Catalog.Price(ctx, body.ProductID)
+	if errors.Is(err, ErrProductNotFound) {
+		return CartItem{}, invalid(fmt.Sprintf("There is no product %s in the catalog.", body.ProductID))
+	}
+	if err != nil {
+		return CartItem{}, answer(err, id, uuid.Nil)
+	}
+	added, err := c.Store.AddItem(ctx, owner, id, NewItem{ProductID: body.ProductID, Quantity: body.Quantity, UnitPrice: price})
 	if err != nil {
 		return CartItem{}, answer(err, id, uuid.Nil)
 	}
@@ -306,6 +319,12 @@ func answer(err error, cartID, itemID uuid.UUID) error {
 		return notFound(fmt.Sprintf("There is no cart %s.", cartID))
 	case errors.Is(err, ErrItemNotFound):
 		return notFound(fmt.Sprintf("Cart %s has no item %s.", cartID, itemID))
+	case errors.Is(err, ErrDatabaseUnavailable):
+		return unavailable("The cart can't reach its database right now. Try again later.")
+	case errors.Is(err, ErrCatalogUnavailable) && errors.Is(err, circuit.ErrRejected):
+		return unavailable("The cart isn't calling the catalog right now, since it has been failing. Try again later.")
+	case errors.Is(err, ErrCatalogUnavailable):
+		return unavailable("The cart can't reach the catalog right now. Try again later.")
 	default:
 		return err
 	}
@@ -316,6 +335,15 @@ func notFound(detail string) NotFound {
 		Type:   "about:blank",
 		Title:  http.StatusText(http.StatusNotFound),
 		Status: http.StatusNotFound,
+		Detail: detail,
+	}}
+}
+
+func unavailable(detail string) Unavailable {
+	return Unavailable{problem.Details{
+		Type:   "about:blank",
+		Title:  http.StatusText(http.StatusServiceUnavailable),
+		Status: http.StatusServiceUnavailable,
 		Detail: detail,
 	}}
 }
