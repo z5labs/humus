@@ -18,6 +18,7 @@ carts_owner_password=$(openssl rand -hex 24)
 cart_password=$(openssl rand -hex 24)
 catalog_owner_password=$(openssl rand -hex 24)
 catalog_password=$(openssl rand -hex 24)
+grafana_password=$(openssl rand -hex 24)
 export KEYSTORE_PASSWORD
 KEYSTORE_PASSWORD=$(openssl rand -hex 24)
 
@@ -66,6 +67,7 @@ url catalog "$catalog_password" catalog catalog
 
 printf '%s' "$postgres_password" >"$tmp/postgres-password"
 printf '%s' "$KEYSTORE_PASSWORD" >"$tmp/keystore-password"
+printf '%s' "$grafana_password" >"$tmp/grafana-password"
 
 k() {
   kubectl --context "kind-$cluster" --namespace "$namespace" "$@"
@@ -116,6 +118,8 @@ configmap() {
   secret token-signing-key --from-file=key.pem="$tmp/signing.key"
   echo ---
   configmap wiremock-files --from-file=jwks.json="$tmp/jwks.json"
+  echo ---
+  secret grafana-admin --from-literal=username=admin --from-file=password="$tmp/grafana-password"
 } >"$tmp/shoppingcart.yaml"
 
 kind load docker-image shoppingcart --name "$cluster"
@@ -138,6 +142,7 @@ REVOKE ALL ON DATABASE catalog FROM PUBLIC;
 GRANT CONNECT ON DATABASE catalog TO catalog;
 SQL
 
-k rollout restart deployment/catalog deployment/cart
-k rollout status deployment/catalog --timeout 5m
-k rollout status deployment/cart --timeout 5m
+k rollout restart deployment/grafana deployment/catalog deployment/cart
+for d in loki tempo mimir otel-collector grafana catalog cart; do
+  k rollout status "deployment/$d" --timeout 5m
+done
