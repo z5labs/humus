@@ -660,12 +660,15 @@ jobs:
 
   # The order status walkthrough's image, built from its Dockerfile with the
   # repository as the context, since its module replaces humus and
-  # queue/kafka with paths under ../.., and its kustomization, rendered. The
-  # ruleset doesn't require this job, and Build doesn't wait on it.
+  # queue/kafka with paths under ../.., and its base kustomization, rendered.
+  # up.sh then creates a kind cluster, loads the image and applies the kind
+  # overlay, with Kafka over mTLS with ACLs, its topics, and PostgreSQL over
+  # TLS, and the processor's Deployment has to become ready. The ruleset
+  # doesn't require this job, and Build doesn't wait on it.
   orderstatus-kind:
     name: Order status walkthrough (kind)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -676,7 +679,23 @@ jobs:
           run: docker build --file example/orderstatus/Dockerfile --tag orderstatus .
 
         - name: Render the kustomization
-          run: kubectl kustomize example/orderstatus/deploy
+          run: kubectl kustomize example/orderstatus/deploy/base
+
+        - name: Bring the order status processor up on kind
+          run: example/orderstatus/deploy/kind/up.sh
+
+        - name: Wait for the order status processor's Deployment
+          run: kubectl --namespace orderstatus rollout status deployment/orderstatus --timeout 5m
+
+        - name: Show the orderstatus namespace
+          if: ${{ failure() }}
+          run: |
+            kubectl --namespace orderstatus get all
+            kubectl --namespace orderstatus describe pods
+            kubectl --namespace orderstatus logs deployment/kafka --tail 200 || true
+            kubectl --namespace orderstatus logs job/kafka-topics --tail 200 || true
+            kubectl --namespace orderstatus logs deployment/postgres --tail 200 || true
+            kubectl --namespace orderstatus logs deployment/orderstatus --all-containers --tail 200 || true
 
   # The mailer walkthrough's tests behind the testcontainers build tag run
   # the shared cases against RabbitMQ and WireMock in containers. The ruleset

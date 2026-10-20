@@ -1,0 +1,62 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-topics
+spec:
+  backoffLimit: 4
+  activeDeadlineSeconds: 600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: kafka-topics
+          image: docker.io/apache/kafka:4.3.1
+          command: [bash, /etc/kafka-admin/config/topics.sh]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/kafka-admin/config
+              readOnly: true
+            - name: tls
+              mountPath: /etc/kafka-admin/tls
+              readOnly: true
+            - name: logs
+              mountPath: /opt/kafka/logs
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: kafka-admin
+        - name: tls
+          secret:
+            secretName: kafka-admin-tls
+            defaultMode: 0440
+            items:
+              - key: tls.pem
+                path: tls.pem
+              - key: ca.crt
+                path: ca.crt
+        - name: logs
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
