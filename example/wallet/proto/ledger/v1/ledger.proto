@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package ledger.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/z5labs/humus/example/wallet/ledgerpb";
+
+service Ledger {
+  rpc OpenAccount(OpenAccountRequest) returns (OpenAccountResponse);
+  rpc GetAccount(GetAccountRequest) returns (GetAccountResponse);
+  rpc Deposit(DepositRequest) returns (DepositResponse);
+  rpc Transfer(TransferRequest) returns (TransferResponse);
+  rpc WatchAccount(WatchAccountRequest) returns (stream WatchAccountResponse);
+}
+
+message Account {
+  string id = 1;
+  int64 balance_cents = 2;
+  google.protobuf.Timestamp balance_change_time = 3;
+}
+
+message Transfer {
+  string id = 1;
+  string from_account_id = 2;
+  string to_account_id = 3;
+  int64 amount_cents = 4;
+  google.protobuf.Timestamp create_time = 5;
+}
+
+message OpenAccountRequest {
+  string account_id = 1;
+}
+
+message OpenAccountResponse {
+  Account account = 1;
+}
+
+message GetAccountRequest {
+  string account_id = 1;
+}
+
+message GetAccountResponse {
+  Account account = 1;
+}
+
+message DepositRequest {
+  string transfer_id = 1;
+  string account_id = 2;
+  int64 amount_cents = 3;
+}
+
+message DepositResponse {
+  Transfer transfer = 1;
+}
+
+message TransferRequest {
+  string transfer_id = 1;
+  string from_account_id = 2;
+  string to_account_id = 3;
+  int64 amount_cents = 4;
+}
+
+message TransferResponse {
+  Transfer transfer = 1;
+}
+
+message WatchAccountRequest {
+  string account_id = 1;
+}
+
+message WatchAccountResponse {
+  Account account = 1;
+}

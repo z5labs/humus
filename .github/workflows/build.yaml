@@ -11,6 +11,7 @@ on:
       - '.golangci.yaml'
       - 'example/*/Dockerfile*'
       - 'example/*/deploy/**'
+      - 'example/*/proto/**'
       - '.github/scripts/**'
       - '.github/workflows/build.yaml'
   pull_request:
@@ -917,6 +918,77 @@ jobs:
             kubectl --namespace databases logs deployment/postgres --tail 200 || true
             kubectl --namespace databases logs deployment/databases --all-containers --tail 200 || true
             kubectl --namespace databases logs deployment/otel-collector --tail 200 || true
+
+        - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
+          uses: ./.github/actions/save-go-cache
+          with:
+            key: ${{ steps.go-cache.outputs.key }}
+            path: ${{ steps.go-cache.outputs.path }}
+
+  # The wallet walkthrough's contract, checked with a pinned buf: buf lint,
+  # buf breaking against main's contract, and buf generate, which has to
+  # leave walletpb and ledgerpb as they are checked in. buf generate runs
+  # protoc-gen-go and protoc-gen-go-grpc as go tools, so the module's go.mod
+  # pins them. A main with no contract yet has nothing to break, so the
+  # breaking check says so and passes. The ruleset doesn't require this job,
+  # and Build doesn't wait on it.
+  wallet-testcontainers:
+    name: Wallet walkthrough (testcontainers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: write
+      contents: read
+    steps:
+        - name: Checkout
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+        - name: Checkout main
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+          with:
+            ref: main
+            path: main
+            persist-credentials: false
+
+        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+          with:
+            go-version: '1.27.2'
+            cache: false
+
+        - id: go-cache
+          uses: ./.github/actions/restore-go-cache
+          with:
+            name: wallet-testcontainers
+
+        - name: Install buf
+          uses: bufbuild/buf-action@85aebf73123b5c15fd5528aaecbf9129cddf7fa7 # v1.6.0
+          with:
+            version: 1.74.0
+            setup_only: true
+
+        - name: Lint the contract
+          working-directory: example/wallet/proto
+          run: buf lint
+
+        - name: Check the contract for breaking changes against main
+          working-directory: example/wallet/proto
+          run: |
+            against="$GITHUB_WORKSPACE/main/example/wallet/proto"
+            if [[ ! -f $against/buf.yaml ]]; then
+              echo "::notice::main has no wallet contract yet, so nothing in it can break"
+              exit 0
+            fi
+            buf breaking --against "$against"
+
+        - name: Generate the contract
+          working-directory: example/wallet/proto
+          run: |
+            buf generate
+            git add --intent-to-add -- ..
+            if ! git diff --exit-code -- ..; then
+              echo "::error::buf generate changed the checked-in code; run it in example/wallet/proto and commit the result"
+              exit 1
+            fi
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache

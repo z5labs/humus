@@ -1,0 +1,9 @@
+version: v2
+lint:
+  use:
+    - STANDARD
+  except:
+    - SERVICE_SUFFIX
+breaking:
+  use:
+    - FILE
