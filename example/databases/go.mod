@@ -16,6 +16,7 @@ require (
 	github.com/z5labs/bedrock/fit v0.25.0
 	github.com/z5labs/humus v0.0.0-00010101000000-000000000000
 	github.com/z5labs/humus/kube v0.0.0-00010101000000-000000000000
+	go.opentelemetry.io/otel v1.47.0
 	golang.org/x/text v0.43.0
 	k8s.io/api v0.37.1
 	k8s.io/apiextensions-apiserver v0.37.1
@@ -96,7 +97,6 @@ require (
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0 // indirect
-	go.opentelemetry.io/otel v1.47.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.23.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.23.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.47.0 // indirect
