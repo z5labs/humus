@@ -15,15 +15,29 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/fit"
+	"go.opentelemetry.io/otel/baggage"
+
+	"github.com/z5labs/humus/fault/jsonscenario"
 )
 
 const (
 	cartsWrite   = "carts:write"
 	catalogWrite = "catalog:write"
+
+	cartsPoint           = "postgresql:carts"
+	catalogDatabasePoint = "postgresql:catalog"
+
+	slowCatalog = 2 * time.Second
+	pollEvery   = 500 * time.Millisecond
+
+	tryAgain = "Try again"
+	shed     = "isn't calling the catalog"
 )
 
 type Target struct {
@@ -52,9 +66,16 @@ var Parallel = []Case{
 	{Name: "UnknownProduct", Run: UnknownProduct},
 	{Name: "Ownership", Run: Ownership},
 	{Name: "Scopes", Run: Scopes},
+	{Name: "SlowCatalog", Run: SlowCatalog},
+	{Name: "CartDatabaseDown", Run: CartDatabaseDown},
+	{Name: "UntrustedScenario", Run: UntrustedScenario},
 }
 
-var Alone []Case
+var Alone = []Case{
+	{Name: "CatalogDown", Run: CatalogDown},
+	{Name: "CatalogDatabaseDown", Run: CatalogDatabaseDown},
+	{Name: "CatalogBreakerOpens", Run: CatalogBreakerOpens},
+}
 
 func ACartsLife(t testing.TB, target Target) {
 	ctx := bounded(t, target)
@@ -157,6 +178,89 @@ func Scopes(t testing.TB, target Target) {
 	require.InDelta(t, 3.25, writer.addItem(ctx, t, c.CartID, p.ProductID, 1).UnitPrice, 1e-9)
 }
 
+func SlowCatalog(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	p := putProduct(ctx, t, target, 7.5)
+	s := newRehearser(t, target)
+	c := s.createCart(ctx, t)
+
+	start := time.Now()
+	added := s.rehearsing(t, delay(catalogPoint(t, target), slowCatalog)).addItem(ctx, t, c.CartID, p.ProductID, 1)
+	require.GreaterOrEqual(t, time.Since(start), slowCatalog)
+	require.InDelta(t, p.UnitPrice, added.UnitPrice, 1e-9)
+	require.Equal(t, []item{added}, s.getCart(ctx, t, c.CartID).Items)
+}
+
+func CartDatabaseDown(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	p := putProduct(ctx, t, target, 5.75)
+	s := newRehearser(t, target)
+	c := s.createCart(ctx, t)
+	added := s.addItem(ctx, t, c.CartID, p.ProductID, 1)
+
+	detail := s.rehearsing(t, abort(cartsPoint)).call(ctx, t, http.MethodGet, cartPath(c.CartID), nil).problem(t, http.StatusServiceUnavailable)
+	require.Contains(t, detail, tryAgain)
+
+	require.Equal(t, []item{added}, s.getCart(ctx, t, c.CartID).Items)
+}
+
+func UntrustedScenario(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	p := putProduct(ctx, t, target, 6.25)
+	s := newShopper(t, target, cartsWrite)
+	c := s.createCart(ctx, t)
+
+	added := s.rehearsing(t, abort(catalogPoint(t, target))).addItem(ctx, t, c.CartID, p.ProductID, 1)
+	require.InDelta(t, p.UnitPrice, added.UnitPrice, 1e-9)
+	require.Equal(t, []item{added}, s.getCart(ctx, t, c.CartID).Items)
+}
+
+func CatalogDown(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	p := putProduct(ctx, t, target, 8.5)
+	s := newRehearser(t, target)
+	c := s.createCart(ctx, t)
+
+	detail := s.rehearsing(t, abort(catalogPoint(t, target))).call(ctx, t, http.MethodPost, itemsPath(c.CartID), newItem(p.ProductID, 1)).problem(t, http.StatusServiceUnavailable)
+	require.Contains(t, detail, "catalog")
+	require.Empty(t, s.getCart(ctx, t, c.CartID).Items)
+
+	added := s.addItemOnceAdmitted(ctx, t, c.CartID, p.ProductID)
+	require.InDelta(t, p.UnitPrice, added.UnitPrice, 1e-9)
+	require.Equal(t, []item{added}, s.getCart(ctx, t, c.CartID).Items)
+}
+
+func CatalogDatabaseDown(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	p := putProduct(ctx, t, target, 10.5)
+	s := newRehearser(t, target)
+	c := s.createCart(ctx, t)
+
+	detail := s.rehearsing(t, abort(catalogDatabasePoint)).call(ctx, t, http.MethodPost, itemsPath(c.CartID), newItem(p.ProductID, 1)).problem(t, http.StatusServiceUnavailable)
+	require.Contains(t, detail, "catalog")
+	require.Empty(t, s.getCart(ctx, t, c.CartID).Items)
+}
+
+func CatalogBreakerOpens(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	p := putProduct(ctx, t, target, 11.25)
+	s := newRehearser(t, target)
+	c := s.createCart(ctx, t)
+
+	failing := s.rehearsing(t, abort(catalogPoint(t, target)))
+	for {
+		detail := failing.call(ctx, t, http.MethodPost, itemsPath(c.CartID), newItem(p.ProductID, 1)).problem(t, http.StatusServiceUnavailable)
+		if strings.Contains(detail, shed) {
+			break
+		}
+	}
+	require.Empty(t, s.getCart(ctx, t, c.CartID).Items)
+
+	added := s.addItemOnceAdmitted(ctx, t, c.CartID, p.ProductID)
+	require.InDelta(t, p.UnitPrice, added.UnitPrice, 1e-9)
+	require.Equal(t, []item{added}, s.getCart(ctx, t, c.CartID).Items)
+}
+
 type cart struct {
 	CartID string `json:"cartId"`
 	Items  []item `json:"items"`
@@ -213,11 +317,29 @@ type shopper struct {
 	target  Target
 	subject string
 	token   string
+	baggage string
 }
 
 func newShopper(t testing.TB, target Target, scopes ...string) shopper {
 	t.Helper()
 	return shopper{target: target, subject: rand.Text()}.withScopes(t, target, scopes...)
+}
+
+func newRehearser(t testing.TB, target Target) shopper {
+	t.Helper()
+	require.NotEmpty(t, target.TrustScope, "Target.TrustScope")
+	return newShopper(t, target, cartsWrite, target.TrustScope)
+}
+
+func (s shopper) rehearsing(t testing.TB, rules ...fit.Rule) shopper {
+	t.Helper()
+	require.NotEmpty(t, s.target.ScenarioKey, "Target.ScenarioKey")
+	codec, err := jsonscenario.New(s.target.ScenarioKey)
+	require.NoError(t, err, "Target.ScenarioKey")
+	b, err := codec.Encode(baggage.Baggage{}, fit.Scenario{Rules: rules})
+	require.NoError(t, err)
+	s.baggage = b.String()
+	return s
 }
 
 func (s shopper) withScopes(t testing.TB, target Target, scopes ...string) shopper {
@@ -230,7 +352,7 @@ func (s shopper) call(ctx context.Context, t testing.TB, method, path string, bo
 	t.Helper()
 	require.NotNil(t, s.target.Cart, "Target.Cart")
 	require.NotNil(t, s.target.CartClient, "Target.CartClient")
-	return call(ctx, t, s.target.CartClient, s.target.Cart, method, path, s.token, body)
+	return call(ctx, t, s.target.CartClient, s.target.Cart, method, path, s.token, s.baggage, body)
 }
 
 func (s shopper) createCart(ctx context.Context, t testing.TB) cart {
@@ -255,6 +377,21 @@ func (s shopper) addItem(ctx context.Context, t testing.TB, cartID, productID st
 	s.call(ctx, t, http.MethodPost, itemsPath(cartID), newItem(productID, quantity)).decode(t, http.StatusCreated, &it)
 	require.NotEmpty(t, it.ItemID)
 	return it
+}
+
+func (s shopper) addItemOnceAdmitted(ctx context.Context, t testing.TB, cartID, productID string) item {
+	t.Helper()
+	for {
+		a := s.call(ctx, t, http.MethodPost, itemsPath(cartID), newItem(productID, 1))
+		if a.code != http.StatusServiceUnavailable {
+			var it item
+			a.decode(t, http.StatusCreated, &it)
+			require.NotEmpty(t, it.ItemID)
+			return it
+		}
+		require.Contains(t, a.problem(t, http.StatusServiceUnavailable), shed)
+		pause(ctx, t, pollEvery)
+	}
 }
 
 func (s shopper) updateItem(ctx context.Context, t testing.TB, cartID, itemID string, quantity int) item {
@@ -282,7 +419,21 @@ func catalogCall(ctx context.Context, t testing.TB, target Target, token, method
 	t.Helper()
 	require.NotNil(t, target.Catalog, "Target.Catalog")
 	require.NotNil(t, target.CatalogClient, "Target.CatalogClient")
-	return call(ctx, t, target.CatalogClient, target.Catalog, method, path, token, body)
+	return call(ctx, t, target.CatalogClient, target.Catalog, method, path, token, "", body)
+}
+
+func catalogPoint(t testing.TB, target Target) string {
+	t.Helper()
+	require.NotEmpty(t, target.CatalogPoint, "Target.CatalogPoint")
+	return target.CatalogPoint
+}
+
+func abort(point string) fit.Rule {
+	return fit.Rule{Point: point, Fault: fit.Fault{Abort: true}}
+}
+
+func delay(point string, d time.Duration) fit.Rule {
+	return fit.Rule{Point: point, Fault: fit.Fault{Delay: d}}
 }
 
 func token(t testing.TB, target Target, subject string, scopes ...string) string {
@@ -300,6 +451,15 @@ func bounded(t testing.TB, target Target) context.Context {
 	return ctx
 }
 
+func pause(ctx context.Context, t testing.TB, d time.Duration) {
+	t.Helper()
+	select {
+	case <-time.After(d):
+	case <-ctx.Done():
+		require.FailNowf(t, "timed out", "pausing for %s: %v", d, context.Cause(ctx))
+	}
+}
+
 type answer struct {
 	request     string
 	code        int
@@ -307,7 +467,7 @@ type answer struct {
 	body        []byte
 }
 
-func call(ctx context.Context, t testing.TB, client *http.Client, base *url.URL, method, path, token string, body any) answer {
+func call(ctx context.Context, t testing.TB, client *http.Client, base *url.URL, method, path, token, scenario string, body any) answer {
 	t.Helper()
 	var r io.Reader
 	if body != nil {
@@ -323,6 +483,9 @@ func call(ctx context.Context, t testing.TB, client *http.Client, base *url.URL,
 	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if scenario != "" {
+		req.Header.Set("Baggage", scenario)
 	}
 	resp, err := client.Do(req)
 	require.NoError(t, err, "%s %s", method, u)
@@ -350,15 +513,17 @@ func (a answer) decode(t testing.TB, code int, v any) {
 	require.NoError(t, json.Unmarshal(a.body, v), "%s: %s", a.request, a.body)
 }
 
-func (a answer) problem(t testing.TB, code int) {
+func (a answer) problem(t testing.TB, code int) string {
 	t.Helper()
 	require.Equal(t, code, a.code, "%s: %s", a.request, a.body)
 	require.Equal(t, "application/problem+json", mediaType(t, a), a.request)
 	var p struct {
-		Status int `json:"status"`
+		Status int    `json:"status"`
+		Detail string `json:"detail"`
 	}
 	require.NoError(t, json.Unmarshal(a.body, &p), "%s: %s", a.request, a.body)
 	require.Equal(t, code, p.Status, "%s: %s", a.request, a.body)
+	return p.Detail
 }
 
 func mediaType(t testing.TB, a answer) string {
