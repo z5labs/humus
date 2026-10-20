@@ -13,10 +13,12 @@ tool (
 )
 
 require (
+	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
 	github.com/z5labs/bedrock v0.25.0
+	github.com/z5labs/bedrock/circuit v0.25.0
 	github.com/z5labs/bedrock/fit v0.25.0
 	github.com/z5labs/humus v0.15.0
 	github.com/z5labs/humus/grpc v0.0.0-00010101000000-000000000000
@@ -71,7 +73,6 @@ require (
 	github.com/tklauser/go-sysconf v0.4.0 // indirect
 	github.com/tklauser/numcpus v0.12.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
-	github.com/z5labs/bedrock/circuit v0.25.0 // indirect
 	github.com/z5labs/bedrock/retry v0.25.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.72.0 // indirect

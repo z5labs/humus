@@ -1,0 +1,237 @@
+// Copyright (c) 2026 Z5Labs and Contributors
+//
+// This software is released under the MIT License.
+// https://opensource.org/licenses/MIT
+
+// Package app is the wallet's Init: its settings, the ledger's client, its key set, its bearer tokens, its server and its probes.
+package app
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
+	"io"
+	"net/url"
+	"strconv"
+	"time"
+
+	"github.com/z5labs/bedrock/config"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
+
+	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/auth"
+	"github.com/z5labs/humus/auth/jwt"
+	"github.com/z5labs/humus/example/wallet/internal/certfile"
+	"github.com/z5labs/humus/example/wallet/ledgerpb"
+	"github.com/z5labs/humus/example/wallet/server"
+	"github.com/z5labs/humus/example/wallet/walletpb"
+	"github.com/z5labs/humus/grpc/grpcauth"
+	"github.com/z5labs/humus/grpc/grpcclient"
+	"github.com/z5labs/humus/grpc/grpchealth"
+	"github.com/z5labs/humus/grpc/grpcserver"
+	"github.com/z5labs/humus/health"
+	"github.com/z5labs/humus/httpclient"
+)
+
+const maxConnectionAge = time.Minute
+
+const reasonKeysUnavailable = "KEYS_UNAVAILABLE"
+
+func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+	set, err := readSettings(ctx, s)
+	if err != nil {
+		return nil, err
+	}
+
+	ledger, err := grpcclient.NewClient(s, set.Ledger)
+	if err != nil {
+		return nil, err
+	}
+
+	keysClient, err := httpclient.NewClient(s, set.KeySet.Client)
+	if err != nil {
+		return nil, err
+	}
+	keys, err := jwt.NewRemoteKeySet(set.KeySet.URL, keysClient)
+	if err != nil {
+		return nil, err
+	}
+	tokens, err := jwt.NewVerifier[server.Claims](s, set.JWT, keys)
+	if err != nil {
+		return nil, err
+	}
+
+	bearer := auth.Bearer("bearer", keysUnavailable(tokens.Verify))
+	write := auth.RequireScopes(bearer, server.ScopeWrite)
+	unary, stream, err := grpcauth.Interceptors(s,
+		grpcauth.Default(auth.RequireScopes(bearer, server.ScopeRead)),
+		grpcauth.Method(walletpb.Wallet_OpenAccount_FullMethodName, write),
+		grpcauth.Method(walletpb.Wallet_Send_FullMethodName, write),
+	)
+	if err != nil {
+		return nil, err
+	}
+	svc, err := grpcserver.NewService(s, set.GRPC,
+		unary,
+		stream,
+		grpc.KeepaliveParams(keepalive.ServerParameters{MaxConnectionAge: maxConnectionAge}),
+	)
+	if err != nil {
+		return nil, err
+	}
+	walletpb.RegisterWalletServer(svc, server.New(ledgerpb.NewLedgerClient(ledger), bearer))
+
+	probes, err := grpchealth.NewService(s, set.Probes, health.Readiness(ledger.Connected()))
+	if err != nil {
+		return nil, err
+	}
+	return []humus.Service{svc, probes}, nil
+}
+
+func keysUnavailable(verify func(context.Context, string) (server.Claims, error)) func(context.Context, string) (server.Claims, error) {
+	return func(ctx context.Context, token string) (server.Claims, error) {
+		claims, err := verify(ctx, token)
+		if _, ok := errors.AsType[*jwt.KeySetError](err); ok {
+			return server.Claims{}, unavailableKeys()
+		}
+		return claims, err
+	}
+}
+
+func unavailableKeys() error {
+	st := status.New(codes.Unavailable, "the wallet can't verify tokens right now; try again later")
+	detailed, err := st.WithDetails(&errdetails.ErrorInfo{
+		Reason: reasonKeysUnavailable,
+		Domain: walletpb.Wallet_ServiceDesc.ServiceName,
+	})
+	if err != nil {
+		return st.Err()
+	}
+	return detailed.Err()
+}
+
+type settings struct {
+	GRPC   grpcserver.Settings
+	Probes grpchealth.Settings
+	Ledger grpcclient.Settings
+	KeySet keySetSettings
+	JWT    jwt.Settings
+}
+
+type keySetSettings struct {
+	URL    *url.URL
+	Client httpclient.Settings
+}
+
+type (
+	serverCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error)
+	clientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error)
+)
+
+func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
+	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
+	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.FS)) }
+	pemFile := func(name string) config.Value[*tls.Config] { return env(name).Parse(pemTLS(s.Host.FS)) }
+
+	got, err := config.Struct(func(r *config.Resolver) settings {
+		ledger := grpcclient.DefaultSettings()
+		ledger.Addr = r.Get(env("LEDGER_ADDR").Validate(grpcclient.CheckAddr))
+		ledger.TLS = &tls.Config{
+			RootCAs: r.Get(file("LEDGER_CA_FILE").Parse(certPool)),
+			GetClientCertificate: r.Get(pemFile("LEDGER_TLS_PEM_FILE").Map(func(c *tls.Config) clientCertificate {
+				return c.GetClientCertificate
+			})),
+			MinVersion: tls.VersionTLS12,
+		}
+		ledger.Timeout = r.Get(env("LEDGER_TIMEOUT").Parse(time.ParseDuration).Default(ledger.Timeout).Validate(grpcclient.CheckTimeout))
+		ledger.MaxAttempts = r.Get(env("LEDGER_MAX_ATTEMPTS").Parse(strconv.Atoi).Default(ledger.MaxAttempts).Validate(grpcclient.CheckMaxAttempts))
+
+		keys := httpclient.DefaultSettings()
+		keys.TLS = &tls.Config{
+			RootCAs:    r.Get(file("TOKEN_KEYS_CA_FILE").Parse(certPool)),
+			MinVersion: tls.VersionTLS12,
+		}
+		keys.Timeout = r.Get(env("TOKEN_KEYS_TIMEOUT").Parse(time.ParseDuration).Default(keys.Timeout).Validate(httpclient.CheckTimeout))
+		keys.MaxAttempts = r.Get(env("TOKEN_KEYS_MAX_ATTEMPTS").Parse(strconv.Atoi).Default(keys.MaxAttempts).Validate(httpclient.CheckMaxAttempts))
+
+		tokens := jwt.DefaultSettings()
+		tokens.Issuer = r.Get(env("TOKEN_ISSUER").Validate(jwt.CheckIssuer))
+		tokens.Audience = r.Get(env("TOKEN_AUDIENCE").Validate(jwt.CheckAudience))
+
+		return settings{
+			GRPC: grpcserver.Settings{
+				Addr: r.Get(env("GRPC_ADDR").Validate(grpcserver.CheckAddr)),
+				TLS: &tls.Config{
+					GetCertificate: r.Get(pemFile("GRPC_TLS_PEM_FILE").Map(func(c *tls.Config) serverCertificate {
+						return c.GetCertificate
+					})),
+					MinVersion: tls.VersionTLS12,
+				},
+			},
+			Probes: grpchealth.Settings{
+				Addr: r.Get(env("PROBES_ADDR").Validate(grpchealth.CheckAddr)),
+			},
+			Ledger: ledger,
+			KeySet: keySetSettings{
+				URL:    r.Get(env("TOKEN_KEYS_URL").Parse(parseURL).Validate(checkKeySetURL)),
+				Client: keys,
+			},
+			JWT: tokens,
+		}
+	}).Read(ctx)
+	if err != nil {
+		return settings{}, err
+	}
+	got.KeySet.Client.BaseURL = &url.URL{Scheme: got.KeySet.URL.Scheme, Host: got.KeySet.URL.Host}
+	return got, nil
+}
+
+func parseURL(s string) (*url.URL, error) {
+	u, err := url.Parse(s)
+	if err != nil {
+		return nil, errors.New("must be a URL")
+	}
+	return u, nil
+}
+
+func checkKeySetURL(u *url.URL) error {
+	switch {
+	case u.Scheme != "https" || u.Host == "":
+		return errors.New("must be an absolute https URL")
+	case u.User != nil:
+		return errors.New("must not hold user info")
+	case u.Fragment != "" || u.RawFragment != "":
+		return errors.New("must not have a fragment")
+	}
+	return nil
+}
+
+func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+	return func(name string) ([]byte, error) {
+		f, err := fsys.Open(name)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = f.Close() }()
+		return io.ReadAll(f)
+	}
+}
+
+func certPool(pem []byte) (*x509.CertPool, error) {
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(pem) {
+		return nil, errors.New("no PEM certificate in the file")
+	}
+	return roots, nil
+}
+
+func pemTLS(fsys humus.FS) func(name string) (*tls.Config, error) {
+	return func(name string) (*tls.Config, error) {
+		return certfile.Config(fsys, name)
+	}
+}
