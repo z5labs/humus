@@ -131,6 +131,23 @@ func TestPipe_Close(t *testing.T) {
 		})
 	})
 
+	t.Run("fails this end's writes before a Read it wakes returns", func(t *testing.T) {
+		for range 100 {
+			a, b := newPipe()
+			wrote := make(chan error, 1)
+			go func() {
+				_, _ = a.Read(make([]byte, 1))
+				_, err := a.Write([]byte("response"))
+				wrote <- err
+			}()
+			require.NoError(t, a.Close())
+			require.ErrorIs(t, <-wrote, io.ErrClosedPipe)
+			got, err := io.ReadAll(b)
+			require.NoError(t, err)
+			require.Empty(t, got, "the peer read a write made after the close")
+		}
+	})
+
 	t.Run("wakes this end's waiting Read and Write", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			a, _ := newPipe()

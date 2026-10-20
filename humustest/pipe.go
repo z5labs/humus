@@ -160,16 +160,18 @@ func (p *pipeEnd) Write(b []byte) (int, error) {
 // io.EOF. Closing it again does nothing.
 func (p *pipeEnd) Close() error {
 	p.once.Do(func() {
+		// Writes fail first, so that nothing a failed Read wakes, such as
+		// an http.Server's handler, can write after the close.
+		p.out.mu.Lock()
+		p.out.wclosed = true
+		p.out.notifyLocked()
+		p.out.mu.Unlock()
+
 		p.in.mu.Lock()
 		p.in.rclosed = true
 		p.in.buf = nil
 		p.in.notifyLocked()
 		p.in.mu.Unlock()
-
-		p.out.mu.Lock()
-		p.out.wclosed = true
-		p.out.notifyLocked()
-		p.out.mu.Unlock()
 	})
 	return nil
 }
