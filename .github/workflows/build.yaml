@@ -855,15 +855,18 @@ jobs:
   # The databases walkthrough's image, built from its Dockerfile with the
   # repository as the context, since its module replaces humus and kube with
   # paths under ../.., and its kustomization, rendered. up.sh then creates a
-  # kind cluster, generates PostgreSQL's admin password and the probes'
-  # certificate, loads the image and applies the kind overlay, with
-  # PostgreSQL beside the controller and the cases' namespace prefix trusted,
-  # and the controller's Deployment has to become ready. The Database beside
+  # kind cluster, generates PostgreSQL's admin password, Grafana's admin
+  # password and the probes' certificate, loads the image and applies the
+  # kind overlay, with PostgreSQL beside the controller, the cases' namespace
+  # prefix trusted, and the LGTM stack behind an OpenTelemetry Collector, and
+  # the controller's Deployment has to become ready. The Database beside
   # up.sh is then checked against the CRD with a server-side dry run. The
   # tests behind the functional tag then run the shared cases against it, the
   # failure injection cases included, through the kind cluster's kubeconfig,
   # and verify against the overlay's PostgreSQL with the admin password up.sh
-  # generates. The ruleset doesn't require this job, and Build doesn't wait
+  # generates, and find a reconcile's trace, the controller's records, its
+  # humus.kube.controller.* instruments and the containers' restarts in the
+  # LGTM stack. The ruleset doesn't require this job, and Build doesn't wait
   # on it; Vet the functional tests vets them.
   databases-kind:
     name: Databases walkthrough (kind)
@@ -911,6 +914,7 @@ jobs:
             kubectl --namespace databases describe pods
             kubectl --namespace databases logs deployment/postgres --tail 200 || true
             kubectl --namespace databases logs deployment/databases --all-containers --tail 200 || true
+            kubectl --namespace databases logs deployment/otel-collector --tail 200 || true
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache

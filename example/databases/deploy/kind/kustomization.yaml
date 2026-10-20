@@ -12,12 +12,36 @@ resources:
   - ../deployment.yaml
   - ../poddisruptionbudget.yaml
   - postgres.yaml
+  - otel-collector.yaml
+  - loki.yaml
+  - tempo.yaml
+  - mimir.yaml
+  - grafana.yaml
 configMapGenerator:
   - name: databases
     envs:
       - ../databases.env
     literals:
       - FAULT_TRUSTED_NAMESPACE_PREFIX=databases-cases-
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
+  - name: otel-collector-config
+    files:
+      - otel-collector/config.yaml
+  - name: loki-config
+    files:
+      - loki/config.yaml
+  - name: tempo-config
+    files:
+      - tempo/config.yaml
+  - name: mimir-config
+    files:
+      - mimir/config.yaml
+  - name: grafana-datasources
+    files:
+      - grafana/datasources.yaml
 patches:
   - target:
       kind: Deployment

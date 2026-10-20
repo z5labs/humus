@@ -13,6 +13,7 @@ if ! kind get clusters | grep -x "$cluster" >/dev/null; then
 fi
 
 postgres_password=$(openssl rand -hex 24)
+grafana_password=$(openssl rand -hex 24)
 
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 30 \
   -subj "/CN=databases kind CA" \
@@ -35,6 +36,7 @@ openssl x509 -req -days 30 -in "$tmp/probes.csr" \
 
 cat "$tmp/probes.crt" "$tmp/probes.key" >"$tmp/probes.pem"
 printf '%s' "$postgres_password" >"$tmp/postgres-password"
+printf '%s' "$grafana_password" >"$tmp/grafana-password"
 printf 'postgres://postgres:%s@postgres.%s.svc:5432/postgres?sslmode=disable' "$postgres_password" "$namespace" >"$tmp/admin-dsn"
 
 k() {
@@ -53,6 +55,8 @@ secret() {
   secret databases-postgres-admin --from-file=dsn="$tmp/admin-dsn"
   echo ---
   secret databases-probes --from-file=tls.pem="$tmp/probes.pem"
+  echo ---
+  secret grafana-admin --from-literal=username=admin --from-file=password="$tmp/grafana-password"
 } >"$tmp/databases.yaml"
 
 kind load docker-image databases --name "$cluster"
@@ -60,5 +64,7 @@ k apply -f "$tmp/databases.yaml"
 
 k rollout restart deployment/postgres
 k rollout status deployment/postgres --timeout 5m
-k rollout restart deployment/databases
-k rollout status deployment/databases --timeout 5m
+k rollout restart deployment/otel-collector deployment/grafana deployment/databases
+for d in loki tempo mimir otel-collector grafana databases; do
+  k rollout status "deployment/$d" --timeout 5m
+done
