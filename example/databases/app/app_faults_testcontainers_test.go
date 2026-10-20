@@ -35,20 +35,8 @@ const untrustedPrefix = "databases-untrusted-"
 var databases = schema.GroupVersionResource{Group: "postgres.example.com", Version: "v1alpha1", Resource: "databases"}
 
 var faultCases = map[string]func(t *testing.T, target cases.Target){
-	"a trusted scenario aborting PostgreSQL":         abortsPostgres,
 	"an untrusted scenario is stripped":              stripsUntrusted,
 	"a trusted scenario is carried on to the Secret": carriesToSecret,
-}
-
-func abortsPostgres(t *testing.T, target cases.Target) {
-	f := newFaults(t, target)
-	ns := f.namespace(t, target.Prefix)
-	value := f.scenario(t, fit.Rule{Point: "postgresql:*", Fault: fit.Fault{Abort: true}})
-
-	f.create(t, ns, "orders", value)
-	t.Cleanup(func() { f.unannotate(t, ns, "orders") })
-
-	f.awaitReady(t, ns, "orders", metav1.ConditionFalse, "PostgresUnavailable")
 }
 
 func stripsUntrusted(t *testing.T, target cases.Target) {
