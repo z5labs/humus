@@ -345,7 +345,7 @@ func TestInit_without_an_order_ID_makes_a_random_one_and_prints_it(t *testing.T)
 func withRecords(k *kfake.Cluster, topic string) []int32 {
 	var ps []int32
 	for _, p := range k.PartitionInfos(topic) {
-		if p.HighWatermark > 0 {
+		if p.HighWatermark > p.LogStartOffset {
 			ps = append(ps, p.Partition)
 		}
 	}

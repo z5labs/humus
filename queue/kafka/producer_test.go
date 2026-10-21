@@ -269,7 +269,7 @@ func TestReadAll_reads_every_record_when_the_first_Fetch_leaves_out_their_partit
 
 		var stored []int32
 		for _, p := range c.PartitionInfos(topic) {
-			if p.HighWatermark > 0 {
+			if p.HighWatermark > p.LogStartOffset {
 				stored = append(stored, p.Partition)
 			}
 		}
