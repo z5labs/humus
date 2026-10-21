@@ -52,6 +52,7 @@ type Transfer struct {
 	ToAccountID   string
 	AmountCents   int64
 	CreatedAt     time.Time
+	Replayed      bool
 }
 
 type Store struct {
@@ -178,6 +179,7 @@ func replay(ctx context.Context, tx pgx.Tx, want Transfer, t *Transfer) error {
 	if t.FromAccountID != want.FromAccountID || t.ToAccountID != want.ToAccountID || t.AmountCents != want.AmountCents {
 		return ErrReusedID
 	}
+	t.Replayed = true
 	return nil
 }
 

@@ -13,5 +13,5 @@ import (
 )
 
 func main() {
-	grpcserver.Main(app.Init, humus.WithFaults(app.Faults))
+	grpcserver.Main(app.Init, humus.WithTelemetry(app.BuildTelemetry), humus.WithFaults(app.Faults))
 }

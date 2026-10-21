@@ -212,6 +212,7 @@ func TestStore_deposits_as_a_transfer_from_external(t *testing.T) {
 
 	again, err := l.store.Deposit(ctx, "d-1", "alice", 1200)
 	require.NoError(t, err)
+	deposit.Replayed = true
 	require.Equal(t, deposit, again)
 	require.EqualValues(t, 1200, l.balance(t, "alice"))
 
@@ -250,6 +251,7 @@ func TestStore_answers_a_transfer_already_made_as_it_was_made(t *testing.T) {
 
 	again, err := l.store.Transfer(ctx, "t-1", "alice", "bob", 400)
 	require.NoError(t, err)
+	sent.Replayed = true
 	require.Equal(t, sent, again)
 	require.EqualValues(t, 600, l.balance(t, "alice"))
 	require.EqualValues(t, 400, l.balance(t, "bob"))
@@ -404,14 +406,20 @@ func TestStore_a_repeated_ID_moves_money_once(t *testing.T) {
 	}
 
 	var first store.Transfer
+	posted := 0
 	for i := range repeats {
 		a := <-answers
 		require.NoError(t, a.err)
+		if !a.transfer.Replayed {
+			posted++
+		}
+		a.transfer.Replayed = false
 		if i == 0 {
 			first = a.transfer
 		}
 		require.Equal(t, first, a.transfer)
 	}
+	require.Equal(t, 1, posted)
 	require.EqualValues(t, 700, l.balance(t, "alice"))
 	require.EqualValues(t, 300, l.balance(t, "bob"))
 	require.Equal(t, 1, l.transfers(t, "t-1"))

@@ -10,8 +10,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/metric"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -21,6 +26,17 @@ import (
 
 	"github.com/z5labs/humus/example/wallet/ledger/store"
 	"github.com/z5labs/humus/example/wallet/ledgerpb"
+	"github.com/z5labs/humus/telemetry"
+)
+
+const scope = "github.com/z5labs/humus/example/wallet/ledger/server"
+
+const outcomeKey = attribute.Key("ledger.transfer.outcome")
+
+const (
+	outcomePosted   = "posted"
+	outcomeReplayed = "replayed"
+	outcomeRefused  = "refused"
 )
 
 type Store interface {
@@ -35,15 +51,37 @@ type Server struct {
 
 	store         Store
 	watchInterval time.Duration
+	logger        log.Logger
+	transfers     metric.Int64Counter
+	watches       metric.Int64UpDownCounter
 }
 
 var ErrWatchInterval = errors.New("watch interval isn't positive")
 
-func New(st Store, watchInterval time.Duration) (*Server, error) {
+func New(st Store, watchInterval time.Duration, tel telemetry.SDK) (*Server, error) {
 	if watchInterval <= 0 {
 		return nil, fmt.Errorf("%w: %s", ErrWatchInterval, watchInterval)
 	}
-	return &Server{store: st, watchInterval: watchInterval}, nil
+	meter := tel.MeterProvider.Meter(scope)
+	transfers, err := meter.Int64Counter("ledger.transfers",
+		metric.WithDescription("Transfers the ledger answered, by outcome."),
+		metric.WithUnit("{transfer}"))
+	if err != nil {
+		return nil, err
+	}
+	watches, err := meter.Int64UpDownCounter("ledger.watches",
+		metric.WithDescription("Watches of an account open on the ledger."),
+		metric.WithUnit("{watch}"))
+	if err != nil {
+		return nil, err
+	}
+	return &Server{
+		store:         st,
+		watchInterval: watchInterval,
+		logger:        tel.LoggerProvider.Logger(scope),
+		transfers:     transfers,
+		watches:       watches,
+	}, nil
 }
 
 func (s *Server) OpenAccount(ctx context.Context, req *ledgerpb.OpenAccountRequest) (*ledgerpb.OpenAccountResponse, error) {
@@ -52,7 +90,7 @@ func (s *Server) OpenAccount(ctx context.Context, req *ledgerpb.OpenAccountReque
 	}
 	a, err := s.store.OpenAccount(ctx, req.GetAccountId())
 	if err != nil {
-		return nil, answer(err, nil)
+		return nil, s.answer(ctx, err, nil)
 	}
 	return &ledgerpb.OpenAccountResponse{Account: account(a)}, nil
 }
@@ -63,7 +101,7 @@ func (s *Server) GetAccount(ctx context.Context, req *ledgerpb.GetAccountRequest
 	}
 	a, err := s.store.Account(ctx, req.GetAccountId())
 	if err != nil {
-		return nil, answer(err, nil)
+		return nil, s.answer(ctx, err, nil)
 	}
 	return &ledgerpb.GetAccountResponse{Account: account(a)}, nil
 }
@@ -75,7 +113,7 @@ func (s *Server) Deposit(ctx context.Context, req *ledgerpb.DepositRequest) (*le
 	}
 	t, err := s.store.Deposit(ctx, req.GetTransferId(), req.GetAccountId(), req.GetAmountCents())
 	if err != nil {
-		return nil, answer(err, []invalid{
+		return nil, s.answer(ctx, err, []invalid{
 			{store.ErrNotPositive, "amount_cents", "must be more than zero"},
 			{store.ErrSameAccount, "account_id", "is the ledger's own " + store.External + " account, which deposits come from"},
 		})
@@ -90,16 +128,38 @@ func (s *Server) Transfer(ctx context.Context, req *ledgerpb.TransferRequest) (*
 		field{"to_account_id", req.GetToAccountId()},
 	)
 	if err != nil {
+		s.count(ctx, outcomeRefused)
 		return nil, err
 	}
 	t, err := s.store.Transfer(ctx, req.GetTransferId(), req.GetFromAccountId(), req.GetToAccountId(), req.GetAmountCents())
 	if err != nil {
-		return nil, answer(err, []invalid{
+		err = s.answer(ctx, err, []invalid{
 			{store.ErrNotPositive, "amount_cents", "must be more than zero"},
 			{store.ErrSameAccount, "to_account_id", "is the account the transfer is from"},
 		})
+		if refused(err) {
+			s.count(ctx, outcomeRefused)
+		}
+		return nil, err
 	}
+	outcome := outcomePosted
+	if t.Replayed {
+		outcome = outcomeReplayed
+	}
+	s.count(ctx, outcome)
 	return &ledgerpb.TransferResponse{Transfer: transfer(t)}, nil
+}
+
+func (s *Server) count(ctx context.Context, outcome string) {
+	s.transfers.Add(ctx, 1, metric.WithAttributes(outcomeKey.String(outcome)))
+}
+
+func refused(err error) bool {
+	switch status.Code(err) {
+	case codes.InvalidArgument, codes.NotFound, codes.FailedPrecondition, codes.AlreadyExists:
+		return true
+	}
+	return false
 }
 
 func (s *Server) WatchAccount(req *ledgerpb.WatchAccountRequest, stream grpc.ServerStreamingServer[ledgerpb.WatchAccountResponse]) error {
@@ -107,9 +167,11 @@ func (s *Server) WatchAccount(req *ledgerpb.WatchAccountRequest, stream grpc.Ser
 		return err
 	}
 	ctx := stream.Context()
+	s.watches.Add(ctx, 1)
+	defer s.watches.Add(context.WithoutCancel(ctx), -1)
 	sent, err := s.store.Account(ctx, req.GetAccountId())
 	if err != nil {
-		return answer(err, nil)
+		return s.answer(ctx, err, nil)
 	}
 	if err := stream.Send(&ledgerpb.WatchAccountResponse{Account: account(sent)}); err != nil {
 		return err
@@ -125,7 +187,7 @@ func (s *Server) WatchAccount(req *ledgerpb.WatchAccountRequest, stream grpc.Ser
 		}
 		a, err := s.store.Account(ctx, req.GetAccountId())
 		if err != nil {
-			return answer(err, nil)
+			return s.answer(ctx, err, nil)
 		}
 		if a.BalanceCents == sent.BalanceCents {
 			continue
@@ -159,6 +221,26 @@ type invalid struct {
 	err         error
 	field       string
 	description string
+}
+
+func (s *Server) answer(ctx context.Context, err error, invalids []invalid) error {
+	answered := answer(err, invalids)
+	switch status.Code(answered) {
+	case codes.Unavailable, codes.Internal:
+		s.warn(ctx, err)
+	}
+	return answered
+}
+
+func (s *Server) warn(ctx context.Context, err error) {
+	method, _ := grpc.Method(ctx)
+	var r log.Record
+	r.SetTimestamp(time.Now())
+	r.SetSeverity(log.SeverityWarn)
+	r.SetSeverityText("WARN")
+	r.SetBody(attribute.StringValue("the ledger's transaction failed"))
+	r.AddAttributes(semconv.RPCMethod(strings.TrimPrefix(method, "/")), semconv.ExceptionMessage(err.Error()))
+	s.logger.Emit(context.WithoutCancel(ctx), r)
 }
 
 func answer(err error, invalids []invalid) error {

@@ -3,7 +3,7 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-// Package app is the wallet's Init: its settings, the ledger's client, its key set, its bearer tokens, its server and its probes.
+// Package app is the wallet's Init: its settings, the ledger's client, its key set, its bearer tokens, its server, its probes and its telemetry.
 package app
 
 import (
@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/config"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
@@ -41,6 +42,7 @@ import (
 	"github.com/z5labs/humus/grpc/grpcserver"
 	"github.com/z5labs/humus/health"
 	"github.com/z5labs/humus/httpclient"
+	"github.com/z5labs/humus/telemetry"
 )
 
 const maxConnectionAge = time.Minute
@@ -61,6 +63,32 @@ func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
 		f.MaxDelay = r.Get(config.Env(s.Process.Environment, "FAULT_MAX_DELAY").Parse(time.ParseDuration).Default(d.MaxDelay).Validate(fault.CheckMaxDelay))
 		return f
 	}).Read(ctx)
+}
+
+func BuildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+	d := telemetry.DefaultSettings()
+	env := func(name string) config.Value[string] { return config.Env(p.Environment, name) }
+	exporter := func(name string, def telemetry.Exporter) config.Value[telemetry.Exporter] {
+		return env(name).
+			Map(func(s string) telemetry.Exporter { return telemetry.Exporter(s) }).
+			Default(def).
+			Validate(telemetry.CheckExporter)
+	}
+
+	s, err := config.Struct(func(r *config.Resolver) telemetry.Settings {
+		s := d
+		s.Disabled = r.Get(env("OTEL_SDK_DISABLED").Parse(strconv.ParseBool).Default(d.Disabled))
+		s.ServiceName = r.Get(env("OTEL_SERVICE_NAME").Default("wallet").Validate(telemetry.CheckServiceName))
+		s.Traces = r.Get(exporter("OTEL_TRACES_EXPORTER", d.Traces))
+		s.Metrics = r.Get(exporter("OTEL_METRICS_EXPORTER", d.Metrics))
+		s.Logs = r.Get(exporter("OTEL_LOGS_EXPORTER", d.Logs))
+		s.OTLP.Endpoint = r.Get(env("OTEL_EXPORTER_OTLP_ENDPOINT").Default(d.OTLP.Endpoint).Validate(telemetry.CheckOTLPEndpoint))
+		return s
+	}).Read(ctx)
+	if err != nil {
+		return telemetry.SDK{}, err
+	}
+	return telemetry.New(ctx, s, dial, p.Stdout)
 }
 
 func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
@@ -108,7 +136,11 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	walletpb.RegisterWalletServer(svc, server.New(ledgerpb.NewLedgerClient(ledger), bearer))
+	wallet, err := server.New(ledgerpb.NewLedgerClient(ledger), bearer, s.Telemetry)
+	if err != nil {
+		return nil, err
+	}
+	walletpb.RegisterWalletServer(svc, wallet)
 
 	probes, err := grpchealth.NewService(s, set.Probes, health.Readiness(ledger.Connected()))
 	if err != nil {

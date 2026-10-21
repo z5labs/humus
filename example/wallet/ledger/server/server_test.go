@@ -28,6 +28,7 @@ import (
 	"github.com/z5labs/humus/example/wallet/ledgerpb"
 	"github.com/z5labs/humus/grpc/grpcserver/grpcservertest"
 	"github.com/z5labs/humus/humustest"
+	"github.com/z5labs/humus/telemetry"
 )
 
 const watchInterval = time.Second
@@ -113,6 +114,7 @@ func (f *fakeStore) move(want store.Transfer, checkBalance bool) (store.Transfer
 		if t.FromAccountID != want.FromAccountID || t.ToAccountID != want.ToAccountID || t.AmountCents != want.AmountCents {
 			return store.Transfer{}, store.ErrReusedID
 		}
+		t.Replayed = true
 		return t, nil
 	}
 	from, ok := f.accounts[want.FromAccountID]
@@ -139,6 +141,11 @@ func (f *fakeStore) move(want store.Transfer, checkBalance bool) (store.Transfer
 
 func serve(t *testing.T, st server.Store) ledgerpb.LedgerClient {
 	t.Helper()
+	return serveWith(t, st, telemetry.Noop())
+}
+
+func serveWith(t *testing.T, st server.Store, tel telemetry.SDK) ledgerpb.LedgerClient {
+	t.Helper()
 	ca := humustest.NewCA(t)
 	h := humustest.NewHost(t)
 	l, err := h.Listen("tcp", "ledger:9090")
@@ -147,7 +154,7 @@ func serve(t *testing.T, st server.Store) ledgerpb.LedgerClient {
 	srv := grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{
 		Certificates: []tls.Certificate{ca.Issue(t, "ledger").TLS()},
 	})))
-	svc, err := server.New(st, watchInterval)
+	svc, err := server.New(st, watchInterval, tel)
 	require.NoError(t, err)
 	ledgerpb.RegisterLedgerServer(srv, svc)
 	served := make(chan error, 1)
@@ -206,7 +213,7 @@ func open(t *testing.T, c ledgerpb.LedgerClient, ids ...string) {
 
 func TestNew_refuses_a_watch_interval_that_isnt_positive(t *testing.T) {
 	for _, interval := range []time.Duration{0, -time.Second} {
-		_, err := server.New(newFakeStore(), interval)
+		_, err := server.New(newFakeStore(), interval, telemetry.Noop())
 		require.ErrorIs(t, err, server.ErrWatchInterval, interval)
 	}
 }

@@ -116,6 +116,7 @@ func (s *memoryStore) move(ctx context.Context, want store.Transfer, checkBalanc
 		if t.FromAccountID != want.FromAccountID || t.ToAccountID != want.ToAccountID || t.AmountCents != want.AmountCents {
 			return store.Transfer{}, store.ErrReusedID
 		}
+		t.Replayed = true
 		return t, nil
 	}
 	from, ok := m.accounts[want.FromAccountID]

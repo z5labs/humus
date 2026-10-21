@@ -224,6 +224,11 @@ func inSynctest(t *testing.T) place {
 
 func startHarness(t *testing.T, pl place) *harness {
 	t.Helper()
+	return startHarnessWith(t, pl, telemetry.NoopBuilder, telemetry.NoopBuilder)
+}
+
+func startHarnessWith(t *testing.T, pl place, walletTel, ledgerTel telemetry.Builder) *harness {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), pl.timeout)
 	defer cancel()
 
@@ -236,8 +241,8 @@ func startHarness(t *testing.T, pl place) *harness {
 	n := newNetwork(pl.host.Dial)
 	host := pl.host
 	host.Dial = n.Dial
-	walletApp := humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(Faults))
-	ledgerApp := humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(ledgerapp.Faults))
+	walletApp := humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(walletTel), humus.WithFaults(Faults))
+	ledgerApp := humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(ledgerTel), humus.WithFaults(ledgerapp.Faults))
 
 	provider := newIdP(t)
 	keysCert := ca.Issue(t, keysHost)
