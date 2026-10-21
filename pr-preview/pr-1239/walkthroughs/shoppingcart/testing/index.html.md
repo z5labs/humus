@@ -223,7 +223,7 @@ type Target struct {
 | `TrustScope` | the scope a token needs for the cart to trust its scenario |
 | `Timeout` | how long a case may take |
 
-The cases come in two lists. Each of `Alone`'s runs by itself, since the
+The cases come in two lists. Each case in `Alone` runs by itself, since the
 catalog's failures it rehearses count toward the breaker every add goes
 through:
 
