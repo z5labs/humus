@@ -888,7 +888,7 @@ The requests go through the API exactly as production's do: routing,
 parameters, codecs, answers and the document.
 
 The shoppingcart's `app_test.go` does it this way. Its `start` helper runs
-the service's `Init`, with every variable it reads, on a new Host, beside
+the cart's `Init`, with the variables it needs, on a new Host, beside
 the test's identity provider, which serves a JSON Web Key Set from a handler
 of the test's own and signs the tokens the test sends. A `newFixture` helper
 makes the Host, its files and the variables:
@@ -976,39 +976,29 @@ it.
 
 ## The shoppingcart
 
-[`example/shoppingcart`](https://github.com/z5labs/humus/tree/main/example/shoppingcart)
-is humus's reference service: an API for shopping carts, on Postgres, built
-on `openapi/v3`, `jsoncodec` and `problem`, and served by `httpserver`. It
-is a module of its own, so pgx, uuid and
-testcontainers stay out of the core module's dependencies, and it is built
-and tested against the humus in the same commit. It has three packages:
+The [shoppingcart walkthrough]({{< relref "walkthroughs/shoppingcart" >}})
+builds an API on `openapi/v3` step by step, at
+[`example/shoppingcart`](https://github.com/z5labs/humus/tree/main/example/shoppingcart):
+a cart service, and a catalog service it prices items from, each an
+`openapi/v3` API served by `httpserver`. Of `openapi/v3`, it shows:
 
-- **`endpoint`**, the API: six typed operations on carts and their items,
-  their paths and parameters, the `NotFound` and `Invalid` answers, and the
-  `Store` interface they are served on.
-- **`database`**, the `Store` on a `pgxpool.Pool`, and the schema.
-- **`app`**, the `Init`. It sources its settings with `config.Struct`,
-  opens its pool through the Host and closes it with `OnStop`, builds the API
-  with `NewAPI`, and serves it with `httpserver.NewService`.
-
-Every operation requires a JWT bearer token, which `auth/jwt`'s `Verifier`
-checks against the identity provider's key set, fetched by a
-`jwt.RemoteKeySet` with an `httpclient` client for the key set's origin.
-Changing a cart requires the scope `carts:write` too, which the token's
-claims, a type of the service's own, report through `auth.Scoped`. The
-document is public, served with `Document(path,
-openapi.Security(auth.Disabled()))`. A `*jwt.KeySetError`, a key set
-that is down before any key was fetched, is answered with a 503
-`Unavailable` by an `openapi.Error`, as a catalog or a database that is
-down is. A cart belongs to the subject of the token that created it:
-a token with no `sub` is a 401, and another subject's token gets a 404 for
-the cart. [Authentication and authorization]({{< relref "auth" >}})
-describes each piece.
-
-Its tests run the whole service as [Testing](#testing) shows, its golden
-document is `app/testdata/openapi.json`, and a test behind the
-`testcontainers` build tag runs it once against Postgres in a container, on
-the OS Host, beside the test's identity provider, in a CI job of its own.
+- **paths and parameters** built from typed parts, with a `Pattern` on each
+  UUID;
+- **six operations** on carts and their items, with `jsoncodec`'s
+  `Decoder` and `Encoder`, and `EmptyDecoder` and `EmptyEncoder` where an
+  operation has no body;
+- **answers as types of its own,** embedding `problem.Details` and given
+  with `Error`: `NotFound` on the whole API, `Invalid` at 422 on the two
+  operations with a body, and `Unavailable` at 503 for a dependency that is
+  down;
+- **`Unmatched`, `RequestErrors` and `CatchAll`,** so every answer the API
+  writes is a problem detail;
+- **`openapi.Security`:** a bearer token on the whole API,
+  `auth.RequireScopes` on the operations that change a cart, and the
+  document opened with `auth.Disabled()`. The catalog requires
+  `auth.MutualTLS` on one operation and a bearer token on the other;
+- **the document** at `/openapi.json`, kept as the golden file
+  `app/testdata/openapi.json` and validated, as [Testing](#testing) shows.
 
 ### pgx's ambient leaks
 
