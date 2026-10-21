@@ -1073,8 +1073,12 @@ jobs:
   # passwords and the signing key, whose key set walletctl jwks makes, and
   # applies the kind overlay, with PostgreSQL over TLS, the ledger's schema
   # applied by its owner, and WireMock serving the key set, and both
-  # services' Deployments have to become ready. The ruleset doesn't require
-  # this job, and Build doesn't wait on it.
+  # services' Deployments have to become ready. The tests behind the
+  # functional tag then run the shared cases against it through kubectl
+  # port-forward, with the cases' certificate and the signing key from the
+  # Secrets up.sh made, rolling each Deployment out and forwarding its port
+  # again. The ruleset doesn't require this job, and Build doesn't wait on
+  # it; Vet the functional tests vets them.
   wallet-kind:
     name: Wallet walkthrough (kind)
     runs-on: ubuntu-latest
@@ -1104,6 +1108,9 @@ jobs:
 
         - name: Bring the wallet and the ledger up on kind
           run: example/wallet/deploy/kind/up.sh
+
+        - name: Run the shared cases against kind
+          run: go -C example/wallet test -count=1 -race -tags functional ./functional/
 
         - name: Show the wallet namespace
           if: ${{ failure() }}
