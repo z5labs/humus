@@ -326,7 +326,7 @@ func rotate(t *testing.T, f *faults, ns string, wait time.Duration) {
 				}
 				line := fmt.Sprintf("%s %s %s %s uid %.8s resourceVersion %s", time.Now().Format(clock), what, e.Type, m.GetName(), m.GetUID(), m.GetResourceVersion())
 				if fields := m.GetManagedFields(); len(fields) > 0 {
-					last := slices.MaxFunc(fields, func(a, b metav1.ManagedFieldsEntry) int { return a.Time.Compare(b.Time.Time) })
+					last := slices.MaxFunc(fields, func(a, b metav1.ManagedFieldsEntry) int { return writtenAt(a).Compare(writtenAt(b)) })
 					line += fmt.Sprintf(", last written by %s %s %s", last.Manager, last.Operation, last.Subresource)
 				}
 				mu.Lock()
@@ -371,6 +371,8 @@ func rotate(t *testing.T, f *faults, ns string, wait time.Duration) {
 	t.Logf("at %s: the Secret uid %.8s, with the old password: %t", time.Now().Format(clock), settled.UID, string(settled.Data["password"]) == oldPassword)
 
 	cancel()
+	sw.Stop()
+	dw.Stop()
 	watched.Wait()
 	for _, e := range events {
 		t.Log("watched: " + e)
@@ -378,6 +380,13 @@ func rotate(t *testing.T, f *faults, ns string, wait time.Duration) {
 
 	require.False(t, oldPassword == string(rotated.Data["password"]), "the new Secret holds the old password")
 	require.False(t, oldPassword == string(settled.Data["password"]), "the rotation was lost: the Secret still holds the old password")
+}
+
+func writtenAt(f metav1.ManagedFieldsEntry) time.Time {
+	if f.Time == nil {
+		return time.Time{}
+	}
+	return f.Time.Time
 }
 
 func pemOf(t *testing.T, c *humustest.Certificate) []byte {
