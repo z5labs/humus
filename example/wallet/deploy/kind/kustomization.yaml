@@ -1,0 +1,48 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: wallet
+resources:
+  - ../base
+  - postgres.yaml
+  - wiremock.yaml
+configMapGenerator:
+  - name: wallet
+    behavior: merge
+    literals:
+      - TOKEN_KEYS_URL=https://wiremock/.well-known/jwks.json
+      - FAULT_TRUST_SCOPE=faults:rehearse
+  - name: postgres-config
+    files:
+      - postgres/pg_hba.conf
+  - name: wiremock-mappings
+    files:
+      - wiremock/jwks.json
+patches:
+  - target:
+      kind: Deployment
+      name: wallet
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: wallet
+      spec:
+        template:
+          spec:
+            containers:
+              - name: wallet
+                imagePullPolicy: Never
+  - target:
+      kind: Deployment
+      name: ledger
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: ledger
+      spec:
+        template:
+          spec:
+            containers:
+              - name: ledger
+                imagePullPolicy: Never

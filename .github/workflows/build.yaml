@@ -1065,3 +1065,58 @@ jobs:
           with:
             key: ${{ steps.go-cache.outputs.key }}
             path: ${{ steps.go-cache.outputs.path }}
+
+  # The wallet walkthrough's image, built from its Dockerfile with the
+  # repository as the context, since its module replaces humus with ../..,
+  # and its base kustomization, rendered. up.sh then creates a kind cluster,
+  # issues every certificate from a CA it generates, makes PostgreSQL's
+  # passwords and the signing key, whose key set walletctl jwks makes, and
+  # applies the kind overlay, with PostgreSQL over TLS, the ledger's schema
+  # applied by its owner, and WireMock serving the key set, and both
+  # services' Deployments have to become ready. The ruleset doesn't require
+  # this job, and Build doesn't wait on it.
+  wallet-kind:
+    name: Wallet walkthrough (kind)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: write
+      contents: read
+    steps:
+        - name: Checkout
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+          with:
+            go-version: '1.27.2'
+            cache: false
+
+        - id: go-cache
+          uses: ./.github/actions/restore-go-cache
+          with:
+            name: wallet-kind
+
+        - name: Build the image
+          run: docker build --file example/wallet/Dockerfile --tag wallet .
+
+        - name: Render the kustomization
+          run: kubectl kustomize example/wallet/deploy/base
+
+        - name: Bring the wallet and the ledger up on kind
+          run: example/wallet/deploy/kind/up.sh
+
+        - name: Show the wallet namespace
+          if: ${{ failure() }}
+          run: |
+            kubectl --namespace wallet get all
+            kubectl --namespace wallet describe pods
+            kubectl --namespace wallet logs deployment/postgres --tail 200 || true
+            kubectl --namespace wallet logs deployment/wiremock --tail 200 || true
+            kubectl --namespace wallet logs deployment/ledger --all-containers --tail 200 || true
+            kubectl --namespace wallet logs deployment/wallet --all-containers --tail 200 || true
+
+        - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
+          uses: ./.github/actions/save-go-cache
+          with:
+            key: ${{ steps.go-cache.outputs.key }}
+            path: ${{ steps.go-cache.outputs.path }}
