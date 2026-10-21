@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: wallet
+  labels:
+    app.kubernetes.io/name: wallet
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: wallet
+  ports:
+    - name: grpc
+      port: 8443
+      targetPort: grpc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ledger
+  labels:
+    app.kubernetes.io/name: ledger
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ledger
+  ports:
+    - name: grpc
+      port: 8443
+      targetPort: grpc
