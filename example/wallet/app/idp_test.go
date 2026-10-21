@@ -21,6 +21,8 @@ import (
 	jose "github.com/go-jose/go-jose/v4"
 	josejwt "github.com/go-jose/go-jose/v4/jwt"
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock"
+	"github.com/z5labs/bedrock/bedrocktest"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/httpserver"
@@ -112,9 +114,9 @@ func (p *idp) sign(subject string, scopes ...string) (string, error) {
 	return josejwt.Signed(sig).Claims(claims).Serialize()
 }
 
-func (p *idp) serve(t *testing.T, host humus.Host, addr string, cert *humustest.Certificate) {
+func (p *idp) serve(t *testing.T, host humus.Host, addr string, cert *humustest.Certificate) (*bedrocktest.Process, <-chan bedrock.ExitStatus) {
 	t.Helper()
-	_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	return humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = addr
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
@@ -126,5 +128,4 @@ func (p *idp) serve(t *testing.T, host humus.Host, addr string, cert *humustest.
 		}
 		return []humus.Service{svc}, nil
 	}, humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(telemetry.NoopBuilder)))
-	t.Cleanup(func() { <-status })
 }

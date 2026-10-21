@@ -78,7 +78,7 @@ func newFakeStore(down bool) *fakeStore {
 	}
 }
 
-func (f *fakeStore) opener() openStore {
+func (f *fakeStore) opener() OpenStore {
 	return func(_ context.Context, _ *humus.Setup, cfg *pgxpool.Config) (server.Store, func(context.Context) error, error) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -223,7 +223,7 @@ func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Servi
 
 func onFake(st *fakeStore) func(context.Context, *humus.Setup) ([]humus.Service, error) {
 	return func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-		return initWith(ctx, s, st.opener())
+		return InitWith(ctx, s, st.opener())
 	}
 }
 
