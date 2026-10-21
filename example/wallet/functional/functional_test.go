@@ -243,7 +243,7 @@ func (f *forward) dial(ctx context.Context, _ string) (net.Conn, error) {
 }
 
 func (f *forward) again(ctx context.Context) error {
-	p, err := startPortForward(ctx, f.service)
+	p, err := startPortForward(ctx, f.service, port)
 	if p != nil {
 		f.mu.Lock()
 		f.forwards = append(f.forwards, p)
@@ -321,9 +321,9 @@ func (p *portForward) stop() {
 	<-p.exited
 }
 
-func startPortForward(ctx context.Context, service string) (*portForward, error) {
+func startPortForward(ctx context.Context, service string, remotePort int) (*portForward, error) {
 	procCtx, cancel := context.WithCancel(context.Background())
-	cmd := command(procCtx, "port-forward", "--address", "127.0.0.1", "service/"+service, fmt.Sprintf(":%d", port))
+	cmd := command(procCtx, "port-forward", "--address", "127.0.0.1", "service/"+service, fmt.Sprintf(":%d", remotePort))
 	r, w := io.Pipe()
 	p := &portForward{cancel: cancel, exited: make(chan struct{}), stderr: &output{}}
 	cmd.Stdout = w
