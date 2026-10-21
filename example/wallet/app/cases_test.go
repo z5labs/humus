@@ -236,7 +236,8 @@ func startHarness(t *testing.T, pl place) *harness {
 	n := newNetwork(pl.host.Dial)
 	host := pl.host
 	host.Dial = n.Dial
-	app := humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(telemetry.NoopBuilder))
+	walletApp := humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(Faults))
+	ledgerApp := humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(ledgerapp.Faults))
 
 	provider := newIdP(t)
 	keysCert := ca.Issue(t, keysHost)
@@ -267,7 +268,7 @@ func startHarness(t *testing.T, pl place) *harness {
 					return ledgerapp.Init(ctx, s)
 				}
 				return ledgerapp.InitWith(ctx, s, pl.ledger)
-			}, app, humustest.WithEnv(env))
+			}, ledgerApp, humustest.WithEnv(env))
 		}
 		r.ready = func(ctx context.Context) error { return serving(ctx, pl.host.Dial, r, probes) }
 		require.NoError(t, ledger.run(ctx, r))
@@ -287,9 +288,10 @@ func startHarness(t *testing.T, pl place) *harness {
 		"TOKEN_KEYS_CA_FILE":  caFile,
 		"TOKEN_ISSUER":        issuer,
 		"TOKEN_AUDIENCE":      audience,
+		"FAULT_TRUST_SCOPE":   trustScope,
 	}
 	w.start = func() (*bedrocktest.Process, <-chan bedrock.ExitStatus) {
-		return grpcservertest.Start(t, Init, app, humustest.WithEnv(walletEnv))
+		return grpcservertest.Start(t, Init, walletApp, humustest.WithEnv(walletEnv))
 	}
 	w.ready = func(ctx context.Context) error { return serving(ctx, pl.host.Dial, w, walletProbes) }
 	require.NoError(t, wallet.run(ctx, w))

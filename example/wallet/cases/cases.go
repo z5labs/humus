@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/fit"
+	"go.opentelemetry.io/otel/baggage"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -22,6 +24,7 @@ import (
 
 	"github.com/z5labs/humus/example/wallet/ledgerpb"
 	"github.com/z5labs/humus/example/wallet/walletpb"
+	"github.com/z5labs/humus/fault/jsonscenario"
 )
 
 const (
@@ -31,6 +34,13 @@ const (
 	pollEvery = 500 * time.Millisecond
 
 	shuttingDown = "server is shutting down"
+
+	transferPoint       = "grpc:ledger.v1.Ledger/Transfer"
+	ledgerDatabasePoint = "postgresql:ledger"
+	slowLedger          = 2 * time.Second
+
+	ledgerUnavailable = "LEDGER_UNAVAILABLE"
+	ledgerShed        = "LEDGER_SHED"
 )
 
 type Target struct {
@@ -62,10 +72,15 @@ var Parallel = []Case{
 	{Name: "SendsAtOnce", Run: SendsAtOnce},
 	{Name: "WhoMayDoWhat", Run: WhoMayDoWhat},
 	{Name: "AWatch", Run: AWatch},
+	{Name: "ASlowLedger", Run: ASlowLedger},
+	{Name: "AnUntrustedScenario", Run: AnUntrustedScenario},
 }
 
 var Alone = []Case{
+	{Name: "TheLedgerIsDown", Run: TheLedgerIsDown},
+	{Name: "TheLedgersDatabaseIsDown", Run: TheLedgersDatabaseIsDown},
 	{Name: "ARolloutOfTheWallet", Run: ARolloutOfTheWallet},
+	{Name: "TheLedgersBreakerOpens", Run: TheLedgersBreakerOpens},
 }
 
 func AnAccountsLife(t testing.TB, target Target) {
@@ -208,6 +223,83 @@ func AWatch(t testing.TB, target Target) {
 	require.EqualValues(t, 600, recvBalance(t, watch))
 }
 
+func ASlowLedger(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	alice := newRehearser(ctx, t, target, 1000)
+	bob := newFunded(ctx, t, target, 0)
+
+	start := time.Now()
+	sent := alice.rehearsing(t, delay(transferPoint, slowLedger)).send(ctx, t, bob, rand.Text(), 300)
+	require.GreaterOrEqual(t, time.Since(start), slowLedger, "the send was delayed")
+	require.EqualValues(t, 300, sent.GetAmountCents())
+
+	require.EqualValues(t, 700, alice.balance(ctx, t))
+	require.EqualValues(t, 300, bob.balance(ctx, t))
+}
+
+func AnUntrustedScenario(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	alice := newFunded(ctx, t, target, 1000)
+	bob := newFunded(ctx, t, target, 0)
+
+	sent := alice.rehearsing(t, abort(transferPoint)).send(ctx, t, bob, rand.Text(), 300)
+	require.EqualValues(t, 300, sent.GetAmountCents())
+
+	require.EqualValues(t, 700, alice.balance(ctx, t))
+	require.EqualValues(t, 300, bob.balance(ctx, t))
+}
+
+func TheLedgerIsDown(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	alice := newRehearser(ctx, t, target, 1000)
+	bob := newFunded(ctx, t, target, 0)
+	requestID := rand.Text()
+
+	_, err := alice.rehearsing(t, abort(transferPoint)).trySend(ctx, bob, requestID, 300)
+	requireReason(t, err, ledgerUnavailable)
+	require.EqualValues(t, 1000, alice.balance(ctx, t))
+	require.Zero(t, bob.balance(ctx, t))
+
+	alice.sendOnceAdmitted(ctx, t, bob, requestID, 300)
+	require.EqualValues(t, 700, alice.balance(ctx, t))
+	require.EqualValues(t, 300, bob.balance(ctx, t))
+}
+
+func TheLedgersDatabaseIsDown(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	alice := newRehearser(ctx, t, target, 1000)
+	bob := newFunded(ctx, t, target, 0)
+
+	_, err := alice.rehearsing(t, abort(ledgerDatabasePoint)).trySend(ctx, bob, rand.Text(), 300)
+	requireCode(t, err, codes.Unavailable)
+
+	require.EqualValues(t, 1000, alice.balance(ctx, t))
+	require.Zero(t, bob.balance(ctx, t))
+}
+
+func TheLedgersBreakerOpens(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	alice := newRehearser(ctx, t, target, 1000)
+	bob := newFunded(ctx, t, target, 0)
+	requestID := rand.Text()
+
+	failing := alice.rehearsing(t, abort(transferPoint))
+	for {
+		_, err := failing.trySend(ctx, bob, requestID, 300)
+		st := requireCode(t, err, codes.Unavailable)
+		if reason(st) == ledgerShed {
+			require.NotNil(t, retryInfo(st), "a LEDGER_SHED answer carries a RetryInfo: %s", st.Message())
+			break
+		}
+		require.Equal(t, ledgerUnavailable, reason(st), "%s", st.Message())
+		pause(ctx, t, pollEvery)
+	}
+
+	alice.sendOnceAdmitted(ctx, t, bob, requestID, 300)
+	require.EqualValues(t, 700, alice.balance(ctx, t))
+	require.EqualValues(t, 300, bob.balance(ctx, t))
+}
+
 func ARolloutOfTheWallet(t testing.TB, target Target) {
 	ctx := bounded(t, target)
 	alice := newFunded(ctx, t, target, 1000)
@@ -249,6 +341,7 @@ type holder struct {
 	target  Target
 	subject string
 	token   string
+	baggage string
 }
 
 func newHolder(t testing.TB, target Target, scopes ...string) holder {
@@ -266,6 +359,23 @@ func newFunded(ctx context.Context, t testing.TB, target Target, amountCents int
 	return h
 }
 
+func newRehearser(ctx context.Context, t testing.TB, target Target, amountCents int64) holder {
+	t.Helper()
+	require.NotEmpty(t, target.TrustScope, "Target.TrustScope")
+	return newFunded(ctx, t, target, amountCents).withScopes(t, target, scopeRead, scopeWrite, target.TrustScope)
+}
+
+func (h holder) rehearsing(t testing.TB, rules ...fit.Rule) holder {
+	t.Helper()
+	require.NotEmpty(t, h.target.ScenarioKey, "Target.ScenarioKey")
+	codec, err := jsonscenario.New(h.target.ScenarioKey)
+	require.NoError(t, err, "Target.ScenarioKey")
+	b, err := codec.Encode(baggage.Baggage{}, fit.Scenario{Rules: rules})
+	require.NoError(t, err, "encoding the scenario")
+	h.baggage = b.String()
+	return h
+}
+
 func (h holder) withScopes(t testing.TB, target Target, scopes ...string) holder {
 	t.Helper()
 	require.NotNil(t, target.Token, "Target.Token")
@@ -280,10 +390,13 @@ func (h holder) wallet() walletpb.WalletClient {
 }
 
 func (h holder) with(ctx context.Context) context.Context {
-	if h.token == "" {
-		return ctx
+	if h.token != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+h.token)
 	}
-	return metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+h.token)
+	if h.baggage != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, "baggage", h.baggage)
+	}
+	return ctx
 }
 
 func (h holder) openAccount(ctx context.Context, t testing.TB) *walletpb.Account {
@@ -326,6 +439,19 @@ func (h holder) sendOnceAnswered(ctx context.Context, t testing.TB, to holder, r
 			require.NoError(t, err, "sending %d from %s to %s again", amountCents, h.subject, to.subject)
 			return sent
 		}
+		pause(ctx, t, pollEvery)
+	}
+}
+
+func (h holder) sendOnceAdmitted(ctx context.Context, t testing.TB, to holder, requestID string, amountCents int64) *walletpb.Transfer {
+	t.Helper()
+	for {
+		sent, err := h.trySend(ctx, to, requestID, amountCents)
+		if status.Code(err) != codes.Unavailable {
+			require.NoError(t, err, "sending %d from %s to %s once the ledger is admitted", amountCents, h.subject, to.subject)
+			return sent
+		}
+		requireReason(t, err, ledgerShed)
 		pause(ctx, t, pollEvery)
 	}
 }
@@ -394,6 +520,39 @@ func requireCode(t testing.TB, err error, want codes.Code) *status.Status {
 	require.True(t, ok, "not a status: %v", err)
 	require.Equal(t, want, st.Code(), "%s", st.Message())
 	return st
+}
+
+func requireReason(t testing.TB, err error, want string) *status.Status {
+	t.Helper()
+	st := requireCode(t, err, codes.Unavailable)
+	require.Equal(t, want, reason(st), "%s", st.Message())
+	return st
+}
+
+func reason(st *status.Status) string {
+	for _, d := range st.Details() {
+		if info, ok := d.(*errdetails.ErrorInfo); ok {
+			return info.GetReason()
+		}
+	}
+	return ""
+}
+
+func retryInfo(st *status.Status) *errdetails.RetryInfo {
+	for _, d := range st.Details() {
+		if info, ok := d.(*errdetails.RetryInfo); ok {
+			return info
+		}
+	}
+	return nil
+}
+
+func abort(point string) fit.Rule {
+	return fit.Rule{Point: point, Fault: fit.Fault{Abort: true}}
+}
+
+func delay(point string, d time.Duration) fit.Rule {
+	return fit.Rule{Point: point, Fault: fit.Fault{Delay: d}}
 }
 
 func bounded(t testing.TB, target Target) context.Context {
