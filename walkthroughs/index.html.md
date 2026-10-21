@@ -21,6 +21,9 @@ from that code.
   Kubernetes controller that provisions a database and the role that owns it
   in PostgreSQL for each `Database`, writes the role's credentials to a
   Secret, and drops both on delete, as the `Database` says.
+- [Shoppingcart](/humus/walkthroughs/shoppingcart/): an API for
+  shopping carts, behind JWT bearer tokens, that prices each item from a
+  catalog service of its own over mTLS, both on PostgreSQL.
 
 ## The bar
 
