@@ -1070,15 +1070,18 @@ jobs:
   # repository as the context, since its module replaces humus with ../..,
   # and its base kustomization, rendered. up.sh then creates a kind cluster,
   # issues every certificate from a CA it generates, makes PostgreSQL's
-  # passwords and the signing key, whose key set walletctl jwks makes, and
-  # applies the kind overlay, with PostgreSQL over TLS, the ledger's schema
-  # applied by its owner, and WireMock serving the key set, and both
+  # passwords, Grafana's admin password and the signing key, whose key set
+  # walletctl jwks makes, and applies the kind overlay, with PostgreSQL over
+  # TLS, the ledger's schema applied by its owner, WireMock serving the key
+  # set, and the LGTM stack behind an OpenTelemetry Collector, and both
   # services' Deployments have to become ready. The tests behind the
   # functional tag then run the shared cases against it through kubectl
   # port-forward, with the cases' certificate and the signing key from the
   # Secrets up.sh made, rolling each Deployment out and forwarding its port
-  # again. The ruleset doesn't require this job, and Build doesn't wait on
-  # it; Vet the functional tests vets them.
+  # again, and find a send's trace across both services, both services'
+  # records of it, both services' metrics by pod, and the Deployments'
+  # replicas and restarts in the LGTM stack. The ruleset doesn't require this
+  # job, and Build doesn't wait on it; Vet the functional tests vets them.
   wallet-kind:
     name: Wallet walkthrough (kind)
     runs-on: ubuntu-latest
@@ -1109,7 +1112,7 @@ jobs:
         - name: Bring the wallet and the ledger up on kind
           run: example/wallet/deploy/kind/up.sh
 
-        - name: Run the shared cases against kind
+        - name: Run the functional tests against kind
           run: go -C example/wallet test -count=1 -race -tags functional ./functional/
 
         - name: Show the wallet namespace
@@ -1121,6 +1124,7 @@ jobs:
             kubectl --namespace wallet logs deployment/wiremock --tail 200 || true
             kubectl --namespace wallet logs deployment/ledger --all-containers --tail 200 || true
             kubectl --namespace wallet logs deployment/wallet --all-containers --tail 200 || true
+            kubectl --namespace wallet logs deployment/otel-collector --tail 200 || true
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache

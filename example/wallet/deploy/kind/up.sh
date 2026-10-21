@@ -15,6 +15,7 @@ fi
 
 postgres_password=$(openssl rand -hex 24)
 ledger_password=$(openssl rand -hex 24)
+grafana_password=$(openssl rand -hex 24)
 export KEYSTORE_PASSWORD
 KEYSTORE_PASSWORD=$(openssl rand -hex 24)
 
@@ -58,6 +59,7 @@ go -C "$module" run ./cmd/walletctl jwks -key "$tmp/signing.key" >"$tmp/jwks.jso
 printf '%s' "$postgres_password" >"$tmp/postgres-password"
 printf '%s' "$ledger_password" >"$tmp/ledger-password"
 printf '%s' "$KEYSTORE_PASSWORD" >"$tmp/keystore-password"
+printf '%s' "$grafana_password" >"$tmp/grafana-password"
 
 k() {
   kubectl --context "kind-$cluster" --namespace "$namespace" "$@"
@@ -97,6 +99,8 @@ configmap() {
   secret cases-tls --from-file=tls.pem="$tmp/cases.pem" --from-file=ca.crt="$tmp/ca.crt"
   echo ---
   secret token-signing-key --from-file=key.pem="$tmp/signing.key"
+  echo ---
+  secret grafana-admin --from-literal=username=admin --from-file=password="$tmp/grafana-password"
 } >"$tmp/wallet.yaml"
 
 kind load docker-image wallet --name "$cluster"
@@ -122,6 +126,7 @@ GRANT SELECT, INSERT, UPDATE ON accounts, transfers TO ledger;
 SQL
 } | k exec -i deployment/postgres -- psql -v ON_ERROR_STOP=1 -U postgres -d postgres
 
-k rollout restart deployment/ledger deployment/wallet
-k rollout status deployment/ledger --timeout 5m
-k rollout status deployment/wallet --timeout 5m
+k rollout restart deployment/grafana deployment/ledger deployment/wallet
+for d in loki tempo mimir otel-collector grafana ledger wallet; do
+  k rollout status "deployment/$d" --timeout 5m
+done

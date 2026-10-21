@@ -5,6 +5,11 @@ resources:
   - ../base
   - postgres.yaml
   - wiremock.yaml
+  - otel-collector.yaml
+  - loki.yaml
+  - tempo.yaml
+  - mimir.yaml
+  - grafana.yaml
 configMapGenerator:
   - name: wallet
     behavior: merge
@@ -17,6 +22,21 @@ configMapGenerator:
   - name: wiremock-mappings
     files:
       - wiremock/jwks.json
+  - name: otel-collector-config
+    files:
+      - otel-collector/config.yaml
+  - name: loki-config
+    files:
+      - loki/config.yaml
+  - name: tempo-config
+    files:
+      - tempo/config.yaml
+  - name: mimir-config
+    files:
+      - mimir/config.yaml
+  - name: grafana-datasources
+    files:
+      - grafana/datasources.yaml
 patches:
   - target:
       kind: Deployment
