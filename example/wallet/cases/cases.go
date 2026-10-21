@@ -39,6 +39,9 @@ const (
 	ledgerDatabasePoint = "postgresql:ledger"
 	slowLedger          = 2 * time.Second
 
+	watchersInARollout = 8
+	sentInARollout     = 100
+
 	ledgerUnavailable = "LEDGER_UNAVAILABLE"
 	ledgerShed        = "LEDGER_SHED"
 )
@@ -80,6 +83,7 @@ var Alone = []Case{
 	{Name: "TheLedgerIsDown", Run: TheLedgerIsDown},
 	{Name: "TheLedgersDatabaseIsDown", Run: TheLedgersDatabaseIsDown},
 	{Name: "ARolloutOfTheWallet", Run: ARolloutOfTheWallet},
+	{Name: "ARolloutOfTheLedger", Run: ARolloutOfTheLedger},
 	{Name: "TheLedgersBreakerOpens", Run: TheLedgersBreakerOpens},
 }
 
@@ -335,6 +339,58 @@ func ARolloutOfTheWallet(t testing.TB, target Target) {
 	require.EqualValues(t, 300, bob.balance(ctx, t))
 
 	require.EqualValues(t, 700, recvBalance(t, alice.watchOnceAnswered(ctx, t)))
+}
+
+func ARolloutOfTheLedger(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	bob := newFunded(ctx, t, target, 0)
+
+	type watcher struct {
+		holder
+		watch grpc.ServerStreamingClient[walletpb.WatchAccountResponse]
+		want  int64
+	}
+	watchers := make([]*watcher, watchersInARollout)
+	for i := range watchers {
+		w := &watcher{holder: newFunded(ctx, t, target, 100_000), want: 100_000}
+		w.watch = w.holder.watch(ctx, t)
+		require.Equal(t, w.want, recvBalance(t, w.watch))
+		watchers[i] = w
+	}
+
+	sendFromEach := func() {
+		t.Helper()
+		for _, w := range watchers {
+			w.send(ctx, t, bob, rand.Text(), sentInARollout)
+			w.want -= sentInARollout
+		}
+		for _, w := range watchers {
+			require.Equal(t, w.want, recvBalance(t, w.watch), "%s's watch", w.subject)
+		}
+	}
+
+	require.NotNil(t, target.RolloutLedger, "Target.RolloutLedger")
+	rolledOut := make(chan error, 1)
+	go func() { rolledOut <- target.RolloutLedger(ctx) }()
+
+	var rounds int
+	for done := false; !done; {
+		sendFromEach()
+		rounds++
+		select {
+		case err := <-rolledOut:
+			require.NoError(t, err, "rolling the ledger out")
+			done = true
+		default:
+		}
+	}
+	sendFromEach()
+	rounds++
+
+	for _, w := range watchers {
+		require.Equal(t, w.want, w.balance(ctx, t), "%s's balance", w.subject)
+	}
+	require.EqualValues(t, int64(rounds)*watchersInARollout*sentInARollout, bob.balance(ctx, t))
 }
 
 type holder struct {
