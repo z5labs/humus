@@ -41,6 +41,7 @@ import (
 	"github.com/z5labs/humus/example/wallet/ledger/server"
 	"github.com/z5labs/humus/example/wallet/ledger/store"
 	"github.com/z5labs/humus/example/wallet/ledgerpb"
+	"github.com/z5labs/humus/fault"
 	"github.com/z5labs/humus/grpc/grpcserver/grpcservertest"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/telemetry"
@@ -50,6 +51,7 @@ const (
 	ledgerAddr  = "ledger:9090"
 	probesAddr  = "localhost:8081"
 	postgresURL = "postgres://ledger@postgres.internal:5432/ledger"
+	storePoint  = "postgresql:ledger"
 	unset       = "\x00unset"
 )
 
@@ -69,6 +71,8 @@ type fakeStore struct {
 	down     bool
 	pings    int
 	cfg      *pgxpool.Config
+	faults   fault.Injector
+	calls    int
 }
 
 func newFakeStore(down bool) *fakeStore {
@@ -79,10 +83,11 @@ func newFakeStore(down bool) *fakeStore {
 }
 
 func (f *fakeStore) opener() OpenStore {
-	return func(_ context.Context, _ *humus.Setup, cfg *pgxpool.Config) (server.Store, func(context.Context) error, error) {
+	return func(_ context.Context, s *humus.Setup, cfg *pgxpool.Config) (server.Store, func(context.Context) error, error) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.cfg = cfg
+		f.faults = s.Faults
 		return f, f.ping, nil
 	}
 }
@@ -109,9 +114,26 @@ func (f *fakeStore) pinged() int {
 	return f.pings
 }
 
-func (f *fakeStore) OpenAccount(_ context.Context, id string) (store.Account, error) {
+func (f *fakeStore) inject(ctx context.Context) error {
+	f.calls++
+	if f.faults.Eval(ctx, storePoint).Abort {
+		return fmt.Errorf("%w: %w", store.ErrUnavailable, &fault.InjectedError{Point: storePoint})
+	}
+	return nil
+}
+
+func (f *fakeStore) called() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	return f.calls
+}
+
+func (f *fakeStore) OpenAccount(ctx context.Context, id string) (store.Account, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.inject(ctx); err != nil {
+		return store.Account{}, err
+	}
 	a, ok := f.accounts[id]
 	if !ok {
 		a = store.Account{ID: id, BalanceChangedAt: time.Now()}
@@ -120,9 +142,12 @@ func (f *fakeStore) OpenAccount(_ context.Context, id string) (store.Account, er
 	return a, nil
 }
 
-func (f *fakeStore) Account(_ context.Context, id string) (store.Account, error) {
+func (f *fakeStore) Account(ctx context.Context, id string) (store.Account, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err := f.inject(ctx); err != nil {
+		return store.Account{}, err
+	}
 	a, ok := f.accounts[id]
 	if !ok {
 		return store.Account{}, fmt.Errorf("reading account %s: %w", id, store.ErrNotFound)
@@ -130,9 +155,12 @@ func (f *fakeStore) Account(_ context.Context, id string) (store.Account, error)
 	return a, nil
 }
 
-func (f *fakeStore) Deposit(_ context.Context, transferID, accountID string, amountCents int64) (store.Transfer, error) {
+func (f *fakeStore) Deposit(ctx context.Context, transferID, accountID string, amountCents int64) (store.Transfer, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err := f.inject(ctx); err != nil {
+		return store.Transfer{}, err
+	}
 	a, ok := f.accounts[accountID]
 	if !ok {
 		return store.Transfer{}, fmt.Errorf("account %s: %w", accountID, store.ErrNotFound)
@@ -154,6 +182,7 @@ type fixture struct {
 	password string
 	files    map[string][]byte
 	env      map[string]string
+	tel      telemetry.Builder
 }
 
 func newFixture(t *testing.T, files map[string][]byte) fixture {
@@ -172,6 +201,7 @@ func newFixture(t *testing.T, files map[string][]byte) fixture {
 		ca:       ca,
 		password: password,
 		files:    all,
+		tel:      telemetry.NoopBuilder,
 		env: map[string]string{
 			"GRPC_ADDR":              ":9090",
 			"GRPC_TLS_PEM_FILE":      "secrets/ledger.pem",
@@ -195,7 +225,7 @@ func (f fixture) start(t *testing.T, init func(context.Context, *humus.Setup) ([
 		merged[name] = value
 	}
 	return grpcservertest.Start(t, init,
-		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(f.tel), humus.WithFaults(Faults)),
 		humustest.WithEnv(merged),
 	)
 }
@@ -208,7 +238,11 @@ type ledger struct {
 
 func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error)) *ledger {
 	t.Helper()
-	f := newFixture(t, nil)
+	return startOn(t, newFixture(t, nil), init)
+}
+
+func startOn(t *testing.T, f fixture, init func(context.Context, *humus.Setup) ([]humus.Service, error)) *ledger {
+	t.Helper()
 	p, status := f.start(t, init, nil)
 	for _, addr := range []string{ledgerAddr, probesAddr} {
 		select {
@@ -519,6 +553,8 @@ func TestInit_with_a_bad_setting_exits_78(t *testing.T) {
 		"a negative watch interval":                {name: "WATCH_INTERVAL", value: "-1s", cause: "must be positive"},
 		"a watch interval with no unit":            {name: "WATCH_INTERVAL", value: "1", cause: "missing unit"},
 		"a watch interval that isn't a duration":   {name: "WATCH_INTERVAL", value: "often", cause: "invalid duration"},
+		"a negative fault delay":                   {name: "FAULT_MAX_DELAY", value: "-1s", cause: "positive"},
+		"a fault delay with no unit":               {name: "FAULT_MAX_DELAY", value: "10", cause: "missing unit"},
 	}
 	for desc, tc := range testCases {
 		t.Run(desc, func(t *testing.T) {

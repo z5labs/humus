@@ -7,10 +7,11 @@
 package main
 
 import (
+	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/example/wallet/ledger/app"
 	"github.com/z5labs/humus/grpc/grpcserver"
 )
 
 func main() {
-	grpcserver.Main(app.Init)
+	grpcserver.Main(app.Init, humus.WithFaults(app.Faults))
 }
