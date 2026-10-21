@@ -16,6 +16,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -43,7 +44,7 @@ func (r Reconciler) Reconcile(ctx context.Context, db database) (kube.Result[v1a
 	st.Conditions = slices.Clone(st.Conditions)
 	name := db.Name + "-postgres"
 
-	password, err := r.password(ctx, db.Namespace, name)
+	password, uid, err := r.password(ctx, db.Namespace, name)
 	if err != nil {
 		return r.failed(db, st, "SecretApplyFailed", "The Secret could not be read.", fmt.Errorf("reading Secret %s/%s: %w", db.Namespace, name, err))
 	}
@@ -52,7 +53,15 @@ func (r Reconciler) Reconcile(ctx context.Context, db database) (kube.Result[v1a
 		return r.failed(db, st, "PostgresUnavailable", "The role and the database could not be provisioned in PostgreSQL.", err)
 	}
 
-	if err := r.applySecret(ctx, db, name, password); err != nil {
+	err = r.applySecret(ctx, db, name, uid, password)
+	if uid != "" && apierrors.IsConflict(err) {
+		password = rand.Text()
+		if err := r.Admin.Provision(ctx, db.Spec.Name, password); err != nil {
+			return r.failed(db, st, "PostgresUnavailable", "The role and the database could not be provisioned in PostgreSQL.", err)
+		}
+		err = r.applySecret(ctx, db, name, "", password)
+	}
+	if err != nil {
 		return r.failed(db, st, "SecretApplyFailed", "The Secret could not be applied.", fmt.Errorf("applying Secret %s/%s: %w", db.Namespace, name, err))
 	}
 
@@ -67,21 +76,21 @@ func (r Reconciler) Reconcile(ctx context.Context, db database) (kube.Result[v1a
 	return kube.Result[v1alpha1.DatabaseStatus]{Status: &st}, nil
 }
 
-func (r Reconciler) password(ctx context.Context, namespace, name string) (string, error) {
+func (r Reconciler) password(ctx context.Context, namespace, name string) (string, types.UID, error) {
 	secret, err := r.Kube.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		return rand.Text(), nil
+		return rand.Text(), "", nil
 	}
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if password := string(secret.Data["password"]); password != "" {
-		return password, nil
+		return password, secret.UID, nil
 	}
-	return rand.Text(), nil
+	return rand.Text(), secret.UID, nil
 }
 
-func (r Reconciler) applySecret(ctx context.Context, db database, name, password string) error {
+func (r Reconciler) applySecret(ctx context.Context, db database, name string, uid types.UID, password string) error {
 	secret := corev1ac.Secret(name, db.Namespace).
 		WithOwnerReferences(metav1ac.OwnerReference().
 			WithAPIVersion(v1alpha1.Database.Group + "/" + v1alpha1.Database.Version).
@@ -97,6 +106,9 @@ func (r Reconciler) applySecret(ctx context.Context, db database, name, password
 			"username": []byte(db.Spec.Name),
 			"password": []byte(password),
 		})
+	if uid != "" {
+		secret.WithUID(uid)
+	}
 	_, err := r.Kube.CoreV1().Secrets(db.Namespace).Apply(ctx, secret, metav1.ApplyOptions{FieldManager: fieldManager, Force: true})
 	return err
 }

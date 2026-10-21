@@ -13,10 +13,14 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -28,12 +32,15 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/bedrocktest"
+	"github.com/z5labs/bedrock/fit"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensions "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -259,6 +266,127 @@ func TestInit_passes_the_shared_cases_against_k3s_and_PostgreSQL(t *testing.T) {
 	})
 
 	c.stop(t)
+}
+
+const (
+	provisionDelay = 3 * time.Second
+	reconcilesDone = 3 * provisionDelay
+	clock          = "15:04:05.000"
+)
+
+func TestInit_a_Secret_deleted_while_a_reconcile_is_in_flight_rotates_the_password(t *testing.T) {
+	tel := humustest.NewTelemetry()
+	c := startController(t, tel.Builder())
+	f := newFaults(t, c.target)
+
+	namespaces := map[string]string{}
+	t.Run("deleted while the reconcile after Ready waits to provision", func(t *testing.T) {
+		ns := f.namespace(t, c.target.Prefix)
+		namespaces[t.Name()] = ns
+		rotate(t, f, ns, time.Second)
+	})
+	t.Run("deleted once the reconciles have settled", func(t *testing.T) {
+		ns := f.namespace(t, c.target.Prefix)
+		namespaces[t.Name()] = ns
+		rotate(t, f, ns, reconcilesDone)
+	})
+
+	c.stop(t)
+
+	spans := tel.Spans()
+	for name, ns := range namespaces {
+		t.Logf("%s (namespace %s):", name, ns)
+		for _, r := range reconcilesOf(spans, ns, "orders") {
+			t.Logf("  reconcile %s to %s, %s", r.StartTime().Format(clock), r.EndTime().Format(clock), r.Status().Code)
+			for _, s := range childrenOf(spans, r) {
+				if u, ok := attr(s.Attributes(), "url.full"); ok && strings.Contains(u.AsString(), "/secrets/") {
+					t.Logf("    %s the Secret at %s", s.Name(), s.StartTime().Format(clock))
+				}
+				if v, ok := attr(s.Attributes(), "db.query.summary"); ok {
+					t.Logf("    %s at %s", v.AsString(), s.StartTime().Format(clock))
+				}
+			}
+		}
+	}
+}
+
+func rotate(t *testing.T, f *faults, ns string, wait time.Duration) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	secrets := f.kube.CoreV1().Secrets(ns)
+	var watched sync.WaitGroup
+	var mu sync.Mutex
+	var events []string
+	record := func(what string, w watch.Interface) {
+		watched.Go(func() {
+			for e := range w.ResultChan() {
+				m, err := meta.Accessor(e.Object)
+				if err != nil {
+					continue
+				}
+				line := fmt.Sprintf("%s %s %s %s uid %.8s resourceVersion %s", time.Now().Format(clock), what, e.Type, m.GetName(), m.GetUID(), m.GetResourceVersion())
+				if fields := m.GetManagedFields(); len(fields) > 0 {
+					last := slices.MaxFunc(fields, func(a, b metav1.ManagedFieldsEntry) int { return writtenAt(a).Compare(writtenAt(b)) })
+					line += fmt.Sprintf(", last written by %s %s %s", last.Manager, last.Operation, last.Subresource)
+				}
+				mu.Lock()
+				events = append(events, line)
+				mu.Unlock()
+			}
+		})
+	}
+	sw, err := secrets.Watch(ctx, metav1.ListOptions{})
+	require.NoError(t, err)
+	record("Secret", sw)
+	dw, err := f.dynamic.Resource(databases).Namespace(ns).Watch(ctx, metav1.ListOptions{})
+	require.NoError(t, err)
+	record("Database", dw)
+
+	f.create(t, ns, "orders", f.scenario(t, fit.Rule{Point: "postgresql:provision", Fault: fit.Fault{Delay: provisionDelay}}))
+	f.awaitReady(t, ns, "orders", metav1.ConditionTrue, "Provisioned")
+	t.Logf("Ready at %s", time.Now().Format(clock))
+	old, err := secrets.Get(t.Context(), "orders-postgres", metav1.GetOptions{})
+	require.NoError(t, err)
+	oldPassword := string(old.Data["password"])
+
+	time.Sleep(wait)
+	t.Logf("deleting the Secret uid %.8s at %s, %s after Ready", old.UID, time.Now().Format(clock), wait)
+	err = secrets.Delete(t.Context(), old.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &old.UID}})
+	require.NoError(t, err)
+
+	f.await(t, "a new Secret", func(ctx context.Context) (bool, error) {
+		s, err := secrets.Get(ctx, old.Name, metav1.GetOptions{})
+		if err != nil {
+			return false, nil
+		}
+		return s.UID != old.UID, nil
+	})
+	rotated, err := secrets.Get(t.Context(), old.Name, metav1.GetOptions{})
+	require.NoError(t, err)
+	t.Logf("the new Secret uid %.8s came at %s, with the old password: %t", rotated.UID, time.Now().Format(clock), string(rotated.Data["password"]) == oldPassword)
+
+	time.Sleep(reconcilesDone)
+	settled, err := secrets.Get(t.Context(), old.Name, metav1.GetOptions{})
+	require.NoError(t, err)
+	t.Logf("at %s: the Secret uid %.8s, with the old password: %t", time.Now().Format(clock), settled.UID, string(settled.Data["password"]) == oldPassword)
+
+	cancel()
+	sw.Stop()
+	dw.Stop()
+	watched.Wait()
+	for _, e := range events {
+		t.Log("watched: " + e)
+	}
+
+	require.False(t, oldPassword == string(rotated.Data["password"]), "the new Secret holds the old password")
+	require.False(t, oldPassword == string(settled.Data["password"]), "the rotation was lost: the Secret still holds the old password")
+}
+
+func writtenAt(f metav1.ManagedFieldsEntry) time.Time {
+	if f.Time == nil {
+		return time.Time{}
+	}
+	return f.Time.Time
 }
 
 func pemOf(t *testing.T, c *humustest.Certificate) []byte {
