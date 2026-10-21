@@ -54,4 +54,4 @@ example/shoppingcart/
 
 These pages build the cart's API, who may call it, and the schema, then
 the catalog and the cart's calls to it, then each service's `Init` and
-`main`.
+`main`. Then they test both services, and deploy them.
