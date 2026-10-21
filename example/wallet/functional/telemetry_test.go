@@ -18,7 +18,6 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -66,10 +65,13 @@ func TestWallet_sends_its_telemetry_to_the_LGTM_stack_on_kind(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), telemetryTimeout)
 	t.Cleanup(cancel)
 
-	eventually(ctx, t, "the send's trace, with spans of both services, in Tempo", func(ctx context.Context) (bool, error) {
-		services, err := traceServices(ctx, client, tempo+"/api/v2/traces/"+traceID)
-		return slices.Contains(services, wallet) && slices.Contains(services, ledger), err
+	var servedBy map[string][]string
+	eventually(ctx, t, "the send's trace, with spans of both services' pods, in Tempo", func(ctx context.Context) (bool, error) {
+		pods, err := tracePods(ctx, client, tempo+"/api/v2/traces/"+traceID)
+		servedBy = pods
+		return len(pods[wallet]) > 0 && len(pods[ledger]) > 0, err
 	})
+	t.Logf("the send was served by %v", servedBy)
 
 	eventually(ctx, t, "both services' records of the send, with its trace ID, in Loki", func(ctx context.Context) (bool, error) {
 		q := url.Values{
@@ -98,7 +100,7 @@ func TestWallet_sends_its_telemetry_to_the_LGTM_stack_on_kind(t *testing.T) {
 	})
 
 	for _, service := range []string{wallet, ledger} {
-		for _, pod := range runningPods(t, service) {
+		for _, pod := range servedBy[service] {
 			eventually(ctx, t, fmt.Sprintf("the %s's metrics from pod %s in Mimir", service, pod), func(ctx context.Context) (bool, error) {
 				return hasSeries(ctx, client, mimir, fmt.Sprintf(`group({job=%q, k8s_pod_name=%q})`, service, pod))
 			})
@@ -217,18 +219,7 @@ func forwardHTTP(t *testing.T, service string, remotePort int) string {
 	return p.addr
 }
 
-func runningPods(t *testing.T, service string) []string {
-	t.Helper()
-	names := strings.Fields(string(kubectl(t, "get", "pods",
-		"--selector", "app.kubernetes.io/name="+service,
-		"--field-selector", "status.phase=Running",
-		"--output", "jsonpath={.items[*].metadata.name}",
-	)))
-	require.NotEmpty(t, names, "no %s pod is running", service)
-	return names
-}
-
-func traceServices(ctx context.Context, client *http.Client, u string) ([]string, error) {
+func tracePods(ctx context.Context, client *http.Client, u string) (map[string][]string, error) {
 	var res struct {
 		Trace struct {
 			ResourceSpans []struct {
@@ -247,15 +238,22 @@ func traceServices(ctx context.Context, client *http.Client, u string) ([]string
 	if !ok || err != nil {
 		return nil, err
 	}
-	var services []string
+	pods := make(map[string][]string)
 	for _, rs := range res.Trace.ResourceSpans {
+		var service, pod string
 		for _, a := range rs.Resource.Attributes {
-			if a.Key == "service.name" && !slices.Contains(services, a.Value.StringValue) {
-				services = append(services, a.Value.StringValue)
+			switch a.Key {
+			case "service.name":
+				service = a.Value.StringValue
+			case "k8s.pod.name":
+				pod = a.Value.StringValue
 			}
 		}
+		if service != "" && pod != "" && !slices.Contains(pods[service], pod) {
+			pods[service] = append(pods[service], pod)
+		}
 	}
-	return services, nil
+	return pods, nil
 }
 
 func hasSeries(ctx context.Context, client *http.Client, mimir, query string) (bool, error) {
