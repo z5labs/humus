@@ -365,8 +365,13 @@
 // too. The API records it as an exception event on the request's span,
 // sets the span's status to Error, and emits one ERROR record, "response
 // failed", in the request's context, with the same attributes. When the
-// request's context is done because the client went away, it goes on the
-// span only. Then the API panics with http.ErrAbortHandler, which
+// client went away, it goes on the span only. The client went away when
+// the request's context is done, or when a write to the writer the
+// WriterTo is handed failed because the connection did: over HTTP/2, such
+// a write can fail before the server cancels the request's context. A
+// write the server refuses, a body for a status that has none or more
+// bytes than the WriterTo's Len, is the server's failure. Then the API
+// panics with http.ErrAbortHandler, which
 // httpserver and net/http pass through without logging, so httpserver
 // records no "handler panicked" for it.
 package openapi

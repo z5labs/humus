@@ -242,7 +242,7 @@ func encodeDocument(info Info, routes []*route, security *authn.List, schemes []
 type documentHandler []byte
 
 func (d documentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if err := write(w, http.StatusOK, "application/json", bytes.NewReader(d)); err != nil {
+	if _, err := write(w, http.StatusOK, "application/json", bytes.NewReader(d)); err != nil {
 		// The document has a Content-Length, so a failure to write it is
 		// the client's, and the client sees it.
 		trace.SpanFromContext(r.Context()).RecordError(err)

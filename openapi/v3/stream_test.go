@@ -14,9 +14,12 @@ import (
 	"fmt"
 	"io"
 	"iter"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 
@@ -25,6 +28,7 @@ import (
 	"go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/z5labs/humus"
 	openapi "github.com/z5labs/humus/openapi/v3"
 )
 
@@ -441,39 +445,55 @@ func TestAPI_sets_Content_Length_from_the_WriterTos_Len(t *testing.T) {
 	}
 }
 
+// untilAWriteFails is an operation whose WriterTo keeps writing until a
+// write fails.
+func untilAWriteFails() openapi.Operation {
+	return openapi.Get(rows, func(context.Context, openapi.Request[openapi.EmptyBody]) (writerFunc, error) {
+		return func(w io.Writer) (int64, error) {
+			var n int64
+			for i := 0; i < 1<<20; i++ {
+				m, err := fmt.Fprintf(w, "row %d\n", i)
+				n += int64(m)
+				if err != nil {
+					return n, err
+				}
+			}
+			return n, errors.New("the client never went away")
+		}, nil
+	}, writerFuncEncoder)
+}
+
+// requireOnTheSpanOnly checks that the request's failed write went on its
+// span, with the span's status set to Error, and that nothing was logged.
+func requireOnTheSpanOnly(t *testing.T, s *server) {
+	t.Helper()
+	spans := serverSpans(s.tel)
+	require.Len(t, spans, 1)
+	msgs := exceptionMessages(spans[0])
+	require.Len(t, msgs, 1)
+	require.NotEqual(t, "the client never went away", msgs[0])
+	require.Equal(t, codes.Error, spans[0].Status().Code)
+	require.Empty(t, records(s.tel), "a write that failed because the client went away isn't logged")
+	for _, rec := range s.tel.Logs() {
+		require.NotEqual(t, "handler panicked", rec.Body().AsString())
+	}
+}
+
 func TestAPI_records_a_failed_write_after_the_client_went_away_on_the_span_only(t *testing.T) {
 	for _, p := range []struct {
 		name   string
 		client func(*server) *http.Client
 	}{
-		// A client that keeps its connection resets only the stream, so
-		// the request's context is done before the write fails.
-		{"over HTTP/2", func(s *server) *http.Client {
-			tr := s.client.Transport.(*http.Transport).Clone()
-			tr.DisableKeepAlives = false
-			s.t.Cleanup(tr.CloseIdleConnections)
-			return &http.Client{Transport: tr}
-		}},
+		// httpservertest.NewClient keeps no idle connection, so on cancel
+		// it resets the stream and closes the connection. Whether the
+		// server cancels the request's context before the write fails
+		// depends on which of its goroutines runs first.
+		{"over HTTP/2", func(s *server) *http.Client { return s.client }},
 		{"over HTTP/1.1", func(s *server) *http.Client { return s.http1 }},
 	} {
 		t.Run(p.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				s := serveAPI(t, []openapi.Operation{
-					// The WriterTo keeps writing until a write fails.
-					openapi.Get(rows, func(context.Context, openapi.Request[openapi.EmptyBody]) (writerFunc, error) {
-						return func(w io.Writer) (int64, error) {
-							var n int64
-							for i := 0; i < 1<<20; i++ {
-								m, err := fmt.Fprintf(w, "row %d\n", i)
-								n += int64(m)
-								if err != nil {
-									return n, err
-								}
-							}
-							return n, errors.New("the client never went away")
-						}, nil
-					}, writerFuncEncoder),
-				})
+				s := serveAPI(t, []openapi.Operation{untilAWriteFails()})
 
 				ctx, cancel := context.WithCancel(t.Context())
 				req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://localhost:8443/rows", nil)
@@ -487,14 +507,204 @@ func TestAPI_records_a_failed_write_after_the_client_went_away_on_the_span_only(
 				_ = r.resp.Body.Close()
 
 				s.stop()
-				spans := serverSpans(s.tel)
-				require.Len(t, spans, 1)
-				msgs := exceptionMessages(spans[0])
-				require.Len(t, msgs, 1)
-				require.NotEqual(t, "the client never went away", msgs[0])
-				require.Equal(t, codes.Error, spans[0].Status().Code)
-				require.Empty(t, records(s.tel), "a write that failed because the client went away isn't logged")
+				requireOnTheSpanOnly(t, s)
 			})
 		})
 	}
 }
+
+// heldReads holds the server's reads: once held is set, every read the
+// server makes on a connection it accepted waits for release before it
+// returns what it read. So the server sees nothing the client sent after
+// held was set, such as its RST_STREAM or its close, until release.
+type heldReads struct {
+	held    atomic.Bool
+	release chan struct{}
+	once    sync.Once
+}
+
+// newHeldReads returns a heldReads whose reads are released, at the
+// latest, when t ends.
+func newHeldReads(t *testing.T) *heldReads {
+	g := &heldReads{release: make(chan struct{})}
+	t.Cleanup(g.unhold)
+	return g
+}
+
+// unhold releases the server's reads.
+func (g *heldReads) unhold() {
+	g.once.Do(func() { close(g.release) })
+}
+
+func (g *heldReads) host(h humus.Host) humus.Host {
+	listen := h.Listen
+	h.Listen = func(network, address string) (net.Listener, error) {
+		l, err := listen(network, address)
+		if err != nil {
+			return nil, err
+		}
+		return heldListener{Listener: l, g: g}, nil
+	}
+	return h
+}
+
+type heldListener struct {
+	net.Listener
+	g *heldReads
+}
+
+func (l heldListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return heldConn{Conn: c, g: l.g}, nil
+}
+
+type heldConn struct {
+	net.Conn
+	g *heldReads
+}
+
+func (c heldConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if c.g.held.Load() {
+		<-c.g.release
+	}
+	return n, err
+}
+
+func TestAPI_records_a_failed_write_on_a_closed_connection_on_the_span_only(t *testing.T) {
+	for _, p := range []struct {
+		name   string
+		client func(*server) *http.Client
+	}{
+		// Over HTTP/2 the write fails on the closed connection while the
+		// request's context is live: the server cancels it only once it
+		// reads the client's RST_STREAM or sees the connection end.
+		{"over HTTP/2", func(s *server) *http.Client { return s.client }},
+		{"over HTTP/1.1", func(s *server) *http.Client { return s.http1 }},
+	} {
+		t.Run(p.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				g := newHeldReads(t)
+				s := serveOn(t, g.host, func(s *humus.Setup) (http.Handler, error) {
+					return newAPI(s, []openapi.Operation{untilAWriteFails()})
+				})
+
+				ctx, cancel := context.WithCancel(t.Context())
+				req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://localhost:8443/rows", nil)
+				require.NoError(t, err)
+				r := <-start(p.client(s), req)
+				require.NoError(t, r.err)
+				first, err := bufio.NewReader(r.resp.Body).ReadString('\n')
+				require.NoError(t, err)
+				require.Equal(t, "row 0\n", first)
+				g.held.Store(true)
+				cancel()
+				_ = r.resp.Body.Close()
+
+				// The write has failed, and the failure been recorded,
+				// before the server reads what the client sent.
+				synctest.Wait()
+				held := records(s.tel)
+				g.unhold()
+
+				s.stop()
+				require.Empty(t, held, "a write that failed because the client went away isn't logged")
+				requireOnTheSpanOnly(t, s)
+			})
+		})
+	}
+}
+
+func TestAPI_logs_a_write_the_server_refuses(t *testing.T) {
+	for _, p := range []struct {
+		name   string
+		client func(*server) *http.Client
+	}{
+		{"over HTTP/2", func(s *server) *http.Client { return s.client }},
+		{"over HTTP/1.1", func(s *server) *http.Client { return s.http1 }},
+	} {
+		for _, tc := range []struct {
+			name string
+			path string
+		}{
+			{"more than its Len", "/rows"},
+			{"a body for a 204", "/rows/none"},
+		} {
+			t.Run(p.name+", "+tc.name, func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					s := serveAPI(t, []openapi.Operation{
+						openapi.Get(rows, func(context.Context, openapi.Request[openapi.EmptyBody]) (shortLen, error) {
+							return shortLen("row 1\n"), nil
+						}, shortLenEncoder),
+						openapi.Get(rows.Lit("none"), func(context.Context, openapi.Request[openapi.EmptyBody]) (writerFunc, error) {
+							return func(w io.Writer) (int64, error) {
+								n, err := io.WriteString(w, "row 1\n")
+								return int64(n), err
+							}, nil
+						}, noContentEncoder),
+					})
+
+					req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://localhost:8443"+tc.path, nil)
+					require.NoError(t, err)
+					r := <-start(p.client(s), req)
+					if r.err == nil {
+						_, _ = io.Copy(io.Discard, r.resp.Body)
+						_ = r.resp.Body.Close()
+					}
+
+					s.stop()
+					spans := serverSpans(s.tel)
+					require.Len(t, spans, 1)
+					require.Len(t, exceptionMessages(spans[0]), 1)
+					require.Equal(t, codes.Error, spans[0].Status().Code)
+					recs := records(s.tel)
+					require.Len(t, recs, 1, "a write the server refused is the server's failure")
+					require.Equal(t, "response failed", recs[0].Body().AsString())
+				})
+			})
+		}
+	}
+}
+
+// shortLen is a body its WriteTo writes twice, whose Len counts it once.
+type shortLen string
+
+func (b shortLen) Len() int { return len(b) }
+
+func (b shortLen) WriteTo(w io.Writer) (int64, error) {
+	var n int64
+	for range 2 {
+		m, err := io.WriteString(w, string(b))
+		n += int64(m)
+		if err != nil {
+			return n, err
+		}
+	}
+	return n, nil
+}
+
+// shortLenCodec is shortLen's Encoder.
+type shortLenCodec struct{}
+
+func shortLenEncoder() openapi.Encoder[shortLen] { return shortLenCodec{} }
+
+func (shortLenCodec) MediaType() string { return "text/plain" }
+
+func (shortLenCodec) Schema() (openapi.Schema, error) { return nil, nil }
+
+func (shortLenCodec) Encode(v shortLen) (io.WriterTo, error) { return v, nil }
+
+// noContentCodec is a writerFunc's Encoder with no media type, so its
+// response is a 204, which has no body.
+type noContentCodec struct{}
+
+func noContentEncoder() openapi.Encoder[writerFunc] { return noContentCodec{} }
+
+func (noContentCodec) MediaType() string { return "" }
+
+func (noContentCodec) Schema() (openapi.Schema, error) { return nil, nil }
+
+func (noContentCodec) Encode(v writerFunc) (io.WriterTo, error) { return v, nil }
