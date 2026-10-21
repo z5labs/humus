@@ -1,0 +1,104 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ledger
+  labels:
+    app.kubernetes.io/name: ledger
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ledger
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ledger
+    spec:
+      serviceAccountName: ledger
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ledger
+          image: wallet
+          command: ["/ledger"]
+          envFrom:
+            - configMapRef:
+                name: ledger
+          ports:
+            - name: grpc
+              containerPort: 8443
+            - name: probes
+              containerPort: 8081
+          startupProbe:
+            grpc:
+              port: 8081
+              service: liveness
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            grpc:
+              port: 8081
+              service: liveness
+          readinessProbe:
+            grpc:
+              port: 8081
+              service: readiness
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tls
+              mountPath: /etc/ledger/tls
+              readOnly: true
+            - name: ca
+              mountPath: /etc/ledger/ca
+              readOnly: true
+            - name: postgres
+              mountPath: /etc/ledger/postgres
+              readOnly: true
+      volumes:
+        - name: tls
+          secret:
+            secretName: ledger-tls
+            defaultMode: 0440
+            items:
+              - key: tls.pem
+                path: tls.pem
+        - name: ca
+          secret:
+            secretName: ledger-ca
+            defaultMode: 0440
+            items:
+              - key: client-ca.crt
+                path: client-ca.crt
+              - key: postgres.crt
+                path: postgres.crt
+        - name: postgres
+          secret:
+            secretName: ledger-postgres
+            defaultMode: 0440
+            items:
+              - key: password
+                path: password

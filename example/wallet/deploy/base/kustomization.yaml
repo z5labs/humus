@@ -1,0 +1,42 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: wallet
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - wallet.yaml
+  - ledger.yaml
+  - service.yaml
+  - poddisruptionbudget.yaml
+configMapGenerator:
+  - name: wallet
+    literals:
+      - GRPC_ADDR=:8443
+      - GRPC_TLS_PEM_FILE=/etc/wallet/tls/tls.pem
+      - PROBES_ADDR=:8081
+      - LEDGER_ADDR=ledger:8443
+      - LEDGER_CA_FILE=/etc/wallet/ca/ledger.crt
+      - LEDGER_TLS_PEM_FILE=/etc/wallet/ledger-client/tls.pem
+      - TOKEN_KEYS_URL=https://idp.example.com/.well-known/jwks.json
+      - TOKEN_KEYS_CA_FILE=/etc/wallet/ca/token-keys.crt
+      - TOKEN_ISSUER=https://idp.example.com
+      - TOKEN_AUDIENCE=wallet
+      - OTEL_SERVICE_NAME=wallet
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
+  - name: ledger
+    literals:
+      - GRPC_ADDR=:8443
+      - GRPC_TLS_PEM_FILE=/etc/ledger/tls/tls.pem
+      - GRPC_CLIENT_CA_FILE=/etc/ledger/ca/client-ca.crt
+      - PROBES_ADDR=:8081
+      - POSTGRES_URL=postgres://ledger@postgres:5432/ledger
+      - POSTGRES_PASSWORD_FILE=/etc/ledger/postgres/password
+      - POSTGRES_TLS_CA_FILE=/etc/ledger/ca/postgres.crt
+      - OTEL_SERVICE_NAME=ledger
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317

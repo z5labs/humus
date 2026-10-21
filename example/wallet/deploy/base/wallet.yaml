@@ -1,0 +1,104 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wallet
+  labels:
+    app.kubernetes.io/name: wallet
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: wallet
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: wallet
+    spec:
+      serviceAccountName: wallet
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: wallet
+          image: wallet
+          command: ["/wallet"]
+          envFrom:
+            - configMapRef:
+                name: wallet
+          ports:
+            - name: grpc
+              containerPort: 8443
+            - name: probes
+              containerPort: 8081
+          startupProbe:
+            grpc:
+              port: 8081
+              service: liveness
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            grpc:
+              port: 8081
+              service: liveness
+          readinessProbe:
+            grpc:
+              port: 8081
+              service: readiness
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tls
+              mountPath: /etc/wallet/tls
+              readOnly: true
+            - name: ledger-client
+              mountPath: /etc/wallet/ledger-client
+              readOnly: true
+            - name: ca
+              mountPath: /etc/wallet/ca
+              readOnly: true
+      volumes:
+        - name: tls
+          secret:
+            secretName: wallet-tls
+            defaultMode: 0440
+            items:
+              - key: tls.pem
+                path: tls.pem
+        - name: ledger-client
+          secret:
+            secretName: wallet-ledger-client
+            defaultMode: 0440
+            items:
+              - key: tls.pem
+                path: tls.pem
+        - name: ca
+          secret:
+            secretName: wallet-ca
+            defaultMode: 0440
+            items:
+              - key: ledger.crt
+                path: ledger.crt
+              - key: token-keys.crt
+                path: token-keys.crt
