@@ -119,6 +119,12 @@ type server struct {
 // with httpserver, through httpservertest, recording its telemetry.
 func serve(t *testing.T, build func(s *humus.Setup) (http.Handler, error)) *server {
 	t.Helper()
+	return serveOn(t, func(h humus.Host) humus.Host { return h }, build)
+}
+
+// serveOn is serve, on the Host host returns from the humustest Host.
+func serveOn(t *testing.T, host func(humus.Host) humus.Host, build func(s *humus.Setup) (http.Handler, error)) *server {
+	t.Helper()
 	ca := humustest.NewCA(t)
 	cert := ca.Issue(t, "localhost")
 	h := humustest.NewHost(t)
@@ -137,7 +143,7 @@ func serve(t *testing.T, build func(s *humus.Setup) (http.Handler, error)) *serv
 			return nil, err
 		}
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+	}, humustest.WithApp(humus.WithHost(host(h.Host())), humus.WithTelemetry(tel.Builder())))
 	select {
 	case <-h.Listening("localhost:8443"):
 	case st := <-status:
