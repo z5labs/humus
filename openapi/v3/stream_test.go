@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -519,6 +520,20 @@ func TestAPI_records_a_failed_write_after_the_client_went_away_on_the_span_only(
 type heldReads struct {
 	held    atomic.Bool
 	release chan struct{}
+	once    sync.Once
+}
+
+// newHeldReads returns a heldReads whose reads are released, at the
+// latest, when t ends.
+func newHeldReads(t *testing.T) *heldReads {
+	g := &heldReads{release: make(chan struct{})}
+	t.Cleanup(g.unhold)
+	return g
+}
+
+// unhold releases the server's reads.
+func (g *heldReads) unhold() {
+	g.once.Do(func() { close(g.release) })
 }
 
 func (g *heldReads) host(h humus.Host) humus.Host {
@@ -572,7 +587,7 @@ func TestAPI_records_a_failed_write_on_a_closed_connection_on_the_span_only(t *t
 	} {
 		t.Run(p.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				g := &heldReads{release: make(chan struct{})}
+				g := newHeldReads(t)
 				s := serveOn(t, g.host, func(s *humus.Setup) (http.Handler, error) {
 					return newAPI(s, []openapi.Operation{untilAWriteFails()})
 				})
@@ -593,7 +608,7 @@ func TestAPI_records_a_failed_write_on_a_closed_connection_on_the_span_only(t *t
 				// before the server reads what the client sent.
 				synctest.Wait()
 				held := records(s.tel)
-				close(g.release)
+				g.unhold()
 
 				s.stop()
 				require.Empty(t, held, "a write that failed because the client went away isn't logged")
