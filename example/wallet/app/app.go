@@ -14,13 +14,16 @@ import (
 	"io"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/z5labs/bedrock/config"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	"github.com/z5labs/humus"
@@ -30,6 +33,8 @@ import (
 	"github.com/z5labs/humus/example/wallet/ledgerpb"
 	"github.com/z5labs/humus/example/wallet/server"
 	"github.com/z5labs/humus/example/wallet/walletpb"
+	"github.com/z5labs/humus/fault"
+	"github.com/z5labs/humus/fault/jsonscenario"
 	"github.com/z5labs/humus/grpc/grpcauth"
 	"github.com/z5labs/humus/grpc/grpcclient"
 	"github.com/z5labs/humus/grpc/grpchealth"
@@ -41,6 +46,22 @@ import (
 const maxConnectionAge = time.Minute
 
 const reasonKeysUnavailable = "KEYS_UNAVAILABLE"
+
+const scenarioKey = "acme.fault"
+
+func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
+	codec, err := jsonscenario.New(scenarioKey)
+	if err != nil {
+		return fault.Settings{}, err
+	}
+	d := fault.DefaultSettings()
+	return config.Struct(func(r *config.Resolver) fault.Settings {
+		f := d
+		f.Decoder = codec
+		f.MaxDelay = r.Get(config.Env(s.Process.Environment, "FAULT_MAX_DELAY").Parse(time.ParseDuration).Default(d.MaxDelay).Validate(fault.CheckMaxDelay))
+		return f
+	}).Read(ctx)
+}
 
 func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	set, err := readSettings(ctx, s)
@@ -66,6 +87,9 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		return nil, err
 	}
 
+	if set.FaultTrustScope != "" {
+		set.GRPC.TrustScenario = trustTokens(s.Faults, tokens.Verify, set.FaultTrustScope)
+	}
 	bearer := auth.Bearer("bearer", keysUnavailable(tokens.Verify))
 	write := auth.RequireScopes(bearer, server.ScopeWrite)
 	unary, stream, err := grpcauth.Interceptors(s,
@@ -93,6 +117,23 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	return []humus.Service{svc, probes}, nil
 }
 
+func trustTokens(faults fault.Injector, verify func(context.Context, string) (server.Claims, error), scope string) func(context.Context, string) bool {
+	return func(ctx context.Context, _ string) bool {
+		md, _ := metadata.FromIncomingContext(ctx)
+		values := md.Get("authorization")
+		if len(values) != 1 {
+			return false
+		}
+		scheme, token, ok := strings.Cut(values[0], " ")
+		if !ok || !strings.EqualFold(scheme, "Bearer") {
+			return false
+		}
+		stripped, _ := faults.Strip(ctx)
+		claims, err := verify(stripped, strings.TrimSpace(token))
+		return err == nil && claims.HasScope(scope)
+	}
+}
+
 func keysUnavailable(verify func(context.Context, string) (server.Claims, error)) func(context.Context, string) (server.Claims, error) {
 	return func(ctx context.Context, token string) (server.Claims, error) {
 		claims, err := verify(ctx, token)
@@ -116,11 +157,12 @@ func unavailableKeys() error {
 }
 
 type settings struct {
-	GRPC   grpcserver.Settings
-	Probes grpchealth.Settings
-	Ledger grpcclient.Settings
-	KeySet keySetSettings
-	JWT    jwt.Settings
+	GRPC            grpcserver.Settings
+	Probes          grpchealth.Settings
+	Ledger          grpcclient.Settings
+	KeySet          keySetSettings
+	JWT             jwt.Settings
+	FaultTrustScope string
 }
 
 type keySetSettings struct {
@@ -150,6 +192,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 		}
 		ledger.Timeout = r.Get(env("LEDGER_TIMEOUT").Parse(time.ParseDuration).Default(ledger.Timeout).Validate(grpcclient.CheckTimeout))
 		ledger.MaxAttempts = r.Get(env("LEDGER_MAX_ATTEMPTS").Parse(strconv.Atoi).Default(ledger.MaxAttempts).Validate(grpcclient.CheckMaxAttempts))
+		ledger.ForwardScenario = true
 
 		keys := httpclient.DefaultSettings()
 		keys.TLS = &tls.Config{
@@ -181,7 +224,8 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 				URL:    r.Get(env("TOKEN_KEYS_URL").Parse(parseURL).Validate(checkKeySetURL)),
 				Client: keys,
 			},
-			JWT: tokens,
+			JWT:             tokens,
+			FaultTrustScope: r.Get(env("FAULT_TRUST_SCOPE").Default("").Validate(checkScope)),
 		}
 	}).Read(ctx)
 	if err != nil {
@@ -207,6 +251,13 @@ func checkKeySetURL(u *url.URL) error {
 		return errors.New("must not hold user info")
 	case u.Fragment != "" || u.RawFragment != "":
 		return errors.New("must not have a fragment")
+	}
+	return nil
+}
+
+func checkScope(scope string) error {
+	if strings.ContainsFunc(scope, unicode.IsSpace) {
+		return errors.New("must be one scope, with no white space")
 	}
 	return nil
 }

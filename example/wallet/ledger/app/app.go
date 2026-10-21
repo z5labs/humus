@@ -22,7 +22,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/z5labs/bedrock/config"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/peer"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/auth"
@@ -30,6 +32,8 @@ import (
 	"github.com/z5labs/humus/example/wallet/ledger/server"
 	"github.com/z5labs/humus/example/wallet/ledger/store"
 	"github.com/z5labs/humus/example/wallet/ledgerpb"
+	"github.com/z5labs/humus/fault"
+	"github.com/z5labs/humus/fault/jsonscenario"
 	"github.com/z5labs/humus/grpc/grpcauth"
 	"github.com/z5labs/humus/grpc/grpchealth"
 	"github.com/z5labs/humus/grpc/grpcserver"
@@ -40,6 +44,22 @@ const (
 	defaultWatchInterval = time.Second
 	maxConnectionAge     = time.Minute
 )
+
+const scenarioKey = "acme.fault"
+
+func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
+	codec, err := jsonscenario.New(scenarioKey)
+	if err != nil {
+		return fault.Settings{}, err
+	}
+	d := fault.DefaultSettings()
+	return config.Struct(func(r *config.Resolver) fault.Settings {
+		f := d
+		f.Decoder = codec
+		f.MaxDelay = r.Get(config.Env(s.Process.Environment, "FAULT_MAX_DELAY").Parse(time.ParseDuration).Default(d.MaxDelay).Validate(fault.CheckMaxDelay))
+		return f
+	}).Read(ctx)
+}
 
 func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	return InitWith(ctx, s, openPostgres)
@@ -89,6 +109,15 @@ func subject(_ context.Context, chains [][]*x509.Certificate) (pkix.Name, error)
 		return pkix.Name{}, fmt.Errorf("no verified chain: %w", auth.ErrUnauthenticated)
 	}
 	return chains[0][0].Subject, nil
+}
+
+func issuedByTheCA(ctx context.Context, _ string) bool {
+	p, ok := peer.FromContext(ctx)
+	if !ok {
+		return false
+	}
+	info, ok := p.AuthInfo.(credentials.TLSInfo)
+	return ok && len(info.State.VerifiedChains) > 0
 }
 
 type reached struct {
@@ -149,7 +178,8 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 		return sourced{
 			settings: settings{
 				GRPC: grpcserver.Settings{
-					Addr: r.Get(env("GRPC_ADDR").Validate(grpcserver.CheckAddr)),
+					Addr:          r.Get(env("GRPC_ADDR").Validate(grpcserver.CheckAddr)),
+					TrustScenario: issuedByTheCA,
 				},
 				Probes: grpchealth.Settings{
 					Addr: r.Get(env("PROBES_ADDR").Validate(grpchealth.CheckAddr)),

@@ -41,7 +41,6 @@ import (
 )
 
 const (
-	scenarioKey    = "acme.fault"
 	trustScope     = "faults:rehearse"
 	ledgerReplicas = 2
 	pollReady      = 100 * time.Millisecond

@@ -73,6 +73,8 @@ type fakeLedger struct {
 	accounts map[string]int64
 	err      error
 	changed  chan struct{}
+	calls    int
+	carried  int
 }
 
 func newFakeLedger() *fakeLedger {
@@ -83,6 +85,25 @@ func (l *fakeLedger) fail(err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.err = err
+}
+
+func (l *fakeLedger) called() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.calls
+}
+
+func (l *fakeLedger) scenarios() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.carried
+}
+
+func (l *fakeLedger) trust(context.Context, string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.carried++
+	return true
 }
 
 func (l *fakeLedger) deposit(id string, amountCents int64) {
@@ -96,6 +117,7 @@ func (l *fakeLedger) deposit(id string, amountCents int64) {
 func (l *fakeLedger) OpenAccount(_ context.Context, req *ledgerpb.OpenAccountRequest) (*ledgerpb.OpenAccountResponse, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.calls++
 	if l.err != nil {
 		return nil, l.err
 	}
@@ -106,6 +128,7 @@ func (l *fakeLedger) OpenAccount(_ context.Context, req *ledgerpb.OpenAccountReq
 func (l *fakeLedger) GetAccount(_ context.Context, req *ledgerpb.GetAccountRequest) (*ledgerpb.GetAccountResponse, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.calls++
 	if l.err != nil {
 		return nil, l.err
 	}
@@ -119,6 +142,7 @@ func (l *fakeLedger) GetAccount(_ context.Context, req *ledgerpb.GetAccountReque
 func (l *fakeLedger) Transfer(_ context.Context, req *ledgerpb.TransferRequest) (*ledgerpb.TransferResponse, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.calls++
 	if l.err != nil {
 		return nil, l.err
 	}
@@ -160,6 +184,7 @@ type fixture struct {
 	idp   *idp
 	files map[string][]byte
 	env   map[string]string
+	tel   telemetry.Builder
 }
 
 func newFixture(t *testing.T, files map[string][]byte) *fixture {
@@ -177,6 +202,7 @@ func newFixture(t *testing.T, files map[string][]byte) *fixture {
 		ca:    ca,
 		idp:   newIdP(t),
 		files: all,
+		tel:   telemetry.NoopBuilder,
 		env: map[string]string{
 			"GRPC_ADDR":           ":9443",
 			"GRPC_TLS_PEM_FILE":   "secrets/wallet.pem",
@@ -203,7 +229,7 @@ func (f *fixture) start(t *testing.T, env map[string]string) (*bedrocktest.Proce
 		merged[name] = value
 	}
 	return grpcservertest.Start(t, Init,
-		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(f.tel), humus.WithFaults(Faults)),
 		humustest.WithEnv(merged),
 	)
 }
@@ -221,13 +247,14 @@ func (f *fixture) startLedger(t *testing.T) (*fakeLedger, func()) {
 				ClientCAs:    f.ca.Pool(),
 				MinVersion:   tls.VersionTLS12,
 			},
+			TrustScenario: l.trust,
 		})
 		if err != nil {
 			return nil, err
 		}
 		ledgerpb.RegisterLedgerServer(svc, l)
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+	}, humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(Faults)))
 	<-f.h.Listening(ledgerAddr)
 
 	var once sync.Once
@@ -669,6 +696,9 @@ func TestInit_with_a_bad_setting_exits_78(t *testing.T) {
 		"key set attempts that aren't a number":   {name: "TOKEN_KEYS_MAX_ATTEMPTS", value: "three", cause: "invalid syntax"},
 		"an empty issuer":                         {name: "TOKEN_ISSUER", value: "", cause: "empty"},
 		"an empty audience":                       {name: "TOKEN_AUDIENCE", value: "", cause: "empty"},
+		"two trust scopes":                        {name: "FAULT_TRUST_SCOPE", value: "faults:rehearse wallet:write", cause: "must be one scope"},
+		"a negative fault delay":                  {name: "FAULT_MAX_DELAY", value: "-1s", cause: "positive"},
+		"a fault delay with no unit":              {name: "FAULT_MAX_DELAY", value: "10", cause: "missing unit"},
 	}
 	for desc, tc := range testCases {
 		t.Run(desc, func(t *testing.T) {
