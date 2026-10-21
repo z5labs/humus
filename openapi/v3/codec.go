@@ -42,7 +42,9 @@ type Encoder[T any] interface {
 	// the WriterTo, which may do more work once it has written the body,
 	// such as recording that a download completed. An error from the
 	// WriterTo cuts the response short, and is the server's unless the
-	// request's context is done. An encoder that buffers returns its
+	// client went away: the request's context is done, or a write to the
+	// writer the WriterTo is handed failed because the connection did,
+	// rather than because the server refused it. An encoder that buffers returns its
 	// encoded bytes, such as a *bytes.Reader. An encoder that streams
 	// returns a WriterTo that writes as it goes.
 	Encode(v T) (io.WriterTo, error)
