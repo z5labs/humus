@@ -386,7 +386,11 @@ func (e *env) startWallet() {
 		if err != nil {
 			return nil, err
 		}
-		walletpb.RegisterWalletServer(svc, server.New(ledgerpb.NewLedgerClient(ledger), bearer))
+		wallet, err := server.New(ledgerpb.NewLedgerClient(ledger), bearer, s.Telemetry)
+		if err != nil {
+			return nil, err
+		}
+		walletpb.RegisterWalletServer(svc, wallet)
 		return []humus.Service{svc}, nil
 	}, humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(telemetry.NoopBuilder)))
 	<-e.h.Listening(walletAddr)

@@ -3,7 +3,7 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-// Package app is the ledger's Init: its settings, its store, its client certificates, its server and its probes.
+// Package app is the ledger's Init: its settings, its store, its client certificates, its server, its probes and its telemetry.
 package app
 
 import (
@@ -15,11 +15,13 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/config"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -38,6 +40,7 @@ import (
 	"github.com/z5labs/humus/grpc/grpchealth"
 	"github.com/z5labs/humus/grpc/grpcserver"
 	"github.com/z5labs/humus/health"
+	"github.com/z5labs/humus/telemetry"
 )
 
 const (
@@ -61,6 +64,32 @@ func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
 	}).Read(ctx)
 }
 
+func BuildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+	d := telemetry.DefaultSettings()
+	env := func(name string) config.Value[string] { return config.Env(p.Environment, name) }
+	exporter := func(name string, def telemetry.Exporter) config.Value[telemetry.Exporter] {
+		return env(name).
+			Map(func(s string) telemetry.Exporter { return telemetry.Exporter(s) }).
+			Default(def).
+			Validate(telemetry.CheckExporter)
+	}
+
+	s, err := config.Struct(func(r *config.Resolver) telemetry.Settings {
+		s := d
+		s.Disabled = r.Get(env("OTEL_SDK_DISABLED").Parse(strconv.ParseBool).Default(d.Disabled))
+		s.ServiceName = r.Get(env("OTEL_SERVICE_NAME").Default("ledger").Validate(telemetry.CheckServiceName))
+		s.Traces = r.Get(exporter("OTEL_TRACES_EXPORTER", d.Traces))
+		s.Metrics = r.Get(exporter("OTEL_METRICS_EXPORTER", d.Metrics))
+		s.Logs = r.Get(exporter("OTEL_LOGS_EXPORTER", d.Logs))
+		s.OTLP.Endpoint = r.Get(env("OTEL_EXPORTER_OTLP_ENDPOINT").Default(d.OTLP.Endpoint).Validate(telemetry.CheckOTLPEndpoint))
+		return s
+	}).Read(ctx)
+	if err != nil {
+		return telemetry.SDK{}, err
+	}
+	return telemetry.New(ctx, s, dial, p.Stdout)
+}
+
 func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	return InitWith(ctx, s, openPostgres)
 }
@@ -77,7 +106,7 @@ func InitWith(ctx context.Context, s *humus.Setup, open OpenStore) ([]humus.Serv
 	if err != nil {
 		return nil, err
 	}
-	ledger, err := server.New(st, set.WatchInterval)
+	ledger, err := server.New(st, set.WatchInterval, s.Telemetry)
 	if err != nil {
 		return nil, err
 	}
