@@ -1,0 +1,10 @@
+apiVersion: 1
+providers:
+  - name: shoppingcart
+    orgId: 1
+    folder: Shoppingcart
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/dashboards
