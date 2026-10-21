@@ -1494,7 +1494,19 @@ variable. A bad one exits 78:&lt;/p&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nt"&gt;values&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="m"&gt;78&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;&lt;span class="w"&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;h2 id="no-secret-is-in-the-environment-the-logs-or-the-spans"&gt;No secret is in the environment, the logs or the spans&lt;/h2&gt;
 &lt;p&gt;The database URL and the API key are files from Secrets, read through the
-Host:&lt;/p&gt;</description></item><item><title>Production-ready</title><link>https://z5labs.github.io/humus/walkthroughs/databases/production-ready/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/databases/production-ready/</guid><description>&lt;p&gt;The controller meets each item. Check your own controller against them:&lt;/p&gt;
+Host:&lt;/p&gt;</description></item><item><title>Observing</title><link>https://z5labs.github.io/humus/walkthroughs/shoppingcart/observing/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/shoppingcart/observing/</guid><description>&lt;h2 id="opening-grafana"&gt;Opening Grafana&lt;/h2&gt;
+&lt;p&gt;&lt;code&gt;up.sh&lt;/code&gt; generates Grafana&amp;rsquo;s admin password into the &lt;code&gt;grafana-admin&lt;/code&gt; Secret.
+Read it, then forward Grafana&amp;rsquo;s port:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre tabindex="0" class="chroma"&gt;&lt;code class="language-sh" data-lang="sh"&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;kubectl --context kind-kind --namespace shoppingcart get secret grafana-admin &lt;span class="se"&gt;\
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="se"&gt;&lt;/span&gt; --output &lt;span class="nv"&gt;jsonpath&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;{.data.password}&amp;#39;&lt;/span&gt; &lt;span class="p"&gt;|&lt;/span&gt; base64 --decode
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;kubectl --context kind-kind --namespace shoppingcart port-forward service/grafana 3000:3000
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;p&gt;Sign in at &lt;a href="http://localhost:3000"&gt;http://localhost:3000&lt;/a&gt; as &lt;code&gt;admin&lt;/code&gt;.&lt;/p&gt;
+&lt;h2 id="an-adds-trace"&gt;An add&amp;rsquo;s trace&lt;/h2&gt;
+&lt;p&gt;Add an item to a cart, as
+&lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/deploying/#calling-the-cart"&gt;Deploying&lt;/a&gt;
+shows. Each server span is named after its method and &lt;code&gt;/&lt;/code&gt;, the pattern the
+API is served under, so in &lt;strong&gt;Explore&lt;/strong&gt;, with &lt;strong&gt;Tempo&lt;/strong&gt;, find the adds by
+their path:&lt;/p&gt;</description></item><item><title>Production-ready</title><link>https://z5labs.github.io/humus/walkthroughs/databases/production-ready/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/databases/production-ready/</guid><description>&lt;p&gt;The controller meets each item. Check your own controller against them:&lt;/p&gt;
 &lt;table&gt;
  &lt;thead&gt;
  &lt;tr&gt;
@@ -1730,6 +1742,87 @@ Host:&lt;/p&gt;</description></item><item><title>Production-ready</title><link>h
  &lt;td&gt;Safe by default&lt;/td&gt;
  &lt;td&gt;no record&amp;rsquo;s scenario trusted. Only the producer to &lt;code&gt;orders.retry&lt;/code&gt; forwards one&lt;/td&gt;
  &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/orderstatus/init/#trusting-a-topics-scenarios"&gt;Trusting a topic&amp;rsquo;s scenarios&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/orderstatus/init/#the-producers"&gt;The &lt;code&gt;Producer&lt;/code&gt;s&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;/tbody&gt;
+&lt;/table&gt;</description></item><item><title>Production-ready</title><link>https://z5labs.github.io/humus/walkthroughs/shoppingcart/production-ready/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/shoppingcart/production-ready/</guid><description>&lt;p&gt;The cart and the catalog meet each item. Check your own API against them:&lt;/p&gt;
+&lt;table&gt;
+ &lt;thead&gt;
+ &lt;tr&gt;
+ &lt;th&gt;Item&lt;/th&gt;
+ &lt;th&gt;How&lt;/th&gt;
+ &lt;th&gt;Where&lt;/th&gt;
+ &lt;/tr&gt;
+ &lt;/thead&gt;
+ &lt;tbody&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Every setting sourced and checked; a bad one exits 78, naming its variable&lt;/td&gt;
+ &lt;td&gt;&lt;code&gt;config.Struct&lt;/code&gt; and the packages&amp;rsquo; checks, in the cart, the catalog and &lt;code&gt;migrate&lt;/code&gt;&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/init/#the-carts-settings"&gt;The cart&amp;rsquo;s settings&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/init/#the-other-checks"&gt;The other checks&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/schema/#migrates-settings"&gt;&lt;code&gt;migrate&lt;/code&gt;&amp;rsquo;s settings&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;No secret in the environment, the logs or the spans&lt;/td&gt;
+ &lt;td&gt;the database URLs and the keys are files, read through &lt;code&gt;s.Host.FS&lt;/code&gt;. No token is recorded, which a test of the App checks&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/init/#the-secrets-as-files"&gt;The secrets, as files&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/observing/#their-log-records"&gt;Their log records&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Certificates renewed without a restart&lt;/td&gt;
+ &lt;td&gt;&lt;code&gt;internal/certfile&lt;/code&gt;, on the &lt;code&gt;kubernetes.io/tls&lt;/code&gt; Secrets that cert-manager renews. Its unit tests rewrite the files under a running server&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/init/#the-certificates-read-again-when-renewed"&gt;The certificates, read again when renewed&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Two replicas of each service&lt;/td&gt;
+ &lt;td&gt;a PodDisruptionBudget of &lt;code&gt;minAvailable: 1&lt;/code&gt;, and a rolling update of &lt;code&gt;maxUnavailable: 0&lt;/code&gt;&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/deploying/#the-deployments"&gt;The Deployments&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/deploying/#the-disruption-budgets"&gt;The disruption budgets&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Ready only once it has reached its dependencies, and still ready through their outages&lt;/td&gt;
+ &lt;td&gt;the latching monitors, on PostgreSQL and on the catalog&amp;rsquo;s readiness&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/init/#readiness"&gt;Readiness&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/catalog/#the-probes"&gt;The catalog&amp;rsquo;s probes&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/calling-the-catalog/#readiness"&gt;The cart&amp;rsquo;s readiness&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;A rollout loses no request&lt;/td&gt;
+ &lt;td&gt;&lt;code&gt;httpserver.Main&lt;/code&gt;&amp;rsquo;s 5s drain, in both services, and a &lt;code&gt;terminationGracePeriodSeconds&lt;/code&gt; above the drain, the grace period and the telemetry&amp;rsquo;s shutdown&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/deploying/#the-drain"&gt;The drain&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;The schema is current before the code that needs it serves&lt;/td&gt;
+ &lt;td&gt;the &lt;code&gt;migrate&lt;/code&gt; init container, under tern&amp;rsquo;s lock, with backwards-compatible migrations&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/schema/#the-migrations"&gt;The migrations&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/schema/#the-job"&gt;The job&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/schema/#the-init-container"&gt;The init container&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Least privilege&lt;/td&gt;
+ &lt;td&gt;the services&amp;rsquo; roles read and write their tables and change no schema. A non-root, read-only container. No service account token mounted&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/schema/#the-grant"&gt;The grant&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/schema/#the-roles"&gt;The roles&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/deploying/#the-deployments"&gt;The Deployments&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;A caller sees only their own carts&lt;/td&gt;
+ &lt;td&gt;the owner, from the token&amp;rsquo;s subject, and a 404 for anyone else&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/access/#a-carts-owner"&gt;A cart&amp;rsquo;s owner&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Prices can&amp;rsquo;t be set by a client&lt;/td&gt;
+ &lt;td&gt;the cart asks the catalog for each price, over mTLS. Only a token with &lt;code&gt;catalog:write&lt;/code&gt; changes one&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/api/#the-bodies"&gt;The bodies&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/catalog/#mtls"&gt;mTLS&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/catalog/#the-operations"&gt;The operations&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Observable&lt;/td&gt;
+ &lt;td&gt;traces across both services, logs and metrics over OTLP, the alerts in &lt;code&gt;deploy/alerts.yaml&lt;/code&gt;, &lt;code&gt;deploy/dashboard.json&lt;/code&gt;, and alerts on each Deployment from the Collector&amp;rsquo;s Kubernetes cluster receiver&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/observing/"&gt;Observing&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Failures say why&lt;/td&gt;
+ &lt;td&gt;a 503 for a dependency that is down, a 422 for an unknown product, and problem details throughout&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/api/#the-answers"&gt;The answers&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/calling-the-catalog/#the-answers"&gt;The catalog&amp;rsquo;s answers&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Failures are rehearsed&lt;/td&gt;
+ &lt;td&gt;the failure injection cases, in CI, and against an end user&amp;rsquo;s staging through its own &lt;code&gt;Target&lt;/code&gt;&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/testing/#the-shared-cases"&gt;The shared cases&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/testing/#the-failure-injection-cases"&gt;The failure injection cases&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Safe by default&lt;/td&gt;
+ &lt;td&gt;&lt;code&gt;FAULT_TRUST_SCOPE&lt;/code&gt; empty, so no scenario is trusted. The OpenAPI document is the only open path besides the probes&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/init/#trustscenario"&gt;&lt;code&gt;TrustScenario&lt;/code&gt;&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/access/#requiring-it"&gt;Requiring it&lt;/a&gt;&lt;/td&gt;
  &lt;/tr&gt;
  &lt;/tbody&gt;
 &lt;/table&gt;</description></item></channel></rss>
