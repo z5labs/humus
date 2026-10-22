@@ -328,6 +328,8 @@ short list per scenario.>
   the triage found> happens>
 - [ ] Tests in `<file>` show <the expected behaviour, per scenario>. They are the triage's
   reproductions, which fail without the fix.
+- [ ] <for a flaky test: `flaky stress -run '<the test>' -count <n> <package>` reports no
+  failures or hangs at any pair of CPU count and load. The pull request gives its output.>
 - [ ] <the docs and comments the fix corrects: `doc.go`'s paragraphs, the comments on the
   functions it changes>
 - [ ] After the fix's pull request is merged, #<N> gets a comment that links the merged pull
@@ -348,6 +350,17 @@ short list per scenario.>
   and comments to correct. They don't design the fix: that's for the story's implementer.
   **Container tests are required** when the bug only shows against the real system; say what
   each shows that the fake can't.
+- **A flaky test's story is checked with `flaky stress`.** A report is of a flaky test when the
+  test fails on some runs and passes on others. `flaky report` posts only reports of flaky tests,
+  so every report it posts is one. Then the story asks for
+  `flaky stress -run '<the test>' -count <n> <package>` to report no failures or hangs at any
+  pair of CPU count and load, and for its pull request to give that output. So the fix is shown
+  to hold at every CPU count and load, not only at the one a hand-written command tried.
+  - `<the test>` is the test's `-run` pattern, such as `'^TestX$/^a_case$'`, and `<package>`
+    is its package from the repository's root, such as `./grpc/grpcserver`. When the test is
+    behind a build tag, add `-tags <tag>`, so only the test's own level runs.
+  - Pick `<n>` so that, at the rate the report or the reproduction showed, the test would have
+    failed several times in that many runs.
 - The closing criterion is always last.
 - Don't change #629. Fixing landed code isn't wave work.
 
