@@ -31,6 +31,7 @@ func newResults(t *testing.T) (*results.Results, string) {
 	return results.New(results.Config{
 		Packages:       pkgs,
 		CPUs:           []int{1, 2, 4},
+		Loads:          []int{1, 2},
 		Count:          3,
 		Timeout:        2 * time.Minute,
 		DefaultTimeout: 2 * time.Minute,
@@ -47,43 +48,46 @@ func passed(names ...string) run.Result {
 	return res
 }
 
-// sweep adds three runs of each package at each CPU count. TestX/a_case
-// fails once at cpu 2 and hangs once at cpu 4; TestY fails every run at cpu
-// 1; health fails outside any test once at cpu 4.
+// sweep adds three runs of each package at each pair of CPU count and load.
+// TestX/a_case fails once at cpu 2 load 2 and hangs once at cpu 4 load 1;
+// TestY fails every run at cpu 1, at either load; health fails outside any
+// test once at cpu 4 load 2.
 func sweep(t *testing.T, r *results.Results) {
 	r.Listed(0, []string{"TestX", "TestY", "TestZ", "TestNeverRan"})
 	r.Listed(1, []string{"TestH"})
 	for _, cpu := range []int{1, 2, 4} {
-		for i := range 3 {
-			res := passed("TestX", "TestX/a_case", "TestY", "TestZ")
-			if cpu == 2 && i == 1 {
-				res.Tests[1] = run.Test{Name: "TestX/a_case", Outcome: run.Fail, Output: []string{"    x_test.go:12: boom"}}
-				res.Output = []byte("--- FAIL: TestX/a_case\n    x_test.go:12: boom\n")
-			}
-			if cpu == 4 && i == 2 {
-				res.Tests[1] = run.Test{Name: "TestX/a_case", Outcome: run.Hang, Output: []string{"=== RUN   TestX/a_case"}}
-				res.TimedOut = true
-			}
-			if cpu == 1 {
-				res.Tests[2] = run.Test{Name: "TestY", Outcome: run.Fail, Output: []string{"    y_test.go:3: always"}}
-			}
-			require.NoError(t, r.Add(0, cpu, res))
-
-			h := passed("TestH")
-			if cpu == 4 && i == 0 {
-				h = run.Result{
-					Tests:         []run.Test{{Name: "TestH", Outcome: run.Pass}},
-					PackageFailed: true,
-					PackageOutput: []string{"goleak: found unexpected goroutines"},
-					Output:        []byte("goleak: found unexpected goroutines\n"),
+		for _, load := range []int{1, 2} {
+			for i := range 3 {
+				res := passed("TestX", "TestX/a_case", "TestY", "TestZ")
+				if cpu == 2 && load == 2 && i == 1 {
+					res.Tests[1] = run.Test{Name: "TestX/a_case", Outcome: run.Fail, Output: []string{"    x_test.go:12: boom"}}
+					res.Output = []byte("--- FAIL: TestX/a_case\n    x_test.go:12: boom\n")
 				}
+				if cpu == 4 && load == 1 && i == 2 {
+					res.Tests[1] = run.Test{Name: "TestX/a_case", Outcome: run.Hang, Output: []string{"=== RUN   TestX/a_case"}}
+					res.TimedOut = true
+				}
+				if cpu == 1 {
+					res.Tests[2] = run.Test{Name: "TestY", Outcome: run.Fail, Output: []string{"    y_test.go:3: always"}}
+				}
+				require.NoError(t, r.Add(0, cpu, load, res))
+
+				h := passed("TestH")
+				if cpu == 4 && load == 2 && i == 0 {
+					h = run.Result{
+						Tests:         []run.Test{{Name: "TestH", Outcome: run.Pass}},
+						PackageFailed: true,
+						PackageOutput: []string{"goleak: found unexpected goroutines"},
+						Output:        []byte("goleak: found unexpected goroutines\n"),
+					}
+				}
+				require.NoError(t, r.Add(1, cpu, load, h))
 			}
-			require.NoError(t, r.Add(1, cpu, h))
 		}
 	}
 }
 
-func TestReport_counts_each_test_s_failures_and_hangs_at_each_CPU_count(t *testing.T) {
+func TestReport_counts_each_test_s_failures_and_hangs_at_each_pair_of_CPU_count_and_load(t *testing.T) {
 	r, out := newResults(t)
 	sweep(t, r)
 	rep := r.Report()
@@ -93,32 +97,37 @@ func TestReport_counts_each_test_s_failures_and_hangs_at_each_CPU_count(t *testi
 	x := rep.Flaky[0]
 	require.Equal(t, "grpc/grpchealth", x.Package)
 	require.Equal(t, "TestX/a_case", x.Test)
-	require.Equal(t, []results.CPU{
-		{CPU: 1, Runs: 3},
-		{CPU: 2, Runs: 3, Failures: 1},
-		{CPU: 4, Runs: 3, Hangs: 1},
-	}, x.CPUs)
-	require.Equal(t, 9, x.Runs)
+	require.Equal(t, []results.Pair{
+		{CPU: 1, Load: 1, Runs: 3},
+		{CPU: 1, Load: 2, Runs: 3},
+		{CPU: 2, Load: 1, Runs: 3},
+		{CPU: 2, Load: 2, Runs: 3, Failures: 1},
+		{CPU: 4, Load: 1, Runs: 3, Hangs: 1},
+		{CPU: 4, Load: 2, Runs: 3},
+	}, x.Pairs)
+	require.Equal(t, 18, x.Runs)
 	require.Equal(t, 1, x.Failures)
 	require.Equal(t, 1, x.Hangs)
 	require.Equal(t, []string{"    x_test.go:12: boom"}, x.FirstFailure)
 	require.Equal(t, 2, x.FirstFailureCPU)
+	require.Equal(t, 2, x.FirstFailureLoad)
 	require.Equal(t, filepath.Join(out, "grpc", "grpchealth", "TestX", "a_case"), x.Output)
-	require.Equal(t, "flaky stress -run '^TestX$/^a_case$' -cpu 2 -count 3 ./grpc/grpchealth", x.Reproduce)
+	require.Equal(t, "flaky stress -run '^TestX$/^a_case$' -cpu 2 -load 2 -count 3 ./grpc/grpchealth", x.Reproduce)
 	require.Equal(t, "taskset -c 0-1 go -C grpc test -race -cover -count=3 -cpu 2 -timeout 2m0s -run '^TestX$/^a_case$' ./grpchealth", x.ReproduceGoTest)
 
 	h := rep.Flaky[1]
 	require.Equal(t, "health", h.Package)
 	require.Empty(t, h.Test, "a failure outside any test counts against its package")
 	require.Equal(t, filepath.Join(out, "health", "outside-tests"), h.Output)
-	require.Equal(t, "flaky stress -cpu 4 -count 3 ./health", h.Reproduce)
+	require.Equal(t, "flaky stress -cpu 4 -load 2 -count 3 ./health", h.Reproduce)
 	require.Equal(t, "taskset -c 0-3 go -C . test -race -cover -count=3 -cpu 4 -timeout 2m0s ./health", h.ReproduceGoTest)
 	require.Equal(t, []string{"goleak: found unexpected goroutines"}, h.FirstFailure)
 
-	require.Len(t, rep.Failing, 1, "a test that failed every run at some CPU count is listed apart")
+	require.Len(t, rep.Failing, 1, "a test that failed every run at some pair is listed apart")
 	y := rep.Failing[0]
 	require.Equal(t, "TestY", y.Test)
-	require.Equal(t, 3, y.Failures)
+	require.Equal(t, 6, y.Failures)
+	require.Equal(t, "flaky stress -run '^TestY$' -cpu 1 -load 1 -count 3 ./grpc/grpchealth", y.Reproduce)
 	require.Equal(t, "taskset -c 0 go -C grpc test -race -cover -count=3 -cpu 1 -timeout 2m0s -run '^TestY$' ./grpchealth", y.ReproduceGoTest)
 
 	// TestX failed through its subtest, TestY failed, and TestNeverRan
@@ -126,38 +135,77 @@ func TestReport_counts_each_test_s_failures_and_hangs_at_each_CPU_count(t *testi
 	require.Equal(t, 2, rep.Passed)
 }
 
+func TestReport_reproduces_a_test_at_the_pair_where_it_failed_most(t *testing.T) {
+	r := results.New(results.Config{
+		Packages: pkgs, CPUs: []int{1, 2}, Loads: []int{1, 2}, Count: 4, Out: t.TempDir(),
+		Timeout: 2 * time.Minute, DefaultTimeout: 2 * time.Minute,
+	})
+	fail := run.Result{Tests: []run.Test{{Name: "TestH", Outcome: run.Fail, Output: []string{"boom"}}}}
+	for _, cpu := range []int{1, 2} {
+		for _, load := range []int{1, 2} {
+			for i := range 4 {
+				res := passed("TestH")
+				if (cpu == 1 && load == 2 && i == 0) || (cpu == 2 && load == 1 && i < 2) {
+					res = fail
+				}
+				require.NoError(t, r.Add(1, cpu, load, res))
+			}
+		}
+	}
+	rep := r.Report()
+	require.Len(t, rep.Flaky, 1)
+	h := rep.Flaky[0]
+	require.Equal(t, 1, h.FirstFailureCPU)
+	require.Equal(t, 2, h.FirstFailureLoad)
+	require.Equal(t, "flaky stress -run '^TestH$' -cpu 2 -load 1 -count 4 ./health", h.Reproduce, "2 of 4 runs failed at cpu 2 load 1")
+	require.Equal(t, "taskset -c 0-1 go -C . test -race -cover -count=4 -cpu 2 -timeout 2m0s -run '^TestH$' ./health", h.ReproduceGoTest)
+}
+
+func TestReport_lists_a_test_apart_when_it_failed_every_run_at_one_load(t *testing.T) {
+	r := results.New(results.Config{Packages: pkgs, CPUs: []int{4}, Loads: []int{1, 2}, Count: 2, Out: t.TempDir()})
+	fail := run.Result{Tests: []run.Test{{Name: "TestH", Outcome: run.Fail}}}
+	require.NoError(t, r.Add(1, 4, 1, passed("TestH")))
+	require.NoError(t, r.Add(1, 4, 1, passed("TestH")))
+	require.NoError(t, r.Add(1, 4, 2, fail))
+	require.NoError(t, r.Add(1, 4, 2, fail))
+	rep := r.Report()
+	require.Empty(t, rep.Flaky)
+	require.Len(t, rep.Failing, 1)
+	require.Equal(t, []results.Pair{{CPU: 4, Load: 1, Runs: 2}, {CPU: 4, Load: 2, Runs: 2, Failures: 2}}, rep.Failing[0].Pairs)
+}
+
 func TestAdd_saves_each_failure_s_whole_output(t *testing.T) {
 	r, out := newResults(t)
 	sweep(t, r)
-	saved, err := os.ReadFile(filepath.Join(out, "grpc", "grpchealth", "TestX", "a_case", "cpu2-1.txt"))
+	saved, err := os.ReadFile(filepath.Join(out, "grpc", "grpchealth", "TestX", "a_case", "cpu2-load2-1.txt"))
 	require.NoError(t, err)
 	require.Equal(t, "--- FAIL: TestX/a_case\n    x_test.go:12: boom\n", string(saved))
 	entries, err := os.ReadDir(filepath.Join(out, "grpc", "grpchealth", "TestY"))
 	require.NoError(t, err)
-	require.Len(t, entries, 3)
-	_, err = os.Stat(filepath.Join(out, "grpc", "grpchealth", "TestX", "a_case", "cpu4-2.txt"))
+	require.Len(t, entries, 6)
+	_, err = os.Stat(filepath.Join(out, "grpc", "grpchealth", "TestX", "a_case", "cpu4-load1-2.txt"))
 	require.NoError(t, err)
 }
 
 func TestAdd_fails_when_the_output_cannot_be_saved(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "file")
 	require.NoError(t, os.WriteFile(file, nil, 0o644))
-	r := results.New(results.Config{Packages: pkgs, CPUs: []int{1}, Count: 1, Out: file})
-	err := r.Add(0, 1, run.Result{Tests: []run.Test{{Name: "TestX", Outcome: run.Fail}}})
+	r := results.New(results.Config{Packages: pkgs, CPUs: []int{1}, Loads: []int{1}, Count: 1, Out: file})
+	err := r.Add(0, 1, 1, run.Result{Tests: []run.Test{{Name: "TestX", Outcome: run.Fail}}})
 	require.Error(t, err)
-	err = r.Add(1, 1, run.Result{PackageFailed: true})
+	err = r.Add(1, 1, 1, run.Result{PackageFailed: true})
 	require.Error(t, err)
 }
 
 func TestAdd_keeps_a_hang_s_or_a_kill_s_cause_in_its_first_failure(t *testing.T) {
 	r, _ := newResults(t)
-	require.NoError(t, r.Add(0, 1, run.Result{Tests: []run.Test{{Name: "TestA", Outcome: run.Hang}}, Killed: true}))
-	require.NoError(t, r.Add(1, 1, run.Result{PackageFailed: true, Killed: true}))
+	require.NoError(t, r.Add(0, 1, 1, run.Result{Tests: []run.Test{{Name: "TestA", Outcome: run.Hang}}, Killed: true}))
+	require.NoError(t, r.Add(1, 1, 1, run.Result{PackageFailed: true, Killed: true}))
 	long := make([]string, 80)
 	for i := range long {
 		long[i] = "line"
 	}
-	require.NoError(t, r.Add(0, 2, run.Result{Tests: []run.Test{{Name: "TestB/c d", Outcome: run.Fail, Output: long}}}))
+	require.NoError(t, r.Add(0, 2, 1, run.Result{Tests: []run.Test{{Name: "TestB/c d", Outcome: run.Fail, Output: long}}}))
 	rep := r.Report()
 	require.Len(t, rep.Failing, 3, "each failed its one run")
 	require.Equal(t, []string{"killed: still running after its timeout"}, rep.Failing[0].FirstFailure)
@@ -175,13 +223,13 @@ func rel(t *testing.T, base, path string) string {
 
 func TestReport_names_a_non_default_timeout_in_the_flaky_command(t *testing.T) {
 	r := results.New(results.Config{
-		Packages: pkgs, CPUs: []int{1}, Count: 5, Out: t.TempDir(),
+		Packages: pkgs, CPUs: []int{1}, Loads: []int{1}, Count: 5, Out: t.TempDir(),
 		Timeout: 10 * time.Second, DefaultTimeout: 2 * time.Minute,
 	})
-	require.NoError(t, r.Add(1, 1, run.Result{Tests: []run.Test{{Name: "TestH", Outcome: run.Fail}, {Name: "TestH2", Outcome: run.Pass}}}))
-	require.NoError(t, r.Add(1, 1, passed("TestH", "TestH2")))
+	require.NoError(t, r.Add(1, 1, 1, run.Result{Tests: []run.Test{{Name: "TestH", Outcome: run.Fail}, {Name: "TestH2", Outcome: run.Pass}}}))
+	require.NoError(t, r.Add(1, 1, 1, passed("TestH", "TestH2")))
 	rep := r.Report()
-	require.Equal(t, "flaky stress -run '^TestH$' -cpu 1 -count 5 -timeout 10s ./health", rep.Flaky[0].Reproduce)
+	require.Equal(t, "flaky stress -run '^TestH$' -cpu 1 -load 1 -count 5 -timeout 10s ./health", rep.Flaky[0].Reproduce)
 }
 
 func TestRunPattern(t *testing.T) {
@@ -200,41 +248,50 @@ func TestWriteText(t *testing.T) {
 	want := `FLAKY: failed or hung in some runs
 
 grpc/grpchealth  TestX/a_case
-              failures     hangs      runs
-    cpu 1            0         0         3
-    cpu 2            1         0         3
-    cpu 4            0         1         3
-    1 failure, 1 hang in 9 runs
-    first failure, at cpu 2:
+                    failures     hangs      runs
+    cpu 1 load 1           0         0         3
+    cpu 1 load 2           0         0         3
+    cpu 2 load 1           0         0         3
+    cpu 2 load 2           1         0         3
+    cpu 4 load 1           0         1         3
+    cpu 4 load 2           0         0         3
+    1 failure, 1 hang in 18 runs
+    first failure, at cpu 2 load 2:
             x_test.go:12: boom
     output:    ` + filepath.Join(out, "grpc/grpchealth/TestX/a_case") + `
-    reproduce: flaky stress -run '^TestX$/^a_case$' -cpu 2 -count 3 ./grpc/grpchealth
+    reproduce: flaky stress -run '^TestX$/^a_case$' -cpu 2 -load 2 -count 3 ./grpc/grpchealth
                taskset -c 0-1 go -C grpc test -race -cover -count=3 -cpu 2 -timeout 2m0s -run '^TestX$/^a_case$' ./grpchealth
 
 health  (outside any test)
-              failures     hangs      runs
-    cpu 1            0         0         3
-    cpu 2            0         0         3
-    cpu 4            1         0         3
-    1 failure, 0 hangs in 9 runs
-    first failure, at cpu 4:
+                    failures     hangs      runs
+    cpu 1 load 1           0         0         3
+    cpu 1 load 2           0         0         3
+    cpu 2 load 1           0         0         3
+    cpu 2 load 2           0         0         3
+    cpu 4 load 1           0         0         3
+    cpu 4 load 2           1         0         3
+    1 failure, 0 hangs in 18 runs
+    first failure, at cpu 4 load 2:
         goleak: found unexpected goroutines
     output:    ` + filepath.Join(out, "health/outside-tests") + `
-    reproduce: flaky stress -cpu 4 -count 3 ./health
+    reproduce: flaky stress -cpu 4 -load 2 -count 3 ./health
                taskset -c 0-3 go -C . test -race -cover -count=3 -cpu 4 -timeout 2m0s ./health
 
-FAILING: failed or hung every run at some CPU count
+FAILING: failed or hung every run at some pair of CPU count and load
 
 grpc/grpchealth  TestY
-              failures     hangs      runs
-    cpu 1            3         0         3
-    cpu 2            0         0         3
-    cpu 4            0         0         3
-    3 failures, 0 hangs in 9 runs
-    first failure, at cpu 1:
+                    failures     hangs      runs
+    cpu 1 load 1           3         0         3
+    cpu 1 load 2           3         0         3
+    cpu 2 load 1           0         0         3
+    cpu 2 load 2           0         0         3
+    cpu 4 load 1           0         0         3
+    cpu 4 load 2           0         0         3
+    6 failures, 0 hangs in 18 runs
+    first failure, at cpu 1 load 1:
             y_test.go:3: always
     output:    ` + filepath.Join(out, "grpc/grpchealth/TestY") + `
-    reproduce: flaky stress -run '^TestY$' -cpu 1 -count 3 ./grpc/grpchealth
+    reproduce: flaky stress -run '^TestY$' -cpu 1 -load 1 -count 3 ./grpc/grpchealth
                taskset -c 0 go -C grpc test -race -cover -count=3 -cpu 1 -timeout 2m0s -run '^TestY$' ./grpchealth
 
 2 tests passed every run
@@ -246,7 +303,7 @@ phases: discovery 1s, build 1m0s
 func TestWriteText_of_a_sweep_that_passed(t *testing.T) {
 	r, _ := newResults(t)
 	r.Listed(1, []string{"TestH"})
-	require.NoError(t, r.Add(1, 1, passed("TestH")))
+	require.NoError(t, r.Add(1, 1, 1, passed("TestH")))
 	var buf bytes.Buffer
 	require.NoError(t, results.WriteText(&buf, r.Report()))
 	require.Equal(t, "1 test passed every run\nphases: \n", buf.String())
@@ -275,11 +332,17 @@ func TestWriteJSON_writes_the_same_report(t *testing.T) {
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &got))
 	require.Equal(t, "abc123", got["commit"])
 	require.Equal(t, "go1.27.2", got["go"])
+	require.Equal(t, []any{1.0, 2.0}, got["loads"])
 	require.InDelta(t, 32, got["cores"], 0)
 	require.InDelta(t, 2, got["passed"], 0)
 	require.Equal(t, []any{map[string]any{"name": "sweep", "seconds": 90.0}}, got["phases"])
 	flaky := got["flaky"].([]any)
 	require.Len(t, flaky, 2)
-	require.Equal(t, "TestX/a_case", flaky[0].(map[string]any)["test"])
+	x := flaky[0].(map[string]any)
+	require.Equal(t, "TestX/a_case", x["test"])
+	require.InDelta(t, 2, x["firstFailureLoad"], 0)
+	pairs := x["pairs"].([]any)
+	require.Len(t, pairs, 6, "every pair of CPU count and load")
+	require.Equal(t, map[string]any{"cpu": 2.0, "load": 2.0, "runs": 3.0, "failures": 1.0, "hangs": 0.0}, pairs[3])
 	require.Len(t, got["failing"], 1)
 }

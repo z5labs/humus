@@ -29,7 +29,7 @@ import (
 
 // fakeRunner stands in for the test binaries. Its builds and runs sleep, so
 // inside a synctest bubble they take no real time, and it records when each
-// happened and which cores each run was pinned to.
+// happened and how many runs were pinned to each core at once.
 type fakeRunner struct {
 	buildTook func(pkg int) time.Duration
 	buildErr  map[int]error
@@ -43,7 +43,7 @@ type fakeRunner struct {
 	firstRun   time.Time
 	runs       map[lanes.Pair]int
 	pinned     map[int]int
-	reuse      []string
+	maxPinned  int
 	running    int
 	maxRunning int
 }
@@ -81,9 +81,7 @@ func (f *fakeRunner) Run(ctx context.Context, pkg, cpu int, cores []int) run.Res
 	f.runs[lanes.Pair{Package: pkg, CPU: cpu}]++
 	for _, c := range cores {
 		f.pinned[c]++
-		if f.pinned[c] > 1 {
-			f.reuse = append(f.reuse, fmt.Sprintf("core %d", c))
-		}
+		f.maxPinned = max(f.maxPinned, f.pinned[c])
 	}
 	f.running++
 	f.maxRunning = max(f.maxRunning, f.running)
@@ -109,17 +107,18 @@ func (f *fakeRunner) Run(ctx context.Context, pkg, cpu int, cores []int) run.Res
 	return run.Result{Tests: []run.Test{{Name: "TestA", Outcome: outcome}}}
 }
 
-func newResults(t *testing.T, n int, cpus []int, count int) *results.Results {
+func newResults(t *testing.T, n int, cpus, loads []int, count int) *results.Results {
 	pkgs := make([]discover.Package, n)
 	for i := range pkgs {
 		pkgs[i] = discover.Package{Module: ".", Dir: fmt.Sprintf("p%d", i), ImportPath: fmt.Sprintf("example.com/p%d", i)}
 	}
-	return results.New(results.Config{Packages: pkgs, CPUs: cpus, Count: count, Out: t.TempDir()})
+	return results.New(results.Config{Packages: pkgs, CPUs: cpus, Loads: loads, Count: count, Out: t.TempDir()})
 }
 
-func TestStress_starts_no_run_before_every_build_has_finished(t *testing.T) {
+func TestStress_starts_no_run_before_every_build_has_finished_and_runs_each_pair_count_times(t *testing.T) {
 	const n, count = 7, 5
 	cpus := []int{1, 2, 4}
+	loads := []int{1, 2}
 	lanesOf, err := lanes.Split(cores(24), 4, 4)
 	require.NoError(t, err)
 	rng := rand.New(rand.NewPCG(1, 2))
@@ -130,21 +129,21 @@ func TestStress_starts_no_run_before_every_build_has_finished(t *testing.T) {
 	f := newFakeRunner()
 	f.buildTook = func(pkg int) time.Duration { return buildTook[pkg] }
 	f.fail = func(pkg, cpu int) bool { return pkg == 3 && cpu == 2 }
-	res := newResults(t, n, cpus, count)
+	res := newResults(t, n, cpus, loads, count)
 	var phases stress.Phases
 	var stressErr error
 	synctest.Test(t, func(t *testing.T) {
 		phases, stressErr = stress.Stress(t.Context(), stress.Config{
-			Packages: n, CPUs: cpus, Count: count, Lanes: lanesOf, Builds: 3,
+			Packages: n, CPUs: cpus, Loads: loads, Count: count, Lanes: lanesOf, Builds: 3,
 		}, f, res)
 	})
 	require.NoError(t, stressErr)
 	require.Equal(t, n, f.builds)
 	require.False(t, f.firstRun.Before(f.lastBuilt), "a run started at %s, before the last build finished at %s", f.firstRun, f.lastBuilt)
-	require.Empty(t, f.reuse, "no core ever has two runs pinned to it")
+	require.Equal(t, 2, f.maxPinned, "runs at load 2 share their cores, and no core has more than 2")
 	require.Len(t, f.runs, n*len(cpus))
 	for pair, runs := range f.runs {
-		require.Equal(t, count, runs, "runs of %+v", pair)
+		require.Equal(t, count*len(loads), runs, "runs of %+v", pair)
 	}
 	require.Positive(t, phases.Build)
 	require.Positive(t, phases.Sweep)
@@ -152,7 +151,25 @@ func TestStress_starts_no_run_before_every_build_has_finished(t *testing.T) {
 	rep := res.Report()
 	require.Len(t, rep.Failing, 1)
 	require.Equal(t, "p3", rep.Failing[0].Package)
+	require.Equal(t, []results.Pair{
+		{CPU: 1, Load: 1, Runs: count}, {CPU: 1, Load: 2, Runs: count},
+		{CPU: 2, Load: 1, Runs: count, Failures: count}, {CPU: 2, Load: 2, Runs: count, Failures: count},
+		{CPU: 4, Load: 1, Runs: count}, {CPU: 4, Load: 2, Runs: count},
+	}, rep.Failing[0].Pairs, "each pair of CPU count and load ran count times")
 	require.Equal(t, n-1, rep.Passed)
+}
+
+func TestStress_pins_one_run_to_each_core_at_load_1(t *testing.T) {
+	lanesOf, err := lanes.Split(cores(12), 4, 4)
+	require.NoError(t, err)
+	f := newFakeRunner()
+	synctest.Test(t, func(t *testing.T) {
+		_, err = stress.Stress(t.Context(), stress.Config{
+			Packages: 3, CPUs: []int{1, 2, 4}, Loads: []int{1}, Count: 4, Lanes: lanesOf, Builds: 3,
+		}, f, newResults(t, 3, []int{1, 2, 4}, []int{1}, 4))
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, f.maxPinned)
 }
 
 func cores(n int) []int {
@@ -169,8 +186,8 @@ func TestStress_runs_nothing_when_a_package_does_not_build(t *testing.T) {
 	var err error
 	synctest.Test(t, func(t *testing.T) {
 		_, err = stress.Stress(t.Context(), stress.Config{
-			Packages: 3, CPUs: []int{1}, Count: 1, Lanes: [][]int{{0}},
-		}, f, newResults(t, 3, []int{1}, 1))
+			Packages: 3, CPUs: []int{1}, Loads: []int{1}, Count: 1, Lanes: [][]int{{0}},
+		}, f, newResults(t, 3, []int{1}, []int{1}, 1))
 	})
 	var buildErr *stress.BuildError
 	require.ErrorAs(t, err, &buildErr)
@@ -187,8 +204,8 @@ func TestStress_warns_of_a_binary_that_does_not_list_its_tests_and_runs_it(t *te
 	var err error
 	synctest.Test(t, func(t *testing.T) {
 		_, err = stress.Stress(t.Context(), stress.Config{
-			Packages: 1, CPUs: []int{1}, Count: 2, Lanes: [][]int{{0}}, Log: &log,
-		}, f, newResults(t, 1, []int{1}, 2))
+			Packages: 1, CPUs: []int{1}, Loads: []int{1}, Count: 2, Lanes: [][]int{{0}}, Log: &log,
+		}, f, newResults(t, 1, []int{1}, []int{1}, 2))
 	})
 	require.NoError(t, err)
 	require.Contains(t, log.String(), "warning: TestMain failed")
@@ -206,8 +223,8 @@ func TestStress_writes_its_progress(t *testing.T) {
 		// is written at 50s, 100s and 150s, so no write ties with a run's
 		// end, whose order in the bubble would be up to the scheduler.
 		_, err := stress.Stress(t.Context(), stress.Config{
-			Packages: 1, CPUs: []int{1}, Count: 3, Lanes: [][]int{{0}}, Log: &log, Progress: 50 * time.Second,
-		}, f, newResults(t, 1, []int{1}, 3))
+			Packages: 1, CPUs: []int{1}, Loads: []int{1}, Count: 3, Lanes: [][]int{{0}}, Log: &log, Progress: 50 * time.Second,
+		}, f, newResults(t, 1, []int{1}, []int{1}, 3))
 		require.NoError(t, err)
 	})
 	require.Contains(t, log.String(), "swept 0 of 3 runs, 0 failed or hung\n")
@@ -219,20 +236,20 @@ func TestStress_stops_when_its_context_is_done_and_counts_no_cancelled_run(t *te
 	f := newFakeRunner()
 	f.runTook = func(int, int) time.Duration { return time.Minute }
 	f.fail = func(int, int) bool { return true }
-	res := newResults(t, 1, []int{1}, 10)
+	res := newResults(t, 1, []int{1}, []int{1}, 10)
 	var err error
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 150*time.Second)
 		defer cancel()
 		_, err = stress.Stress(ctx, stress.Config{
-			Packages: 1, CPUs: []int{1}, Count: 10, Lanes: [][]int{{0}},
+			Packages: 1, CPUs: []int{1}, Loads: []int{1}, Count: 10, Lanes: [][]int{{0}},
 		}, f, res)
 	})
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.Equal(t, 3, f.runs[lanes.Pair{Package: 0, CPU: 1}])
 	rep := res.Report()
 	require.Len(t, rep.Failing, 1)
-	require.Equal(t, []results.CPU{{CPU: 1, Runs: 2, Failures: 2}}, rep.Failing[0].CPUs, "the run cut short isn't counted")
+	require.Equal(t, []results.Pair{{CPU: 1, Load: 1, Runs: 2, Failures: 2}}, rep.Failing[0].Pairs, "the run cut short isn't counted")
 }
 
 func TestStress_stops_when_a_run_s_output_cannot_be_saved(t *testing.T) {
@@ -240,14 +257,14 @@ func TestStress_stops_when_a_run_s_output_cannot_be_saved(t *testing.T) {
 	require.NoError(t, os.WriteFile(file, nil, 0o644))
 	res := results.New(results.Config{
 		Packages: []discover.Package{{Module: ".", Dir: "p", ImportPath: "example.com/p"}},
-		CPUs:     []int{1}, Count: 5, Out: file,
+		CPUs:     []int{1}, Loads: []int{1}, Count: 5, Out: file,
 	})
 	f := newFakeRunner()
 	f.fail = func(int, int) bool { return true }
 	var err error
 	synctest.Test(t, func(t *testing.T) {
 		_, err = stress.Stress(t.Context(), stress.Config{
-			Packages: 1, CPUs: []int{1}, Count: 5, Lanes: [][]int{{0}},
+			Packages: 1, CPUs: []int{1}, Loads: []int{1}, Count: 5, Lanes: [][]int{{0}},
 		}, f, res)
 	})
 	require.ErrorContains(t, err, "saving a run's output")

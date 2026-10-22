@@ -6,14 +6,17 @@
 // Command flaky runs the repository's tests until they fail, so a flaky test
 // is found before it turns CI red. A maintainer runs it by hand, on Linux.
 //
-//	flaky stress [-cpu 1,2,4] [-count n] [-timeout d] [-keep n]
+//	flaky stress [-cpu 1,2,4] [-load 1,2] [-count n] [-timeout d] [-keep n]
 //	             [-run regexp] [-skip regexp] [-o dir] [-json] [packages]
 //
 // flaky stress builds every package's test binary with go test -c -race
-// -cover, then runs each one -count times at each -cpu value. Each run is
-// pinned with taskset to as many cores as its CPU count, so both GOMAXPROCS
-// and runtime.NumCPU() are that count, as on a GitHub runner with that many
-// vCPUs. It reports each test that failed or hung, and exits 1 if any did.
+// -cover, then runs each one -count times at each pair of -cpu and -load
+// values. Each run is pinned with taskset to as many cores as its CPU count,
+// so both GOMAXPROCS and runtime.NumCPU() are that count, as on a GitHub
+// runner with that many vCPUs. At load 1 a run has its cores to itself; at
+// load L, up to L runs are pinned to each of its cores, so they compete for
+// them. It reports each test that failed or hung, at each pair, and exits 1
+// if any did.
 //
 // Packages are patterns from the repository's root, such as ./grpc/... or
 // ./example/wallet/app. With none, it runs every module that
@@ -55,9 +58,10 @@ func main() {
 
 const usage = `usage: flaky stress [flags] [packages]
 
-flaky stress runs every package's tests -count times at each -cpu value, each
-run pinned to as many cores as its CPU count, and reports each test that failed
-or hung.
+flaky stress runs every package's tests -count times at each pair of -cpu and
+-load values, each run pinned to as many cores as its CPU count and sharing
+each of them with up to its load of runs, and reports each test that failed or
+hung.
 `
 
 func flaky(ctx context.Context, p bedrock.Process) bedrock.ExitStatus {
@@ -78,6 +82,7 @@ func flaky(ctx context.Context, p bedrock.Process) bedrock.ExitStatus {
 
 type stressFlags struct {
 	cpus     []int
+	loads    []int
 	count    int
 	timeout  time.Duration
 	keep     int
@@ -89,7 +94,7 @@ type stressFlags struct {
 }
 
 func parseStress(p bedrock.Process, args []string) (stressFlags, error) {
-	f := stressFlags{cpus: []int{1, 2, 4}}
+	f := stressFlags{cpus: []int{1, 2, 4}, loads: []int{1, 2}}
 	fs := flag.NewFlagSet("flaky stress", flag.ContinueOnError)
 	fs.SetOutput(p.Stderr)
 	fs.Usage = func() {
@@ -97,11 +102,16 @@ func parseStress(p bedrock.Process, args []string) (stressFlags, error) {
 		fs.PrintDefaults()
 	}
 	fs.Func("cpu", "the CPU counts to run each package at, comma-separated (default 1,2,4)", func(s string) error {
-		cpus, err := parseCPUs(s)
+		cpus, err := parseCounts(s, "CPU count")
 		f.cpus = cpus
 		return err
 	})
-	fs.IntVar(&f.count, "count", 500, "how many times to run each package at each CPU count")
+	fs.Func("load", "the loads to run each package at, comma-separated: how many runs, at most, share each core (default 1,2)", func(s string) error {
+		loads, err := parseCounts(s, "load")
+		f.loads = loads
+		return err
+	})
+	fs.IntVar(&f.count, "count", 500, "how many times to run each package at each pair of CPU count and load")
 	fs.DurationVar(&f.timeout, "timeout", defaultTimeout, "each run's -test.timeout; a run still going 30s later is killed")
 	fs.IntVar(&f.keep, "keep", 8, "how many cores to keep back from the lanes")
 	fs.StringVar(&f.run, "run", "", "run only the tests that match, as go test -run")
@@ -121,16 +131,17 @@ func parseStress(p bedrock.Process, args []string) (stressFlags, error) {
 	return f, nil
 }
 
-func parseCPUs(s string) ([]int, error) {
-	var cpus []int
+// parseCounts parses a comma-separated list of positive numbers, each a what.
+func parseCounts(s, what string) ([]int, error) {
+	var ns []int
 	for part := range strings.SplitSeq(s, ",") {
 		n, err := strconv.Atoi(strings.TrimSpace(part))
 		if err != nil || n < 1 {
-			return nil, fmt.Errorf("%q is not a CPU count", part)
+			return nil, fmt.Errorf("%q is not a %s", part, what)
 		}
-		cpus = append(cpus, n)
+		ns = append(ns, n)
 	}
-	return cpus, nil
+	return ns, nil
 }
 
 func stressCommand(ctx context.Context, p bedrock.Process, args []string) bedrock.ExitStatus {
@@ -237,12 +248,13 @@ func stressRun(ctx context.Context, p bedrock.Process, f stressFlags) (results.R
 		r.bins[i] = filepath.Join(bins, fmt.Sprintf("%d-%s.test", i, filepath.Base(pkg.Dir)))
 	}
 	res := results.New(results.Config{
-		Packages: pkgs, CPUs: f.cpus, Count: f.count,
+		Packages: pkgs, CPUs: f.cpus, Loads: f.loads, Count: f.count,
 		Timeout: f.timeout, DefaultTimeout: defaultTimeout, Out: f.out,
 	})
 	phases, err := stress.Stress(ctx, stress.Config{
 		Packages: len(pkgs),
 		CPUs:     f.cpus,
+		Loads:    f.loads,
 		Count:    f.count,
 		Lanes:    laneCores,
 		Builds:   max(len(cores)/4, 1),
