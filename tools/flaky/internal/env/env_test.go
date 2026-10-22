@@ -6,6 +6,7 @@
 package env_test
 
 import (
+	"crypto/rand"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -34,4 +35,16 @@ func TestWith_sets_a_variable_in_place_of_any_value_it_had(t *testing.T) {
 	require.Equal(t, []string{"PATH=/bin", "KIND_CLUSTER_NAME_X=y", "KIND_CLUSTER_NAME=flaky-wallet"}, env.With(in, "KIND_CLUSTER_NAME", "flaky-wallet"))
 	require.Equal(t, []string{"PATH=/bin", "KIND_CLUSTER_NAME=kind", "KIND_CLUSTER_NAME_X=y"}, in, "env isn't changed")
 	require.Equal(t, []string{"A=b"}, env.With(nil, "A", "b"))
+}
+
+func TestGH_passes_on_gh_s_variables_too_and_Child_does_not(t *testing.T) {
+	token := rand.Text()
+	e := bedrock.NewStaticEnvironment(map[string]string{
+		"PATH":     "/bin",
+		"GH_TOKEN": token,
+		"GH_REPO":  "z5labs/humus",
+		"SECRET":   "not passed on",
+	})
+	require.Equal(t, []string{"PATH=/bin", "GH_TOKEN=" + token, "GH_REPO=z5labs/humus"}, env.GH(e))
+	require.Equal(t, []string{"PATH=/bin"}, env.Child(e), "no test binary sees a token")
 }

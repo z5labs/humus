@@ -1,0 +1,39 @@
+## What happens
+
+The test restarts the server and checks it reports `SERVING`.
+
+Now and then it reads `NOT_SERVING` instead.
+
+At [6351c869](https://github.com/z5labs/humus/commit/6351c86978a51659d1d1dae16a9f4553bd64a712), with go1.27.0 on 16 cores, `flaky stress` ran it 6,000 times:
+
+|       | load 1    | load 2    |
+|-------|-----------|-----------|
+| cpu 1 | 0 / 1,000 | 0 / 1,000 |
+| cpu 2 | 1 / 1,000 | 3 / 1,000 |
+| cpu 4 | 0 / 1,000 | 2 / 1,000 |
+
+That is 6 failures and 0 hangs. Its first failure:
+
+```text
+--- FAIL: TestServe_reports_serving/after_a_restart (0.02s)
+    serve_test.go:88: got NOT_SERVING, want SERVING
+```
+
+It reproduces with:
+
+```sh
+flaky stress -tags unit -run '^TestServe_reports_serving$/^after_a_restart$' -cpu 2 -load 2 -count 1000 ./grpc/grpchealth
+taskset -c 0-1 go -C grpc test -race -cover -count=1000 -cpu 2 -timeout 2m0s -run '^TestServe_reports_serving$/^after_a_restart$' ./grpchealth
+```
+
+## Why
+
+This hasn't been triaged.
+
+## Expected
+
+`TestServe_reports_serving/after_a_restart` passes on every run, at every CPU count and load.
+
+## References
+
+- [`TestServe_reports_serving/after_a_restart`](https://github.com/z5labs/humus/blob/6351c86978a51659d1d1dae16a9f4553bd64a712/grpc/grpchealth/serve_test.go#L61)

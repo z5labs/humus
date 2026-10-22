@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 Z5Labs and Contributors
+#
+# This software is released under the MIT License.
+# https://opensource.org/licenses/MIT
+
+# A stand-in for the gh command, for the tests of report.GH. Its state is in
+# files beside it:
+#
+#   calls/<n>       each call writes its arguments here, each ended by a NUL
+#   repo.json       what gh repo view prints
+#   search.json     what gh api graphql prints for the search
+#   categories.json what gh api graphql prints for the categories query
+#   create.json     what gh api graphql prints for the mutation
+#   fail            when it exists, every call fails, printing it to stderr
+
+dir=$(dirname "$0")
+mkdir -p "$dir/calls"
+n=$(find "$dir/calls" -type f | wc -l)
+printf '%s\0' "$@" >"$dir/calls/$n"
+if [[ -e $dir/fail ]]; then
+  cat "$dir/fail" >&2
+  exit 1
+fi
+case "$1 $2" in
+  "repo view")
+    cat "$dir/repo.json"
+    ;;
+  "api graphql")
+    case "$4" in
+      query=mutation*) cat "$dir/create.json" ;;
+      *discussionCategories*) cat "$dir/categories.json" ;;
+      *) cat "$dir/search.json" ;;
+    esac
+    ;;
+  *)
+    echo "gh: unknown command $1 $2" >&2
+    exit 1
+    ;;
+esac

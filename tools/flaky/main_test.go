@@ -6,8 +6,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -18,8 +20,10 @@ import (
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/bedrocktest"
 
+	"github.com/z5labs/humus/tools/flaky/discover"
 	"github.com/z5labs/humus/tools/flaky/internal/dockertest"
 	"github.com/z5labs/humus/tools/flaky/internal/repotest"
+	"github.com/z5labs/humus/tools/flaky/report"
 	"github.com/z5labs/humus/tools/flaky/results"
 	"github.com/z5labs/humus/tools/flaky/run"
 )
@@ -456,4 +460,83 @@ func TestStress_exits_2_when_a_package_has_functional_tests_outside_a_walkthroug
 	st, _, stderr := stressIn(t, repo, "stress", "-count", "1", "-keep", "0", "./wallet/...")
 	require.Equal(t, 2, st.Code())
 	require.Contains(t, stderr, "wallet/functional has functional tests, but its module wallet isn't a walkthrough")
+}
+
+// openReport is a GitHub where an open report names TestA.
+type openReport struct{ created bool }
+
+func (o *openReport) Search(context.Context, string) (report.Found, error) {
+	return report.Found{
+		Repository: "https://github.com/z5labs/humus",
+		Reports:    []report.Earlier{{URL: "https://github.com/z5labs/humus/discussions/1999", Body: "`TestA` fails", Open: true}},
+	}, nil
+}
+
+func (o *openReport) Create(context.Context, string, string) (string, error) {
+	o.created = true
+	return "", nil
+}
+
+// reportIn runs flaky report with args in repo, reaching gh.
+func reportIn(t *testing.T, repo string, gh report.GitHub, args ...string) (bedrock.ExitStatus, string, string) {
+	t.Helper()
+	t.Chdir(filepath.Join(repo, "a"))
+	app := bedrock.AppFunc(func(ctx context.Context, p bedrock.Process) bedrock.ExitStatus {
+		return reportCommand(ctx, p, p.Args[2:], func(root string) report.GitHub {
+			require.Equal(t, repo, root, "GitHub is reached from the repository's root")
+			return gh
+		})
+	})
+	p, status := bedrocktest.Start(t, app, bedrocktest.WithArgs(append([]string{"report"}, args...)...), bedrocktest.WithEnv(flakyEnv(t)))
+	st := <-status
+	return st, p.Stdout(), p.Stderr()
+}
+
+// flakedA writes results in which TestA, of the package a of repo, flaked, and
+// a description, and returns their files.
+func flakedA(t *testing.T, repo string) (string, string) {
+	head, err := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", "HEAD").Output()
+	require.NoError(t, err)
+	b, err := json.Marshal(results.Report{
+		Commit: strings.TrimSpace(string(head)), Go: "go1.27.0", Cores: 4,
+		Packages: []discover.Package{{Module: ".", Dir: "a", ImportPath: "example.com/repo/a", Level: "unit"}},
+		Flaky: []results.Test{{
+			Package: "a", ImportPath: "example.com/repo/a", Level: "unit", Test: "TestA",
+			Runs: 2, Failures: 1, Pairs: []results.Pair{{CPU: 1, Load: 1, Runs: 2, Failures: 1}},
+		}},
+	})
+	require.NoError(t, err)
+	dir := t.TempDir()
+	res, desc := filepath.Join(dir, "results.json"), filepath.Join(dir, "description.md")
+	require.NoError(t, os.WriteFile(res, b, 0o644))
+	require.NoError(t, os.WriteFile(desc, []byte("It fails now and then.\n"), 0o644))
+	return res, desc
+}
+
+func TestReport_prints_the_open_report_s_link_and_exits_2(t *testing.T) {
+	repo := repotest.New(t, "0.0.1")
+	res, desc := flakedA(t, repo)
+	gh := &openReport{}
+	st, stdout, stderr := reportIn(t, repo, gh, "-results", res, "-package", "a", "-test", "TestA", "-description", desc)
+	require.Equal(t, 2, st.Code(), stderr)
+	require.Equal(t, "https://github.com/z5labs/humus/discussions/1999\n", stdout)
+	require.Contains(t, stderr, "flaky report: an open report already names TestA: https://github.com/z5labs/humus/discussions/1999\n")
+	require.False(t, gh.created)
+}
+
+func TestReport_exits_1_and_says_why_when_it_posts_nothing(t *testing.T) {
+	repo := repotest.New(t, "0.0.1")
+	res, desc := flakedA(t, repo)
+	st, stdout, stderr := reportIn(t, repo, &openReport{}, "-results", res, "-package", "a", "-test", "TestAToo", "-description", desc)
+	require.Equal(t, 1, st.Code())
+	require.Empty(t, stdout)
+	require.Contains(t, stderr, "flaky report: the results don't have TestAToo failing or hanging in a")
+
+	st, _, stderr = reportIn(t, repo, &openReport{}, "-results", res, "-package", "a", "-test", "TestA")
+	require.Equal(t, 1, st.Code())
+	require.Contains(t, stderr, "flaky report: -description is required\n")
+
+	st, _, stderr = reportIn(t, repo, &openReport{}, "-results", res, "-package", "a", "-test", "TestA", "-description", desc, "extra")
+	require.Equal(t, 1, st.Code())
+	require.Contains(t, stderr, `flaky report takes no arguments, but was given ["extra"]`)
 }

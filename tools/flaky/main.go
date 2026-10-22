@@ -69,6 +69,29 @@
 // Packages are patterns from the repository's root, such as ./grpc/... or
 // ./example/wallet/app. With none, it runs every module that
 // .github/scripts/go-modules.sh lists.
+//
+//	flaky report -results file -package path -test name -description file
+//	             [-notes file] [-dry-run]
+//
+// flaky report posts a flaky test's Bugs discussion, rendered from a fixed
+// template. -results is what flaky stress -json wrote, -package the test's
+// package, as its directory from the repository's root or its import path,
+// and -test its full name. -description and -notes are files of Markdown with
+// no headings: what the test checks and how it fails, and anything else worth
+// saying. Everything else, the title, the commit, the Go version, the core
+// count, the table, the first failure, both commands and a link to the test's
+// function at the commit, is rendered from the results.
+//
+// It posts nothing, and says why, when the description or the notes is empty
+// or has a heading, when the results don't have the test failing or hanging,
+// or when the test failed every run at some pair, since that test is failing
+// rather than flaky. When an open Bugs discussion or an open story already
+// names the test, it prints that report's link and exits 2. A closed report
+// that names the test is linked under References.
+//
+// It finds the Bugs category by name, creates the discussion with gh api
+// graphql, and prints its URL. With -dry-run, it prints the title and body
+// instead. It exits 1 when it posts nothing for any other reason.
 package main
 
 import (
@@ -94,6 +117,7 @@ import (
 	"github.com/z5labs/humus/tools/flaky/docker"
 	"github.com/z5labs/humus/tools/flaky/internal/env"
 	"github.com/z5labs/humus/tools/flaky/lanes"
+	"github.com/z5labs/humus/tools/flaky/report"
 	"github.com/z5labs/humus/tools/flaky/results"
 	"github.com/z5labs/humus/tools/flaky/run"
 	"github.com/z5labs/humus/tools/flaky/stress"
@@ -137,6 +161,7 @@ func main() {
 }
 
 const usage = `usage: flaky stress [flags] [packages]
+       flaky report -results file -package path -test name -description file [-notes file] [-dry-run]
 
 flaky stress runs every package's tests at each level of -tags, the unit level
 and one for each build tag the test files use by default, -count times
@@ -148,6 +173,10 @@ lane's 4 cores. Then it runs each test that failed or hung alone, -confirm times
 and reports each test that failed or hung. With -run, it runs the matching
 tests -count times at each pair, and confirms none. With -shuffle, each run
 shuffles its tests with a seed of its own.
+
+flaky report posts a flaky test's Bugs discussion, rendered from the results
+of flaky stress -json and a description, unless an open report already names
+the test. Then it prints that report's link and exits 2.
 `
 
 func flaky(ctx context.Context, p bedrock.Process) bedrock.ExitStatus {
@@ -158,6 +187,10 @@ func flaky(ctx context.Context, p bedrock.Process) bedrock.ExitStatus {
 	switch p.Args[1] {
 	case "stress":
 		return stressCommand(ctx, p, p.Args[2:])
+	case "report":
+		return reportCommand(ctx, p, p.Args[2:], func(root string) report.GitHub {
+			return report.GH{Dir: root, Env: env.GH(p.Environment)}
+		})
 	case "-h", "-help", "--help", "help":
 		say(p.Stdout, "%s", usage)
 		return bedrock.Exit(0)
@@ -589,6 +622,69 @@ func stressRun(ctx context.Context, p bedrock.Process, f stressFlags) (results.R
 		rep.Phases = append(rep.Phases, results.NewPhase("confirm", phases.Confirm))
 	}
 	return rep, nil
+}
+
+const reportUsage = `usage: flaky report -results file -package path -test name -description file [-notes file] [-dry-run]
+
+flaky report renders a flaky test's Bugs discussion from the results of flaky
+stress -json, the description and any notes, and creates it, then prints its
+URL. It posts nothing, and says why, when the description or the notes is
+empty or has a heading, when the results don't have the test failing or
+hanging, or when it failed every run at some pair. When an open Bugs
+discussion or an open story already names the test, it prints that report's
+link and exits 2. It exits 1 when it posts nothing for any other reason.
+`
+
+// reportCommand runs flaky report, reaching GitHub through what github
+// returns for the repository's root.
+func reportCommand(ctx context.Context, p bedrock.Process, args []string, github func(root string) report.GitHub) bedrock.ExitStatus {
+	var req report.Request
+	fs := flag.NewFlagSet("flaky report", flag.ContinueOnError)
+	fs.SetOutput(p.Stderr)
+	fs.Usage = func() {
+		say(fs.Output(), "%s\nflags:\n", reportUsage)
+		fs.PrintDefaults()
+	}
+	fs.StringVar(&req.Results, "results", "", "the file flaky stress -json wrote (required)")
+	fs.StringVar(&req.Package, "package", "", "the test's package: its directory from the repository's root, or its import path (required)")
+	fs.StringVar(&req.Test, "test", "", "the test's full name, such as TestX or TestX/a_case (required)")
+	fs.StringVar(&req.Description, "description", "", "a file of Markdown with no headings: what the test checks and how it fails (required)")
+	fs.StringVar(&req.Notes, "notes", "", "a file of Markdown with no headings: anything else worth saying")
+	fs.BoolVar(&req.DryRun, "dry-run", false, "print the title and body rather than creating the discussion")
+	switch err := fs.Parse(args); {
+	case errors.Is(err, flag.ErrHelp):
+		return bedrock.Exit(0)
+	case err != nil:
+		say(p.Stderr, "flaky report: %v\n", err)
+		return bedrock.ExitWithCause(1, err)
+	}
+	if fs.NArg() > 0 {
+		err := fmt.Errorf("flaky report takes no arguments, but was given %q", fs.Args())
+		say(p.Stderr, "flaky report: %v\n", err)
+		return bedrock.ExitWithCause(1, err)
+	}
+	req.Env = env.Child(p.Environment)
+	err := func() error {
+		wd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		if req.Root, err = discover.Root(ctx, wd, req.Env); err != nil {
+			return err
+		}
+		return report.File(ctx, github(req.Root), req, p.Stdout)
+	}()
+	var open *report.OpenError
+	switch {
+	case errors.As(err, &open):
+		say(p.Stderr, "flaky report: %v\n", err)
+		say(p.Stdout, "%s\n", open.Report.URL)
+		return bedrock.ExitWithCause(2, err)
+	case err != nil:
+		say(p.Stderr, "flaky report: %v\n", err)
+		return bedrock.ExitWithCause(1, err)
+	}
+	return bedrock.Exit(0)
 }
 
 // pkgWalkthroughs returns the walkthroughs that the packages at the

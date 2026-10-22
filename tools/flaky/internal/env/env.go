@@ -26,6 +26,27 @@ var names = []string{
 	"KUBECONFIG", "KIND_CLUSTER_NAME", "KIND_EXPERIMENTAL_PROVIDER",
 }
 
+// ghNames are the variables the gh command is given, besides names, when
+// they are set: its own, and those its keyring is reached with.
+var ghNames = []string{
+	"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
+	"GH_HOST", "GH_REPO", "GH_CONFIG_DIR", "GH_PROMPT_DISABLED",
+	"DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR", "XDG_DATA_HOME", "XDG_STATE_HOME",
+}
+
+// GH returns the environment of the gh command: Child's, and every variable
+// gh reads its token, host and repository from, or reaches its keyring with,
+// that e has. Only gh is given them, so no test binary sees a token.
+func GH(e bedrock.Environment) []string {
+	out := Child(e)
+	for _, name := range ghNames {
+		if v, err := e.Value(name); err == nil {
+			out = append(out, name+"="+v)
+		}
+	}
+	return out
+}
+
 // Child returns the environment of a child process: every variable in names
 // that e has, as NAME=value. It is never nil, since an exec.Cmd with a nil Env
 // inherits the real environment.
