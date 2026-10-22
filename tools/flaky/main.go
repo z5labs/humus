@@ -578,10 +578,8 @@ func newExecRunner(root string, pkgs []discover.Package, bins string, levels []r
 		r.untagged[i] = strings.TrimSuffix(r.bins[i], ".test") + "-untagged.test"
 		r.buildUntagged[i] = true
 	}
-	if f.run != "" {
-		if _, err := regexp.Compile(topLevel(f.run)); err != nil {
-			return nil, fmt.Errorf("-run: %w", err)
-		}
+	if err := compileRun(f.run); err != nil {
+		return nil, err
 	}
 	return r, nil
 }
@@ -665,6 +663,20 @@ func ownPattern(own []string, run string) string {
 		pattern += "/" + rest
 	}
 	return pattern
+}
+
+// compileRun returns an error when a part of the -run pattern run, at any
+// level of the tests' names, doesn't compile, as the test binary would fail
+// on.
+func compileRun(run string) error {
+	for rest, more := run, run != ""; more; {
+		var part string
+		part, rest, more = splitRun(rest)
+		if _, err := regexp.Compile(part); err != nil {
+			return fmt.Errorf("-run: %w", err)
+		}
+	}
+	return nil
 }
 
 // topLevel returns the part of the -run pattern run that a top-level test's

@@ -85,26 +85,32 @@ func Pin(ctx context.Context, cores []int, env []string, log io.Writer) (*Pinner
 		return nil, errors.New("no cores to pin the testcontainers containers to")
 	}
 	ctx, cancel := context.WithCancel(ctx)
+	// The watch stops on its own when its output can't be read, and
+	// cmdCtx is how it stops docker events then.
+	cmdCtx, stopCmd := context.WithCancel(ctx)
 	// --since replays the events from just before the watch started, so
 	// a container that starts while docker events is connecting is still
 	// pinned.
-	cmd := exec.CommandContext(ctx, "docker", EventsArgs(time.Now().Add(-time.Second))...)
+	cmd := exec.CommandContext(cmdCtx, "docker", EventsArgs(time.Now().Add(-time.Second))...)
 	cmd.Env = env
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	cmd.WaitDelay = 5 * time.Second
 	out, err := cmd.StdoutPipe()
 	if err != nil {
+		stopCmd()
 		cancel()
 		return nil, err
 	}
 	if err := cmd.Start(); err != nil {
+		stopCmd()
 		cancel()
 		return nil, fmt.Errorf("watching Docker's events: %w", err)
 	}
 	p := &Pinner{cancel: cancel, done: make(chan struct{})}
 	go func() {
 		defer close(p.done)
+		defer stopCmd()
 		sc := bufio.NewScanner(out)
 		for sc.Scan() {
 			id := strings.TrimSpace(sc.Text())
@@ -115,14 +121,22 @@ func Pin(ctx context.Context, cores []int, env []string, log io.Writer) (*Pinner
 				warn(log, "warning: %v\n", err)
 			}
 		}
-		err := cmd.Wait()
+		scanErr := sc.Err()
+		if scanErr != nil {
+			stopCmd()
+		}
+		waitErr := cmd.Wait()
 		if ctx.Err() != nil {
 			return
 		}
+		err := fmt.Errorf("docker events ended: %v: %s", waitErr, strings.TrimSpace(stderr.String()))
+		if scanErr != nil {
+			err = fmt.Errorf("reading Docker's events: %w", scanErr)
+		}
 		p.mu.Lock()
-		p.err = fmt.Errorf("docker events ended: %v: %s", err, strings.TrimSpace(stderr.String()))
+		p.err = err
 		p.mu.Unlock()
-		warn(log, "warning: %v; the testcontainers containers started from now on aren't pinned\n", p.err)
+		warn(log, "warning: %v; the testcontainers containers started from now on aren't pinned\n", err)
 	}()
 	return p, nil
 }

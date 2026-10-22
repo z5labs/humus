@@ -62,6 +62,21 @@ func TestPin_warns_when_the_watch_ends_before_it_is_stopped(t *testing.T) {
 	require.Contains(t, log.String(), "warning: docker events ended: exit status 1: events died; the testcontainers containers started from now on aren't pinned\n")
 }
 
+func TestPin_warns_when_it_cannot_read_the_watch_and_stops_it(t *testing.T) {
+	dir := dockertest.Fake(t)
+	dockertest.Touch(t, dir, "ids", strings.Repeat("x", 70_000)+"\n")
+	var log dockertest.Buffer
+	p, err := docker.Pin(t.Context(), []int{3}, env.Child(bedrock.OSEnvironment{}), &log)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		return strings.Contains(log.String(), "aren't pinned")
+	}, 10*time.Second, 10*time.Millisecond, "the watch ends though docker events is still running")
+	err = p.Stop()
+	require.ErrorContains(t, err, "reading Docker's events: bufio.Scanner: token too long")
+	require.Contains(t, log.String(), "warning: reading Docker's events: bufio.Scanner: token too long; the testcontainers containers started from now on aren't pinned\n")
+	require.Empty(t, dockertest.Read(t, dir, "updates"))
+}
+
 func TestPin_fails_with_no_cores_or_no_docker_command(t *testing.T) {
 	_, err := docker.Pin(t.Context(), nil, nil, &dockertest.Buffer{})
 	require.ErrorContains(t, err, "no cores to pin")

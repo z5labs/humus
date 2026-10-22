@@ -248,6 +248,13 @@ func TestOwnPattern_runs_exactly_the_level_s_own_tests_and_the_rest_of_run_in_ea
 	require.Equal(t, `^(TestA)$/y`, ownPattern([]string{"TestA"}, `Test[/]\//y`), "nor does one in brackets or escaped")
 }
 
+func TestCompileRun_compiles_every_level_of_the_pattern(t *testing.T) {
+	require.NoError(t, compileRun(""))
+	require.NoError(t, compileRun("TestA/(a/b)/c"))
+	require.ErrorContains(t, compileRun("[/"), "-run: error parsing regexp")
+	require.ErrorContains(t, compileRun("TestA/x/("), "-run: error parsing regexp")
+}
+
 func TestParseLevels_takes_each_known_level_once(t *testing.T) {
 	levels, err := parseLevels("testcontainers, unit,testcontainers")
 	require.NoError(t, err)
@@ -285,6 +292,7 @@ func TestStress_exits_2_when_it_cannot_run(t *testing.T) {
 		{"a level it doesn't know", []string{"stress", "-tags", "unit,nope"}, `"nope" is not a level`},
 		{"a containers cap below 1", []string{"stress", "-containers", "0"}, "-containers must be at least 1"},
 		{"a -run that doesn't compile", []string{"stress", "-keep", "0", "-cpu", "1", "-run", "(", "./a"}, "-run: error parsing regexp"},
+		{"a -run whose subtest part doesn't compile", []string{"stress", "-keep", "0", "-cpu", "1", "-run", "TestA/x/(", "./a"}, "-run: error parsing regexp"},
 		{"a CPU count that isn't one", []string{"stress", "-cpu", "1,x"}, `"x" is not a CPU count`},
 		{"a load that isn't one", []string{"stress", "-load", "0"}, `"0" is not a load`},
 		{"a shuffle that isn't on, off or a seed", []string{"stress", "-shuffle=x"}, `"x" is not on, off or a seed`},
