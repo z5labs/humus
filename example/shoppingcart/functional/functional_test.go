@@ -10,6 +10,7 @@ package functional
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto"
 	"crypto/tls"
@@ -24,6 +25,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -47,7 +49,7 @@ const (
 	timeout     = 2 * time.Minute
 )
 
-var kubeContext = flag.String("context", "kind-kind", "the kubectl context of the cluster up.sh brought the shoppingcart up on")
+var kubeContext = flag.String("context", "kind-"+cmp.Or(os.Getenv("KIND_CLUSTER_NAME"), "kind"), "the kubectl context of the cluster up.sh brought the shoppingcart up on")
 
 var forwarding = regexp.MustCompile(`^Forwarding from (127\.0\.0\.1:\d+) -> \d+$`)
 
