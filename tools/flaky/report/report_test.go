@@ -361,6 +361,15 @@ func gitHead(t *testing.T, dir string) string {
 	return strings.TrimSpace(string(out))
 }
 
+func TestFile_keeps_the_indentation_of_the_description_s_first_line(t *testing.T) {
+	req := request(t, "")
+	require.NoError(t, os.WriteFile(req.Description, []byte("\n  \n    panic: boom\n\nIt panics.\n\n"), 0o644))
+	gh := &fakeGitHub{}
+	require.NoError(t, report.File(t.Context(), gh, req, &bytes.Buffer{}))
+	require.Len(t, gh.created, 1)
+	require.Contains(t, gh.created[0][1], "## What happens\n\n    panic: boom\n\nIt panics.\n\nAt [", "an indented code block stays code")
+}
+
 func TestFile_with_DryRun_prints_the_title_and_body_and_creates_nothing(t *testing.T) {
 	req := request(t, "")
 	req.DryRun = true

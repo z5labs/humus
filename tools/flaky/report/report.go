@@ -170,7 +170,21 @@ func readText(flag, name string) (string, error) {
 	if err := CheckText(string(b)); err != nil {
 		return "", fmt.Errorf("%s %s: %w", flag, name, err)
 	}
-	return strings.TrimSpace(string(b)), nil
+	return trimBlank(string(b)), nil
+}
+
+// trimBlank returns text without its blank lines at either end and its
+// trailing space, but with its first line's indentation, which may make it
+// code.
+func trimBlank(text string) string {
+	text = strings.TrimRight(text, " \t\r\n")
+	for {
+		line, rest, ok := strings.Cut(text, "\n")
+		if !ok || strings.TrimSpace(line) != "" {
+			return text
+		}
+		text = rest
+	}
 }
 
 func readResults(name string) (results.Report, error) {
