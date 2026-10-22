@@ -662,12 +662,13 @@ jobs:
   # and its kustomization, rendered. up.sh then creates a kind cluster,
   # loads the image and applies the kind overlay, with the LGTM stack the
   # job's telemetry goes to, and one Job made from the CronJob's template has
-  # to complete. test.sh then runs the tests behind the functional tag
-  # against it: the shared cases, each as Jobs made from the CronJob's
-  # template, the template as it is, failing a bad setting by its pod failure
-  # policy, and a run whose trace, records and metrics have to reach Tempo,
-  # Loki and Mimir. The ruleset doesn't require this job, and Build doesn't
-  # wait on it; Vet the functional tests vets them.
+  # to complete. The tests behind the functional tag then run against it,
+  # through kubectl port-forward and with the passwords from its Secrets: the
+  # shared cases, each as Jobs made from the CronJob's template, the template
+  # as it is, failing a bad setting by its pod failure policy, and a run whose
+  # trace, records and metrics have to reach Tempo, Loki and Mimir. The
+  # ruleset doesn't require this job, and Build doesn't wait on it; Vet the
+  # functional tests vets them.
   billing-kind:
     name: Billing walkthrough (kind)
     runs-on: ubuntu-latest
@@ -710,8 +711,8 @@ jobs:
               exit 1
             fi
 
-        - name: Run the functional tests
-          run: example/billing/deploy/kind/test.sh
+        - name: Run the functional tests against kind
+          run: go -C example/billing test -count=1 -race -tags functional ./functional/
 
         - name: Show the billing namespace
           if: ${{ failure() }}

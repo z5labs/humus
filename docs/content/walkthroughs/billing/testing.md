@@ -386,8 +386,6 @@ job.Spec.BackoffLimit = &noRetries
 
 ```go
 func TestBilling_passes_the_shared_cases_as_deployed(t *testing.T) {
-	require.NotEmpty(t, *postgresURL, "-postgres")
-	require.NotEmpty(t, *wiremockURL, "-wiremock")
 	d := deployed(t)
 	target := d.target(t)
 
@@ -405,12 +403,32 @@ func TestBilling_passes_the_shared_cases_as_deployed(t *testing.T) {
 }
 ```
 
+They forward PostgreSQL's and WireMock's ports themselves and read the
+password from the `postgres` Secret:
+
+```go
+postgres := url.URL{
+	Scheme:   "postgres",
+	User:     url.UserPassword("billing", d.secret(t, "postgres", "password")),
+	Host:     forward(t, "postgres", 5432),
+	Path:     "/billing",
+	RawQuery: "sslmode=disable",
+}
+```
+
+They find the cluster as `kind-` followed by `KIND_CLUSTER_NAME`, or
+`kind-kind` when it's unset:
+
+```go
+var kubeContext = flag.String("context", "kind-"+cmp.Or(os.Getenv("KIND_CLUSTER_NAME"), "kind"), "the kubectl context of the cluster up.sh brought the billing job up on")
+```
+
 Once the job is
-[deployed]({{< relref "walkthroughs/billing/deploying" >}}), `test.sh`
-forwards the ports and runs them:
+[deployed]({{< relref "walkthroughs/billing/deploying" >}}), they run with
+no flags:
 
 ```sh
-example/billing/deploy/kind/test.sh
+go -C example/billing test -tags functional ./functional/
 ```
 
 ## The failure injection cases

@@ -468,7 +468,7 @@ Then run the [shared cases]({{< relref "walkthroughs/billing/testing" >}})
 against it:
 
 ```sh
-example/billing/deploy/kind/test.sh
+go -C example/billing test -tags functional ./functional/
 ```
 
 ## A backfill

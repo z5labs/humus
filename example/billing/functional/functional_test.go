@@ -9,7 +9,9 @@
 package functional
 
 import (
+	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/tls"
@@ -24,10 +26,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -43,25 +48,18 @@ import (
 	"github.com/z5labs/humus/example/billing/cases"
 )
 
-var (
-	kubeContext     = flag.String("kube-context", "", "the kubeconfig context of the cluster the billing job is deployed to, the current one if empty")
-	namespace       = flag.String("namespace", "billing", "the namespace of the billing CronJob")
-	cronJobName     = flag.String("cronjob", "billing", "the name of the billing CronJob")
-	postgresURL     = flag.String("postgres", "", "a URL of the PostgreSQL server as the tests reach it, as a role that may create databases")
-	postgresAddress = flag.String("postgres-address", "", "the PostgreSQL server's host:port as the billing job reaches it, the -postgres URL's if empty")
-	wiremockURL     = flag.String("wiremock", "", "the payments API stand-in's base URL as the tests reach it")
-	caseTimeout     = flag.Duration("timeout", 5*time.Minute, "how long each case may take")
-	tempoURL        = flag.String("tempo", "", "Tempo's HTTP base URL as the tests reach it")
-	lokiURL         = flag.String("loki", "", "Loki's HTTP base URL as the tests reach it")
-	mimirURL        = flag.String("mimir", "", "Mimir's HTTP base URL as the tests reach it")
-	grafanaURL      = flag.String("grafana", "", "Grafana's base URL as the tests reach it")
-	grafanaPassword = flag.String("grafana-password", "", "the password of Grafana's admin user")
+const (
+	namespace       = "billing"
+	cronJobName     = "billing"
+	containerName   = "billing"
+	postgresAddress = "postgres:5432"
+	exitConfig      = 78
+	caseTimeout     = 5 * time.Minute
 )
 
-const (
-	containerName = "billing"
-	exitConfig    = 78
-)
+var kubeContext = flag.String("context", "kind-"+cmp.Or(os.Getenv("KIND_CLUSTER_NAME"), "kind"), "the kubectl context of the cluster up.sh brought the billing job up on")
+
+var forwarding = regexp.MustCompile(`^Forwarding from (127\.0\.0\.1:\d+) -> \d+$`)
 
 type deployment struct {
 	t       *testing.T
@@ -75,12 +73,21 @@ func deployed(t *testing.T) deployment {
 		clientcmd.NewDefaultClientConfigLoadingRules(),
 		&clientcmd.ConfigOverrides{CurrentContext: *kubeContext},
 	).ClientConfig()
-	require.NoError(t, err, "loading the kubeconfig")
+	require.NoError(t, err, "the kubeconfig's context %s", *kubeContext)
 	client, err := kubernetes.NewForConfig(cfg)
 	require.NoError(t, err)
-	cronJob, err := client.BatchV1().CronJobs(*namespace).Get(t.Context(), *cronJobName, metav1.GetOptions{})
-	require.NoError(t, err, "getting the CronJob %s/%s", *namespace, *cronJobName)
+	cronJob, err := client.BatchV1().CronJobs(namespace).Get(t.Context(), cronJobName, metav1.GetOptions{})
+	require.NoError(t, err, "getting the CronJob %s/%s", namespace, cronJobName)
 	return deployment{t: t, client: client, cronJob: cronJob}
+}
+
+func (d deployment) secret(t *testing.T, name, key string) string {
+	t.Helper()
+	s, err := d.client.CoreV1().Secrets(namespace).Get(t.Context(), name, metav1.GetOptions{})
+	require.NoError(t, err, "the secret %s/%s", namespace, name)
+	v := s.Data[key]
+	require.NotEmpty(t, v, "the secret %s/%s has no %s", namespace, name, key)
+	return string(v)
 }
 
 func billingContainer(spec *corev1.PodSpec) (*corev1.Container, error) {
@@ -296,9 +303,7 @@ func (d deployment) run(ctx context.Context, databaseURL string, env map[string]
 	if err != nil {
 		return 0, errors.New("the database URL doesn't parse")
 	}
-	if *postgresAddress != "" {
-		u.Host = *postgresAddress
-	}
+	u.Host = postgresAddress
 
 	job, err := d.newJob(env)
 	if err != nil {
@@ -377,30 +382,33 @@ func (d deployment) target(t *testing.T) cases.Target {
 	require.NoError(t, err)
 	payments, err := url.Parse(paymentsURL)
 	require.NoError(t, err)
-	wiremock, err := url.Parse(*wiremockURL)
-	require.NoError(t, err)
+	postgres := url.URL{
+		Scheme:   "postgres",
+		User:     url.UserPassword("billing", d.secret(t, "postgres", "password")),
+		Host:     forward(t, "postgres", 5432),
+		Path:     "/billing",
+		RawQuery: "sslmode=disable",
+	}
 	schema, err := os.ReadFile(filepath.Join("..", "postgres", "schema.sql"))
 	require.NoError(t, err)
 
 	return cases.Target{
-		Postgres: *postgresURL,
+		Postgres: postgres.String(),
 		Schema:   string(schema),
-		WireMock: wiremock,
+		WireMock: &url.URL{Scheme: "https", Host: forward(t, "wiremock", 443)},
 		Client: &http.Client{
-			Timeout: *caseTimeout,
+			Timeout: caseTimeout,
 			Transport: &http.Transport{TLSClientConfig: &tls.Config{
 				RootCAs:    roots,
 				ServerName: payments.Hostname(),
 			}},
 		},
 		Key:     strings.TrimSpace(string(key)),
-		Timeout: *caseTimeout,
+		Timeout: caseTimeout,
 	}
 }
 
 func TestBilling_passes_the_shared_cases_as_deployed(t *testing.T) {
-	require.NotEmpty(t, *postgresURL, "-postgres")
-	require.NotEmpty(t, *wiremockURL, "-wiremock")
 	d := deployed(t)
 	target := d.target(t)
 
@@ -418,7 +426,6 @@ func TestBilling_passes_the_shared_cases_as_deployed(t *testing.T) {
 }
 
 func TestPostgres_stays_reachable_while_cases_drop_their_databases(t *testing.T) {
-	require.NotEmpty(t, *postgresURL, "-postgres")
 	target := deployed(t).target(t)
 
 	const workers, cycles = 8, 100
@@ -428,7 +435,7 @@ func TestPostgres_stays_reachable_while_cases_drop_their_databases(t *testing.T)
 				t.Parallel()
 				for c := range cycles {
 					completed := t.Run(strconv.Itoa(c), func(t *testing.T) {
-						ctx, cancel := context.WithTimeout(t.Context(), *caseTimeout)
+						ctx, cancel := context.WithTimeout(t.Context(), caseTimeout)
 						defer cancel()
 						subscribe(ctx, t, cases.NewDatabase(ctx, t, target, "cycled-"))
 					})
@@ -440,16 +447,16 @@ func TestPostgres_stays_reachable_while_cases_drop_their_databases(t *testing.T)
 		}
 	})
 
-	ctx, cancel := context.WithTimeout(t.Context(), *caseTimeout)
+	ctx, cancel := context.WithTimeout(t.Context(), caseTimeout)
 	defer cancel()
-	conn, err := pgx.Connect(ctx, *postgresURL)
+	conn, err := pgx.Connect(ctx, target.Postgres)
 	require.NoError(t, err, "connecting to PostgreSQL after the cycles")
 	require.NoError(t, conn.Close(ctx))
 }
 
 func TestCronJob_fails_a_bad_setting_after_one_pod_by_its_pod_failure_policy(t *testing.T) {
 	d := deployed(t)
-	ctx, cancel := context.WithTimeout(t.Context(), *caseTimeout)
+	ctx, cancel := context.WithTimeout(t.Context(), caseTimeout)
 	defer cancel()
 
 	job, err := d.newJob(map[string]string{"BILLING_PERIOD": "last-month"})
@@ -472,15 +479,13 @@ func TestCronJob_fails_a_bad_setting_after_one_pod_by_its_pod_failure_policy(t *
 }
 
 func TestBilling_sends_a_runs_telemetry_to_the_LGTM_stack(t *testing.T) {
-	require.NotEmpty(t, *postgresURL, "-postgres")
-	require.NotEmpty(t, *wiremockURL, "-wiremock")
-	require.NotEmpty(t, *tempoURL, "-tempo")
-	require.NotEmpty(t, *lokiURL, "-loki")
-	require.NotEmpty(t, *mimirURL, "-mimir")
-	require.NotEmpty(t, *grafanaURL, "-grafana")
-	require.NotEmpty(t, *grafanaPassword, "-grafana-password")
 	d := deployed(t)
 	target := d.target(t)
+	tempo := "http://" + forward(t, "tempo", 3200)
+	loki := "http://" + forward(t, "loki", 3100)
+	mimir := "http://" + forward(t, "mimir", 9009)
+	grafana := "http://" + forward(t, "grafana", 3000)
+	grafanaPassword := d.secret(t, "grafana", "password")
 
 	traceID := randomHex(t, 16)
 	traceparent := "00-" + traceID + "-" + randomHex(t, 8) + "-01"
@@ -495,7 +500,7 @@ func TestBilling_sends_a_runs_telemetry_to_the_LGTM_stack(t *testing.T) {
 	}
 	cases.BillingAMonth(t, target)
 
-	ctx, cancel := context.WithTimeout(t.Context(), *caseTimeout)
+	ctx, cancel := context.WithTimeout(t.Context(), caseTimeout)
 	defer cancel()
 
 	t.Run("its trace is in Tempo", func(t *testing.T) {
@@ -505,7 +510,7 @@ func TestBilling_sends_a_runs_telemetry_to_the_LGTM_stack(t *testing.T) {
 					ResourceSpans []json.RawMessage `json:"resourceSpans"`
 				} `json:"trace"`
 			}
-			if err := getJSON(ctx, *tempoURL+"/api/v2/traces/"+traceID, nil, &body); err != nil {
+			if err := getJSON(ctx, tempo+"/api/v2/traces/"+traceID, nil, &body); err != nil {
 				return err
 			}
 			if len(body.Trace.ResourceSpans) == 0 {
@@ -528,7 +533,7 @@ func TestBilling_sends_a_runs_telemetry_to_the_LGTM_stack(t *testing.T) {
 					} `json:"result"`
 				} `json:"data"`
 			}
-			if err := getJSON(ctx, *lokiURL+"/loki/api/v1/query_range?"+q.Encode(), nil, &body); err != nil {
+			if err := getJSON(ctx, loki+"/loki/api/v1/query_range?"+q.Encode(), nil, &body); err != nil {
 				return err
 			}
 			for _, r := range body.Data.Result {
@@ -549,7 +554,7 @@ func TestBilling_sends_a_runs_telemetry_to_the_LGTM_stack(t *testing.T) {
 			var body struct {
 				Data []map[string]string `json:"data"`
 			}
-			if err := getJSON(ctx, *mimirURL+"/prometheus/api/v1/series?"+q.Encode(), nil, &body); err != nil {
+			if err := getJSON(ctx, mimir+"/prometheus/api/v1/series?"+q.Encode(), nil, &body); err != nil {
 				return err
 			}
 			names := map[string]bool{}
@@ -573,8 +578,8 @@ func TestBilling_sends_a_runs_telemetry_to_the_LGTM_stack(t *testing.T) {
 						Status  string `json:"status"`
 						Message string `json:"message"`
 					}
-					err := getJSON(ctx, *grafanaURL+"/api/datasources/uid/"+uid+"/health", func(req *http.Request) {
-						req.SetBasicAuth("admin", *grafanaPassword)
+					err := getJSON(ctx, grafana+"/api/datasources/uid/"+uid+"/health", func(req *http.Request) {
+						req.SetBasicAuth("admin", grafanaPassword)
 					}, &body)
 					if err != nil {
 						return err
@@ -600,19 +605,17 @@ var alertRules = []struct {
 }
 
 func TestGrafana_alerts_on_the_billing_job_and_has_its_dashboard(t *testing.T) {
-	require.NotEmpty(t, *postgresURL, "-postgres")
-	require.NotEmpty(t, *wiremockURL, "-wiremock")
-	require.NotEmpty(t, *mimirURL, "-mimir")
-	require.NotEmpty(t, *grafanaURL, "-grafana")
-	require.NotEmpty(t, *grafanaPassword, "-grafana-password")
 	d := deployed(t)
 	target := d.target(t)
+	mimir := "http://" + forward(t, "mimir", 9009)
+	grafana := "http://" + forward(t, "grafana", 3000)
+	grafanaPassword := d.secret(t, "grafana", "password")
 	target.Run = d.run
 	admin := func(req *http.Request) {
-		req.SetBasicAuth("admin", *grafanaPassword)
+		req.SetBasicAuth("admin", grafanaPassword)
 	}
 
-	loaded, cancel := context.WithTimeout(t.Context(), *caseTimeout)
+	loaded, cancel := context.WithTimeout(t.Context(), caseTimeout)
 	defer cancel()
 
 	t.Run("Grafana loaded every rule", func(t *testing.T) {
@@ -625,7 +628,7 @@ func TestGrafana_alerts_on_the_billing_job_and_has_its_dashboard(t *testing.T) {
 			var rules []struct {
 				Title string `json:"title"`
 			}
-			if err := getJSON(ctx, *grafanaURL+"/api/v1/provisioning/alert-rules", admin, &rules); err != nil {
+			if err := getJSON(ctx, grafana+"/api/v1/provisioning/alert-rules", admin, &rules); err != nil {
 				return err
 			}
 			got := make([]string, 0, len(rules))
@@ -651,7 +654,7 @@ func TestGrafana_alerts_on_the_billing_job_and_has_its_dashboard(t *testing.T) {
 					Provisioned bool `json:"provisioned"`
 				} `json:"meta"`
 			}
-			if err := getJSON(ctx, *grafanaURL+"/api/dashboards/uid/billing", admin, &body); err != nil {
+			if err := getJSON(ctx, grafana+"/api/dashboards/uid/billing", admin, &body); err != nil {
 				return err
 			}
 			if body.Dashboard.Title != "Billing" || !body.Meta.Provisioned || len(body.Dashboard.Panels) == 0 {
@@ -665,7 +668,7 @@ func TestGrafana_alerts_on_the_billing_job_and_has_its_dashboard(t *testing.T) {
 	cases.ThePaymentsAPIIsDown(t, target)
 	failingAnInvoice(t, d, target)
 
-	ctx, cancel := context.WithTimeout(t.Context(), *caseTimeout)
+	ctx, cancel := context.WithTimeout(t.Context(), caseTimeout)
 	defer cancel()
 
 	t.Run("Mimir holds every series the rules read", func(t *testing.T) {
@@ -679,7 +682,7 @@ func TestGrafana_alerts_on_the_billing_job_and_has_its_dashboard(t *testing.T) {
 					var body struct {
 						Data []map[string]string `json:"data"`
 					}
-					if err := getJSON(ctx, *mimirURL+"/prometheus/api/v1/series?"+q.Encode(), nil, &body); err != nil {
+					if err := getJSON(ctx, mimir+"/prometheus/api/v1/series?"+q.Encode(), nil, &body); err != nil {
 						return err
 					}
 					if len(body.Data) == 0 {
@@ -708,7 +711,7 @@ func TestGrafana_alerts_on_the_billing_job_and_has_its_dashboard(t *testing.T) {
 							} `json:"groups"`
 						} `json:"data"`
 					}
-					if err := getJSON(ctx, *grafanaURL+"/api/prometheus/grafana/api/v1/rules", admin, &body); err != nil {
+					if err := getJSON(ctx, grafana+"/api/prometheus/grafana/api/v1/rules", admin, &body); err != nil {
 						return err
 					}
 					for _, g := range body.Data.Groups {
@@ -734,7 +737,7 @@ func TestGrafana_alerts_on_the_billing_job_and_has_its_dashboard(t *testing.T) {
 
 func failingAnInvoice(t *testing.T, d deployment, target cases.Target) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), *caseTimeout)
+	ctx, cancel := context.WithTimeout(t.Context(), caseTimeout)
 	defer cancel()
 
 	db := cases.NewDatabase(ctx, t, target, "failed-")
@@ -847,4 +850,71 @@ func getJSON(ctx context.Context, u string, auth func(*http.Request), v any) err
 		return fmt.Errorf("GET %s: %s: %s", req.URL.Path, resp.Status, b)
 	}
 	return json.Unmarshal(b, v)
+}
+
+type output struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (o *output) Write(p []byte) (int, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.buf.Write(p)
+}
+
+func (o *output) String() string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.buf.String()
+}
+
+func forward(t *testing.T, service string, port int) string {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(ctx, "kubectl", "--context", *kubeContext, "--namespace", namespace, "port-forward", "--address", "127.0.0.1", "service/"+service, fmt.Sprintf(":%d", port))
+	r, w := io.Pipe()
+	stderr := &output{}
+	cmd.Stdout = w
+	cmd.Stderr = stderr
+	require.NoError(t, cmd.Start(), "kubectl port-forward service/%s", service)
+
+	addrs := make(chan string, 1)
+	go func() {
+		s := bufio.NewScanner(r)
+		for s.Scan() {
+			if m := forwarding.FindStringSubmatch(s.Text()); m != nil {
+				select {
+				case addrs <- m[1]:
+				default:
+				}
+			}
+		}
+		_, _ = io.Copy(io.Discard, r)
+	}()
+	exited := make(chan struct{})
+	var waitErr error
+	go func() {
+		waitErr = cmd.Wait()
+		_ = w.Close()
+		close(exited)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-exited
+		if t.Failed() {
+			t.Logf("kubectl port-forward service/%s: %v\n%s", service, waitErr, stderr)
+		}
+	})
+
+	select {
+	case addr := <-addrs:
+		return addr
+	case <-exited:
+		require.FailNowf(t, "exited", "kubectl port-forward service/%s exited: %v: %s", service, waitErr, stderr)
+		return ""
+	case <-time.After(time.Minute):
+		require.FailNowf(t, "timed out", "kubectl port-forward service/%s didn't report its address: %s", service, stderr)
+		return ""
+	}
 }
