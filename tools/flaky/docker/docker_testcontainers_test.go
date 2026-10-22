@@ -1,0 +1,82 @@
+// Copyright (c) 2026 Z5Labs and Contributors
+//
+// This software is released under the MIT License.
+// https://opensource.org/licenses/MIT
+
+//go:build testcontainers
+
+package docker_test
+
+import (
+	"bytes"
+	"os/exec"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock"
+
+	"github.com/z5labs/humus/tools/flaky/docker"
+	"github.com/z5labs/humus/tools/flaky/internal/dockertest"
+	"github.com/z5labs/humus/tools/flaky/internal/env"
+	"github.com/z5labs/humus/tools/flaky/lanes"
+	"github.com/z5labs/humus/tools/flaky/run"
+)
+
+// image is a small image whose sleep keeps a container running.
+const image = "busybox:1.37"
+
+// dockerRun runs docker with args, and returns what it printed.
+func dockerRun(t *testing.T, args ...string) string {
+	t.Helper()
+	cmd := exec.CommandContext(t.Context(), "docker", args...)
+	cmd.Env = env.Child(bedrock.OSEnvironment{})
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	require.NoError(t, err, "docker %v: %s", args, stderr.String())
+	return strings.TrimSpace(string(out))
+}
+
+// start starts a container that sleeps, with args before the image, and
+// removes it at the end of the test.
+func start(t *testing.T, args ...string) string {
+	t.Helper()
+	id := dockerRun(t, append(append([]string{"run", "-d"}, args...), image, "sleep", "300")...)
+	t.Cleanup(func() {
+		cmd := exec.Command("docker", "rm", "-f", id)
+		cmd.Env = env.Child(bedrock.OSEnvironment{})
+		_ = cmd.Run()
+	})
+	return id
+}
+
+func cpuset(t *testing.T, id string) string {
+	return dockerRun(t, "inspect", "--format", "{{.HostConfig.CpusetCpus}}", id)
+}
+
+func TestPin_puts_a_testcontainers_container_on_the_kept_back_cores(t *testing.T) {
+	childEnv := env.Child(bedrock.OSEnvironment{})
+	require.NoError(t, docker.Check(t.Context(), childEnv))
+	cores, err := run.Affinity()
+	require.NoError(t, err)
+	if len(cores) < 2 {
+		t.Skipf("this process may run on %d cores, and the test needs 2", len(cores))
+	}
+	kept := lanes.Kept(cores, 1)
+	dockerRun(t, "pull", "-q", image)
+
+	var log dockertest.Buffer
+	p, err := docker.Pin(t.Context(), kept, childEnv, &log)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, p.Stop()) })
+
+	labelled := start(t, "--label", docker.Label+"=true")
+	unlabelled := start(t)
+	require.Eventually(t, func() bool {
+		return cpuset(t, labelled) == run.CoreList(kept)
+	}, 30*time.Second, 100*time.Millisecond, "the container labelled %s lands on the kept-back cores %v; log:\n%s", docker.Label, kept, log.String())
+	require.Empty(t, cpuset(t, unlabelled), "a container without the label isn't pinned")
+	require.Empty(t, log.String())
+}

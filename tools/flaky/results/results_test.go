@@ -22,20 +22,18 @@ import (
 )
 
 var pkgs = []discover.Package{
-	{Module: "grpc", Dir: "grpc/grpchealth", ImportPath: "github.com/z5labs/humus/grpc/grpchealth"},
-	{Module: ".", Dir: "health", ImportPath: "github.com/z5labs/humus/health"},
+	{Module: "grpc", Dir: "grpc/grpchealth", ImportPath: "github.com/z5labs/humus/grpc/grpchealth", Level: "unit"},
+	{Module: ".", Dir: "health", ImportPath: "github.com/z5labs/humus/health", Level: "unit"},
 }
 
 func newResults(t *testing.T) (*results.Results, string) {
 	out := t.TempDir()
 	return results.New(results.Config{
-		Packages:       pkgs,
-		CPUs:           []int{1, 2, 4},
-		Loads:          []int{1, 2},
-		Count:          3,
-		Timeout:        2 * time.Minute,
-		DefaultTimeout: 2 * time.Minute,
-		Out:            out,
+		Packages: pkgs,
+		CPUs:     []int{1, 2, 4},
+		Loads:    []int{1, 2},
+		Out:      out,
+		Levels:   []results.Level{{Name: "unit", Count: 3, Timeout: 2 * time.Minute, DefaultTimeout: 2 * time.Minute}},
 	}), out
 }
 
@@ -112,14 +110,14 @@ func TestReport_counts_each_test_s_failures_and_hangs_at_each_pair_of_CPU_count_
 	require.Equal(t, 2, x.FirstFailureCPU)
 	require.Equal(t, 2, x.FirstFailureLoad)
 	require.Equal(t, filepath.Join(out, "grpc", "grpchealth", "TestX", "a_case"), x.Output)
-	require.Equal(t, "flaky stress -run '^TestX$/^a_case$' -cpu 2 -load 2 -count 3 ./grpc/grpchealth", x.Reproduce)
+	require.Equal(t, "flaky stress -tags unit -run '^TestX$/^a_case$' -cpu 2 -load 2 -count 3 ./grpc/grpchealth", x.Reproduce)
 	require.Equal(t, "taskset -c 0-1 go -C grpc test -race -cover -count=3 -cpu 2 -timeout 2m0s -run '^TestX$/^a_case$' ./grpchealth", x.ReproduceGoTest)
 
 	h := rep.Flaky[1]
 	require.Equal(t, "health", h.Package)
 	require.Empty(t, h.Test, "a failure outside any test counts against its package")
 	require.Equal(t, filepath.Join(out, "health", "outside-tests"), h.Output)
-	require.Equal(t, "flaky stress -cpu 4 -load 2 -count 3 ./health", h.Reproduce)
+	require.Equal(t, "flaky stress -tags unit -cpu 4 -load 2 -count 3 ./health", h.Reproduce)
 	require.Equal(t, "taskset -c 0-3 go -C . test -race -cover -count=3 -cpu 4 -timeout 2m0s ./health", h.ReproduceGoTest)
 	require.Equal(t, []string{"goleak: found unexpected goroutines"}, h.FirstFailure)
 
@@ -127,7 +125,7 @@ func TestReport_counts_each_test_s_failures_and_hangs_at_each_pair_of_CPU_count_
 	y := rep.Failing[0]
 	require.Equal(t, "TestY", y.Test)
 	require.Equal(t, 6, y.Failures)
-	require.Equal(t, "flaky stress -run '^TestY$' -cpu 1 -load 1 -count 3 ./grpc/grpchealth", y.Reproduce)
+	require.Equal(t, "flaky stress -tags unit -run '^TestY$' -cpu 1 -load 1 -count 3 ./grpc/grpchealth", y.Reproduce)
 	require.Equal(t, "taskset -c 0 go -C grpc test -race -cover -count=3 -cpu 1 -timeout 2m0s -run '^TestY$' ./grpchealth", y.ReproduceGoTest)
 
 	// TestX failed through its subtest, TestY failed, and TestNeverRan
@@ -137,8 +135,8 @@ func TestReport_counts_each_test_s_failures_and_hangs_at_each_pair_of_CPU_count_
 
 func TestReport_reproduces_a_test_at_the_pair_where_it_failed_most(t *testing.T) {
 	r := results.New(results.Config{
-		Packages: pkgs, CPUs: []int{1, 2}, Loads: []int{1, 2}, Count: 4, Out: t.TempDir(),
-		Timeout: 2 * time.Minute, DefaultTimeout: 2 * time.Minute,
+		Packages: pkgs, CPUs: []int{1, 2}, Loads: []int{1, 2}, Out: t.TempDir(),
+		Levels: []results.Level{{Name: "unit", Count: 4, Timeout: 2 * time.Minute, DefaultTimeout: 2 * time.Minute}},
 	})
 	fail := run.Result{Tests: []run.Test{{Name: "TestH", Outcome: run.Fail, Output: []string{"boom"}}}}
 	for _, cpu := range []int{1, 2} {
@@ -157,12 +155,12 @@ func TestReport_reproduces_a_test_at_the_pair_where_it_failed_most(t *testing.T)
 	h := rep.Flaky[0]
 	require.Equal(t, 1, h.FirstFailureCPU)
 	require.Equal(t, 2, h.FirstFailureLoad)
-	require.Equal(t, "flaky stress -run '^TestH$' -cpu 2 -load 1 -count 4 ./health", h.Reproduce, "2 of 4 runs failed at cpu 2 load 1")
+	require.Equal(t, "flaky stress -tags unit -run '^TestH$' -cpu 2 -load 1 -count 4 ./health", h.Reproduce, "2 of 4 runs failed at cpu 2 load 1")
 	require.Equal(t, "taskset -c 0-1 go -C . test -race -cover -count=4 -cpu 2 -timeout 2m0s -run '^TestH$' ./health", h.ReproduceGoTest)
 }
 
 func TestReport_lists_a_test_apart_when_it_failed_every_run_at_one_load(t *testing.T) {
-	r := results.New(results.Config{Packages: pkgs, CPUs: []int{4}, Loads: []int{1, 2}, Count: 2, Out: t.TempDir()})
+	r := results.New(results.Config{Packages: pkgs, CPUs: []int{4}, Loads: []int{1, 2}, Out: t.TempDir(), Levels: []results.Level{{Name: "unit", Count: 2}}})
 	fail := run.Result{Tests: []run.Test{{Name: "TestH", Outcome: run.Fail}}}
 	require.NoError(t, r.Add(1, 4, 1, passed("TestH")))
 	require.NoError(t, r.Add(1, 4, 1, passed("TestH")))
@@ -190,7 +188,7 @@ func TestAdd_saves_each_failure_s_whole_output(t *testing.T) {
 func TestAdd_fails_when_the_output_cannot_be_saved(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "file")
 	require.NoError(t, os.WriteFile(file, nil, 0o644))
-	r := results.New(results.Config{Packages: pkgs, CPUs: []int{1}, Loads: []int{1}, Count: 1, Out: file})
+	r := results.New(results.Config{Packages: pkgs, CPUs: []int{1}, Loads: []int{1}, Out: file, Levels: []results.Level{{Name: "unit", Count: 1}}})
 	err := r.Add(0, 1, 1, run.Result{Tests: []run.Test{{Name: "TestX", Outcome: run.Fail}}})
 	require.Error(t, err)
 	err = r.Add(1, 1, 1, run.Result{PackageFailed: true})
@@ -223,13 +221,36 @@ func rel(t *testing.T, base, path string) string {
 
 func TestReport_names_a_non_default_timeout_in_the_flaky_command(t *testing.T) {
 	r := results.New(results.Config{
-		Packages: pkgs, CPUs: []int{1}, Loads: []int{1}, Count: 5, Out: t.TempDir(),
-		Timeout: 10 * time.Second, DefaultTimeout: 2 * time.Minute,
+		Packages: pkgs, CPUs: []int{1}, Loads: []int{1}, Out: t.TempDir(),
+		Levels: []results.Level{{Name: "unit", Count: 5, Timeout: 10 * time.Second, DefaultTimeout: 2 * time.Minute}},
 	})
 	require.NoError(t, r.Add(1, 1, 1, run.Result{Tests: []run.Test{{Name: "TestH", Outcome: run.Fail}, {Name: "TestH2", Outcome: run.Pass}}}))
 	require.NoError(t, r.Add(1, 1, 1, passed("TestH", "TestH2")))
 	rep := r.Report()
-	require.Equal(t, "flaky stress -run '^TestH$' -cpu 1 -load 1 -count 5 -timeout 10s ./health", rep.Flaky[0].Reproduce)
+	require.Equal(t, "flaky stress -tags unit -run '^TestH$' -cpu 1 -load 1 -count 5 -timeout 10s ./health", rep.Flaky[0].Reproduce)
+}
+
+func TestReport_reproduces_a_test_at_its_level_with_the_level_s_tag_count_and_timeout(t *testing.T) {
+	tagged := []discover.Package{{Module: "kube", Dir: "kube", ImportPath: "github.com/z5labs/humus/kube", Level: "testcontainers"}}
+	r := results.New(results.Config{
+		Packages: tagged, CPUs: []int{1, 2}, Loads: []int{1}, Out: t.TempDir(),
+		Levels: []results.Level{
+			{Name: "unit", Count: 500, Timeout: 2 * time.Minute, DefaultTimeout: 2 * time.Minute},
+			{Name: "testcontainers", Count: 25, Timeout: 10 * time.Minute, DefaultTimeout: 10 * time.Minute},
+		},
+	})
+	require.NoError(t, r.Add(0, 2, 1, run.Result{Tests: []run.Test{{Name: "TestK", Outcome: run.Fail, Output: []string{"boom"}}}}))
+	require.NoError(t, r.Add(0, 2, 1, passed("TestK")))
+	rep := r.Report()
+	require.Len(t, rep.Flaky, 1)
+	k := rep.Flaky[0]
+	require.Equal(t, "testcontainers", k.Level)
+	require.Equal(t, "flaky stress -tags testcontainers -run '^TestK$' -cpu 2 -load 1 -count 25 ./kube", k.Reproduce, "the level's default timeout is left out")
+	require.Equal(t, "taskset -c 0-1 go -C kube test -race -cover -tags testcontainers -count=25 -cpu 2 -timeout 10m0s -run '^TestK$' .", k.ReproduceGoTest)
+
+	var buf bytes.Buffer
+	require.NoError(t, results.WriteText(&buf, rep))
+	require.Contains(t, buf.String(), "\nkube  TestK  (testcontainers)\n", "a test at a tagged level names its level")
 }
 
 func TestRunPattern(t *testing.T) {
@@ -259,7 +280,7 @@ grpc/grpchealth  TestX/a_case
     first failure, at cpu 2 load 2:
             x_test.go:12: boom
     output:    ` + filepath.Join(out, "grpc/grpchealth/TestX/a_case") + `
-    reproduce: flaky stress -run '^TestX$/^a_case$' -cpu 2 -load 2 -count 3 ./grpc/grpchealth
+    reproduce: flaky stress -tags unit -run '^TestX$/^a_case$' -cpu 2 -load 2 -count 3 ./grpc/grpchealth
                taskset -c 0-1 go -C grpc test -race -cover -count=3 -cpu 2 -timeout 2m0s -run '^TestX$/^a_case$' ./grpchealth
 
 health  (outside any test)
@@ -274,7 +295,7 @@ health  (outside any test)
     first failure, at cpu 4 load 2:
         goleak: found unexpected goroutines
     output:    ` + filepath.Join(out, "health/outside-tests") + `
-    reproduce: flaky stress -cpu 4 -load 2 -count 3 ./health
+    reproduce: flaky stress -tags unit -cpu 4 -load 2 -count 3 ./health
                taskset -c 0-3 go -C . test -race -cover -count=3 -cpu 4 -timeout 2m0s ./health
 
 FAILING: failed or hung every run at some pair of CPU count and load
@@ -291,7 +312,7 @@ grpc/grpchealth  TestY
     first failure, at cpu 1 load 1:
             y_test.go:3: always
     output:    ` + filepath.Join(out, "grpc/grpchealth/TestY") + `
-    reproduce: flaky stress -run '^TestY$' -cpu 1 -load 1 -count 3 ./grpc/grpchealth
+    reproduce: flaky stress -tags unit -run '^TestY$' -cpu 1 -load 1 -count 3 ./grpc/grpchealth
                taskset -c 0 go -C grpc test -race -cover -count=3 -cpu 1 -timeout 2m0s -run '^TestY$' ./grpchealth
 
 2 tests passed every run
@@ -350,14 +371,11 @@ func TestWriteJSON_writes_the_same_report(t *testing.T) {
 func newConfirmResults(t *testing.T) (*results.Results, string) {
 	out := t.TempDir()
 	return results.New(results.Config{
-		Packages:       pkgs,
-		CPUs:           []int{1, 2},
-		Loads:          []int{1, 2},
-		Count:          3,
-		Confirm:        4,
-		Timeout:        2 * time.Minute,
-		DefaultTimeout: 2 * time.Minute,
-		Out:            out,
+		Packages: pkgs,
+		CPUs:     []int{1, 2},
+		Loads:    []int{1, 2},
+		Out:      out,
+		Levels:   []results.Level{{Name: "unit", Count: 3, Confirm: 4, Timeout: 2 * time.Minute, DefaultTimeout: 2 * time.Minute}},
 	}), out
 }
 
@@ -402,7 +420,7 @@ func TestReport_gives_a_confirmed_test_s_confirm_runs(t *testing.T) {
 	r, out := newConfirmResults(t)
 	confirmSweep(t, r)
 	rep := r.Report()
-	require.Equal(t, 4, rep.Confirm)
+	require.Equal(t, 4, rep.Levels[0].Confirm)
 	require.Equal(t, 1, rep.Confirmed)
 	require.Equal(t, 16, rep.ConfirmRuns)
 	require.Empty(t, rep.Failing)
@@ -420,7 +438,7 @@ func TestReport_gives_a_confirmed_test_s_confirm_runs(t *testing.T) {
 	require.Equal(t, 1, x.Hangs)
 	require.Equal(t, []string{"    x_test.go:12: boom"}, x.FirstFailure, "the first failure is the sweep's")
 	require.Equal(t, 1, x.FirstFailureCPU)
-	require.Equal(t, "flaky stress -run '^TestX$/^a_case$' -cpu 2 -load 2 -count 4 ./grpc/grpchealth", x.Reproduce, "the pair where its confirm runs failed most, at the confirm count")
+	require.Equal(t, "flaky stress -tags unit -run '^TestX$/^a_case$' -cpu 2 -load 2 -count 4 ./grpc/grpchealth", x.Reproduce, "the pair where its confirm runs failed most, at the confirm count")
 	require.Equal(t, "taskset -c 0-1 go -C grpc test -race -cover -count=4 -cpu 2 -timeout 2m0s -run '^TestX$/^a_case$' ./grpchealth", x.ReproduceGoTest)
 	require.Equal(t, 1, rep.Passed, "TestH")
 
@@ -461,7 +479,7 @@ func TestConfirmed_counts_a_run_by_the_test_and_its_subtests(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			r := results.New(results.Config{Packages: pkgs, CPUs: []int{1}, Loads: []int{1}, Count: 1, Confirm: 1, Out: t.TempDir()})
+			r := results.New(results.Config{Packages: pkgs, CPUs: []int{1}, Loads: []int{1}, Out: t.TempDir(), Levels: []results.Level{{Name: "unit", Count: 1, Confirm: 1}}})
 			require.NoError(t, r.Add(0, 1, 1, run.Result{Tests: []run.Test{{Name: "TestX", Outcome: run.Fail}}}))
 			require.NoError(t, r.Confirmed(0, "TestX", 1, 1, tc.res))
 			rep := r.Report()
@@ -474,7 +492,7 @@ func TestConfirmed_counts_a_run_by_the_test_and_its_subtests(t *testing.T) {
 }
 
 func TestConfirmed_counts_no_run_in_which_the_test_never_started(t *testing.T) {
-	r := results.New(results.Config{Packages: pkgs, CPUs: []int{1}, Loads: []int{1}, Count: 1, Confirm: 1, Out: t.TempDir()})
+	r := results.New(results.Config{Packages: pkgs, CPUs: []int{1}, Loads: []int{1}, Out: t.TempDir(), Levels: []results.Level{{Name: "unit", Count: 1, Confirm: 1}}})
 	require.NoError(t, r.Add(0, 1, 1, run.Result{Tests: []run.Test{{Name: "TestX", Outcome: run.Fail}}}))
 	require.NoError(t, r.Confirmed(0, "TestX", 1, 1, passed("TestXY")))
 	rep := r.Report()
@@ -487,7 +505,7 @@ func TestConfirmed_counts_no_run_in_which_the_test_never_started(t *testing.T) {
 func TestConfirmed_fails_when_the_output_cannot_be_saved(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "file")
 	require.NoError(t, os.WriteFile(file, nil, 0o644))
-	r := results.New(results.Config{Packages: pkgs, CPUs: []int{1}, Loads: []int{1}, Count: 1, Confirm: 1, Out: file})
+	r := results.New(results.Config{Packages: pkgs, CPUs: []int{1}, Loads: []int{1}, Out: file, Levels: []results.Level{{Name: "unit", Count: 1, Confirm: 1}}})
 	require.Error(t, r.Confirmed(0, "TestX", 1, 1, run.Result{Tests: []run.Test{{Name: "TestX", Outcome: run.Fail}}}))
 }
 
@@ -510,7 +528,7 @@ grpc/grpchealth  TestX/a_case
     first failure, at cpu 1 load 1:
             x_test.go:12: boom
     output:    ` + filepath.Join(out, "grpc/grpchealth/TestX/a_case") + `
-    reproduce: flaky stress -run '^TestX$/^a_case$' -cpu 2 -load 2 -count 4 ./grpc/grpchealth
+    reproduce: flaky stress -tags unit -run '^TestX$/^a_case$' -cpu 2 -load 2 -count 4 ./grpc/grpchealth
                taskset -c 0-1 go -C grpc test -race -cover -count=4 -cpu 2 -timeout 2m0s -run '^TestX$/^a_case$' ./grpchealth
 
 1 test passed every run
@@ -527,10 +545,11 @@ func TestWriteJSON_gives_the_confirm_runs(t *testing.T) {
 	require.NoError(t, results.WriteJSON(&buf, r.Report()))
 	var got map[string]any
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &got))
-	require.InDelta(t, 4, got["confirm"], 0)
+	require.Equal(t, []any{map[string]any{"name": "unit", "count": 3.0, "confirm": 4.0, "timeoutSeconds": 120.0}}, got["levels"])
 	require.InDelta(t, 1, got["confirmed"], 0)
 	require.InDelta(t, 16, got["confirmRuns"], 0)
 	x := got["flaky"].([]any)[0].(map[string]any)
+	require.Equal(t, "unit", x["level"])
 	require.Equal(t, true, x["confirmed"])
 	require.InDelta(t, 16, x["runs"], 0)
 }
@@ -577,23 +596,24 @@ func TestReport_keeps_a_failure_s_seed_and_reproduces_what_its_run_ran_with_it(t
 	}{
 		{
 			name:       "the sweep ran every test",
-			wantFlaky:  "flaky stress -run . -shuffle=105 -cpu 2 -load 1 -count 2 ./grpc/grpchealth",
+			wantFlaky:  "flaky stress -tags unit -run . -shuffle=105 -cpu 2 -load 1 -count 2 ./grpc/grpchealth",
 			wantGoTest: "taskset -c 0-1 go -C grpc test -race -cover -count=2 -cpu 2 -timeout 2m0s -run . -shuffle=105 ./grpchealth",
 		},
 		{
 			name:       "the sweep ran what -run matched, and skipped what -skip matched",
 			run:        "^Test[XY]$",
 			skip:       "^TestZ$",
-			wantFlaky:  "flaky stress -run '^Test[XY]$' -skip '^TestZ$' -shuffle=105 -cpu 2 -load 1 -count 2 ./grpc/grpchealth",
+			wantFlaky:  "flaky stress -tags unit -run '^Test[XY]$' -skip '^TestZ$' -shuffle=105 -cpu 2 -load 1 -count 2 ./grpc/grpchealth",
 			wantGoTest: "taskset -c 0-1 go -C grpc test -race -cover -count=2 -cpu 2 -timeout 2m0s -run '^Test[XY]$' -skip '^TestZ$' -shuffle=105 ./grpchealth",
 		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			r := results.New(results.Config{
-				Packages: pkgs, CPUs: []int{1, 2}, Loads: []int{1, 2}, Count: 3, Confirm: 2,
-				Timeout: 2 * time.Minute, DefaultTimeout: 2 * time.Minute, Out: t.TempDir(),
+				Packages: pkgs, CPUs: []int{1, 2}, Loads: []int{1, 2},
+				Out: t.TempDir(),
 				Run: tc.run, Skip: tc.skip,
+				Levels: []results.Level{{Name: "unit", Count: 3, Confirm: 2, Timeout: 2 * time.Minute, DefaultTimeout: 2 * time.Minute}},
 			})
 			orderSweep(t, r)
 			rep := r.Report()
@@ -620,7 +640,7 @@ func TestReport_reproduces_a_test_that_failed_alone_with_its_confirm_run_s_seed(
 	x := rep.Flaky[0]
 	require.Equal(t, int64(1), *x.FirstFailureSeed)
 	require.Equal(t, int64(3), *x.Seed, "the first failed confirm run's seed")
-	require.Equal(t, "flaky stress -run '^TestX$' -shuffle=3 -cpu 2 -load 2 -count 4 ./grpc/grpchealth", x.Reproduce)
+	require.Equal(t, "flaky stress -tags unit -run '^TestX$' -shuffle=3 -cpu 2 -load 2 -count 4 ./grpc/grpchealth", x.Reproduce)
 	require.Equal(t, "taskset -c 0-1 go -C grpc test -race -cover -count=4 -cpu 2 -timeout 2m0s -run '^TestX$' -shuffle=3 ./grpchealth", x.ReproduceGoTest)
 }
 
@@ -630,7 +650,7 @@ func TestWriteText_gives_a_shuffled_failure_s_seed(t *testing.T) {
 	var buf bytes.Buffer
 	require.NoError(t, results.WriteText(&buf, r.Report()))
 	require.Contains(t, buf.String(), "    first failure, at cpu 2 load 1, seed 105:\n")
-	require.Contains(t, buf.String(), "    reproduce: flaky stress -run . -shuffle=105 -cpu 2 -load 1 -count 4 ./grpc/grpchealth\n")
+	require.Contains(t, buf.String(), "    reproduce: flaky stress -tags unit -run . -shuffle=105 -cpu 2 -load 1 -count 4 ./grpc/grpchealth\n")
 	require.Contains(t, buf.String(), " -run . -shuffle=105 ./grpchealth\n")
 }
 

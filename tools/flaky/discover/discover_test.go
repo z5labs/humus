@@ -18,6 +18,8 @@ import (
 	"github.com/z5labs/humus/tools/flaky/run"
 )
 
+var unit = []string{discover.Unit}
+
 func dirs(pkgs []discover.Package) []string {
 	out := make([]string, len(pkgs))
 	for i, p := range pkgs {
@@ -49,18 +51,46 @@ func TestModules_fails_without_go_modules_sh(t *testing.T) {
 func TestPackages_finds_every_package_with_tests_in_every_module(t *testing.T) {
 	repo := repotest.New(t, "1.27.2")
 	childEnv := env.Child(bedrock.OSEnvironment{})
-	pkgs, err := discover.Packages(t.Context(), repo, []string{".", "b"}, nil, childEnv)
+	pkgs, err := discover.Packages(t.Context(), repo, []string{".", "b"}, nil, unit, childEnv)
 	require.NoError(t, err)
 	require.Equal(t, []discover.Package{
-		{Module: ".", Dir: "a", ImportPath: "example.com/repo/a"},
-		{Module: ".", Dir: "twocpus", ImportPath: "example.com/repo/twocpus"},
-		{Module: "b", Dir: "b", ImportPath: "example.com/repo/b"},
+		{Module: ".", Dir: "a", ImportPath: "example.com/repo/a", Level: "unit"},
+		{Module: ".", Dir: "twocpus", ImportPath: "example.com/repo/twocpus", Level: "unit"},
+		{Module: "b", Dir: "b", ImportPath: "example.com/repo/b", Level: "unit"},
 	}, pkgs, "notests has no test files")
 
 	repotest.Write(t, repo, "notests/notests_test.go", "package notests\n\nimport \"testing\"\n\nfunc TestNow(t *testing.T) {}\n")
-	pkgs, err = discover.Packages(t.Context(), repo, []string{".", "b"}, nil, childEnv)
+	pkgs, err = discover.Packages(t.Context(), repo, []string{".", "b"}, nil, unit, childEnv)
 	require.NoError(t, err)
 	require.Equal(t, []string{"a", "notests", "twocpus", "b"}, dirs(pkgs), "a package given a test is found")
+}
+
+func TestPackages_finds_a_package_at_a_tagged_level_when_its_tag_changes_its_test_files(t *testing.T) {
+	repo := repotest.New(t, "1.27.2")
+	repotest.Write(t, repo, "a/a_containers_test.go", "//go:build testcontainers\n\npackage a\n\nimport \"testing\"\n\nfunc TestAContainers(t *testing.T) {}\n")
+	repotest.Write(t, repo, "c/c_test.go", "//go:build testcontainers\n\npackage c\n\nimport \"testing\"\n\nfunc TestC(t *testing.T) {}\n")
+	childEnv := env.Child(bedrock.OSEnvironment{})
+	levels := []string{discover.Unit, "testcontainers"}
+	pkgs, err := discover.Packages(t.Context(), repo, []string{".", "b"}, nil, levels, childEnv)
+	require.NoError(t, err)
+	require.Equal(t, []discover.Package{
+		{Module: ".", Dir: "a", ImportPath: "example.com/repo/a", Level: "unit"},
+		{Module: ".", Dir: "twocpus", ImportPath: "example.com/repo/twocpus", Level: "unit"},
+		{Module: ".", Dir: "a", ImportPath: "example.com/repo/a", Level: "testcontainers", Untagged: true},
+		{Module: ".", Dir: "c", ImportPath: "example.com/repo/c", Level: "testcontainers"},
+		{Module: "b", Dir: "b", ImportPath: "example.com/repo/b", Level: "unit"},
+	}, pkgs, "twocpus and b have the same test files with the tag, and c has test files only with it")
+
+	pkgs, err = discover.Packages(t.Context(), repo, []string{"."}, []string{"./c"}, levels, childEnv)
+	require.NoError(t, err)
+	require.Equal(t, []string{"c"}, dirs(pkgs), "a pattern matches at any level")
+	_, err = discover.Packages(t.Context(), repo, []string{"."}, []string{"./c"}, unit, childEnv)
+	require.ErrorContains(t, err, "./c matched no package with tests", "c has no tests at the unit level")
+}
+
+func TestTag_is_none_for_the_unit_level_and_the_level_s_name_for_any_other(t *testing.T) {
+	require.Empty(t, discover.Tag(discover.Unit))
+	require.Equal(t, "testcontainers", discover.Tag("testcontainers"))
 }
 
 func TestPackages_matches_patterns_from_the_repository_s_root(t *testing.T) {
@@ -81,7 +111,7 @@ func TestPackages_matches_patterns_from_the_repository_s_root(t *testing.T) {
 		{[]string{"./twocpus", "./b"}, []string{"twocpus", "b"}},
 	}
 	for _, tc := range testCases {
-		pkgs, err := discover.Packages(t.Context(), repo, modules, tc.patterns, childEnv)
+		pkgs, err := discover.Packages(t.Context(), repo, modules, tc.patterns, unit, childEnv)
 		if tc.want == nil {
 			require.ErrorContains(t, err, "matched no package with tests", "%v", tc.patterns)
 			continue
@@ -94,11 +124,11 @@ func TestPackages_matches_patterns_from_the_repository_s_root(t *testing.T) {
 func TestPackages_refuses_a_pattern_not_from_the_repository_s_root(t *testing.T) {
 	repo := repotest.New(t, "1.27.2")
 	childEnv := env.Child(bedrock.OSEnvironment{})
-	_, err := discover.Packages(t.Context(), repo, []string{"."}, []string{"a"}, childEnv)
+	_, err := discover.Packages(t.Context(), repo, []string{"."}, []string{"a"}, unit, childEnv)
 	require.ErrorContains(t, err, "must start with ./")
-	_, err = discover.Packages(t.Context(), repo, []string{"."}, []string{"./../x"}, childEnv)
+	_, err = discover.Packages(t.Context(), repo, []string{"."}, []string{"./../x"}, unit, childEnv)
 	require.ErrorContains(t, err, "leaves the repository")
-	_, err = discover.Packages(t.Context(), repo, []string{"missing"}, nil, childEnv)
+	_, err = discover.Packages(t.Context(), repo, []string{"missing"}, nil, unit, childEnv)
 	require.ErrorContains(t, err, "go list")
 }
 
@@ -106,11 +136,11 @@ func TestPackages_tests_are_listed_by_each_binary(t *testing.T) {
 	repo := repotest.New(t, "1.27.2")
 	childEnv := env.Child(bedrock.OSEnvironment{})
 	list := func() []string {
-		pkgs, err := discover.Packages(t.Context(), repo, []string{"."}, []string{"./a"}, childEnv)
+		pkgs, err := discover.Packages(t.Context(), repo, []string{"."}, []string{"./a"}, unit, childEnv)
 		require.NoError(t, err)
 		require.Len(t, pkgs, 1)
 		bin := filepath.Join(t.TempDir(), "a.test")
-		require.NoError(t, run.Build(t.Context(), filepath.Join(repo, pkgs[0].Module), pkgs[0].ImportPath, bin, childEnv))
+		require.NoError(t, run.Build(t.Context(), filepath.Join(repo, pkgs[0].Module), pkgs[0].ImportPath, "", bin, childEnv))
 		tests, err := run.List(t.Context(), bin, filepath.Join(repo, pkgs[0].Dir), childEnv)
 		require.NoError(t, err)
 		return tests

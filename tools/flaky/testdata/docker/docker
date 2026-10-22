@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 Z5Labs and Contributors
+#
+# This software is released under the MIT License.
+# https://opensource.org/licenses/MIT
+
+# A stand-in for the docker command, for the tests that need no Docker. Its
+# state is in files beside it:
+#
+#   down         when it exists, docker version can't reach a daemon
+#   ids          what docker events prints, before it waits to be killed
+#   die          when it exists, docker events exits 1 once it has printed ids
+#   events.args  docker events writes its arguments here
+#   updates      docker update appends its arguments here, and fails for an
+#                ID that starts with bad
+
+dir=$(dirname "$0")
+case "$1" in
+  version)
+    if [[ -e $dir/down ]]; then
+      echo "Cannot connect to the Docker daemon" >&2
+      exit 1
+    fi
+    echo 27.0.0
+    ;;
+  events)
+    echo "$*" >"$dir/events.args"
+    [[ -e $dir/ids ]] && cat "$dir/ids"
+    if [[ -e $dir/die ]]; then
+      echo "events died" >&2
+      exit 1
+    fi
+    exec sleep 600
+    ;;
+  update)
+    echo "$*" >>"$dir/updates"
+    if [[ ${*: -1} == bad* ]]; then
+      echo "Error: No such container: ${*: -1}" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "docker: unknown command $1" >&2
+    exit 1
+    ;;
+esac
