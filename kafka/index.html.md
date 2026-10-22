@@ -1510,16 +1510,29 @@ require.Equal(t, int64(5), committed(c)[0])
 A `Producer` is tested the same way, through the end user's `Init`, against
 the cluster on the test Host. The cluster seeds the topic the `Producer`
 produces to, `kfake.SeedTopics(1, dlqTopic)` here for `orders.dlq`, and the
-test reads it back with a client of its own, after the App has exited:
+test reads it back with a client of its own, after the App has exited. It
+reads each partition up to the high watermark the cluster reports for it,
+rather than stopping at an empty poll, which can come before a topic's end:
 
 ```go
 // readAll returns every record of topic, in each partition's order,
-// through a client that dials h with opts. It polls until a poll finds
-// nothing new for a second, which inside a bubble takes no real time, and
-// fails the test on any error but the poll's own deadline, so a client that
-// can't read the topic isn't mistaken for an empty one.
+// through a client that dials h with opts. It knows it has read the whole
+// topic when it has read each partition up to the high watermark c reports
+// for it as it starts, the offset after the partition's last record. A poll
+// that comes back empty isn't the end: a client makes a topic's partitions
+// fetchable one at a time, so its first fetch can leave out the one with the
+// records, and the cluster holds that fetch for kgo's FetchMaxWait. It fails
+// the test on any error, and if a minute passes before it reaches every end,
+// which inside a bubble takes no real time, so a client that can't read the
+// topic isn't mistaken for an empty one.
 func readAll(t *testing.T, h *humustest.Host, c *kfake.Cluster, topic string, opts ...kgo.Opt) []*kgo.Record {
 	t.Helper()
+	ends := map[int32]int64{}
+	for _, p := range c.PartitionInfos(topic) {
+		if p.HighWatermark > p.LogStartOffset {
+			ends[p.Partition] = p.HighWatermark
+		}
+	}
 	cl, err := kgo.NewClient(append([]kgo.Opt{
 		kgo.SeedBrokers(c.ListenAddrs()...),
 		kgo.Dialer(h.Dial),
@@ -1529,25 +1542,23 @@ func readAll(t *testing.T, h *humustest.Host, c *kfake.Cluster, topic string, op
 	require.NoError(t, err)
 	defer cl.Close()
 
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
 	var out []*kgo.Record
-	for {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	for len(ends) > 0 {
 		fetches := cl.PollFetches(ctx)
-		cancel()
+		require.NoError(t, ctx.Err(), "reading %s: partitions %v are never read to their ends", topic, ends)
 		fetches.EachError(func(_ string, _ int32, err error) {
-			if !errors.Is(err, context.DeadlineExceeded) {
-				require.NoError(t, err, "reading %s", topic)
-			}
+			require.NoError(t, err, "reading %s", topic)
 		})
-		n := 0
 		fetches.EachRecord(func(r *kgo.Record) {
 			out = append(out, r)
-			n++
+			if r.Offset+1 >= ends[r.Partition] {
+				delete(ends, r.Partition)
+			}
 		})
-		if n == 0 {
-			return out
-		}
 	}
+	return out
 }
 ```
 
