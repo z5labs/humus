@@ -23,9 +23,10 @@ var names = []string{
 }
 
 // Child returns the environment of a child process: every variable in names
-// that e has, as NAME=value.
+// that e has, as NAME=value. It is never nil, since an exec.Cmd with a nil Env
+// inherits the real environment.
 func Child(e bedrock.Environment) []string {
-	var out []string
+	out := []string{}
 	for _, name := range names {
 		if v, err := e.Value(name); err == nil {
 			out = append(out, name+"="+v)

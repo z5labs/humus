@@ -14,8 +14,9 @@
 // ended. The other lanes keep taking the tasks after it. So a lane holds at
 // most one task, and no task waits forever.
 //
-// The queue runs first the pair furthest behind its count, so every pair has
-// the same share of its runs done at any moment. Ties go to the pair whose
+// The queue runs first the pair furthest behind its count, counting the runs
+// it has started, so every pair has the same share of its runs started at any
+// moment. Ties go to the pair whose
 // runs have taken longest on average, measured as they finish, so the longest
 // runs don't all come last.
 package lanes

@@ -22,3 +22,9 @@ func TestChild_passes_on_the_variables_it_knows_that_are_set(t *testing.T) {
 	}))
 	require.Equal(t, []string{"PATH=/bin", "GOFLAGS=-mod=mod"}, got)
 }
+
+func TestChild_is_never_nil_so_a_child_never_inherits_the_real_environment(t *testing.T) {
+	got := env.Child(bedrock.NewStaticEnvironment(map[string]string{}))
+	require.NotNil(t, got)
+	require.Empty(t, got)
+}
