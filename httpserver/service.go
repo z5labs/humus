@@ -72,9 +72,12 @@ func NewService(s *humus.Setup, settings Settings, h http.Handler) (*Service, er
 	// a panic is recorded on the request's span before the span ends.
 	// stripScenarios runs inside recordPanics, after otelhttp has extracted
 	// the baggage and before the handler, so a panic of TrustScenario is
-	// recorded as the handler's would be.
+	// recorded as the handler's would be. nameRoute runs right below
+	// otelhttp, so the route reaches otelhttp's request however many
+	// handlers on the way pass on a copy of it.
 	stripped := stripScenarios{next: h, faults: s.Faults, trust: settings.TrustScenario}
-	instrumented := otelhttp.NewHandler(recordPanics{next: stripped, logger: logger}, "",
+	named := nameRoute{next: recordPanics{next: stripped, logger: logger}}
+	instrumented := otelhttp.NewHandler(named, "",
 		otelhttp.WithTracerProvider(s.Telemetry.TracerProvider),
 		otelhttp.WithMeterProvider(s.Telemetry.MeterProvider),
 		otelhttp.WithPropagators(s.Telemetry.Propagator),

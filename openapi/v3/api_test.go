@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
@@ -23,6 +24,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"github.com/z5labs/humus"
@@ -239,6 +241,32 @@ func spanNames(tel *humustest.Telemetry) []string {
 	return names
 }
 
+// durationRoutes returns the http.route of each data point of
+// http.server.request.duration.
+func durationRoutes(t *testing.T, tel *humustest.Telemetry) []string {
+	t.Helper()
+	rm, err := tel.Metrics(context.Background())
+	require.NoError(t, err)
+	var routes []string
+	for _, sm := range rm.ScopeMetrics {
+		if sm.Scope.Name != otelhttp.ScopeName {
+			continue
+		}
+		for _, m := range sm.Metrics {
+			if m.Name != "http.server.request.duration" {
+				continue
+			}
+			hist, ok := m.Data.(metricdata.Histogram[float64])
+			require.True(t, ok, "http.server.request.duration is a %T", m.Data)
+			for _, dp := range hist.DataPoints {
+				route, _ := dp.Attributes.Value("http.route")
+				routes = append(routes, route.AsString())
+			}
+		}
+	}
+	return routes
+}
+
 // records returns the records the package logged.
 func records(tel *humustest.Telemetry) []sdklog.Record {
 	var recs []sdklog.Record
@@ -383,6 +411,82 @@ func TestAPI_serves_an_operation(t *testing.T) {
 			require.Empty(t, records(s.tel), "a rejected request is the client's mistake")
 		})
 	})
+}
+
+func TestAPI_names_its_span_after_the_route_under_the_handlers_it_is_wrapped_in(t *testing.T) {
+	testCases := []struct {
+		name string
+		wrap func(api http.Handler) http.Handler
+	}{
+		{
+			name: "under a ServeMux",
+			wrap: func(api http.Handler) http.Handler {
+				mux := http.NewServeMux()
+				mux.Handle("/", api)
+				return mux
+			},
+		},
+		{
+			name: "under a ServeMux, behind MaxBytesHandler, as the walkthrough serves it",
+			wrap: func(api http.Handler) http.Handler {
+				mux := http.NewServeMux()
+				mux.Handle("/", http.MaxBytesHandler(api, 64<<10))
+				return mux
+			},
+		},
+		{
+			name: "behind MaxBytesHandler",
+			wrap: func(api http.Handler) http.Handler {
+				return http.MaxBytesHandler(api, 64<<10)
+			},
+		},
+		{
+			name: "behind TimeoutHandler",
+			wrap: func(api http.Handler) http.Handler {
+				return http.TimeoutHandler(api, time.Minute, "timed out")
+			},
+		},
+		{
+			name: "under a ServeMux, behind handlers of the end user's that each pass on a clone",
+			wrap: func(api http.Handler) http.Handler {
+				clone := func(next http.Handler) http.Handler {
+					return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						next.ServeHTTP(w, r.Clone(r.Context()))
+					})
+				}
+				mux := http.NewServeMux()
+				mux.Handle("/", clone(clone(api)))
+				return mux
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var names, routes []string
+			synctest.Test(t, func(t *testing.T) {
+				s := serve(t, func(s *humus.Setup) (http.Handler, error) {
+					api, err := newAPI(s, []openapi.Operation{
+						openapi.Post(items, addItem, jsonDecoder, jsonEncoder, openapi.Status(http.StatusCreated)),
+					})
+					if err != nil {
+						return nil, err
+					}
+					return tc.wrap(api), nil
+				})
+
+				r := s.do(http.MethodPost, "/carts/c-1/items", "application/json", `{"name":"tea","quantity":2}`)
+				require.Equal(t, http.StatusCreated, r.status)
+
+				s.stop()
+				names = spanNames(s.tel)
+				routes = durationRoutes(t, s.tel)
+			})
+			t.Logf("span names %q, http.server.request.duration routes %q", names, routes)
+			require.Equal(t, []string{"POST /carts/{cartId}/items"}, names)
+			require.Equal(t, []string{"/carts/{cartId}/items"}, routes)
+		})
+	}
 }
 
 func TestAPI_unescapes_path_values(t *testing.T) {
