@@ -324,15 +324,22 @@ of a humus App:
   RPCs through the App's [drain](/humus/lifecycle/#the-drain), while
   load balancers stop sending it traffic. An RPC that arrives during the drain
   is served, and an RPC in flight finishes.
-- **`Shutdown` ends every stream,** as [Streams at shutdown](#streams-at-shutdown)
-  describes, **and then calls `GracefulStop`.** That stops accepting
-  connections, sends every client a GOAWAY, and waits for the RPCs in flight
-  to finish. gRPC connections are long-lived, and the GOAWAY is what moves a
-  client off a terminating pod: it opens its next connection elsewhere.
+- **`Shutdown` calls `GracefulStop`.** That stops accepting connections, sends
+  every client a GOAWAY, and waits for the RPCs in flight to finish. gRPC
+  connections are long-lived, and the GOAWAY is what moves a client off a
+  terminating pod: it opens its next connection elsewhere. **Once every
+  connection has sent its GOAWAY, `Shutdown` ends every stream,** as
+  [Streams at shutdown](#streams-at-shutdown) describes.
 - **When the grace period runs out first, `Shutdown` calls `Stop`,** which
   closes every connection and cancels every RPC's context. With
   `grpc.WaitForHandlers(true)`, which humus sets, `Stop` then waits for every
   handler to return. The App exits 1 with a `*humus.GracePeriodError`.
+
+grpc-go sends no GOAWAY, and doesn't stop, until every connection it has
+accepted has finished its TLS handshake, which it allows two minutes by
+default. So `Shutdown` first closes every connection still in its handshake,
+and every connection accepted after. Such a connection carries no RPC yet,
+and its client dials again, and reaches another pod.
 
 **A handler returns once its context is done.** `Stop` waits for every
 handler, so a handler that ignores its context holds the App up past the grace
@@ -346,11 +353,11 @@ A stream that runs until its client leaves, such as a subscription, would hold
 So `Shutdown` ends every stream, with a status the client can act on. A stream
 interceptor of humus's gives every streaming RPC's handler a context of its
 own, derived from the RPC's, which `Shutdown` cancels. That covers server,
-client and bidirectional streams. When `Shutdown` starts:
+client and bidirectional streams. Once every connection has sent its client a
+GOAWAY:
 
-- **it cancels the context of every stream in flight,** before it calls
-  `GracefulStop`. A stream that starts after that gets a context that is
-  already cancelled;
+- **`Shutdown` cancels the context of every stream in flight.** A stream that
+  starts after that gets a context that is already cancelled;
 - **when a handler then returns nil, an error that is `context.Canceled`, or a
   status with `codes.Canceled`,** the stream ends with `codes.Unavailable` and
   the message `server is shutting down`. Without that, grpc-go would end it
@@ -361,9 +368,11 @@ client and bidirectional streams. When `Shutdown` starts:
 - **unary RPCs are not cancelled.** They finish within the grace period.
 
 `GracefulStop` keeps each connection open until its streams have ended, so the
-status reaches the client, in the stream's trailers. `Unavailable` is gRPC's
-code for a condition the client corrects by retrying, so the end user's client
-reconnects on it:
+status reaches the client, in the stream's trailers. The trailers follow the
+GOAWAY on the connection, so the client has read the GOAWAY by the time its
+stream ends, and a stream it opens again at once goes over a new connection.
+`Unavailable` is gRPC's code for a condition the client corrects by retrying,
+so the end user's client reconnects on it:
 
 ```go
 // receive is the end user's client of a subscription: it receives from
@@ -392,8 +401,8 @@ breaker of a client whose streams it ends, and the client's reconnect goes
 through, as
 [Calling gRPC services](/humus/grpc-client/#streams) describes.
 
-The streams are cancelled when `Shutdown` starts, after the drain, and not
-when `Serve`'s context is done. During the drain, a load balancer may still
+The streams are cancelled at `Shutdown`, after the drain, and not when
+`Serve`'s context is done. During the drain, a load balancer may still
 route a client that reconnects back to this pod.
 
 ### A handler blocked in `Recv`
@@ -430,8 +439,8 @@ the telemetry `Builder` as `humus.Main`'s:
   GOAWAY. Streams that never end don't use it up, since `Shutdown` ends them.
 
 From SIGTERM, then: the Service serves through the 5s drain; `Shutdown` then
-ends every stream and waits up to 15s for the RPCs in flight, and stops what
-is left; and the telemetry's shutdown, `telemetry.Settings.ShutdownTimeout`,
+sends every client a GOAWAY, ends every stream, waits up to 15s for the RPCs
+in flight, and stops what is left; and the telemetry's shutdown, `telemetry.Settings.ShutdownTimeout`,
 takes up to 5s more. The worst case is 25s, the budget that `humus.Main` keeps
 within Kubernetes' default `terminationGracePeriodSeconds` of 30s. A service
 whose RPCs all finish during the drain exits 5s after SIGTERM, when the drain

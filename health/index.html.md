@@ -388,8 +388,9 @@ probes: grpchealth.Settings{
 
 The port stays plaintext until Kubernetes' `grpc` probes use TLS without a
 feature gate. TLS is made required on it then, by a proposal of its own.
-`Shutdown` ends every stream, a `Watch` included, with `Unavailable`, as a
-`grpcserver.Service` does, and then stops the server gracefully.
+`Shutdown` stops the server gracefully, and ends every stream, a `Watch`
+included, with `Unavailable` once it has sent every client a GOAWAY, as a
+`grpcserver.Service` does.
 
 ### The HTTP answers
 
