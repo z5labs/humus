@@ -3,10 +3,10 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-// Package discover finds what flaky runs: the repository's modules, and the
-// packages in them that have tests at each level. It keeps no list of either,
-// so adding or removing a module, a package or a test changes nothing in
-// flaky.
+// Package discover finds what flaky runs: the repository's modules, the
+// packages in them that have tests at each level, and the walkthroughs. It
+// keeps no list of any of them, so adding or removing a module, a package, a
+// test or a walkthrough changes nothing in flaky.
 //
 // A level is the tests a build tag adds. The unit level is the untagged
 // tests; any other level is named after its tag, such as testcontainers, and
@@ -265,6 +265,60 @@ func (m matcher) overlaps(module string) bool {
 		return true
 	}
 	return m.subdir && strings.HasPrefix(module, m.dir+"/")
+}
+
+// Walkthrough is a module that deploys onto a kind cluster: one with a
+// Dockerfile and a deploy/kind/up.sh. Its functional tests are its packages at
+// the functional level.
+type Walkthrough struct {
+	// Module is its module's directory, relative to the repository's
+	// root, such as example/wallet.
+	Module string `json:"module"`
+	// Name is its directory's name, such as wallet, which its image is
+	// tagged with.
+	Name string `json:"name"`
+}
+
+// Dockerfile returns the path of the walkthrough's Dockerfile, under root.
+func (w Walkthrough) Dockerfile(root string) string {
+	return filepath.Join(root, filepath.FromSlash(w.Module), "Dockerfile")
+}
+
+// Up returns the path of the walkthrough's deploy/kind/up.sh, under root.
+func (w Walkthrough) Up(root string) string {
+	return filepath.Join(root, filepath.FromSlash(w.Module), "deploy", "kind", "up.sh")
+}
+
+// Walkthroughs returns the modules, of the directories modules under root,
+// that are walkthroughs, in their order. Two walkthroughs can't share a name,
+// since each one's image is tagged with it.
+func Walkthroughs(root string, modules []string) ([]Walkthrough, error) {
+	var found []Walkthrough
+	names := map[string]string{}
+	for _, module := range modules {
+		w := Walkthrough{Module: module, Name: path.Base(module)}
+		ok := true
+		for _, file := range []string{w.Dockerfile(root), w.Up(root)} {
+			info, err := os.Stat(file)
+			switch {
+			case os.IsNotExist(err):
+				ok = false
+			case err != nil:
+				return nil, err
+			case !info.Mode().IsRegular():
+				ok = false
+			}
+		}
+		if !ok {
+			continue
+		}
+		if other, dup := names[w.Name]; dup {
+			return nil, fmt.Errorf("the walkthroughs %s and %s share the name %s", other, module, w.Name)
+		}
+		names[w.Name] = module
+		found = append(found, w)
+	}
+	return found, nil
 }
 
 var goVersionLine = regexp.MustCompile(`go-version:\s*['"]?([0-9][0-9.]*)['"]?`)

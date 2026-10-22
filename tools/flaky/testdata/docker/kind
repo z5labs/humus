@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 Z5Labs and Contributors
+#
+# This software is released under the MIT License.
+# https://opensource.org/licenses/MIT
+
+# A stand-in for the kind command, for the tests that need no Docker. Its
+# state is in files beside it:
+#
+#   kind.log            kind create cluster and kind delete cluster append
+#                       create <name> and delete <name> here
+#   create-fails-<name> when it exists, kind create cluster fails for the
+#                       cluster <name>
+#
+# kind get nodes lists one node, <name>-control-plane.
+
+dir=$(dirname "$0")
+name=
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+  if [[ ${args[i]} == --name ]]; then
+    name=${args[i + 1]}
+  fi
+done
+case "$1 $2" in
+  "create cluster")
+    echo "create $name" >>"$dir/kind.log"
+    if [[ -e $dir/create-fails-$name ]]; then
+      echo "ERROR: failed to create cluster: node(s) already exist for a cluster with the name \"$name\"" >&2
+      exit 1
+    fi
+    ;;
+  "get nodes")
+    echo "$name-control-plane"
+    ;;
+  "delete cluster")
+    echo "delete $name" >>"$dir/kind.log"
+    ;;
+  *)
+    echo "kind: unknown command $*" >&2
+    exit 1
+    ;;
+esac

@@ -423,3 +423,20 @@ func (c *countingRunner) Run(ctx context.Context, r Run) {
 	}
 	c.f.Run(ctx, r)
 }
+
+func TestSchedule_runs_a_first_task_before_every_task_that_is_not(t *testing.T) {
+	lanes := [][]int{{0}}
+	other := Pair{Package: 0, CPU: 1, Load: 1}
+	first := Pair{Package: 1, CPU: 1, Load: 1, Level: 1}
+	var f *fakeRunner
+	synctest.Test(t, func(t *testing.T) {
+		f = newFakeRunner(lanes, func(Run) time.Duration { return time.Second })
+		require.NoError(t, Schedule(t.Context(), lanes, []Task{{Pair: other, Count: 3}, {Pair: first, Count: 2, First: true}}, nil, f))
+	})
+	require.Empty(t, f.violations)
+	var order []Pair
+	for _, s := range f.started {
+		order = append(order, s.run.Pair)
+	}
+	require.Equal(t, []Pair{first, first, other, other, other}, order, "the first task's runs go before the other's, though it is further behind")
+}

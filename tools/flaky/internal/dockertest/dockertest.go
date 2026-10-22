@@ -3,8 +3,8 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-// Package dockertest puts a stand-in for the docker command on PATH, for the
-// tests that need no Docker.
+// Package dockertest puts stand-ins for the docker, kind and kubectl commands
+// on PATH, for the tests that need no Docker.
 package dockertest
 
 import (
@@ -19,17 +19,19 @@ import (
 	"github.com/z5labs/bedrock"
 )
 
-// Fake puts a copy of testdata/docker/docker first on PATH for the rest of
-// the test, and returns its directory, which holds its state: see the
-// script's comment.
+// Fake puts copies of testdata/docker/docker, kind and kubectl first on PATH
+// for the rest of the test, and returns their directory, which holds their
+// state: see each script's comment.
 func Fake(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
 	require.True(t, ok)
-	script, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", "..", "testdata", "docker", "docker"))
-	require.NoError(t, err)
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), script, 0o755))
+	for _, name := range []string{"docker", "kind", "kubectl"} {
+		script, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", "..", "testdata", "docker", name))
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), script, 0o755))
+	}
 	path, err := bedrock.OSEnvironment{}.Value("PATH")
 	require.NoError(t, err)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+path)

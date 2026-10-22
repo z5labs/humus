@@ -28,3 +28,10 @@ func TestChild_is_never_nil_so_a_child_never_inherits_the_real_environment(t *te
 	require.NotNil(t, got)
 	require.Empty(t, got)
 }
+
+func TestWith_sets_a_variable_in_place_of_any_value_it_had(t *testing.T) {
+	in := []string{"PATH=/bin", "KIND_CLUSTER_NAME=kind", "KIND_CLUSTER_NAME_X=y"}
+	require.Equal(t, []string{"PATH=/bin", "KIND_CLUSTER_NAME_X=y", "KIND_CLUSTER_NAME=flaky-wallet"}, env.With(in, "KIND_CLUSTER_NAME", "flaky-wallet"))
+	require.Equal(t, []string{"PATH=/bin", "KIND_CLUSTER_NAME=kind", "KIND_CLUSTER_NAME_X=y"}, in, "env isn't changed")
+	require.Equal(t, []string{"A=b"}, env.With(nil, "A", "b"))
+}
