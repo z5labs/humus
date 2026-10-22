@@ -352,10 +352,10 @@ short list per scenario.>
   each shows that the fake can't.
 - **A flaky test's story is checked with `flaky stress`.** A report is of a flaky test when the
   test fails on some runs and passes on others. `flaky report` posts only reports of flaky tests,
-  so every report it posts is one. Then the story asks for `flaky stress -run '<the test>' -count <n> <package>` to report no failures or
-  hangs at any pair of CPU count and load, and for its pull request to give that output. So the
-  fix is shown to hold at every CPU count and load, not only at the one a hand-written command
-  tried.
+  so every report it posts is one. Then the story asks for
+  `flaky stress -run '<the test>' -count <n> <package>` to report no failures or hangs at any
+  pair of CPU count and load, and for its pull request to give that output. So the fix is shown
+  to hold at every CPU count and load, not only at the one a hand-written command tried.
   - `<the test>` is the test's `-run` pattern, such as `'^TestX$/^a_case$'`, and `<package>`
     is its package from the repository's root, such as `./grpc/grpcserver`. When the test is
     behind a build tag, add `-tags <tag>`, so only the test's own level runs.
