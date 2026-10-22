@@ -33,10 +33,13 @@ import (
 	"time"
 )
 
-// Pair is one package at one pair of CPU count and load.
+// Pair is one package at one pair of CPU count and load, or one test of it.
 type Pair struct {
 	// Package is the package's index.
 	Package int
+	// Test is the one test a run of the pair runs alone, or "" when it
+	// runs the whole package.
+	Test string
 	// CPU is the run's CPU count.
 	CPU int
 	// Load is how many runs, at most, are pinned to each of the run's

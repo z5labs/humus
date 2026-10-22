@@ -55,33 +55,52 @@ func TestStress_reports_a_test_that_failed_and_exits_1(t *testing.T) {
 	needCores(t, 2)
 	repo := repotest.New(t, "0.0.1")
 	out := filepath.Join(t.TempDir(), "out")
-	st, stdout, stderr := stressIn(t, repo, "stress", "-cpu", "1,2", "-count", "2", "-keep", "0", "-o", out)
+	st, stdout, stderr := stressIn(t, repo, "stress", "-cpu", "1,2", "-count", "2", "-confirm", "3", "-keep", "0", "-o", out)
 	require.Equal(t, 1, st.Code(), "stdout:\n%s\nstderr:\n%s", stdout, stderr)
 
 	require.Contains(t, stderr, "but build.yaml sets 0.0.1", "it warns that the local Go isn't CI's")
 	require.Contains(t, stderr, "found 3 packages with tests")
 	require.Contains(t, stderr, "built 3 test binaries")
 
+	require.Contains(t, stderr, "confirming 1 tests, 3 times at each pair of CPU count and load")
 	require.Contains(t, stdout, "FAILING: failed or hung every run at some pair of CPU count and load\n\ntwocpus  TestFailsOnTwoCPUs\n")
-	require.Contains(t, stdout, "    cpu 1 load 1           0         0         2\n")
-	require.Contains(t, stdout, "    cpu 2 load 1           2         0         2\n")
-	require.Contains(t, stdout, "    cpu 2 load 2           2         0         2\n", "-load is 1 and 2 by default")
+	require.Contains(t, stdout, "    cpu 1 load 1           0         0         3\n", "the table gives the confirm runs, at every pair")
+	require.Contains(t, stdout, "    cpu 2 load 1           3         0         3\n")
+	require.Contains(t, stdout, "    cpu 2 load 2           3         0         3\n", "-load is 1 and 2 by default")
+	require.Contains(t, stdout, "    6 failures, 0 hangs in 12 confirm runs\n")
 	require.Contains(t, stdout, "runtime.NumCPU() is 2")
-	require.Contains(t, stdout, "reproduce: flaky stress -run '^TestFailsOnTwoCPUs$' -cpu 2 -load 1 -count 2 ./twocpus\n")
-	require.Contains(t, stdout, "taskset -c 0-1 go -C . test -race -cover -count=2 -cpu 2 -timeout 2m0s -run '^TestFailsOnTwoCPUs$' ./twocpus\n")
+	require.Contains(t, stdout, "reproduce: flaky stress -run '^TestFailsOnTwoCPUs$' -cpu 2 -load 1 -count 3 ./twocpus\n")
+	require.Contains(t, stdout, "taskset -c 0-1 go -C . test -race -cover -count=3 -cpu 2 -timeout 2m0s -run '^TestFailsOnTwoCPUs$' ./twocpus\n")
 	require.Contains(t, stdout, "3 tests passed every run\n", "TestA, TestAToo and TestB")
+	require.Contains(t, stdout, "confirmed 1 test in 12 runs\n")
 	require.Contains(t, stdout, "phases: discovery ")
+	require.Contains(t, stdout, ", confirm ")
 	require.NotContains(t, stdout, "FLAKY")
 
 	saved, err := os.ReadDir(filepath.Join(out, "twocpus", "TestFailsOnTwoCPUs"))
 	require.NoError(t, err)
-	require.Len(t, saved, 4, "each failure's whole output is saved")
+	require.Len(t, saved, 4+6, "each failure's whole output is saved, the sweep's and the confirm runs'")
+}
+
+func TestStress_runs_the_tests_that_match_run_count_times_and_confirms_none(t *testing.T) {
+	needCores(t, 2)
+	repo := repotest.New(t, "0.0.1")
+	st, stdout, stderr := stressIn(t, repo, "stress", "-cpu", "1,2", "-load", "1", "-count", "2", "-confirm", "3", "-keep", "0", "-run", "^TestFailsOnTwoCPUs$", "./twocpus")
+	require.Equal(t, 1, st.Code(), "stdout:\n%s\nstderr:\n%s", stdout, stderr)
+	require.NotContains(t, stderr, "confirming")
+	require.Contains(t, stdout, "    cpu 1 load 1           0         0         2\n")
+	require.Contains(t, stdout, "    cpu 2 load 1           2         0         2\n")
+	require.Contains(t, stdout, "    2 failures, 0 hangs in 4 runs\n")
+	require.Contains(t, stdout, "-count 2 ./twocpus\n")
+	require.NotContains(t, stdout, "confirm run")
+	require.NotContains(t, stdout, "\nconfirmed ")
+	require.NotContains(t, stdout, ", confirm ")
 }
 
 func TestStress_writes_the_report_as_JSON(t *testing.T) {
 	needCores(t, 2)
 	repo := repotest.New(t, "0.0.1")
-	st, stdout, stderr := stressIn(t, repo, "stress", "-cpu", "2", "-load", "2", "-count", "1", "-keep", "0", "-timeout", "1m", "-json", "./twocpus")
+	st, stdout, stderr := stressIn(t, repo, "stress", "-cpu", "2", "-load", "2", "-count", "1", "-confirm", "2", "-keep", "0", "-timeout", "1m", "-json", "./twocpus")
 	require.Equal(t, 1, st.Code(), stderr)
 	var rep results.Report
 	require.NoError(t, json.Unmarshal([]byte(stdout), &rep))
@@ -92,9 +111,14 @@ func TestStress_writes_the_report_as_JSON(t *testing.T) {
 	require.Equal(t, []int{2}, rep.Loads)
 	require.Len(t, rep.Failing, 1)
 	require.Equal(t, "TestFailsOnTwoCPUs", rep.Failing[0].Test)
-	require.Equal(t, []results.Pair{{CPU: 2, Load: 2, Runs: 1, Failures: 1}}, rep.Failing[0].Pairs)
-	require.Equal(t, "flaky stress -run '^TestFailsOnTwoCPUs$' -cpu 2 -load 2 -count 1 -timeout 1m0s ./twocpus", rep.Failing[0].Reproduce)
-	require.Len(t, rep.Phases, 3)
+	require.True(t, rep.Failing[0].Confirmed)
+	require.Equal(t, []results.Pair{{CPU: 2, Load: 2, Runs: 2, Failures: 2}}, rep.Failing[0].Pairs)
+	require.Equal(t, "flaky stress -run '^TestFailsOnTwoCPUs$' -cpu 2 -load 2 -count 2 -timeout 1m0s ./twocpus", rep.Failing[0].Reproduce)
+	require.Equal(t, 2, rep.Confirm)
+	require.Equal(t, 1, rep.Confirmed)
+	require.Equal(t, 2, rep.ConfirmRuns)
+	require.Len(t, rep.Phases, 4)
+	require.Equal(t, "confirm", rep.Phases[3].Name)
 	require.Regexp(t, `/flaky-\d{8}T\d{6}$`, rep.Output, "the output goes under TMPDIR by default")
 }
 
@@ -122,6 +146,7 @@ func TestStress_exits_2_when_it_cannot_run(t *testing.T) {
 	}{
 		{"a flag it doesn't know", []string{"stress", "-nope"}, "flag provided but not defined"},
 		{"a count below 1", []string{"stress", "-count", "0"}, "-count must be at least 1"},
+		{"a confirm count below 1", []string{"stress", "-confirm", "0"}, "-confirm must be at least 1"},
 		{"a timeout that isn't positive", []string{"stress", "-timeout", "0s"}, "-timeout must be positive"},
 		{"a CPU count that isn't one", []string{"stress", "-cpu", "1,x"}, `"x" is not a CPU count`},
 		{"a load that isn't one", []string{"stress", "-load", "0"}, `"0" is not a load`},

@@ -346,3 +346,191 @@ func TestWriteJSON_writes_the_same_report(t *testing.T) {
 	require.Equal(t, map[string]any{"cpu": 2.0, "load": 2.0, "runs": 3.0, "failures": 1.0, "hangs": 0.0}, pairs[3])
 	require.Len(t, got["failing"], 1)
 }
+
+func newConfirmResults(t *testing.T) (*results.Results, string) {
+	out := t.TempDir()
+	return results.New(results.Config{
+		Packages:       pkgs,
+		CPUs:           []int{1, 2},
+		Loads:          []int{1, 2},
+		Count:          3,
+		Confirm:        4,
+		Timeout:        2 * time.Minute,
+		DefaultTimeout: 2 * time.Minute,
+		Out:            out,
+	}), out
+}
+
+// confirmSweep adds a sweep in which TestX/a_case fails once at cpu 1 load 1,
+// and TestH passes every run, then four confirm runs of TestX/a_case at each
+// pair. Its confirm runs fail twice at cpu 2 load 2 and hang once at cpu 2
+// load 1.
+func confirmSweep(t *testing.T, r *results.Results) {
+	r.Listed(0, []string{"TestX"})
+	r.Listed(1, []string{"TestH"})
+	for _, cpu := range []int{1, 2} {
+		for _, load := range []int{1, 2} {
+			for i := range 3 {
+				res := passed("TestX", "TestX/a_case")
+				if cpu == 1 && load == 1 && i == 0 {
+					res.Tests[1] = run.Test{Name: "TestX/a_case", Outcome: run.Fail, Output: []string{"    x_test.go:12: boom"}}
+				}
+				require.NoError(t, r.Add(0, cpu, load, res))
+				require.NoError(t, r.Add(1, cpu, load, passed("TestH")))
+			}
+		}
+	}
+	for _, cpu := range []int{1, 2} {
+		for _, load := range []int{1, 2} {
+			for i := range 4 {
+				res := passed("TestX", "TestX/a_case")
+				if cpu == 2 && load == 2 && i < 2 {
+					res.Tests[1] = run.Test{Name: "TestX/a_case", Outcome: run.Fail}
+					res.Output = []byte("--- FAIL: TestX/a_case\n")
+				}
+				if cpu == 2 && load == 1 && i == 3 {
+					res.Tests[1] = run.Test{Name: "TestX/a_case", Outcome: run.Hang}
+					res.TimedOut = true
+				}
+				require.NoError(t, r.Confirmed(0, "TestX/a_case", cpu, load, res))
+			}
+		}
+	}
+}
+
+func TestReport_gives_a_confirmed_test_s_confirm_runs(t *testing.T) {
+	r, out := newConfirmResults(t)
+	confirmSweep(t, r)
+	rep := r.Report()
+	require.Equal(t, 4, rep.Confirm)
+	require.Equal(t, 1, rep.Confirmed)
+	require.Equal(t, 16, rep.ConfirmRuns)
+	require.Empty(t, rep.Failing)
+	require.Len(t, rep.Flaky, 1)
+	x := rep.Flaky[0]
+	require.True(t, x.Confirmed)
+	require.Equal(t, []results.Pair{
+		{CPU: 1, Load: 1, Runs: 4},
+		{CPU: 1, Load: 2, Runs: 4},
+		{CPU: 2, Load: 1, Runs: 4, Hangs: 1},
+		{CPU: 2, Load: 2, Runs: 4, Failures: 2},
+	}, x.Pairs, "the table gives its confirm runs, not its sweep runs")
+	require.Equal(t, 16, x.Runs)
+	require.Equal(t, 2, x.Failures)
+	require.Equal(t, 1, x.Hangs)
+	require.Equal(t, []string{"    x_test.go:12: boom"}, x.FirstFailure, "the first failure is the sweep's")
+	require.Equal(t, 1, x.FirstFailureCPU)
+	require.Equal(t, "flaky stress -run '^TestX$/^a_case$' -cpu 2 -load 2 -count 4 ./grpc/grpchealth", x.Reproduce, "the pair where its confirm runs failed most, at the confirm count")
+	require.Equal(t, "taskset -c 0-1 go -C grpc test -race -cover -count=4 -cpu 2 -timeout 2m0s -run '^TestX$/^a_case$' ./grpchealth", x.ReproduceGoTest)
+	require.Equal(t, 1, rep.Passed, "TestH")
+
+	saved, err := os.ReadFile(filepath.Join(out, "grpc", "grpchealth", "TestX", "a_case", "confirm-cpu2-load2-2.txt"))
+	require.NoError(t, err)
+	require.Equal(t, "--- FAIL: TestX/a_case\n", string(saved), "a failed confirm run's whole output is saved")
+	entries, err := os.ReadDir(filepath.Join(out, "grpc", "grpchealth", "TestX", "a_case"))
+	require.NoError(t, err)
+	require.Len(t, entries, 4, "one sweep failure and three failed or hung confirm runs")
+}
+
+func TestReport_lists_a_test_apart_when_it_failed_every_confirm_run_at_some_pair(t *testing.T) {
+	r, _ := newConfirmResults(t)
+	require.NoError(t, r.Add(1, 1, 1, run.Result{Tests: []run.Test{{Name: "TestH", Outcome: run.Fail}}}))
+	require.NoError(t, r.Add(1, 1, 1, passed("TestH")))
+	for range 4 {
+		require.NoError(t, r.Confirmed(1, "TestH", 2, 1, run.Result{Tests: []run.Test{{Name: "TestH", Outcome: run.Fail}}}))
+		require.NoError(t, r.Confirmed(1, "TestH", 1, 1, passed("TestH")))
+	}
+	rep := r.Report()
+	require.Empty(t, rep.Flaky)
+	require.Len(t, rep.Failing, 1)
+	require.True(t, rep.Failing[0].Confirmed)
+}
+
+func TestConfirmed_counts_a_run_by_the_test_and_its_subtests(t *testing.T) {
+	testCases := []struct {
+		name string
+		res  run.Result
+		want results.Pair
+	}{
+		{"the test passed", passed("TestX", "TestX/a"), results.Pair{CPU: 1, Load: 1, Runs: 1}},
+		{"the test failed", run.Result{Tests: []run.Test{{Name: "TestX", Outcome: run.Fail}}}, results.Pair{CPU: 1, Load: 1, Runs: 1, Failures: 1}},
+		{"a subtest failed", run.Result{Tests: []run.Test{{Name: "TestX"}, {Name: "TestX/a", Outcome: run.Fail}}}, results.Pair{CPU: 1, Load: 1, Runs: 1, Failures: 1}},
+		{"a subtest hung and another failed", run.Result{Tests: []run.Test{{Name: "TestX"}, {Name: "TestX/a", Outcome: run.Hang}, {Name: "TestX/b", Outcome: run.Fail}}}, results.Pair{CPU: 1, Load: 1, Runs: 1, Hangs: 1}},
+		{"the run failed outside any test", run.Result{Tests: []run.Test{{Name: "TestX"}}, PackageFailed: true}, results.Pair{CPU: 1, Load: 1, Runs: 1, Failures: 1}},
+		{"the run failed before the test started", run.Result{PackageFailed: true}, results.Pair{CPU: 1, Load: 1, Runs: 1, Failures: 1}},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := results.New(results.Config{Packages: pkgs, CPUs: []int{1}, Loads: []int{1}, Count: 1, Confirm: 1, Out: t.TempDir()})
+			require.NoError(t, r.Add(0, 1, 1, run.Result{Tests: []run.Test{{Name: "TestX", Outcome: run.Fail}}}))
+			require.NoError(t, r.Confirmed(0, "TestX", 1, 1, tc.res))
+			rep := r.Report()
+			tests := append(rep.Flaky, rep.Failing...)
+			require.Len(t, tests, 1)
+			require.True(t, tests[0].Confirmed)
+			require.Equal(t, []results.Pair{tc.want}, tests[0].Pairs)
+		})
+	}
+}
+
+func TestConfirmed_counts_no_run_in_which_the_test_never_started(t *testing.T) {
+	r := results.New(results.Config{Packages: pkgs, CPUs: []int{1}, Loads: []int{1}, Count: 1, Confirm: 1, Out: t.TempDir()})
+	require.NoError(t, r.Add(0, 1, 1, run.Result{Tests: []run.Test{{Name: "TestX", Outcome: run.Fail}}}))
+	require.NoError(t, r.Confirmed(0, "TestX", 1, 1, passed("TestXY")))
+	rep := r.Report()
+	require.Zero(t, rep.Confirmed)
+	require.Len(t, rep.Failing, 1)
+	require.False(t, rep.Failing[0].Confirmed, "a run that never started the test says nothing about it")
+	require.Equal(t, []results.Pair{{CPU: 1, Load: 1, Runs: 1, Failures: 1}}, rep.Failing[0].Pairs, "so the table gives its sweep runs")
+}
+
+func TestConfirmed_fails_when_the_output_cannot_be_saved(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "file")
+	require.NoError(t, os.WriteFile(file, nil, 0o644))
+	r := results.New(results.Config{Packages: pkgs, CPUs: []int{1}, Loads: []int{1}, Count: 1, Confirm: 1, Out: file})
+	require.Error(t, r.Confirmed(0, "TestX", 1, 1, run.Result{Tests: []run.Test{{Name: "TestX", Outcome: run.Fail}}}))
+}
+
+func TestWriteText_of_a_confirmed_test(t *testing.T) {
+	r, out := newConfirmResults(t)
+	confirmSweep(t, r)
+	rep := r.Report()
+	rep.Phases = []results.Phase{results.NewPhase("sweep", time.Minute), results.NewPhase("confirm", 2*time.Minute)}
+	var buf bytes.Buffer
+	require.NoError(t, results.WriteText(&buf, rep))
+	want := `FLAKY: failed or hung in some runs
+
+grpc/grpchealth  TestX/a_case
+                    failures     hangs      runs
+    cpu 1 load 1           0         0         4
+    cpu 1 load 2           0         0         4
+    cpu 2 load 1           0         1         4
+    cpu 2 load 2           2         0         4
+    2 failures, 1 hang in 16 confirm runs
+    first failure, at cpu 1 load 1:
+            x_test.go:12: boom
+    output:    ` + filepath.Join(out, "grpc/grpchealth/TestX/a_case") + `
+    reproduce: flaky stress -run '^TestX$/^a_case$' -cpu 2 -load 2 -count 4 ./grpc/grpchealth
+               taskset -c 0-1 go -C grpc test -race -cover -count=4 -cpu 2 -timeout 2m0s -run '^TestX$/^a_case$' ./grpchealth
+
+1 test passed every run
+confirmed 1 test in 16 runs
+phases: sweep 1m0s, confirm 2m0s
+`
+	require.Equal(t, want, buf.String())
+}
+
+func TestWriteJSON_gives_the_confirm_runs(t *testing.T) {
+	r, _ := newConfirmResults(t)
+	confirmSweep(t, r)
+	var buf bytes.Buffer
+	require.NoError(t, results.WriteJSON(&buf, r.Report()))
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &got))
+	require.InDelta(t, 4, got["confirm"], 0)
+	require.InDelta(t, 1, got["confirmed"], 0)
+	require.InDelta(t, 16, got["confirmRuns"], 0)
+	x := got["flaky"].([]any)[0].(map[string]any)
+	require.Equal(t, true, x["confirmed"])
+	require.InDelta(t, 16, x["runs"], 0)
+}

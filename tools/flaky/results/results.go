@@ -4,7 +4,8 @@
 // https://opensource.org/licenses/MIT
 
 // Package results counts each test's failures and hangs over a sweep's runs,
-// saves its failures' output, and writes the report.
+// and over its confirm runs, saves its failures' output, and writes the
+// report.
 package results
 
 import (
@@ -35,7 +36,11 @@ type Config struct {
 	Loads    []int
 	// Count is how many times each package ran at each pair of CPU count
 	// and load.
-	Count   int
+	Count int
+	// Confirm is how many times each test that failed or hung in the sweep
+	// ran alone at each pair of CPU count and load, or 0 for no confirm
+	// runs.
+	Confirm int
 	Timeout time.Duration
 	// DefaultTimeout is -timeout's default, which the reproducing
 	// commands leave out.
@@ -63,6 +68,22 @@ type entry struct {
 	first     []string
 	firstPair pair
 	saved     int
+	// confirm are the test's confirm runs, or nil when it wasn't
+	// confirmed.
+	confirm      map[pair]*counts
+	confirmSaved int
+}
+
+// failed reports whether the test failed or hung in any run.
+func (e *entry) failed() bool {
+	for _, table := range []map[pair]*counts{e.pairs, e.confirm} {
+		for _, c := range table {
+			if c.failures+c.hangs > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // pair is a CPU count and a load.
@@ -111,15 +132,78 @@ func (r *Results) Add(pkg, cpu, load int, res run.Result) error {
 }
 
 func (r *Results) count(k key, at pair, outcome run.Outcome, output []string, res run.Result) error {
+	e := r.entry(k)
+	if !tally(e.pairs, at, outcome) {
+		return nil
+	}
+	if e.first == nil {
+		e.first = firstLines(outcome, output, res)
+		e.firstPair = at
+	}
+	e.saved++
+	return r.save(k, fmt.Sprintf("cpu%d-load%d-%d.txt", at.cpu, at.load, e.saved), res.Output)
+}
+
+// Confirmed counts one confirm run of the test named test, of the package at
+// index pkg, at CPU count cpu and load load: a run of that test alone.
+//
+// The run fails when the test or one of its subtests failed, or when it
+// failed outside any test, and hangs when the test or one of its subtests
+// hung. A run in which the test never started, and that didn't fail, says
+// nothing about the test, so it isn't counted. The whole output of a run that
+// failed or hung is saved under the test's directory.
+func (r *Results) Confirmed(pkg int, test string, cpu, load int, res run.Result) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	started := false
+	outcome := run.Pass
+	for _, t := range res.Tests {
+		if t.Name != test && !strings.HasPrefix(t.Name, test+"/") {
+			continue
+		}
+		started = true
+		switch {
+		case t.Outcome == run.Hang:
+			outcome = run.Hang
+		case t.Outcome == run.Fail && outcome != run.Hang:
+			outcome = run.Fail
+		}
+	}
+	if outcome == run.Pass && res.PackageFailed {
+		outcome = run.Fail
+	}
+	if !started && outcome == run.Pass {
+		return nil
+	}
+	k := key{pkg, test}
+	e := r.entry(k)
+	if e.confirm == nil {
+		e.confirm = map[pair]*counts{}
+	}
+	at := pair{cpu, load}
+	if !tally(e.confirm, at, outcome) {
+		return nil
+	}
+	e.confirmSaved++
+	return r.save(k, fmt.Sprintf("confirm-cpu%d-load%d-%d.txt", at.cpu, at.load, e.confirmSaved), res.Output)
+}
+
+func (r *Results) entry(k key) *entry {
 	e := r.tests[k]
 	if e == nil {
 		e = &entry{pairs: map[pair]*counts{}}
 		r.tests[k] = e
 	}
-	c := e.pairs[at]
+	return e
+}
+
+// tally counts a run at at with outcome in table, and reports whether it
+// failed or hung.
+func tally(table map[pair]*counts, at pair, outcome run.Outcome) bool {
+	c := table[at]
 	if c == nil {
 		c = &counts{}
-		e.pairs[at] = c
+		table[at] = c
 	}
 	c.runs++
 	switch outcome {
@@ -128,19 +212,18 @@ func (r *Results) count(k key, at pair, outcome run.Outcome, output []string, re
 	case run.Hang:
 		c.hangs++
 	default:
-		return nil
+		return false
 	}
-	if e.first == nil {
-		e.first = firstLines(outcome, output, res)
-		e.firstPair = at
-	}
-	e.saved++
+	return true
+}
+
+// save writes a run's whole output to the file name under k's directory.
+func (r *Results) save(k key, name string, output []byte) error {
 	dir := filepath.Join(r.cfg.Out, r.dir(k))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	name := fmt.Sprintf("cpu%d-load%d-%d.txt", at.cpu, at.load, e.saved)
-	return os.WriteFile(filepath.Join(dir, name), res.Output, 0o644)
+	return os.WriteFile(filepath.Join(dir, name), output, 0o644)
 }
 
 func firstLines(outcome run.Outcome, output []string, res run.Result) []string {
@@ -197,6 +280,14 @@ type Report struct {
 	// Count is how many times it ran each package at each pair of CPU
 	// count and load.
 	Count int `json:"count"`
+	// Confirm is how many times it ran each test that failed or hung in
+	// the sweep alone, at each pair of CPU count and load, or 0 when it
+	// had no confirm runs, as with -run.
+	Confirm int `json:"confirm"`
+	// Confirmed is the number of tests it confirmed, and ConfirmRuns the
+	// number of their confirm runs.
+	Confirmed   int `json:"confirmed"`
+	ConfirmRuns int `json:"confirmRuns"`
 	// Packages are the packages it ran.
 	Packages []discover.Package `json:"packages"`
 	// Output is the directory failures' output was saved under.
@@ -226,10 +317,13 @@ type Test struct {
 	Package    string `json:"package"`
 	ImportPath string `json:"importPath"`
 	// Test is the test's full name, or "" for a failure outside any test.
-	Test     string `json:"test"`
-	Runs     int    `json:"runs"`
-	Failures int    `json:"failures"`
-	Hangs    int    `json:"hangs"`
+	Test string `json:"test"`
+	// Confirmed reports that the test was confirmed, so Runs, Failures,
+	// Hangs and Pairs are its confirm runs, not its sweep runs.
+	Confirmed bool `json:"confirmed"`
+	Runs      int  `json:"runs"`
+	Failures  int  `json:"failures"`
+	Hangs     int  `json:"hangs"`
 	// Pairs are its runs, failures and hangs at each pair of CPU count
 	// and load.
 	Pairs []Pair `json:"pairs"`
@@ -242,7 +336,8 @@ type Test struct {
 	// Output is the directory its failures' whole output was saved to.
 	Output string `json:"output"`
 	// Reproduce is the command that reproduces it with flaky stress, at
-	// the pair where it failed most.
+	// the pair where it failed most: in its confirm runs, when it failed
+	// in any of them.
 	Reproduce string `json:"reproduce"`
 	// ReproduceGoTest is the command that reproduces it with go test,
 	// under taskset, at the CPU count of that pair. It can't reproduce a
@@ -280,6 +375,7 @@ func (r *Results) Report() Report {
 		CPUs:     r.cfg.CPUs,
 		Loads:    r.cfg.Loads,
 		Count:    r.cfg.Count,
+		Confirm:  r.cfg.Confirm,
 		Packages: r.cfg.Packages,
 		Output:   r.cfg.Out,
 		Flaky:    []Test{},
@@ -297,9 +393,14 @@ func (r *Results) Report() Report {
 		return strings.Compare(a.test, b.test)
 	})
 	for _, k := range keys {
-		t, failing := r.test(k, r.tests[k])
-		if t.Failures+t.Hangs == 0 {
+		e := r.tests[k]
+		if !e.failed() {
 			continue
+		}
+		t, failing := r.test(k, e)
+		if t.Confirmed {
+			rep.Confirmed++
+			rep.ConfirmRuns += t.Runs
 		}
 		bad[k] = true
 		if failing {
@@ -334,13 +435,15 @@ func (r *Results) test(k key, e *entry) (Test, bool) {
 		FirstFailureLoad: e.firstPair.load,
 		Output:           filepath.Join(r.cfg.Out, r.dir(k)),
 	}
+	table, count := e.pairs, r.cfg.Count
+	if e.confirm != nil {
+		table, count = e.confirm, r.cfg.Confirm
+		t.Confirmed = true
+	}
 	failing := false
-	var worst pair
-	worstRate := -1.0
 	for _, cpu := range r.cfg.CPUs {
 		for _, load := range r.cfg.Loads {
-			at := pair{cpu, load}
-			c := e.pairs[at]
+			c := table[pair{cpu, load}]
 			if c == nil {
 				c = &counts{}
 			}
@@ -351,28 +454,49 @@ func (r *Results) test(k key, e *entry) (Test, bool) {
 			if c.runs > 0 && c.failures+c.hangs == c.runs {
 				failing = true
 			}
-			if c.runs > 0 {
-				if rate := float64(c.failures+c.hangs) / float64(c.runs); rate > worstRate {
-					worst, worstRate = at, rate
-				}
-			}
 		}
 	}
-	t.Reproduce, t.ReproduceGoTest = r.reproduce(pkg, k.test, worst)
+	worst, rate := r.worst(table)
+	if rate <= 0 {
+		// It passed every confirm run, so its sweep runs say where it
+		// fails.
+		worst, _ = r.worst(e.pairs)
+	}
+	t.Reproduce, t.ReproduceGoTest = r.reproduce(pkg, k.test, worst, count)
 	return t, failing
 }
 
+// worst returns the pair at which the runs in table failed or hung most
+// often, and that rate, or -1 when table has no runs.
+func (r *Results) worst(table map[pair]*counts) (pair, float64) {
+	var worst pair
+	worstRate := -1.0
+	for _, cpu := range r.cfg.CPUs {
+		for _, load := range r.cfg.Loads {
+			at := pair{cpu, load}
+			c := table[at]
+			if c == nil || c.runs == 0 {
+				continue
+			}
+			if rate := float64(c.failures+c.hangs) / float64(c.runs); rate > worstRate {
+				worst, worstRate = at, rate
+			}
+		}
+	}
+	return worst, worstRate
+}
+
 // reproduce returns the commands that run test, or the whole package when
-// test is "", at the pair at, Count times. The go test command runs at at's
+// test is "", at the pair at, count times. The go test command runs at at's
 // CPU count, since it can't reproduce a load.
-func (r *Results) reproduce(pkg discover.Package, test string, at pair) (string, string) {
+func (r *Results) reproduce(pkg discover.Package, test string, at pair, count int) (string, string) {
 	cpu := at.cpu
 	pattern := RunPattern(test)
 	flaky := []string{"flaky", "stress"}
 	if pattern != "" {
 		flaky = append(flaky, "-run", quote(pattern))
 	}
-	flaky = append(flaky, "-cpu", strconv.Itoa(cpu), "-load", strconv.Itoa(at.load), "-count", strconv.Itoa(r.cfg.Count))
+	flaky = append(flaky, "-cpu", strconv.Itoa(cpu), "-load", strconv.Itoa(at.load), "-count", strconv.Itoa(count))
 	if r.cfg.Timeout != r.cfg.DefaultTimeout {
 		flaky = append(flaky, "-timeout", r.cfg.Timeout.String())
 	}
@@ -390,7 +514,7 @@ func (r *Results) reproduce(pkg discover.Package, test string, at pair) (string,
 		cores = "0-" + strconv.Itoa(cpu-1)
 	}
 	goTest := []string{"taskset", "-c", cores, "go", "-C", pkg.Module, "test", "-race", "-cover",
-		"-count=" + strconv.Itoa(r.cfg.Count), "-cpu", strconv.Itoa(cpu), "-timeout", r.cfg.Timeout.String()}
+		"-count=" + strconv.Itoa(count), "-cpu", strconv.Itoa(cpu), "-timeout", r.cfg.Timeout.String()}
 	if pattern != "" {
 		goTest = append(goTest, "-run", quote(pattern))
 	}
@@ -449,6 +573,9 @@ func WriteText(w io.Writer, rep Report) error {
 		p.printf("\n")
 	}
 	p.printf("%s passed every run\n", plural(rep.Passed, "test", "tests"))
+	if rep.Confirm > 0 {
+		p.printf("confirmed %s in %s\n", plural(rep.Confirmed, "test", "tests"), plural(rep.ConfirmRuns, "run", "runs"))
+	}
 	phases := make([]string, len(rep.Phases))
 	for i, ph := range rep.Phases {
 		phases[i] = ph.Name + " " + ph.Took.Round(time.Millisecond).String()
@@ -479,7 +606,11 @@ func (p *printer) test(t Test) {
 	for _, c := range t.Pairs {
 		p.printf("    %-14s %9d %9d %9d\n", fmt.Sprintf("cpu %d load %d", c.CPU, c.Load), c.Failures, c.Hangs, c.Runs)
 	}
-	p.printf("    %s, %s in %s\n", plural(t.Failures, "failure", "failures"), plural(t.Hangs, "hang", "hangs"), plural(t.Runs, "run", "runs"))
+	runs := plural(t.Runs, "run", "runs")
+	if t.Confirmed {
+		runs = plural(t.Runs, "confirm run", "confirm runs")
+	}
+	p.printf("    %s, %s in %s\n", plural(t.Failures, "failure", "failures"), plural(t.Hangs, "hang", "hangs"), runs)
 	p.printf("    first failure, at cpu %d load %d:\n", t.FirstFailureCPU, t.FirstFailureLoad)
 	for _, l := range t.FirstFailure {
 		p.printf("        %s\n", l)
