@@ -17,6 +17,7 @@ import (
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/internal/authn"
+	"github.com/z5labs/humus/internal/httproute"
 )
 
 // loggerName is the name of the logger the API logs through.
@@ -219,13 +220,17 @@ func NewAPI(s *humus.Setup, info Info, unmatched Unmatched, requestErrors Reques
 //
 // chi routes a copy of the request, so ServeHTTP hands chi a copy that
 // already carries a chi routing context, which chi routes without copying
-// again. It then sets the pattern chi found on r, so that httpserver's
-// spans are named after the route, such as GET /carts/{cartId}.
+// again. It then sets the pattern chi found on r, and records it as the
+// request's route for httpserver, so that httpserver's spans, and the
+// http.route of its metrics, are named after the route, such as
+// GET /carts/{cartId}. That holds even when handlers above the API pass on a
+// copy of the request, such as http.MaxBytesHandler.
 func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	routed := r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, chi.NewRouteContext()))
 	defer func() {
 		if routed.Pattern != "" {
 			r.Pattern = routed.Pattern
+			httproute.Record(r.Context(), routed.Pattern)
 		}
 	}()
 	a.mux.ServeHTTP(w, routed)

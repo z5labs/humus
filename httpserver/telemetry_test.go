@@ -182,6 +182,32 @@ func TestService_measures_each_request(t *testing.T) {
 	})
 }
 
+// durationRoutes returns the http.route of each data point of
+// http.server.request.duration.
+func durationRoutes(t *testing.T, tel *humustest.Telemetry) []string {
+	t.Helper()
+	rm, err := tel.Metrics(context.Background())
+	require.NoError(t, err)
+	var routes []string
+	for _, sm := range rm.ScopeMetrics {
+		if sm.Scope.Name != otelhttp.ScopeName {
+			continue
+		}
+		for _, m := range sm.Metrics {
+			if m.Name != "http.server.request.duration" {
+				continue
+			}
+			hist, ok := m.Data.(metricdata.Histogram[float64])
+			require.True(t, ok, "http.server.request.duration is a %T", m.Data)
+			for _, dp := range hist.DataPoints {
+				route, _ := dp.Attributes.Value("http.route")
+				routes = append(routes, route.AsString())
+			}
+		}
+	}
+	return routes
+}
+
 // countingPropagator is a TextMapPropagator that counts the calls to its
 // Extract and Inject, and propagates nothing.
 type countingPropagator struct {

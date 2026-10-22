@@ -17,7 +17,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// recordPanics is the layer between otelhttp and the end user's handler. It
+// recordPanics is the layer between nameRoute and the end user's handler. It
 // records a panic of next on the request's span and as an ERROR record, then
 // aborts the response by panicking again with http.ErrAbortHandler, which
 // net/http handles without logging.

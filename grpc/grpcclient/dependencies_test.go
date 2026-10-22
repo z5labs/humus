@@ -390,14 +390,18 @@ func (p *pod) publish(ctx context.Context, send func(*testpb.StreamingOutputCall
 // the pod SIGTERM, and returns its exit status once it has exited.
 func startPod(t *testing.T, h *humustest.Host, ca *humustest.CA, name string, opts ...grpc.ServerOption) (stop func() bedrock.ExitStatus) {
 	t.Helper()
-	return startPodServing(t, h.Host(), ca, name+":9090", &pod{name: name}, func() { <-h.Listening(name + ":9090") }, opts...)
+	return startPodServing(t, h.Host(), ca, name+":9090", &pod{name: name}, h.Listening(name+":9090"), opts)
 }
 
 // startPodServing runs the dependency's pod at addr on host, as startPod
-// does, serving srv, and returns once listening has. It returns a function
-// that sends the pod SIGTERM, and returns its exit status once it has
-// exited.
-func startPodServing(t *testing.T, host humus.Host, ca *humustest.CA, addr string, srv testpb.TestServiceServer, listening func(), opts ...grpc.ServerOption) (stop func() bedrock.ExitStatus) {
+// does, serving srv, with app applied to its App after grpcserver's
+// defaults, and returns once listening is closed or the pod's App has
+// exited, whichever is first. It returns a function that sends the pod
+// SIGTERM once the App is registered for it, and returns the App's exit
+// status once it has exited. A pod whose App exits on its own, as when its
+// Listen fails, is not sent SIGTERM: the function returns its exit status,
+// and neither wait outlives the App.
+func startPodServing(t *testing.T, host humus.Host, ca *humustest.CA, addr string, srv testpb.TestServiceServer, listening <-chan struct{}, opts []grpc.ServerOption, app ...humus.Option) (stop func() bedrock.ExitStatus) {
 	t.Helper()
 	cert := ca.Issue(t, "ledger")
 	p, exit := grpcservertest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
@@ -411,12 +415,20 @@ func startPodServing(t *testing.T, host humus.Host, ca *humustest.CA, addr strin
 		}
 		testpb.RegisterTestServiceServer(svc, srv)
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(telemetry.NoopBuilder)))
-	listening()
+	}, humustest.WithApp(append([]humus.Option{humus.WithHost(host), humus.WithTelemetry(telemetry.NoopBuilder)}, app...)...))
+	select {
+	case <-listening:
+	case st := <-exit:
+		return func() bedrock.ExitStatus { return st }
+	}
 	return func() bedrock.ExitStatus {
-		<-p.Notified(syscall.SIGTERM)
-		p.Signal(syscall.SIGTERM)
-		return <-exit
+		select {
+		case <-p.Notified(syscall.SIGTERM):
+			p.Signal(syscall.SIGTERM)
+			return <-exit
+		case st := <-exit:
+			return st
+		}
 	}
 }
 
@@ -1002,12 +1014,40 @@ type rollout struct {
 	stopA, stopB func() bedrock.ExitStatus
 }
 
-// run rolls ledger-a out from under tc's streams: it opens them, holds a
-// connection to ledger-a in its handshake if handshaking, routes the
-// Service to ledger-b, and sends ledger-a SIGTERM. It requires that every
-// stream first heard from ledger-a, was ended by its Shutdown, and, opened
-// again, first heard from ledger-b, and that both pods exited 0.
+// rolled is what happened in a rollout.
+type rolled struct {
+	streams  []reopened
+	closeErr error // how the connection held in its handshake closed
+	stA, stB bedrock.ExitStatus
+}
+
+// run rolls ledger-a out from under tc's streams, as roll does. It requires
+// that both pods exited 0, and that every stream first heard from ledger-a,
+// was ended by its Shutdown, and, opened again, first heard from ledger-b.
 func (ro rollout) run(t *testing.T, ca *humustest.CA, tc reopenCase, handshaking bool) {
+	t.Helper()
+	r := ro.roll(t, ca, tc, handshaking)
+	require.Zero(t, r.stA.Code(), "ledger-a exited %d: %v", r.stA.Code(), r.stA.Cause())
+	require.Zero(t, r.stB.Code(), "ledger-b exited %d: %v", r.stB.Code(), r.stB.Cause())
+
+	landed := make([]string, len(r.streams))
+	want := make([]string, len(r.streams))
+	for i, s := range r.streams {
+		require.Equal(t, "ledger-a", s.first, "stream %d", i)
+		require.Equal(t, codes.Unavailable, status.Code(s.ended), "stream %d: %v", i, s.ended)
+		require.Equal(t, "server is shutting down", status.Convert(s.ended).Message(), "stream %d", i)
+		landed[i] = s.again
+		want[i] = "ledger-b"
+	}
+	require.Equal(t, want, landed, "every stream opened again lands on the next pod, and hears from it")
+	require.NoError(t, r.closeErr)
+}
+
+// roll rolls ledger-a out from under tc's streams: it opens them, holds a
+// connection to ledger-a in its handshake if handshaking, routes the
+// Service to ledger-b, and sends ledger-a SIGTERM. Once both pods have
+// exited, it logs what happened, in order, and returns it.
+func (ro rollout) roll(t *testing.T, ca *humustest.CA, tc reopenCase, handshaking bool) rolled {
 	t.Helper()
 	start := time.Now()
 	var events []string
@@ -1048,23 +1088,11 @@ func (ro rollout) run(t *testing.T, ca *humustest.CA, tc reopenCase, handshaking
 	stA := <-exitA
 	note("ledger-a exited %d", stA.Code())
 	stB := ro.stopB()
+	note("ledger-b exited %d", stB.Code())
 	for _, e := range events {
 		t.Log(e)
 	}
-
-	landed := make([]string, len(rs))
-	want := make([]string, len(rs))
-	for i, r := range rs {
-		require.Equal(t, "ledger-a", r.first, "stream %d", i)
-		require.Equal(t, codes.Unavailable, status.Code(r.ended), "stream %d: %v", i, r.ended)
-		require.Equal(t, "server is shutting down", status.Convert(r.ended).Message(), "stream %d", i)
-		landed[i] = r.again
-		want[i] = "ledger-b"
-	}
-	require.Equal(t, want, landed, "every stream opened again lands on the next pod, and hears from it")
-	require.NoError(t, closeErr)
-	require.Zero(t, stA.Code(), "cause: %v", stA.Cause())
-	require.Zero(t, stB.Code(), "cause: %v", stB.Cause())
+	return rolled{streams: rs, closeErr: closeErr, stA: stA, stB: stB}
 }
 
 func TestClient_a_stream_opened_again_when_Shutdown_ends_it_lands_on_the_next_pod(t *testing.T) {
@@ -1075,7 +1103,7 @@ func TestClient_a_stream_opened_again_when_Shutdown_ends_it_lands_on_the_next_po
 			svc := &service{}
 			svc.route("ledger-a")
 			start := func(name string) func() bedrock.ExitStatus {
-				return startPodServing(t, h.Host(), ca, name+":9090", serve(name), func() { <-h.Listening(name + ":9090") })
+				return startPodServing(t, h.Host(), ca, name+":9090", serve(name), h.Listening(name+":9090"), nil)
 			}
 			rollout{
 				host:  svc.host(h),
@@ -1121,28 +1149,64 @@ func (s *osService) host() humus.Host {
 	return host
 }
 
-// freeAddr returns a loopback address with a port no one listens on.
+// heldPort is a loopback port freeAddr holds for one pod.
+type heldPort struct {
+	ln       net.Listener
+	taken    atomic.Bool
+	listened chan struct{}
+}
+
+// held is every heldPort, by its address, until its test ends.
+var held sync.Map
+
+// freeAddr returns a loopback address whose port no other pod, and no other
+// listener on the host, can get: freeAddr listens on it, and holds that
+// listener until the pod at the address takes it, with a Listen through
+// osHost, or the test ends. A port is held from the moment it is picked,
+// so two parallel subtests never get the same one.
 func freeAddr(t *testing.T) string {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	addr := l.Addr().String()
-	require.NoError(t, l.Close())
+	hp := &heldPort{ln: l, listened: make(chan struct{})}
+	held.Store(addr, hp)
+	t.Cleanup(func() {
+		held.CompareAndDelete(addr, hp)
+		if !hp.taken.Swap(true) {
+			_ = l.Close()
+		}
+	})
 	return addr
 }
 
-// listensOnOS waits until addr accepts connections.
-func listensOnOS(t *testing.T, addr string) func() {
-	return func() {
-		require.Eventually(t, func() bool {
-			conn, err := net.Dial("tcp", addr)
-			if err != nil {
-				return false
+// osHost is humus.OSHost, whose first Listen of an address from freeAddr
+// returns the listener that holds its port. Every other Listen listens, as
+// humus.OSHost's does.
+func osHost() humus.Host {
+	host := humus.OSHost()
+	listen := host.Listen
+	host.Listen = func(network, address string) (net.Listener, error) {
+		if v, ok := held.Load(address); ok && network == "tcp" {
+			if hp := v.(*heldPort); !hp.taken.Swap(true) {
+				close(hp.listened)
+				return hp.ln, nil
 			}
-			_ = conn.Close()
-			return true
-		}, 10*time.Second, 10*time.Millisecond, "%s listens", addr)
+		}
+		return listen(network, address)
 	}
+	return host
+}
+
+// listensOnOS returns a channel that is closed once the pod at addr, an
+// address from freeAddr, listens on it: once its Listen through osHost has
+// taken the listener that holds the port. From then on, the pod accepts
+// every connection to addr.
+func listensOnOS(t *testing.T, addr string) <-chan struct{} {
+	t.Helper()
+	v, ok := held.Load(addr)
+	require.True(t, ok, "%s is an address from freeAddr", addr)
+	return v.(*heldPort).listened
 }
 
 func TestClient_a_stream_opened_again_when_Shutdown_ends_it_lands_on_the_next_pod_over_TCP(t *testing.T) {
@@ -1160,8 +1224,130 @@ func TestClient_a_stream_opened_again_when_Shutdown_ends_it_lands_on_the_next_po
 				require.NoError(t, err)
 				return conn
 			},
-			stopA: startPodServing(t, humus.OSHost(), ca, addrA, serve("ledger-a"), listensOnOS(t, addrA)),
-			stopB: startPodServing(t, humus.OSHost(), ca, addrB, serve("ledger-b"), listensOnOS(t, addrB)),
+			stopA: startPodServing(t, osHost(), ca, addrA, serve("ledger-a"), listensOnOS(t, addrA), nil),
+			stopB: startPodServing(t, osHost(), ca, addrB, serve("ledger-b"), listensOnOS(t, addrB), nil),
 		}.run(t, ca, tc, handshaking)
 	})
+}
+
+// stopsWithin calls stop, and reports whether it returned within d. A stop
+// that has not returned is left blocked.
+func stopsWithin(stop func() bedrock.ExitStatus, d time.Duration) (bedrock.ExitStatus, bool) {
+	exit := make(chan bedrock.ExitStatus, 1)
+	go func() { exit <- stop() }()
+	select {
+	case st := <-exit:
+		return st, true
+	case <-time.After(d):
+		return bedrock.ExitStatus{}, false
+	}
+}
+
+// loggedHost is osHost, logging each Listen of name's that fails.
+func loggedHost(t *testing.T, name string) humus.Host {
+	host := osHost()
+	listen := host.Listen
+	host.Listen = func(network, address string) (net.Listener, error) {
+		ln, err := listen(network, address)
+		if err != nil {
+			t.Logf("%s's Listen failed: %v", name, err)
+		}
+		return ln, err
+	}
+	return host
+}
+
+// reaches reports what a TLS dial of addr, trusting ca, reaches.
+func reaches(ca *humustest.CA, addr string) string {
+	conn, err := tls.Dial("tcp", addr, &tls.Config{RootCAs: ca.Pool(), ServerName: "ledger"})
+	if err != nil {
+		return err.Error()
+	}
+	_ = conn.Close()
+	return "a pod with a certificate from ca"
+}
+
+// Each round starts the pods of the TCP test's 12 parallel subtests, as
+// they start them: both of a subtest's addresses from freeAddr, then each
+// pod on its own, with listensOnOS. Every pod must then be registered for
+// SIGTERM, and exit 0 when sent it. The pods don't drain, so a round takes
+// no longer than its pods take to start.
+func TestClient_over_TCP_every_parallel_pod_listens_on_a_port_of_its_own(t *testing.T) {
+	const rounds = 40
+	for round := range rounds {
+		t.Run(fmt.Sprintf("round %d", round), func(t *testing.T) {
+			for sub := range 12 {
+				t.Run(fmt.Sprintf("subtest %d", sub), func(t *testing.T) {
+					t.Parallel()
+					ca := humustest.NewCA(t)
+					addrA, addrB := freeAddr(t), freeAddr(t)
+					stopA := startPodServing(t, loggedHost(t, "ledger-a"), ca, addrA, &pod{name: "ledger-a"}, listensOnOS(t, addrA), nil, humus.WithDrain(nil))
+					stopB := startPodServing(t, loggedHost(t, "ledger-b"), ca, addrB, &pod{name: "ledger-b"}, listensOnOS(t, addrB), nil, humus.WithDrain(nil))
+					for _, p := range []struct {
+						name, addr string
+						stop       func() bedrock.ExitStatus
+					}{{"ledger-a", addrA, stopA}, {"ledger-b", addrB, stopB}} {
+						st, ok := stopsWithin(p.stop, 10*time.Second)
+						if !ok {
+							t.Errorf("%s at %s: stop did not return in 10s; a dial of %s reaches: %s", p.name, p.addr, p.addr, reaches(ca, p.addr))
+							continue
+						}
+						require.Zero(t, st.Code(), "%s at %s: %v", p.name, p.addr, st.Cause())
+					}
+				})
+			}
+		})
+	}
+}
+
+// Another pod listens on ledger-a's address before ledger-a starts, as when
+// two subtests got the same port, or something else on the host took it.
+// ledger-a's Listen fails, and its App exits: stop must still return, with
+// that exit.
+func TestClient_over_TCP_a_pod_stops_when_another_pod_already_listens_on_its_address(t *testing.T) {
+	addrA := freeAddr(t)
+	other := humustest.NewCA(t)
+	stopOther := startPodServing(t, osHost(), other, addrA, &pod{name: "another subtest's pod"}, listensOnOS(t, addrA), nil)
+	t.Cleanup(func() { stopOther() })
+
+	ca := humustest.NewCA(t)
+	stopA := startPodServing(t, loggedHost(t, "ledger-a"), ca, addrA, &pod{name: "ledger-a"}, listensOnOS(t, addrA), nil)
+	t.Logf("startPodServing returned for ledger-a at %s; a dial of it reaches: %s", addrA, reaches(ca, addrA))
+
+	start := time.Now()
+	st, ok := stopsWithin(stopA, 10*time.Second)
+	require.True(t, ok, "ledger-a's stop did not return in %v", time.Since(start).Round(time.Second))
+	require.NotZero(t, st.Code(), "ledger-a exits on its own")
+	require.ErrorIs(t, st.Cause(), syscall.EADDRINUSE)
+	require.ErrorContains(t, st.Cause(), addrA)
+}
+
+// The rollout of the 8 server streams case with a connection held in its
+// handshake, on pods that send before they look at their context, as the
+// TCP test runs it, with another subtest's pod on ledger-a's address. The
+// rollout must end, with ledger-a's exit naming its address.
+func TestClient_a_stream_opened_again_when_Shutdown_ends_it_lands_on_the_next_pod_over_TCP_ends_when_another_pod_holds_ledger_a_s_port(t *testing.T) {
+	addrA, addrB := freeAddr(t), freeAddr(t)
+	other := humustest.NewCA(t)
+	stopOther := startPodServing(t, osHost(), other, addrA, &pod{name: "another subtest's pod"}, listensOnOS(t, addrA), nil)
+	t.Cleanup(func() { stopOther() })
+
+	ca := humustest.NewCA(t)
+	svc := &osService{}
+	svc.route(addrA)
+	r := rollout{
+		host:  svc.host(),
+		route: func() { svc.route(addrB) },
+		hold: func() net.Conn {
+			conn, err := net.Dial("tcp", addrA)
+			require.NoError(t, err)
+			return conn
+		},
+		stopA: startPodServing(t, loggedHost(t, "ledger-a"), ca, addrA, &eagerPod{pod{name: "ledger-a"}}, listensOnOS(t, addrA), nil),
+		stopB: startPodServing(t, osHost(), ca, addrB, &eagerPod{pod{name: "ledger-b"}}, listensOnOS(t, addrB), nil),
+	}.roll(t, ca, reopenCases[2], true)
+	require.NotZero(t, r.stA.Code(), "ledger-a exits on its own")
+	require.ErrorIs(t, r.stA.Cause(), syscall.EADDRINUSE)
+	require.ErrorContains(t, r.stA.Cause(), addrA)
+	require.Zero(t, r.stB.Code(), "cause: %v", r.stB.Cause())
 }
