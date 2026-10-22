@@ -93,7 +93,7 @@ var Alone = []Case{
 
 func Sent(t testing.TB, target Target) {
 	ctx := bounded(t, target)
-	b := watch(ctx, t, target)
+	b := watch(t, target)
 	r := newRequest("example.com")
 
 	b.publish(ctx, t, r)
@@ -112,7 +112,7 @@ func Sent(t testing.TB, target Target) {
 
 func SentOnce(t testing.TB, target Target) {
 	ctx := bounded(t, target)
-	b := watch(ctx, t, target)
+	b := watch(t, target)
 	r := newRequest("example.com")
 
 	b.publish(ctx, t, r)
@@ -135,7 +135,7 @@ func SentOnce(t testing.TB, target Target) {
 
 func Refused(t testing.TB, target Target) {
 	ctx := bounded(t, target)
-	b := watch(ctx, t, target)
+	b := watch(t, target)
 	r := newRequest("example.invalid")
 
 	b.publish(ctx, t, r)
@@ -156,7 +156,7 @@ func Refused(t testing.TB, target Target) {
 
 func Malformed(t testing.TB, target Target) {
 	ctx := bounded(t, target)
-	b := watch(ctx, t, target)
+	b := watch(t, target)
 	r := newRequest("example.com")
 	r.body = map[string]string{"to": r.to}
 
@@ -173,7 +173,7 @@ func Malformed(t testing.TB, target Target) {
 
 func SlowProvider(t testing.TB, target Target) {
 	ctx := bounded(t, target)
-	b := watch(ctx, t, target)
+	b := watch(t, target)
 	r := rehearsal(t, target, delay(providerPoint(t, target), slowProvider))
 
 	b.publish(ctx, t, r)
@@ -188,7 +188,7 @@ func SlowProvider(t testing.TB, target Target) {
 
 func UntrustedScenario(t testing.TB, target Target) {
 	ctx := bounded(t, target)
-	b := watch(ctx, t, target)
+	b := watch(t, target)
 	r := rehearsal(t, target, abort(providerPoint(t, target)))
 	r.userID = ""
 
@@ -204,7 +204,7 @@ func UntrustedScenario(t testing.TB, target Target) {
 
 func ProviderDown(t testing.TB, target Target) {
 	ctx := bounded(t, target)
-	b := watch(ctx, t, target)
+	b := watch(t, target)
 	r := rehearsal(t, target, abort(providerPoint(t, target)))
 
 	b.publish(ctx, t, r)
@@ -222,13 +222,13 @@ func LostConnection(t testing.TB, target Target) {
 		t.Skip("Target.CloseConnections is nil")
 	}
 	ctx := bounded(t, target)
-	b := watch(ctx, t, target)
+	b := watch(t, target)
 	r := rehearsal(t, target, delay(providerPoint(t, target), slowInFlight))
 
 	b.publish(ctx, t, r)
 	pause(ctx, t, inFlight)
 	require.NoError(t, target.CloseConnections(ctx))
-	b = watch(ctx, t, target)
+	b = watch(t, target)
 	event := b.outcome(ctx, t, r.messageID)
 
 	require.Equal(t, sentKey, event.RoutingKey)
@@ -248,7 +248,7 @@ func LostConnection(t testing.TB, target Target) {
 
 func ResultNotPublished(t testing.TB, target Target) {
 	ctx := bounded(t, target)
-	b := watch(ctx, t, target)
+	b := watch(t, target)
 	r := rehearsal(t, target, abort(eventsPoint))
 
 	b.publish(ctx, t, r)
@@ -376,15 +376,15 @@ type broker struct {
 	seen       []amqp.Delivery
 }
 
-func watch(ctx context.Context, t testing.TB, target Target) *broker {
+func watch(t testing.TB, target Target) *broker {
 	t.Helper()
 	conn := dial(t, target)
 
 	ch, err := conn.Channel()
 	require.NoError(t, err)
-	events := bind(ctx, t, ch, eventsExchange, "#")
-	dead := bind(ctx, t, ch, deadExchange, "")
-	retry := bind(ctx, t, ch, retryExchange, sendKey)
+	events := bind(t, ch, eventsExchange, "#")
+	dead := bind(t, ch, deadExchange, "")
+	retry := bind(t, ch, retryExchange, sendKey)
 
 	publishing, err := conn.Channel()
 	require.NoError(t, err)
@@ -410,12 +410,13 @@ func dial(t testing.TB, target Target) *amqp.Connection {
 	return conn
 }
 
-func bind(ctx context.Context, t testing.TB, ch *amqp.Channel, exchange, key string) <-chan amqp.Delivery {
+func bind(t testing.TB, ch *amqp.Channel, exchange, key string) <-chan amqp.Delivery {
 	t.Helper()
-	q, err := ch.QueueDeclare("", false, true, true, false, nil)
+	q, err := ch.QueueDeclare("", false, false, true, false, nil)
 	require.NoError(t, err)
 	require.NoError(t, ch.QueueBind(q.Name, key, exchange, false, nil))
-	deliveries, err := ch.ConsumeWithContext(ctx, q.Name, "", true, true, false, false, nil)
+	t.Cleanup(func() { _ = ch.QueueUnbind(q.Name, key, exchange, nil) })
+	deliveries, err := ch.Consume(q.Name, "", true, true, false, false, nil)
 	require.NoError(t, err)
 	return deliveries
 }

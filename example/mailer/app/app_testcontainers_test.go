@@ -19,7 +19,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -28,12 +27,13 @@ import (
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 	tcrabbitmq "github.com/testcontainers/testcontainers-go/modules/rabbitmq"
 	"github.com/testcontainers/testcontainers-go/wait"
+	"github.com/z5labs/bedrock"
+	"github.com/z5labs/bedrock/bedrocktest"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/example/mailer/app"
 	"github.com/z5labs/humus/example/mailer/cases"
 	"github.com/z5labs/humus/humustest"
-	"github.com/z5labs/humus/telemetry"
 )
 
 const (
@@ -166,7 +166,15 @@ func writeFile(t *testing.T, dir, name string, contents []byte) string {
 	return path
 }
 
-func TestInit_passes_the_shared_cases_against_RabbitMQ_and_WireMock(t *testing.T) {
+type sharedMailer struct {
+	target cases.Target
+	tel    *humustest.Telemetry
+	p      *bedrocktest.Process
+	status <-chan bedrock.ExitStatus
+}
+
+func startSharedMailer(t *testing.T) *sharedMailer {
+	t.Helper()
 	broker := startRabbitMQ(t)
 	provider := startWireMock(t)
 	mailer := broker.addUser(t, `^$`, `^mail\.(retry|dead|events)$`, `^mail\.send$`)
@@ -175,8 +183,9 @@ func TestInit_passes_the_shared_cases_against_RabbitMQ_and_WireMock(t *testing.T
 	ca := humustest.NewCA(t)
 	dir := t.TempDir()
 	probesAddr := freeAddr(t)
+	tel := humustest.NewTelemetry()
 	p, status := humustest.Start(t, app.Init,
-		humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(app.Faults)),
+		humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(tel.Builder()), humus.WithFaults(app.Faults)),
 		humustest.WithEnv(map[string]string{
 			"RABBITMQ_ADDR":           broker.addr,
 			"RABBITMQ_USERNAME":       mailer.username,
@@ -203,38 +212,70 @@ func TestInit_passes_the_shared_cases_against_RabbitMQ_and_WireMock(t *testing.T
 		return resp.StatusCode == http.StatusOK
 	}, waitLimit, 100*time.Millisecond, "the mailer didn't become ready")
 
-	target := cases.Target{
-		Addr:             broker.addr,
-		Vhost:            "/",
-		Username:         cased.username,
-		Password:         cased.password,
-		WireMock:         provider,
-		Client:           &http.Client{Timeout: waitLimit},
-		ProviderPoint:    "http:" + provider.Host,
-		ScenarioKey:      "acme.fault",
-		CloseConnections: broker.closeConnections,
-		Timeout:          waitLimit,
+	return &sharedMailer{
+		target: cases.Target{
+			Addr:             broker.addr,
+			Vhost:            "/",
+			Username:         cased.username,
+			Password:         cased.password,
+			WireMock:         provider,
+			Client:           &http.Client{Timeout: waitLimit},
+			ProviderPoint:    "http:" + provider.Host,
+			ScenarioKey:      "acme.fault",
+			CloseConnections: broker.closeConnections,
+			Timeout:          waitLimit,
+		},
+		tel:    tel,
+		p:      p,
+		status: status,
 	}
+}
+
+func TestInit_passes_the_shared_cases_against_RabbitMQ_and_WireMock(t *testing.T) {
+	m := startSharedMailer(t)
+
 	t.Run("in parallel", func(t *testing.T) {
 		for _, c := range cases.Parallel {
 			t.Run(c.Name, func(t *testing.T) {
 				t.Parallel()
-				c.Run(t, target)
+				c.Run(t, m.target)
 			})
 		}
 	})
 	for _, c := range cases.Alone {
 		t.Run(c.Name, func(t *testing.T) {
-			c.Run(t, target)
+			c.Run(t, m.target)
 		})
 	}
 
-	<-p.Notified(syscall.SIGTERM)
-	p.Signal(syscall.SIGTERM)
+	stop(t, m.p, m.status)
+}
+
+func TestInit_passes_the_shared_cases_when_four_runs_of_them_are_in_parallel(t *testing.T) {
+	m := startSharedMailer(t)
+
+	t.Run("in parallel", func(t *testing.T) {
+		for i := range 4 {
+			for _, c := range cases.Parallel {
+				t.Run(fmt.Sprintf("%s_%d", c.Name, i), func(t *testing.T) {
+					t.Parallel()
+					c.Run(t, m.target)
+				})
+			}
+		}
+	})
+
 	select {
-	case st := <-status:
-		require.Zero(t, st.Code(), "cause: %v", st.Cause())
-	case <-time.After(waitLimit):
-		t.Fatal("the mailer didn't exit")
+	case st := <-m.status:
+		require.FailNowf(t, "the mailer exited", "exit %d: %v", st.Code(), st.Cause())
+	default:
 	}
+	rm, err := m.tel.Metrics(t.Context())
+	require.NoError(t, err)
+	ms := metricsOf(rm, rabbitmqScope)
+	require.Positive(t, sumBy(ms["humus.circuit.calls"], "humus.circuit.outcome")["success"], "the Publishers' breakers counted no calls")
+	transitions := sumBy(ms["humus.circuit.transitions"], "humus.circuit.state")
+	require.Zero(t, transitions["open"], "a Publisher's breaker opened")
+
+	stop(t, m.p, m.status)
 }
