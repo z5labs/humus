@@ -209,4 +209,102 @@ distroless, non-root base:&lt;/p&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="err"&gt;&lt;/span&gt;&lt;span class="k"&gt;COPY&lt;/span&gt; --from&lt;span class="o"&gt;=&lt;/span&gt;build /out/ledger /ledger&lt;span class="err"&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="err"&gt;&lt;/span&gt;&lt;span class="k"&gt;USER&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="s"&gt;65532:65532&lt;/span&gt;&lt;span class="err"&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;p&gt;Build it from the repository&amp;rsquo;s root, since the module replaces humus and
-&lt;code&gt;humus/grpc&lt;/code&gt; with their directories:&lt;/p&gt;</description></item></channel></rss>
+&lt;code&gt;humus/grpc&lt;/code&gt; with their directories:&lt;/p&gt;</description></item><item><title>Observing</title><link>https://z5labs.github.io/humus/walkthroughs/wallet/observing/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/wallet/observing/</guid><description>&lt;h2 id="opening-grafana"&gt;Opening Grafana&lt;/h2&gt;
+&lt;p&gt;&lt;code&gt;up.sh&lt;/code&gt; generates Grafana&amp;rsquo;s admin password into the &lt;code&gt;grafana-admin&lt;/code&gt; Secret.
+Read it, then forward Grafana&amp;rsquo;s port:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre tabindex="0" class="chroma"&gt;&lt;code class="language-sh" data-lang="sh"&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;kubectl --context kind-kind --namespace wallet get secret grafana-admin &lt;span class="se"&gt;\
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="se"&gt;&lt;/span&gt; --output &lt;span class="nv"&gt;jsonpath&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;{.data.password}&amp;#39;&lt;/span&gt; &lt;span class="p"&gt;|&lt;/span&gt; base64 --decode
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;kubectl --context kind-kind --namespace wallet port-forward service/grafana 3000:3000
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;p&gt;Sign in at &lt;a href="http://localhost:3000"&gt;http://localhost:3000&lt;/a&gt; as &lt;code&gt;admin&lt;/code&gt;.&lt;/p&gt;
+&lt;h2 id="a-sends-trace"&gt;A send&amp;rsquo;s trace&lt;/h2&gt;
+&lt;p&gt;Send from alice&amp;rsquo;s account to bob&amp;rsquo;s, as
+&lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/deploying/#trying-it-with-walletctl"&gt;Deploying&lt;/a&gt;
+shows. Each server span is named after its method, so in &lt;strong&gt;Explore&lt;/strong&gt;, with
+&lt;strong&gt;Tempo&lt;/strong&gt;, find the sends by name:&lt;/p&gt;</description></item><item><title>Production-ready</title><link>https://z5labs.github.io/humus/walkthroughs/wallet/production-ready/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/wallet/production-ready/</guid><description>&lt;p&gt;The wallet and the ledger meet each item. Check your own gRPC services
+against them:&lt;/p&gt;
+&lt;table&gt;
+ &lt;thead&gt;
+ &lt;tr&gt;
+ &lt;th&gt;Item&lt;/th&gt;
+ &lt;th&gt;How&lt;/th&gt;
+ &lt;th&gt;Where&lt;/th&gt;
+ &lt;/tr&gt;
+ &lt;/thead&gt;
+ &lt;tbody&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Every setting sourced and checked; a bad one exits 78, naming its variable&lt;/td&gt;
+ &lt;td&gt;&lt;code&gt;config.Struct&lt;/code&gt; and the packages&amp;rsquo; checks, in both services&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/init/#the-wallets-settings"&gt;The wallet&amp;rsquo;s settings&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/init/#the-ledgers-settings"&gt;The ledger&amp;rsquo;s settings&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;No secret in the environment, the logs or the spans&lt;/td&gt;
+ &lt;td&gt;PostgreSQL&amp;rsquo;s password and the private keys are files, read through &lt;code&gt;s.Host.FS&lt;/code&gt;. The token is metadata, which otelgrpc doesn&amp;rsquo;t record, and no handler logs it, which a test of the Apps checks&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/init/#the-secrets-as-files"&gt;The secrets, as files&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/observing/#their-log-records"&gt;Their log records&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Certificates and signing keys renewed without a restart&lt;/td&gt;
+ &lt;td&gt;&lt;code&gt;internal/certfile&lt;/code&gt;, for both servers&amp;rsquo; certificates and the wallet&amp;rsquo;s client certificate. The key set is fetched again for a &lt;code&gt;kid&lt;/code&gt; the wallet lacks&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/init/#the-certificates-read-again-when-renewed"&gt;The certificates, read again when renewed&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/serving-the-wallet/#the-fetched-key-set"&gt;The fetched key set&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Two replicas of each service&lt;/td&gt;
+ &lt;td&gt;a PodDisruptionBudget of &lt;code&gt;minAvailable: 1&lt;/code&gt;, and a rolling update of &lt;code&gt;maxUnavailable: 0&lt;/code&gt;&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/deploying/#the-deployments"&gt;The Deployments&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/deploying/#the-disruption-budgets"&gt;The disruption budgets&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Ready once it has reached its dependency, and still ready through its outages&lt;/td&gt;
+ &lt;td&gt;&lt;code&gt;Connected&lt;/code&gt;, and the ledger&amp;rsquo;s latch on PostgreSQL&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/calling-the-ledger/#readiness-connected"&gt;Readiness: &lt;code&gt;Connected&lt;/code&gt;&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/serving-the-ledger/#the-probes"&gt;The ledger&amp;rsquo;s probes&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/init/#readiness"&gt;Readiness&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;A rollout loses no call&lt;/td&gt;
+ &lt;td&gt;&lt;code&gt;grpcserver.Main&lt;/code&gt;&amp;rsquo;s 5s drain. A unary call is bounded by &lt;code&gt;LEDGER_TIMEOUT&lt;/code&gt;, 10s, inside the 15s grace period. Watches end with &lt;code&gt;Unavailable&lt;/code&gt; and are opened again. &lt;code&gt;terminationGracePeriodSeconds&lt;/code&gt; is 30, above the drain, the grace period and the telemetry&amp;rsquo;s shutdown&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/deploying/#the-drain"&gt;The drain&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/serving-the-wallet/#relaying-the-watch"&gt;Relaying the watch&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Calls spread across pods&lt;/td&gt;
+ &lt;td&gt;&lt;code&gt;MaxConnectionAge&lt;/code&gt; on both servers&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/init/#maxconnectionage"&gt;&lt;code&gt;MaxConnectionAge&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Money is never made or lost&lt;/td&gt;
+ &lt;td&gt;one transaction per transfer, locks in the order of the IDs, and a &lt;code&gt;CHECK&lt;/code&gt; that no account but &lt;code&gt;external&lt;/code&gt; goes below zero&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/accounts/#schemasql"&gt;&lt;code&gt;schema.sql&lt;/code&gt;&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/accounts/#a-transfers-transaction"&gt;A transfer&amp;rsquo;s transaction&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;A retry never moves money twice&lt;/td&gt;
+ &lt;td&gt;every transfer&amp;rsquo;s ID: the subject and the request&amp;rsquo;s ID&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/calling-the-ledger/#why-every-transfer-is-safe-to-retry"&gt;Why every transfer is safe to retry&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;The contract never breaks a caller&lt;/td&gt;
+ &lt;td&gt;&lt;code&gt;buf breaking&lt;/code&gt; against main, in CI&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/contract/#bufs-rules"&gt;buf&amp;rsquo;s rules&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/contract/#buf-generate"&gt;&lt;code&gt;buf generate&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Least privilege&lt;/td&gt;
+ &lt;td&gt;the ledger&amp;rsquo;s role has &lt;code&gt;SELECT&lt;/code&gt;, &lt;code&gt;INSERT&lt;/code&gt; and &lt;code&gt;UPDATE&lt;/code&gt; on its two tables. Only the internal CA&amp;rsquo;s certificates call the ledger. A token can use only its subject&amp;rsquo;s account. A non-root, read-only container, with no service account token&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/deploying/#running-it-on-kind"&gt;Running it on kind&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/serving-the-ledger/#mtls"&gt;mTLS&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/serving-the-ledger/#grpcauth"&gt;&lt;code&gt;grpcauth&lt;/code&gt;&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/serving-the-wallet/#the-subjects-account"&gt;The subject&amp;rsquo;s account&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/deploying/#the-deployments"&gt;The Deployments&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Observable&lt;/td&gt;
+ &lt;td&gt;traces across both services, logs and metrics over OTLP, &lt;code&gt;deploy/alerts.yaml&lt;/code&gt;, &lt;code&gt;deploy/dashboard.json&lt;/code&gt;, and alerts on each Deployment from the Collector&amp;rsquo;s Kubernetes cluster receiver&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/observing/"&gt;Observing&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Failures say why&lt;/td&gt;
+ &lt;td&gt;statuses with &lt;code&gt;PreconditionFailure&lt;/code&gt;, &lt;code&gt;BadRequest&lt;/code&gt;, &lt;code&gt;ErrorInfo&lt;/code&gt; and &lt;code&gt;RetryInfo&lt;/code&gt; details&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/serving-the-ledger/#the-statuses-with-details"&gt;The statuses, with details&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/calling-the-ledger/#the-ledgers-answers-as-the-wallets"&gt;The ledger&amp;rsquo;s answers, as the wallet&amp;rsquo;s&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/serving-the-wallet/#a-key-set-that-cant-be-fetched"&gt;A key set that can&amp;rsquo;t be fetched&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Failures are rehearsed&lt;/td&gt;
+ &lt;td&gt;the failure injection cases, in CI and against staging through its own &lt;code&gt;Target&lt;/code&gt;&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/testing/#the-shared-cases"&gt;The shared cases&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/testing/#the-failure-injection-cases"&gt;The failure injection cases&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Safe by default&lt;/td&gt;
+ &lt;td&gt;&lt;code&gt;FAULT_TRUST_SCOPE&lt;/code&gt; empty, so no scenario is trusted. Server reflection off. The probes ports serve gRPC health and nothing else&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/init/#trustscenario"&gt;&lt;code&gt;TrustScenario&lt;/code&gt;&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/wallet/deploying/#the-grpc-probes"&gt;The gRPC probes&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;/tbody&gt;
+&lt;/table&gt;</description></item></channel></rss>

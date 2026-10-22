@@ -54,4 +54,5 @@ example/wallet/
 
 These pages build the contract, the ledger's accounts and its server, then
 the wallet's calls to the ledger and its server, then each service's `Init`
-and `main`. Then they test both services, and deploy them.
+and `main`. Then they test both services, deploy them, and observe them,
+and end with the checklist they meet.
