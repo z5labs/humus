@@ -33,6 +33,11 @@ The design behind everything on this page is in
 [Proposal: outbound gRPC clients](https://github.com/z5labs/humus/discussions/763),
 with its [revision 1](https://github.com/z5labs/humus/discussions/763#discussioncomment-19009949).
 
+The [wallet walkthrough]({{< relref "walkthroughs/wallet" >}}) builds a
+production-ready service that calls another on `grpcclient`, step by step:
+a wallet whose Client for its ledger retries every transfer safely, turns
+the ledger's answers into its own, and gates its readiness on `Connected`.
+
 ## A Client for each dependency
 
 The end user's `Init` sources the dependency's `grpcclient.Settings`, builds

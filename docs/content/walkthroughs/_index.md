@@ -33,6 +33,10 @@ from that code.
 - [Shoppingcart]({{< relref "walkthroughs/shoppingcart" >}}): an API for
   shopping carts, behind JWT bearer tokens, that prices each item from a
   catalog service of its own over mTLS, both on PostgreSQL.
+- [Wallet]({{< relref "walkthroughs/wallet" >}}): a gRPC service for each
+  caller's own account, behind JWT bearer tokens, on a ledger service of its
+  own that it calls over mTLS, which keeps the accounts and the transfers
+  between them in PostgreSQL.
 
 ## The bar
 
