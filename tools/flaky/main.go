@@ -6,17 +6,20 @@
 // Command flaky runs the repository's tests until they fail, so a flaky test
 // is found before it turns CI red. A maintainer runs it by hand, on Linux.
 //
-//	flaky stress [-tags unit,testcontainers,functional] [-cpu 1,2,4] [-load 1,2]
+//	flaky stress [-tags unit,testcontainers,...] [-cpu 1,2,4] [-load 1,2]
 //	             [-count n] [-confirm n] [-timeout d] [-keep n] [-containers n]
 //	             [-clusters n] [-shuffle] [-run regexp] [-skip regexp] [-o dir]
 //	             [-json] [packages]
 //
-// -tags picks the levels, all three by default. The unit level runs the
-// untagged tests, as CI's Test jobs do. The testcontainers level builds with
-// that tag, as CI's testcontainers jobs do, and runs only the tests its binary
-// lists and the untagged binary doesn't, by -test.run, so no unit test runs at
-// both. The functional level does the same with its tag, and runs each
+// The levels are found on each run: the unit level, plus one level for each
+// build tag in a //go:build line of a _test.go file that git tracks. -tags
+// picks among them, all of them by default. The unit level runs the untagged
+// tests, as CI's Test jobs do. Any other level builds with its tag, and runs
+// only the tests its binary lists and the untagged binary doesn't, by
+// -test.run, so no unit test runs at two levels. The testcontainers level does
+// so as CI's testcontainers jobs do, and the functional level runs each
 // walkthrough's functional tests against a kind cluster, as CI's kind jobs do.
+// Any other tag, such as conformance, runs as the unit tests do, with its tag.
 //
 // flaky stress builds every package's test binary at each level with go test
 // -c -race -cover, then runs each one -count times at each pair of -cpu and
@@ -44,9 +47,10 @@
 // at once, and clusters start before every other run. A walkthrough whose
 // cluster doesn't come up is reported by name.
 //
-// -count, -confirm and -timeout are 500, 1000 and 2m at the unit level, 25,
-// 50 and 10m at the testcontainers level, and 10, 50 and 15m at the
-// functional level. Given, each applies to every level.
+// -count, -confirm and -timeout are 500, 1000 and 2m at the unit level, and
+// at any level whose tag flaky doesn't know, 25, 50 and 10m at the
+// testcontainers level, and 10, 50 and 15m at the functional level. Given,
+// each applies to every level.
 //
 // Once every one of those runs has ended, it confirms each test that failed
 // or hung: it runs the test alone, by its own -run pattern, -confirm times at
@@ -113,16 +117,19 @@ const (
 	downTimeout = 5 * time.Minute
 )
 
-// levelDefaults are each level's -count, -confirm and -timeout, in the order
-// -tags lists them by default.
-var levelDefaults = []struct {
-	name           string
-	count, confirm int
-	timeout        time.Duration
-}{
+// levelDefaults are the -count, -confirm and -timeout of the levels flaky
+// knows, in the order -tags lists them by default, before the levels it
+// doesn't know. A level it doesn't know has the unit level's.
+var levelDefaults = []levelDefault{
 	{discover.Unit, 500, 1000, 2 * time.Minute},
 	{testcontainers, 25, 50, 10 * time.Minute},
 	{functional, 10, 50, 15 * time.Minute},
+}
+
+type levelDefault struct {
+	name           string
+	count, confirm int
+	timeout        time.Duration
 }
 
 func main() {
@@ -131,7 +138,8 @@ func main() {
 
 const usage = `usage: flaky stress [flags] [packages]
 
-flaky stress runs every package's tests at each level of -tags -count times
+flaky stress runs every package's tests at each level of -tags, the unit level
+and one for each build tag the test files use by default, -count times
 at each pair of -cpu and -load values, each run pinned to as many cores as its
 CPU count and sharing each of them with up to its load of runs. The
 testcontainers containers run on the -keep cores kept back from the runs, and
@@ -159,7 +167,8 @@ func flaky(ctx context.Context, p bedrock.Process) bedrock.ExitStatus {
 }
 
 type stressFlags struct {
-	levels     []string
+	// tags is -tags, the levels asked for, or nil for every level found.
+	tags       []string
 	cpus       []int
 	loads      []int
 	count      int
@@ -178,15 +187,16 @@ type stressFlags struct {
 	set map[string]bool
 }
 
-// level returns how the level name runs: its defaults, with -count, -confirm
-// and -timeout in their place when they were given.
+// level returns how the level name runs: its defaults, or the unit level's
+// when flaky doesn't know it, with -count, -confirm and -timeout in their
+// place when they were given.
 func (f stressFlags) level(name string) results.Level {
 	l := results.Level{Name: name}
-	for _, d := range levelDefaults {
-		if d.name == name {
-			l.Count, l.Confirm, l.Timeout = d.count, d.confirm, d.timeout
-		}
+	d := levelDefaults[0]
+	if i := slices.IndexFunc(levelDefaults, func(d levelDefault) bool { return d.name == name }); i >= 0 {
+		d = levelDefaults[i]
 	}
+	l.Count, l.Confirm, l.Timeout = d.count, d.confirm, d.timeout
 	l.DefaultTimeout = l.Timeout
 	if name == functional {
 		l.CPU, l.Load = stress.ClusterCPU, 1
@@ -205,19 +215,15 @@ func (f stressFlags) level(name string) results.Level {
 
 func parseStress(p bedrock.Process, args []string) (stressFlags, error) {
 	f := stressFlags{cpus: []int{1, 2, 4}, loads: []int{1, 2}, set: map[string]bool{}}
-	for _, d := range levelDefaults {
-		f.levels = append(f.levels, d.name)
-	}
 	fs := flag.NewFlagSet("flaky stress", flag.ContinueOnError)
 	fs.SetOutput(p.Stderr)
 	fs.Usage = func() {
 		say(fs.Output(), "%s\nflags:\n", usage)
 		fs.PrintDefaults()
 	}
-	fs.Func("tags", "the levels to run, comma-separated: unit, the untagged tests, and testcontainers and functional, the tests behind those tags (default unit,testcontainers,functional)", func(s string) error {
-		levels, err := parseLevels(s)
-		f.levels = levels
-		return err
+	fs.Func("tags", "the levels to run, comma-separated: unit, the untagged tests, and any build tag the test files use, the tests behind it (default every level found)", func(s string) error {
+		f.tags = splitLevels(s)
+		return nil
 	})
 	fs.Func("cpu", "the CPU counts to run each package at, comma-separated (default 1,2,4)", func(s string) error {
 		cpus, err := parseCounts(s, "CPU count")
@@ -229,9 +235,9 @@ func parseStress(p bedrock.Process, args []string) (stressFlags, error) {
 		f.loads = loads
 		return err
 	})
-	fs.IntVar(&f.count, "count", 0, "how many times to run each package at each pair of CPU count and load (default 500 at the unit level, 25 at the testcontainers level, 10 at the functional level)")
-	fs.IntVar(&f.confirm, "confirm", 0, "how many times to run each test that failed or hung alone, at each pair of CPU count and load, once the sweep has ended; with -run, none is (default 1000 at the unit level, 50 at the testcontainers and functional levels)")
-	fs.DurationVar(&f.timeout, "timeout", 0, "each run's -test.timeout; a run still going 30s later is killed (default 2m at the unit level, 10m at the testcontainers level, 15m at the functional level)")
+	fs.IntVar(&f.count, "count", 0, "how many times to run each package at each pair of CPU count and load (default 500 at the unit level and any level whose tag flaky doesn't know, 25 at the testcontainers level, 10 at the functional level)")
+	fs.IntVar(&f.confirm, "confirm", 0, "how many times to run each test that failed or hung alone, at each pair of CPU count and load, once the sweep has ended; with -run, none is (default 1000 at the unit level and any level whose tag flaky doesn't know, 50 at the testcontainers and functional levels)")
+	fs.DurationVar(&f.timeout, "timeout", 0, "each run's -test.timeout; a run still going 30s later is killed (default 2m at the unit level and any level whose tag flaky doesn't know, 10m at the testcontainers level, 15m at the functional level)")
 	fs.IntVar(&f.keep, "keep", 8, "how many cores to keep back from the lanes, for flaky, dockerd and the testcontainers containers")
 	fs.IntVar(&f.containers, "containers", 4, "how many testcontainers runs, at most, go at once")
 	fs.IntVar(&f.clusters, "clusters", 2, "how many walkthroughs' kind clusters, at most, are up at once")
@@ -312,24 +318,45 @@ func (s *shuffle) next() *int64 {
 	return nil
 }
 
-// parseLevels parses -tags: a comma-separated list of levels, each once.
-func parseLevels(s string) ([]string, error) {
-	names := make([]string, len(levelDefaults))
-	for i, d := range levelDefaults {
-		names[i] = d.name
-	}
+// splitLevels splits -tags, a comma-separated list of levels, into each one
+// once.
+func splitLevels(s string) []string {
 	var levels []string
 	for part := range strings.SplitSeq(s, ",") {
-		level := strings.TrimSpace(part)
-		if !slices.Contains(names, level) {
-			last := len(names) - 1
-			return nil, fmt.Errorf("%q is not a level: the levels are %s and %s", part, strings.Join(names[:last], ", "), names[last])
-		}
-		if !slices.Contains(levels, level) {
+		if level := strings.TrimSpace(part); !slices.Contains(levels, level) {
 			levels = append(levels, level)
 		}
 	}
-	return levels, nil
+	return levels
+}
+
+// pickLevels returns the levels to run, of found: the ones tags asks for, in
+// its order, or with no tags, every one, those flaky knows first, in the
+// order of levelDefaults, and then the rest in found's order.
+func pickLevels(found, tags []string) ([]string, error) {
+	if tags == nil {
+		known := func(level string) int {
+			i := slices.IndexFunc(levelDefaults, func(d levelDefault) bool { return d.name == level })
+			if i < 0 {
+				return len(levelDefaults)
+			}
+			return i
+		}
+		levels := slices.Clone(found)
+		slices.SortStableFunc(levels, func(a, b string) int { return known(a) - known(b) })
+		return levels, nil
+	}
+	for _, level := range tags {
+		if !slices.Contains(found, level) {
+			names := found
+			if len(names) == 1 {
+				return nil, fmt.Errorf("%q is not a level: the only level is %s", level, names[0])
+			}
+			last := len(names) - 1
+			return nil, fmt.Errorf("%q is not a level: the levels are %s and %s", level, strings.Join(names[:last], ", "), names[last])
+		}
+	}
+	return tags, nil
 }
 
 // parseCounts parses a comma-separated list of positive numbers, each a what.
@@ -410,17 +437,25 @@ func stressRun(ctx context.Context, p bedrock.Process, f stressFlags) (results.R
 	}
 
 	start := time.Now()
+	found, err := discover.Levels(ctx, root, childEnv)
+	if err != nil {
+		return results.Report{}, err
+	}
+	levelNames, err := pickLevels(found, f.tags)
+	if err != nil {
+		return results.Report{}, fmt.Errorf("-tags: %w", err)
+	}
 	modules, err := discover.Modules(ctx, root, childEnv)
 	if err != nil {
 		return results.Report{}, err
 	}
-	pkgs, err := discover.Packages(ctx, root, modules, f.patterns, f.levels, childEnv)
+	pkgs, err := discover.Packages(ctx, root, modules, f.patterns, levelNames, childEnv)
 	if err != nil {
 		return results.Report{}, err
 	}
 	discovery := time.Since(start)
-	atLevel := make([]string, len(f.levels))
-	for i, level := range f.levels {
+	atLevel := make([]string, len(levelNames))
+	for i, level := range levelNames {
 		n := 0
 		for _, pkg := range pkgs {
 			if pkg.Level == level {
@@ -490,9 +525,9 @@ func stressRun(ctx context.Context, p bedrock.Process, f stressFlags) (results.R
 		return results.Report{}, err
 	}
 
-	levels := make([]results.Level, len(f.levels))
-	stressLevels := make([]stress.Level, len(f.levels))
-	for i, name := range f.levels {
+	levels := make([]results.Level, len(levelNames))
+	stressLevels := make([]stress.Level, len(levelNames))
+	for i, name := range levelNames {
 		levels[i] = f.level(name)
 		if f.run != "" {
 			// -run asks for the matching tests at -count, so there is
@@ -524,7 +559,7 @@ func stressRun(ctx context.Context, p bedrock.Process, f stressFlags) (results.R
 	})
 	pkgLevels := make([]int, len(pkgs))
 	for i, pkg := range pkgs {
-		pkgLevels[i] = slices.Index(f.levels, pkg.Level)
+		pkgLevels[i] = slices.Index(levelNames, pkg.Level)
 	}
 	phases, err := stress.Stress(ctx, stress.Config{
 		Levels:       stressLevels,
