@@ -1,0 +1,317 @@
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: wallet
+    folder: Wallet
+    interval: 1m
+    rules:
+      - uid: wallet-errors
+        title: WalletErrors
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: ((sum(rate(rpc_server_call_duration_count{job="wallet", rpc_method!="wallet.v1.Wallet/WatchAccount", rpc_response_status_code=~"UNKNOWN|DEADLINE_EXCEEDED|UNIMPLEMENTED|INTERNAL|UNAVAILABLE|DATA_LOSS"}[5m])) or vector(0)) / sum(rate(rpc_server_call_duration_count{job="wallet", rpc_method!="wallet.v1.Wallet/WatchAccount"}[5m])) >= 0) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.01]
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: The wallet has ended {{ humanizePercentage $values.A.Value }} of its unary calls with a server's code for 10 minutes.
+          description: Look at the wallet's logs and traces for the failing methods, and at its breakers for the ledger and the key set.
+      - uid: wallet-slow
+        title: WalletSlow
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: (histogram_quantile(0.99, sum by (le) (rate(rpc_server_call_duration_bucket{job="wallet", rpc_method!="wallet.v1.Wallet/WatchAccount"}[5m]))) >= 0) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [1]
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: The wallet's p99 latency of unary calls has been {{ $values.A.Value }}s for 10 minutes.
+          description: Look at the wallet's slowest traces to see which span takes the time, the ledger's, the key set's or the ledger's database's.
+      - uid: ledger-errors
+        title: LedgerErrors
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: ((sum(rate(rpc_server_call_duration_count{job="ledger", rpc_method!="ledger.v1.Ledger/WatchAccount", rpc_response_status_code=~"UNKNOWN|DEADLINE_EXCEEDED|UNIMPLEMENTED|INTERNAL|UNAVAILABLE|DATA_LOSS"}[5m])) or vector(0)) / sum(rate(rpc_server_call_duration_count{job="ledger", rpc_method!="ledger.v1.Ledger/WatchAccount"}[5m])) >= 0) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.01]
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: The ledger has ended {{ humanizePercentage $values.A.Value }} of its unary calls with a server's code for 10 minutes.
+          description: Look at the ledger's logs and traces for the failing methods, and at its database.
+      - uid: wallet-breaker-open
+        title: WalletBreakerOpen
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: max by (server_address) (humus_circuit_state{job="wallet", otel_scope_name=~"github.com/z5labs/humus/(grpc/grpcclient|httpclient)", humus_circuit_state="open"}) or on () vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: page
+        annotations:
+          summary: The wallet's breaker for {{ $labels.server_address }} is open.
+          description: The wallet doesn't call that dependency while the breaker is open, and answers Unavailable. Look at the dependency.
+      - uid: wallet-breaker-opened
+        title: WalletBreakerOpened
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: (sum by (server_address) (increase(humus_circuit_transitions{job="wallet", otel_scope_name=~"github.com/z5labs/humus/(grpc/grpcclient|httpclient)", humus_circuit_state="open"}[5m]) or (humus_circuit_transitions{job="wallet", otel_scope_name=~"github.com/z5labs/humus/(grpc/grpcclient|httpclient)", humus_circuit_state="open"} unless humus_circuit_transitions{job="wallet", otel_scope_name=~"github.com/z5labs/humus/(grpc/grpcclient|httpclient)", humus_circuit_state="open"} offset 5m))) or on () vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: ticket
+        annotations:
+          summary: The wallet's breaker for {{ $labels.server_address }} opened in the last 5 minutes.
+          description: Calls to that dependency failed often enough to open the breaker, however briefly. Look at the dependency's errors and latency on the dashboard.
+      - uid: wallet-retries-throttled
+        title: WalletRetriesThrottled
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: (sum by (server_address) (increase(humus_retry_decisions{job="wallet", otel_scope_name=~"github.com/z5labs/humus/(grpc/grpcclient|httpclient)", humus_retry_decision="throttled"}[5m]) or (humus_retry_decisions{job="wallet", otel_scope_name=~"github.com/z5labs/humus/(grpc/grpcclient|httpclient)", humus_retry_decision="throttled"} unless humus_retry_decisions{job="wallet", otel_scope_name=~"github.com/z5labs/humus/(grpc/grpcclient|httpclient)", humus_retry_decision="throttled"} offset 5m))) or on () vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: page
+        annotations:
+          summary: The wallet's retries to {{ $labels.server_address }} were throttled in the last 5 minutes.
+          description: The client's retry budget ran out, so its calls failed without another attempt. Look at that dependency.
+      - uid: wallet-unavailable
+        title: WalletUnavailable
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: min(k8s_deployment_available{k8s_namespace_name="wallet", k8s_deployment_name="wallet"}) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: The wallet's Deployment has had no available replica for 5 minutes.
+          description: Nothing answers the wallet's calls. Look at the Deployment's pods, their events and their logs.
+      - uid: ledger-unavailable
+        title: LedgerUnavailable
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: min(k8s_deployment_available{k8s_namespace_name="wallet", k8s_deployment_name="ledger"}) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: The ledger's Deployment has had no available replica for 5 minutes.
+          description: The wallet can't open an account, send or watch while the ledger is down. Look at the Deployment's pods, their events and their logs.
+      - uid: wallet-crash-looping
+        title: WalletCrashLooping
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 1200
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: max(delta(k8s_container_restarts{k8s_namespace_name="wallet", k8s_container_name="wallet"}[15m])) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [3]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: page
+        annotations:
+          summary: A wallet container restarted more than 3 times in 15 minutes.
+          description: Look at the previous container's logs, and at the pod's events.
+      - uid: ledger-crash-looping
+        title: LedgerCrashLooping
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 1200
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: max(delta(k8s_container_restarts{k8s_namespace_name="wallet", k8s_container_name="ledger"}[15m])) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [3]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: page
+        annotations:
+          summary: A ledger container restarted more than 3 times in 15 minutes.
+          description: Look at the previous container's logs, and at the pod's events.

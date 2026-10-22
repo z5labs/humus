@@ -1080,8 +1080,11 @@ jobs:
   # Secrets up.sh made, rolling each Deployment out and forwarding its port
   # again, and find a send's trace across both services, both services'
   # records of it, both services' metrics by pod, and the Deployments'
-  # replicas and restarts in the LGTM stack. The ruleset doesn't require this
-  # job, and Build doesn't wait on it; Vet the functional tests vets them.
+  # replicas and restarts in the LGTM stack, then check that Grafana loaded
+  # every alert rule and the dashboard, and that after the ledger's breaker
+  # opens Mimir holds every series the rules read and each rule evaluates
+  # without error. The ruleset doesn't require this job, and Build doesn't
+  # wait on it; Vet the functional tests vets them.
   wallet-kind:
     name: Wallet walkthrough (kind)
     runs-on: ubuntu-latest

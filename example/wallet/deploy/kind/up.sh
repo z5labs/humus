@@ -74,7 +74,7 @@ configmap() {
 }
 
 {
-  kubectl kustomize "$dir"
+  kubectl kustomize --load-restrictor LoadRestrictionsNone "$dir"
   echo ---
   secret wallet-tls --from-file=tls.pem="$tmp/wallet.pem"
   echo ---
