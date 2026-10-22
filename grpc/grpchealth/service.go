@@ -63,8 +63,8 @@ func NewService(s *humus.Setup, settings Settings, opts ...health.Option) (*Serv
 
 	hs := health.NewService(opts...)
 
-	// No credentials and no stats handler: the server speaks plain text,
-	// and a probe records no span and no metric. A recovered panic is
+	// Plain-text credentials and no stats handler: the server speaks plain
+	// text, and a probe records no span and no metric. A recovered panic is
 	// logged under this package's scope.
 	srv, err := grpcsrv.New(s, loggerName, settings.Addr, nil)
 	if err != nil {

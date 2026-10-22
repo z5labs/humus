@@ -58,8 +58,8 @@ import (
 // again whenever one ends with Unavailable, as the gRPC services page's
 // Streams at shutdown tells a client to.
 //
-// The last open streams on a pod, and open each again at once when the
-// pod's Shutdown ends it, as #1254 reported, on the test Host and over
+// The last tests open streams on a pod, and open each again at once when
+// the pod's Shutdown ends it, as #1254 reported, on the test Host and over
 // loopback TCP. Each stream opened again lands on the next pod.
 
 // startServing runs a dependency on h, in an App of its own, with a

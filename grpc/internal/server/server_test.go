@@ -235,15 +235,16 @@ func TestServer_Shutdown_called_during_another_waits_for_it(t *testing.T) {
 
 func TestServer_Shutdown_closes_a_connection_in_its_handshake(t *testing.T) {
 	testCases := []struct {
-		name string
-		ctx  func(t *testing.T) context.Context
+		name    string
+		ctx     func(t *testing.T) context.Context
+		wantErr error
 	}{
 		{name: "and sends its GOAWAY at once", ctx: func(t *testing.T) context.Context { return t.Context() }},
 		{name: "and stops at once when its context is done already", ctx: func(t *testing.T) context.Context {
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
 			return ctx
-		}},
+		}, wantErr: context.Canceled},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -265,7 +266,12 @@ func TestServer_Shutdown_closes_a_connection_in_its_handshake(t *testing.T) {
 				synctest.Wait()
 
 				begin := time.Now()
-				_ = srv.Shutdown(tc.ctx(t))
+				err = srv.Shutdown(tc.ctx(t))
+				if tc.wantErr == nil {
+					require.NoError(t, err)
+				} else {
+					require.ErrorIs(t, err, tc.wantErr)
+				}
 				require.Zero(t, time.Since(begin), "Shutdown waits for no handshake")
 				_, err = io.ReadAll(conn)
 				require.NoError(t, err, "the server closed the connection")
