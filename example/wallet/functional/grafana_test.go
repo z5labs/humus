@@ -23,6 +23,7 @@ import (
 
 const (
 	clientScopes = `otel_scope_name=~"github.com/z5labs/humus/(grpc/grpcclient|httpclient)"`
+	serverCodes  = `rpc_response_status_code=~"UNKNOWN|DEADLINE_EXCEEDED|UNIMPLEMENTED|INTERNAL|UNAVAILABLE|DATA_LOSS"`
 	inNamespace  = `k8s_namespace_name="wallet"`
 )
 
@@ -30,7 +31,7 @@ var alertRules = []struct {
 	title  string
 	series string
 }{
-	{title: "WalletErrors", series: `rpc_server_call_duration_count{job="wallet", rpc_method!="wallet.v1.Wallet/WatchAccount", rpc_response_status_code="UNAVAILABLE"}`},
+	{title: "WalletErrors", series: `rpc_server_call_duration_count{job="wallet", rpc_method!="wallet.v1.Wallet/WatchAccount", ` + serverCodes + `}`},
 	{title: "WalletSlow", series: `rpc_server_call_duration_bucket{job="wallet", rpc_method!="wallet.v1.Wallet/WatchAccount"}`},
 	{title: "LedgerErrors", series: `rpc_server_call_duration_count{job="ledger", rpc_method!="ledger.v1.Ledger/WatchAccount"}`},
 	{title: "WalletBreakerOpen", series: `humus_circuit_state{job="wallet", ` + clientScopes + `, humus_circuit_state="open", server_address="ledger"}`},
