@@ -9,10 +9,9 @@
 // listens through the Setup's Host, builds the *grpc.Server, serves it
 // through the drain, and shuts it down with GracefulStop, then Stop once
 // the grace period runs out. It knows nothing of TLS or of
-// grpcserver.Settings: the transport credentials, if any, are among the
-// options it is given. grpcserver.NewService builds on it with TLS
-// required, and grpchealth.NewService builds its plaintext health server
-// on it.
+// grpcserver.Settings: the transport credentials, if any, are the ones New
+// is given. grpcserver.NewService builds on it with TLS required, and
+// grpchealth.NewService builds its plaintext health server on it.
 //
 // Its outermost interceptors recover a panic of an RPC's handler, or of an
 // interceptor inside them, and fail only that RPC, with codes.Internal and
@@ -24,9 +23,11 @@
 //
 // Inside the recovering stream interceptor, a second one gives every
 // streaming RPC's handler a context of its own, derived from the RPC's,
-// which Shutdown cancels when it starts. A stream whose handler then
-// returns nil or a context error ends with codes.Unavailable and the
-// message "server is shutting down". Unary RPCs are not cancelled.
+// which Shutdown cancels once every connection has written its client a
+// GOAWAY. A stream whose handler then returns nil or a context error ends
+// with codes.Unavailable and the message "server is shutting down", in
+// trailers that follow the GOAWAY, so a client that opens the stream again
+// opens it on a new connection. Unary RPCs are not cancelled.
 //
 // StripUnary and StripStream are the interceptors that strip the failure
 // scenario an RPC carries from a caller the end user doesn't trust. New
@@ -46,6 +47,8 @@ import (
 	"sync/atomic"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/z5labs/humus"
 )
@@ -56,6 +59,7 @@ type Server struct {
 	ln      net.Listener
 	srv     *grpc.Server
 	streams *streams
+	conns   *conns
 
 	// mu orders RegisterService against Serve, so a registration either
 	// happens before Serve or is refused: grpc-go exits the process on one
@@ -72,16 +76,18 @@ type Server struct {
 // New listens on addr with s.Host.Listen("tcp", addr), and builds the
 // server with grpc.WaitForHandlers(true), a unary and a stream interceptor
 // that recover a panic, a stream interceptor inside it that gives each
-// stream's handler a context Shutdown cancels, and then opts. A failure to
-// listen, such as EADDRINUSE, is its error. It registers a function with
-// s.OnStop that closes the listener, so a listener whose Server never
-// serves, because Init failed after New, is still closed.
+// stream's handler a context Shutdown cancels, then opts, and then
+// grpc.Creds with tc, or with insecure credentials, for plain text, if tc
+// is nil. A grpc.Creds in opts has no effect. A failure to listen, such as
+// EADDRINUSE, is its error. It registers a function with s.OnStop that
+// closes the listener, so a listener whose Server never serves, because
+// Init failed after New, is still closed.
 //
 // scope is the instrumentation scope of the logger a recovered panic is
 // logged through, s.Telemetry.LoggerProvider.Logger(scope): the import path
 // of the package building the server, such as
 // "github.com/z5labs/humus/grpc/grpcserver".
-func New(s *humus.Setup, scope, addr string, opts ...grpc.ServerOption) (*Server, error) {
+func New(s *humus.Setup, scope, addr string, tc credentials.TransportCredentials, opts ...grpc.ServerOption) (*Server, error) {
 	ln, err := s.Host.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
@@ -105,16 +111,31 @@ func New(s *humus.Setup, scope, addr string, opts ...grpc.ServerOption) (*Server
 	// recovery, so a panic of a handler it ran is still recovered, and
 	// outside opts, so every interceptor of the end user's sees the
 	// context Shutdown cancels.
+	//
+	// The credentials come last, so grpc-go keeps them over any
+	// grpc.Creds in opts, and every connection is one the listener's
+	// conns track.
+	if tc == nil {
+		tc = insecure.NewCredentials()
+	}
 	logger := s.Telemetry.LoggerProvider.Logger(scope)
 	st := newStreams()
-	all := make([]grpc.ServerOption, 0, 3+len(opts))
+	cs := newConns()
+	all := make([]grpc.ServerOption, 0, 3+len(opts)+1)
 	all = append(all,
 		grpc.WaitForHandlers(true),
 		grpc.ChainUnaryInterceptor(recoverUnary(logger)),
 		grpc.ChainStreamInterceptor(recoverStream(logger), st.interceptor()),
 	)
 	all = append(all, opts...)
-	return &Server{ln: ln, srv: grpc.NewServer(all...), streams: st, stopped: make(chan struct{})}, nil
+	all = append(all, grpc.Creds(creds{TransportCredentials: tc}))
+	return &Server{
+		ln:      &listener{Listener: ln, conns: cs},
+		srv:     grpc.NewServer(all...),
+		streams: st,
+		conns:   cs,
+		stopped: make(chan struct{}),
+	}, nil
 }
 
 // closeListener closes ln. A listener that is already closed is not an
@@ -181,16 +202,24 @@ func (s *Server) Serve(context.Context) error {
 	return fmt.Errorf("serving: %w", err)
 }
 
-// Shutdown ends every streaming RPC: before anything else, it cancels the
-// context of every stream's handler, and of every stream that starts
-// after, and a stream whose handler then returns nil or a context error
-// ends with codes.Unavailable. Unary RPCs are not cancelled.
+// Shutdown stops the server gracefully, with GracefulStop, and ends every
+// streaming RPC. Unary RPCs are not cancelled.
 //
-// Then it stops the server gracefully, with GracefulStop: it stops
-// accepting connections, sends every client a GOAWAY, and waits for the
-// RPCs in flight. If ctx is done first, or is done already, it calls Stop,
-// which closes every connection and cancels every RPC, waits for every
-// handler to return, and returns an error that wraps ctx's error.
+// First it closes every connection still in its handshake, and every one
+// accepted after, since grpc-go sends no GOAWAY until every handshake has
+// ended. Then GracefulStop stops accepting connections, sends every client
+// a GOAWAY, and waits for the RPCs in flight. Once every connection has
+// written its GOAWAY, Shutdown cancels the context of every stream's
+// handler, and of every stream that starts after, and a stream whose
+// handler then returns nil or a context error ends with codes.Unavailable.
+// Its trailers follow the GOAWAY on its connection, so a client has read
+// the GOAWAY when the stream ends, and a stream it opens again goes on a
+// new connection.
+//
+// If ctx is done first, or is done already, it cancels the streams, and
+// calls Stop, which closes every connection and cancels every RPC, waits
+// for every handler to return, and returns an error that wraps ctx's
+// error.
 //
 // A call after the first one has returned returns nil. A call made while
 // the first is still running waits for it, and, if its own ctx is done
@@ -201,17 +230,26 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return s.awaitShutdown(ctx)
 	}
 	defer close(s.stopped)
-	s.streams.stop()
 	// Before Serve, the *grpc.Server doesn't know the listener, so neither
 	// GracefulStop nor Stop closes it.
 	defer func() { _ = closeListener(s.ln) }()
 
+	wentAway := s.conns.goingAway()
 	if ctx.Err() == nil {
 		stopped := make(chan struct{})
 		go func() {
 			defer close(stopped)
 			s.srv.GracefulStop()
 		}()
+		// GracefulStop returns once every connection has closed, by when
+		// each has settled. stopped is a backstop, so that Shutdown never
+		// waits on wentAway after GracefulStop has returned.
+		select {
+		case <-wentAway:
+		case <-stopped:
+		case <-ctx.Done():
+		}
+		s.streams.stop()
 		select {
 		case <-stopped:
 			return nil
@@ -222,6 +260,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		s.srv.Stop()
 		<-stopped
 	} else {
+		s.streams.stop()
 		s.srv.Stop()
 	}
 	return fmt.Errorf("shutting down: %w", ctx.Err())

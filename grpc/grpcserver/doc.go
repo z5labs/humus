@@ -143,15 +143,21 @@
 //   - Serve's context being done changes nothing. The Service keeps serving
 //     connections and RPCs through the App's drain, while a load balancer
 //     stops sending it traffic.
-//   - Shutdown ends every stream, as Streams at shutdown describes, and
-//     calls GracefulStop. It stops accepting connections, sends
+//   - Shutdown calls GracefulStop. It stops accepting connections, sends
 //     every client a GOAWAY, so that clients open new connections
 //     elsewhere, and waits for the RPCs in flight to finish. gRPC
 //     connections are long-lived, and the GOAWAY is what moves a client off
-//     a terminating pod. When the grace period runs out first, Shutdown
-//     calls Stop, which closes every connection and cancels every RPC's
-//     context, waits for every handler to return, and the App exits with a
-//     *humus.GracePeriodError.
+//     a terminating pod. Once every connection has sent its GOAWAY,
+//     Shutdown ends every stream, as Streams at shutdown describes. When
+//     the grace period runs out first, Shutdown calls Stop, which closes
+//     every connection and cancels every RPC's context, waits for every
+//     handler to return, and the App exits with a *humus.GracePeriodError.
+//
+// grpc-go sends no GOAWAY, and doesn't stop, until every connection it has
+// accepted has finished its TLS handshake, which it allows two minutes by
+// default. So Shutdown first closes every connection still in its
+// handshake, and every connection accepted after. Such a connection
+// carries no RPC yet, and its client dials again, and reaches another pod.
 //
 // A handler should return once its context is done. With
 // grpc.WaitForHandlers(true), which humus sets, Stop waits for every
@@ -166,12 +172,11 @@
 // can act on. A stream interceptor of humus's, inside the one that
 // recovers panics and outside the end user's, gives every streaming RPC's
 // handler a context of its own, derived from the RPC's, which Shutdown
-// cancels. That covers server, client and bidirectional streams. When
-// Shutdown starts:
+// cancels. That covers server, client and bidirectional streams. Once every
+// connection has sent its client a GOAWAY:
 //
-//   - it cancels the context of every stream in flight, before it calls
-//     GracefulStop. A stream that starts after that gets a context that is
-//     already cancelled;
+//   - Shutdown cancels the context of every stream in flight. A stream that
+//     starts after that gets a context that is already cancelled;
 //   - when a handler then returns nil, an error that is context.Canceled,
 //     or a status with codes.Canceled, the stream ends with codes.Unavailable
 //     and the message "server is shutting down". Without that, grpc-go
@@ -182,8 +187,11 @@
 //   - unary RPCs are not cancelled. They finish within the grace period.
 //
 // GracefulStop keeps each connection open until its streams have ended,
-// so the status reaches the client, in the stream's trailers. Unavailable
-// is gRPC's code for a condition the client corrects by retrying:
+// so the status reaches the client, in the stream's trailers. The trailers
+// follow the GOAWAY on the connection, so the client has read the GOAWAY by
+// the time its stream ends, and a stream it opens again at once goes over a
+// new connection. Unavailable is gRPC's code for a condition the client
+// corrects by retrying:
 //
 //	resp, err := stream.Recv()
 //	if status.Code(err) == codes.Unavailable {
@@ -195,8 +203,8 @@
 // breaker of a client whose streams it ends, and the client's reconnect
 // goes through.
 //
-// The streams are cancelled when Shutdown starts, after the drain, and not
-// when Serve's context is done. During the drain, a load balancer may still
+// The streams are cancelled at Shutdown, after the drain, and not when
+// Serve's context is done. During the drain, a load balancer may still
 // route a client that reconnects back to this pod.
 //
 // A handler sees the shutdown through its context, and the Service doesn't
