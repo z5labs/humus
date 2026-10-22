@@ -4,8 +4,8 @@
 // https://opensource.org/licenses/MIT
 
 // Package stress runs a sweep: it builds every package's test binary, and
-// once every build has finished, runs each package at each CPU count, packed
-// into lanes of cores, and counts the results.
+// once every build has finished, runs each package at each pair of CPU count
+// and load, packed into lanes of cores, and counts the results.
 package stress
 
 import (
@@ -30,7 +30,9 @@ type Runner interface {
 	// lists. It is called only once the package is built.
 	List(ctx context.Context, pkg int) ([]string, error)
 	// Run runs the binary of the package pkg once, at CPU count cpu,
-	// pinned to cores. It is called only once every package is built.
+	// pinned to cores. Other runs may be pinned to the same cores, as many
+	// as the run's load allows. It is called only once every package is
+	// built.
 	Run(ctx context.Context, pkg, cpu int, cores []int) run.Result
 }
 
@@ -40,7 +42,11 @@ type Config struct {
 	Packages int
 	// CPUs are the CPU counts each package runs at.
 	CPUs []int
-	// Count is how many times each package runs at each CPU count.
+	// Loads are the loads each package runs at: how many runs, at most,
+	// are pinned to each of a run's cores.
+	Loads []int
+	// Count is how many times each package runs at each pair of CPU count
+	// and load.
 	Count int
 	// Lanes are the cores runs are pinned to, split into lanes.
 	Lanes [][]int
@@ -113,10 +119,12 @@ func sweep(ctx context.Context, cfg Config, r Runner, res *results.Results) erro
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 
-	pairs := make([]lanes.Pair, 0, cfg.Packages*len(cfg.CPUs))
+	pairs := make([]lanes.Pair, 0, cfg.Packages*len(cfg.CPUs)*len(cfg.Loads))
 	for pkg := range cfg.Packages {
 		for _, cpu := range cfg.CPUs {
-			pairs = append(pairs, lanes.Pair{Package: pkg, CPU: cpu})
+			for _, load := range cfg.Loads {
+				pairs = append(pairs, lanes.Pair{Package: pkg, CPU: cpu, Load: load})
+			}
 		}
 	}
 	a := &adapter{r: r, res: res, cancel: cancel}
@@ -147,7 +155,7 @@ func (a *adapter) Run(ctx context.Context, lr lanes.Run) {
 	if result.Cancelled {
 		return
 	}
-	if err := a.res.Add(lr.Pair.Package, lr.Pair.CPU, result); err != nil {
+	if err := a.res.Add(lr.Pair.Package, lr.Pair.CPU, lr.Pair.Load, result); err != nil {
 		a.cancel(fmt.Errorf("saving a run's output: %w", err))
 	}
 	a.mu.Lock()
