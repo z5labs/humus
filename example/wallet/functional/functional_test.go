@@ -10,6 +10,7 @@ package functional
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto"
 	"crypto/tls"
@@ -22,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"os/exec"
 	"regexp"
 	"slices"
@@ -50,7 +52,7 @@ const (
 	pollEvery   = time.Second
 )
 
-var kubeContext = flag.String("context", "kind-kind", "the kubectl context of the cluster up.sh brought the wallet and the ledger up on")
+var kubeContext = flag.String("context", "kind-"+cmp.Or(os.Getenv("KIND_CLUSTER_NAME"), "kind"), "the kubectl context of the cluster up.sh brought the wallet and the ledger up on")
 
 var forwarding = regexp.MustCompile(`^Forwarding from (127\.0\.0\.1:\d+) -> \d+$`)
 

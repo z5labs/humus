@@ -10,6 +10,7 @@ package functional
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -20,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -43,7 +45,7 @@ const (
 	timeout     = 2 * time.Minute
 )
 
-var kubeContext = flag.String("context", "kind-kind", "the kubectl context of the cluster up.sh brought the order status processor up on")
+var kubeContext = flag.String("context", "kind-"+cmp.Or(os.Getenv("KIND_CLUSTER_NAME"), "kind"), "the kubectl context of the cluster up.sh brought the order status processor up on")
 
 var forwarding = regexp.MustCompile(`^Forwarding from (127\.0\.0\.1:\d+) -> \d+$`)
 
