@@ -41,11 +41,17 @@ type fakeRunner struct {
 	lastBuilt  time.Time
 	builds     int
 	firstRun   time.Time
-	runs       map[lanes.Pair]int
+	runs       map[pkgCPU]int
 	pinned     map[int]int
 	maxPinned  int
 	running    int
 	maxRunning int
+}
+
+// pkgCPU is a package at a CPU count. A Runner isn't told a run's load, so
+// the fake counts its runs by these, over every load.
+type pkgCPU struct {
+	pkg, cpu int
 }
 
 func newFakeRunner() *fakeRunner {
@@ -53,7 +59,7 @@ func newFakeRunner() *fakeRunner {
 		buildTook: func(int) time.Duration { return time.Second },
 		runTook:   func(int, int) time.Duration { return 100 * time.Millisecond },
 		fail:      func(int, int) bool { return false },
-		runs:      map[lanes.Pair]int{},
+		runs:      map[pkgCPU]int{},
 		pinned:    map[int]int{},
 	}
 }
@@ -78,7 +84,7 @@ func (f *fakeRunner) Run(ctx context.Context, pkg, cpu int, cores []int) run.Res
 	if f.firstRun.IsZero() {
 		f.firstRun = time.Now()
 	}
-	f.runs[lanes.Pair{Package: pkg, CPU: cpu}]++
+	f.runs[pkgCPU{pkg, cpu}]++
 	for _, c := range cores {
 		f.pinned[c]++
 		f.maxPinned = max(f.maxPinned, f.pinned[c])
@@ -210,7 +216,7 @@ func TestStress_warns_of_a_binary_that_does_not_list_its_tests_and_runs_it(t *te
 	require.NoError(t, err)
 	require.Contains(t, log.String(), "warning: TestMain failed")
 	require.Contains(t, log.String(), "built 1 test binaries")
-	require.Equal(t, 2, f.runs[lanes.Pair{Package: 0, CPU: 1}])
+	require.Equal(t, 2, f.runs[pkgCPU{0, 1}])
 }
 
 func TestStress_writes_its_progress(t *testing.T) {
@@ -246,7 +252,7 @@ func TestStress_stops_when_its_context_is_done_and_counts_no_cancelled_run(t *te
 		}, f, res)
 	})
 	require.ErrorIs(t, err, context.DeadlineExceeded)
-	require.Equal(t, 3, f.runs[lanes.Pair{Package: 0, CPU: 1}])
+	require.Equal(t, 3, f.runs[pkgCPU{0, 1}])
 	rep := res.Report()
 	require.Len(t, rep.Failing, 1)
 	require.Equal(t, []results.Pair{{CPU: 1, Load: 1, Runs: 2, Failures: 2}}, rep.Failing[0].Pairs, "the run cut short isn't counted")
@@ -268,7 +274,7 @@ func TestStress_stops_when_a_run_s_output_cannot_be_saved(t *testing.T) {
 		}, f, res)
 	})
 	require.ErrorContains(t, err, "saving a run's output")
-	require.Equal(t, 1, f.runs[lanes.Pair{Package: 0, CPU: 1}])
+	require.Equal(t, 1, f.runs[pkgCPU{0, 1}])
 }
 
 func TestBuildError_unwraps(t *testing.T) {
