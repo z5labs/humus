@@ -11,7 +11,8 @@
 // A level is the tests a build tag adds. The unit level is the untagged
 // tests; any other level is named after its tag, such as testcontainers, and
 // its tests are the ones a binary built with the tag has and the untagged
-// binary doesn't.
+// binary doesn't. The levels are found too: one for each build tag the test
+// files use.
 package discover
 
 import (
@@ -19,6 +20,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"go/build/constraint"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path"
@@ -38,6 +42,88 @@ func Tag(level string) string {
 		return ""
 	}
 	return level
+}
+
+// Levels returns the levels of the repository at root: Unit, then one for
+// each build tag in a //go:build line of a _test.go file that git tracks
+// there, in order of their names. It keeps no list of tags, so a tag that a
+// test file starts to use is a level of its own, with no change to flaky.
+func Levels(ctx context.Context, root string, env []string) ([]string, error) {
+	out, err := command(ctx, root, env, "git", "ls-files", "-z", "--", "*_test.go")
+	if err != nil {
+		return nil, err
+	}
+	tags := map[string]string{}
+	for name := range strings.SplitSeq(out, "\x00") {
+		if name == "" {
+			continue
+		}
+		if err := fileTags(root, name, tags); err != nil {
+			return nil, err
+		}
+	}
+	if file, ok := tags[Unit]; ok {
+		return nil, fmt.Errorf("%s uses the build tag %s, which is the name of the untagged level", file, Unit)
+	}
+	levels := []string{Unit}
+	for tag := range tags {
+		levels = append(levels, tag)
+	}
+	slices.Sort(levels[1:])
+	return levels, nil
+}
+
+// fileTags adds the build tags in the //go:build line of the Go file name, a
+// slash-separated path under root, to tags, each one mapped to the first file
+// that uses it. A file that git tracks but that is gone from the working tree
+// has none.
+func fileTags(root, name string, tags map[string]string) error {
+	src, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	f, err := parser.ParseFile(token.NewFileSet(), name, src, parser.PackageClauseOnly|parser.ParseComments)
+	if err != nil {
+		return err
+	}
+	for _, group := range f.Comments {
+		if group.Pos() >= f.Package {
+			break
+		}
+		for _, c := range group.List {
+			if !constraint.IsGoBuild(c.Text) {
+				continue
+			}
+			expr, err := constraint.Parse(c.Text)
+			if err != nil {
+				return fmt.Errorf("%s: %w", name, err)
+			}
+			for _, tag := range exprTags(expr) {
+				if _, ok := tags[tag]; !ok {
+					tags[tag] = name
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// exprTags returns every build tag that expr names, negated or not.
+func exprTags(expr constraint.Expr) []string {
+	switch e := expr.(type) {
+	case *constraint.TagExpr:
+		return []string{e.Tag}
+	case *constraint.NotExpr:
+		return exprTags(e.X)
+	case *constraint.AndExpr:
+		return append(exprTags(e.X), exprTags(e.Y)...)
+	case *constraint.OrExpr:
+		return append(exprTags(e.X), exprTags(e.Y)...)
+	}
+	return nil
 }
 
 // Package is a package that has test files at a level.

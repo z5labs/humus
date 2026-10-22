@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
@@ -102,6 +103,10 @@ func TestStress_runs_the_tests_that_match_run_count_times_and_confirms_none(t *t
 func TestStress_writes_the_report_as_JSON(t *testing.T) {
 	needCores(t, 2)
 	repo := repotest.New(t, "0.0.1")
+	repotest.Write(t, repo, "c/c_test.go", containersTest("c", "TestC"))
+	repotest.Write(t, repo, "d/d_test.go", "//go:build functional\n\npackage d\n")
+	repotest.Write(t, repo, "e/e_test.go", "//go:build conformance\n\npackage e\n")
+	repotest.Commit(t, repo)
 	st, stdout, stderr := stressIn(t, repo, "stress", "-cpu", "2", "-load", "2", "-count", "1", "-confirm", "2", "-keep", "0", "-timeout", "1m", "-json", "./twocpus")
 	require.Equal(t, 1, st.Code(), stderr)
 	var rep results.Report
@@ -120,7 +125,8 @@ func TestStress_writes_the_report_as_JSON(t *testing.T) {
 		{Name: "unit", Count: 1, Confirm: 2, TimeoutSeconds: 60},
 		{Name: "testcontainers", Count: 1, Confirm: 2, TimeoutSeconds: 60},
 		{Name: "functional", Count: 1, Confirm: 2, TimeoutSeconds: 60, CPU: 4, Load: 1},
-	}, rep.Levels, "-count, -confirm and -timeout, given, apply to every level, and the functional level runs at CPU count 4 and load 1 alone")
+		{Name: "conformance", Count: 1, Confirm: 2, TimeoutSeconds: 60},
+	}, rep.Levels, "every level found runs by default; -count, -confirm and -timeout, given, apply to every level, and the functional level runs at CPU count 4 and load 1 alone")
 	require.Equal(t, 1, rep.Confirmed)
 	require.Equal(t, 2, rep.ConfirmRuns)
 	require.Len(t, rep.Phases, 4)
@@ -175,12 +181,13 @@ func TestStress_runs_the_testcontainers_level_s_own_tests_with_its_containers_on
 	repo := repotest.New(t, "0.0.1")
 	repotest.Write(t, repo, "a/a_containers_test.go", containersTest("a", "TestAContainers"))
 	repotest.Write(t, repo, "c/c_test.go", "//go:build testcontainers\n\npackage c\n\nimport \"testing\"\n\nfunc TestC(t *testing.T) {}\n")
+	repotest.Commit(t, repo)
 	cores, err := run.Affinity()
 	require.NoError(t, err)
 
 	st, stdout, stderr := stressIn(t, repo, "stress", "-cpu", "1,2", "-load", "1", "-count", "2", "-confirm", "3", "-keep", "1", "./a", "./c")
 	require.Equal(t, 1, st.Code(), "stdout:\n%s\nstderr:\n%s", stdout, stderr)
-	require.Contains(t, stderr, "found 3 packages with tests (1 unit, 2 testcontainers, 0 functional)", "c has tests only behind the tag")
+	require.Contains(t, stderr, "found 3 packages with tests (1 unit, 2 testcontainers)", "c has tests only behind the tag")
 	require.Contains(t, stderr, "pinning the testcontainers containers to cores "+strconv.Itoa(cores[0])+"\n", "-keep 1 keeps back the first core")
 	require.Contains(t, dockertest.Read(t, docker, "events.args"), "--filter label=org.testcontainers", "it watches Docker's events")
 	require.Contains(t, stderr, "built 3 test binaries")
@@ -199,6 +206,7 @@ func TestStress_runs_the_testcontainers_level_s_own_tests_that_match_run(t *test
 	repo := repotest.New(t, "0.0.1")
 	repotest.Write(t, repo, "a/a_containers_test.go", containersTest("a", "TestAContainers"))
 	repotest.Write(t, repo, "c/c_test.go", containersTest("c", "TestC"))
+	repotest.Commit(t, repo)
 
 	st, stdout, stderr := stressIn(t, repo, "stress", "-tags", "testcontainers", "-cpu", "2", "-load", "1", "-count", "2", "-keep", "1", "-run", "Containers$/x?", "-json", "./a", "./c")
 	require.Equal(t, 1, st.Code(), "stdout:\n%s\nstderr:\n%s", stdout, stderr)
@@ -210,6 +218,24 @@ func TestStress_runs_the_testcontainers_level_s_own_tests_that_match_run(t *test
 	require.Equal(t, "testcontainers", rep.Failing[0].Level)
 	require.Equal(t, []results.Pair{{CPU: 2, Load: 1, Runs: 2, Failures: 2}}, rep.Failing[0].Pairs)
 	require.Zero(t, rep.Passed, "with no untagged binary built beside it, TestA still doesn't run at the testcontainers level")
+}
+
+func TestStress_runs_a_level_it_does_not_know_as_the_unit_tests_run_with_its_tag(t *testing.T) {
+	needCores(t, 2)
+	docker := dockertest.Fake(t)
+	repo := repotest.New(t, "0.0.1")
+	repotest.Write(t, repo, "a/a_conformance_test.go", strings.Replace(containersTest("a", "TestAConformance"), "testcontainers", "conformance", 1))
+	repotest.Commit(t, repo)
+
+	st, stdout, stderr := stressIn(t, repo, "stress", "-cpu", "1,2", "-load", "1", "-count", "2", "-confirm", "3", "-keep", "0", "./a")
+	require.Equal(t, 1, st.Code(), "stdout:\n%s\nstderr:\n%s", stdout, stderr)
+	require.Contains(t, stderr, "found 2 packages with tests (1 unit, 1 conformance)", "the conformance tag is a level, with no change to flaky")
+	require.Empty(t, dockertest.Read(t, docker, "events.args"), "its tests need no containers")
+	require.Contains(t, stderr, "confirming 1 conformance tests, 3 times at each pair of CPU count and load")
+	require.Contains(t, stdout, "FAILING: failed or hung every run at some pair of CPU count and load\n\na  TestAConformance  (conformance)\n")
+	require.Contains(t, stdout, "reproduce: flaky stress -tags conformance -run '^TestAConformance$' -cpu 2 -load 1 -count 3 ./a\n")
+	require.Contains(t, stdout, "taskset -c 0-1 go -C . test -race -cover -tags conformance -count=3 -cpu 2 -timeout 2m0s -run '^TestAConformance$' ./a\n", "its timeout is the unit level's")
+	require.Contains(t, stdout, "2 tests passed every run\n", "TestA and TestAToo, at the unit level alone")
 }
 
 func TestStress_needs_no_Docker_at_the_unit_level(t *testing.T) {
@@ -256,15 +282,26 @@ func TestCompileRun_compiles_every_level_of_the_pattern(t *testing.T) {
 	require.ErrorContains(t, compileRun("TestA/x/("), "-run: error parsing regexp")
 }
 
-func TestParseLevels_takes_each_known_level_once(t *testing.T) {
-	levels, err := parseLevels("testcontainers, unit,testcontainers")
+func TestPickLevels_picks_among_the_levels_found(t *testing.T) {
+	found := []string{"unit", "conformance", "functional", "loopback", "testcontainers"}
+	levels, err := pickLevels(found, nil)
 	require.NoError(t, err)
-	require.Equal(t, []string{"testcontainers", "unit"}, levels)
-	levels, err = parseLevels("functional")
+	require.Equal(t, []string{"unit", "testcontainers", "functional", "conformance", "loopback"}, levels, "every level by default, the ones flaky knows first")
+
+	levels, err = pickLevels(found, splitLevels("loopback, unit,loopback"))
 	require.NoError(t, err)
-	require.Equal(t, []string{"functional"}, levels)
-	_, err = parseLevels("unit,nope")
-	require.ErrorContains(t, err, `"nope" is not a level: the levels are unit, testcontainers and functional`)
+	require.Equal(t, []string{"loopback", "unit"}, levels, "each level once, in -tags' order")
+
+	_, err = pickLevels(found, splitLevels("unit,nope"))
+	require.ErrorContains(t, err, `"nope" is not a level: the levels are unit, conformance, functional, loopback and testcontainers`)
+	_, err = pickLevels([]string{"unit"}, splitLevels("testcontainers"))
+	require.ErrorContains(t, err, `"testcontainers" is not a level: the only level is unit`, "a level flaky knows isn't one until a test file uses its tag")
+}
+
+func TestLevel_runs_a_level_flaky_does_not_know_with_the_unit_level_s_defaults(t *testing.T) {
+	f := stressFlags{set: map[string]bool{}}
+	require.Equal(t, results.Level{Name: "conformance", Count: 500, Confirm: 1000, Timeout: 2 * time.Minute, DefaultTimeout: 2 * time.Minute}, f.level("conformance"))
+	require.Equal(t, results.Level{Name: "testcontainers", Count: 25, Confirm: 50, Timeout: 10 * time.Minute, DefaultTimeout: 10 * time.Minute}, f.level("testcontainers"))
 }
 
 func TestStress_exits_0_when_every_test_passed_every_run(t *testing.T) {
@@ -384,7 +421,7 @@ func TestStress_runs_each_walkthrough_s_functional_tests_on_a_kind_cluster_of_it
 
 	st, stdout, stderr := stressIn(t, repo, "stress", "-count", "2", "-confirm", "1", "-keep", "0", "./mailer/...", "./wallet/...")
 	require.Equal(t, 1, st.Code(), "stdout:\n%s\nstderr:\n%s", stdout, stderr)
-	require.Contains(t, stderr, "found 2 packages with tests (0 unit, 0 testcontainers, 2 functional)", "-tags has functional by default")
+	require.Contains(t, stderr, "found 2 packages with tests (0 unit, 2 functional)", "-tags has functional by default")
 	require.Contains(t, stderr, "built 2 test binaries")
 
 	builds := dockertest.Read(t, docker, "builds")

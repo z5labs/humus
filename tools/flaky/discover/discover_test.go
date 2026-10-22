@@ -6,6 +6,7 @@
 package discover_test
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -46,6 +47,57 @@ func TestModules_lists_what_go_modules_sh_lists(t *testing.T) {
 func TestModules_fails_without_go_modules_sh(t *testing.T) {
 	_, err := discover.Modules(t.Context(), t.TempDir(), env.Child(bedrock.OSEnvironment{}))
 	require.ErrorContains(t, err, "go-modules.sh")
+}
+
+func TestLevels_finds_the_unit_level_and_one_for_each_build_tag_the_tracked_test_files_use(t *testing.T) {
+	repo := repotest.New(t, "1.27.2")
+	childEnv := env.Child(bedrock.OSEnvironment{})
+	levels, err := discover.Levels(t.Context(), repo, childEnv)
+	require.NoError(t, err)
+	require.Equal(t, unit, levels, "no test file in the repository has a build tag")
+
+	repotest.Write(t, repo, "a/a_conformance_test.go", "// Copyright\n\n//go:build conformance\n\npackage a\n\nimport \"testing\"\n\nfunc TestAConformance(t *testing.T) {}\n")
+	repotest.Commit(t, repo)
+	levels, err = discover.Levels(t.Context(), repo, childEnv)
+	require.NoError(t, err)
+	require.Equal(t, []string{"unit", "conformance"}, levels, "a tag added is a level, with no change to flaky")
+
+	repotest.Write(t, repo, "b/sub/sub_test.go", "/* a block comment */\n\n//go:build (loopback || testcontainers) && !functional\n\npackage sub\n\nimport \"testing\"\n\nfunc TestSub(t *testing.T) {}\n")
+	repotest.Commit(t, repo)
+	levels, err = discover.Levels(t.Context(), repo, childEnv)
+	require.NoError(t, err)
+	require.Equal(t, []string{"unit", "conformance", "functional", "loopback", "testcontainers"}, levels, "every tag in the line is a level, negated or not, in a module of its own too")
+
+	repotest.Write(t, repo, "c/c_test.go", "//go:build untracked\n\npackage c\n")
+	repotest.Write(t, repo, "notests/gen.go", "//go:build generate\n\npackage notests\n")
+	repotest.Write(t, repo, "a/body_test.go", "package a\n\n//go:build body\n")
+	repotest.Git(t, repo, "add", "notests/gen.go", "a/body_test.go")
+	levels, err = discover.Levels(t.Context(), repo, childEnv)
+	require.NoError(t, err)
+	require.Equal(t, []string{"unit", "conformance", "functional", "loopback", "testcontainers"}, levels, "a test file git doesn't track, a file that isn't a test file, and a line after the package clause add no level")
+
+	require.NoError(t, os.Remove(filepath.Join(repo, "a", "a_conformance_test.go")))
+	levels, err = discover.Levels(t.Context(), repo, childEnv)
+	require.NoError(t, err)
+	require.Equal(t, []string{"unit", "functional", "loopback", "testcontainers"}, levels, "a tracked test file gone from the working tree has no tags")
+}
+
+func TestLevels_fails_on_a_tag_it_cannot_make_a_level_of(t *testing.T) {
+	childEnv := env.Child(bedrock.OSEnvironment{})
+	repo := repotest.New(t, "1.27.2")
+	repotest.Write(t, repo, "a/unit_test.go", "//go:build unit\n\npackage a\n")
+	repotest.Commit(t, repo)
+	_, err := discover.Levels(t.Context(), repo, childEnv)
+	require.ErrorContains(t, err, "a/unit_test.go uses the build tag unit, which is the name of the untagged level")
+
+	repo = repotest.New(t, "1.27.2")
+	repotest.Write(t, repo, "a/bad_test.go", "//go:build (conformance\n\npackage a\n")
+	repotest.Commit(t, repo)
+	_, err = discover.Levels(t.Context(), repo, childEnv)
+	require.ErrorContains(t, err, "a/bad_test.go")
+
+	_, err = discover.Levels(t.Context(), t.TempDir(), childEnv)
+	require.ErrorContains(t, err, "git ls-files")
 }
 
 func TestPackages_finds_every_package_with_tests_in_every_module(t *testing.T) {
