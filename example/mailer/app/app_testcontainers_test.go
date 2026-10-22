@@ -272,7 +272,9 @@ func TestInit_passes_the_shared_cases_when_four_runs_of_them_are_in_parallel(t *
 	}
 	rm, err := m.tel.Metrics(t.Context())
 	require.NoError(t, err)
-	transitions := sumBy(metricsOf(rm, rabbitmqScope)["humus.circuit.transitions"], "humus.circuit.state")
+	ms := metricsOf(rm, rabbitmqScope)
+	require.Positive(t, sumBy(ms["humus.circuit.calls"], "humus.circuit.outcome")["success"], "the Publishers' breakers counted no calls")
+	transitions := sumBy(ms["humus.circuit.transitions"], "humus.circuit.state")
 	require.Zero(t, transitions["open"], "a Publisher's breaker opened")
 
 	stop(t, m.p, m.status)
