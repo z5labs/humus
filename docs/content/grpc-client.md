@@ -309,7 +309,10 @@ whose name has one address whichever resolver looks it up.
 ### Spreading the load with `MaxConnectionAge`
 
 Two things move a `Client` to another pod. `grpcserver`'s `Shutdown` sends
-every client a GOAWAY, so a rollout of the dependency moves them. And a
+every client a GOAWAY, so a rollout of the dependency moves them. It ends the
+streams open on the pod only once it has sent that GOAWAY, so a stream the
+end user's code opens again at once goes over a new connection, to the next
+pod. And a
 server whose end user sets `keepalive.ServerParameters{MaxConnectionAge}` in
 `grpcserver.NewService`'s options sends a GOAWAY when a connection reaches
 that age. The `Client` then dials again, through the Kubernetes Service, and

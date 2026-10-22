@@ -73,14 +73,14 @@ func NewService(s *humus.Setup, settings Settings, opts ...grpc.ServerOption) (*
 	// propagator are passed, so otelgrpc never falls back to
 	// OpenTelemetry's globals.
 	//
-	// The credentials come last, so grpc-go keeps them over any grpc.Creds
-	// in opts. credentials.NewTLS clones the config, so the end user's is
-	// never changed.
+	// server.New adds the credentials after opts, so grpc-go keeps them
+	// over any grpc.Creds in opts. credentials.NewTLS clones the config,
+	// so the end user's is never changed.
 	//
 	// The strip interceptors come before opts, so they are chained after
 	// server.New's recovery and streams interceptors, and before every
 	// interceptor of the end user's.
-	all := make([]grpc.ServerOption, 0, 3+len(opts)+1)
+	all := make([]grpc.ServerOption, 0, 3+len(opts))
 	all = append(all,
 		grpc.StatsHandler(otelgrpc.NewServerHandler(
 			otelgrpc.WithTracerProvider(s.Telemetry.TracerProvider),
@@ -91,9 +91,8 @@ func NewService(s *humus.Setup, settings Settings, opts ...grpc.ServerOption) (*
 		grpc.ChainStreamInterceptor(server.StripStream(s.Faults, settings.TrustScenario)),
 	)
 	all = append(all, opts...)
-	all = append(all, grpc.Creds(credentials.NewTLS(settings.TLS)))
 
-	srv, err := server.New(s, scope, settings.Addr, all...)
+	srv, err := server.New(s, scope, settings.Addr, credentials.NewTLS(settings.TLS), all...)
 	if err != nil {
 		return nil, fmt.Errorf("grpcserver: NewService: %w", err)
 	}
@@ -146,13 +145,14 @@ func (svc *Service) Serve(ctx context.Context) error {
 	return nil
 }
 
-// Shutdown ends every streaming RPC: it cancels each stream handler's
+// Shutdown stops the server gracefully: it closes every connection still
+// in its TLS handshake, stops accepting connections, sends every client a
+// GOAWAY, and waits for the RPCs in flight. Once every connection has sent
+// its GOAWAY, it ends every streaming RPC: it cancels each stream handler's
 // context, and a stream whose handler then returns nil or a context error
-// ends with codes.Unavailable. It stops the server gracefully: it stops
-// accepting connections, sends every client a GOAWAY, and waits for the
-// RPCs in flight. If ctx is done first, it closes every connection,
-// cancels every RPC, waits for every handler to return, and returns an
-// error that wraps ctx's error.
+// ends with codes.Unavailable. If ctx is done first, it closes every
+// connection, cancels every RPC, waits for every handler to return, and
+// returns an error that wraps ctx's error.
 func (svc *Service) Shutdown(ctx context.Context) error {
 	if err := svc.srv.Shutdown(ctx); err != nil {
 		return fmt.Errorf("grpcserver: %w", err)

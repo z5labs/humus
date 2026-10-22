@@ -110,11 +110,14 @@
 // first. gRFC A9 added MaxConnectionAge for this kind of rebalancing.
 //
 // Either one may end the streams open on the old connection. Shutdown ends
-// each with Unavailable, and so does grpc-go when the server's
-// MaxConnectionAgeGrace closes the connection under them. The circuit
-// breaker ignores a stream that ends with Unavailable, however many end at
-// once (see Streams, below), so the end user's code opens them again, and
-// they land on the next pod.
+// each with Unavailable once it has sent its GOAWAY, so the Client has read
+// the GOAWAY by the time a stream ends. grpc-go ends each with Unavailable
+// too when the server's MaxConnectionAgeGrace, a grace period after its
+// GOAWAY, closes the connection under them. Either way, a stream opened
+// again goes over a new connection. The circuit breaker ignores a stream
+// that ends with Unavailable, however many end at once (see Streams,
+// below), so the end user's code opens them again, at once, and they land
+// on the next pod.
 //
 // # :authority and the certificate
 //

@@ -43,7 +43,7 @@ var streamInfo = &grpc.StreamServerInfo{FullMethod: "/grpc.testing.TestService/F
 func TestStreams_a_stream_that_starts_during_Shutdown(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
-		srv, err := New(&humus.Setup{Host: h.Host(), Telemetry: telemetry.Noop()}, "example.com/caller", ":8081")
+		srv, err := New(&humus.Setup{Host: h.Host(), Telemetry: telemetry.Noop()}, "example.com/caller", ":8081", nil)
 		require.NoError(t, err)
 
 		// The first Shutdown is running, waiting in GracefulStop for an
@@ -64,7 +64,7 @@ func TestStreams_a_stream_that_starts_during_Shutdown(t *testing.T) {
 	t.Run("through Shutdown itself", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
-			srv, err := New(&humus.Setup{Host: h.Host(), Telemetry: telemetry.Noop()}, "example.com/caller", ":8081")
+			srv, err := New(&humus.Setup{Host: h.Host(), Telemetry: telemetry.Noop()}, "example.com/caller", ":8081", nil)
 			require.NoError(t, err)
 			require.NoError(t, srv.Shutdown(t.Context()))
 

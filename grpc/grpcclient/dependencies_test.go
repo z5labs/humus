@@ -57,6 +57,10 @@ import (
 // streams on which the dependency sends a message a second, and subscribes
 // again whenever one ends with Unavailable, as the gRPC services page's
 // Streams at shutdown tells a client to.
+//
+// The last open streams on a pod, and open each again at once when the
+// pod's Shutdown ends it, as #1254 reported, on the test Host and over
+// loopback TCP. Each stream opened again lands on the next pod.
 
 // startServing runs a dependency on h, in an App of its own, with a
 // certificate for name from ca, serving b at addr, and passing opts to
@@ -386,7 +390,15 @@ func (p *pod) publish(ctx context.Context, send func(*testpb.StreamingOutputCall
 // the pod SIGTERM, and returns its exit status once it has exited.
 func startPod(t *testing.T, h *humustest.Host, ca *humustest.CA, name string, opts ...grpc.ServerOption) (stop func() bedrock.ExitStatus) {
 	t.Helper()
-	addr := name + ":9090"
+	return startPodServing(t, h.Host(), ca, name+":9090", &pod{name: name}, func() { <-h.Listening(name + ":9090") }, opts...)
+}
+
+// startPodServing runs the dependency's pod at addr on host, as startPod
+// does, serving srv, and returns once listening has. It returns a function
+// that sends the pod SIGTERM, and returns its exit status once it has
+// exited.
+func startPodServing(t *testing.T, host humus.Host, ca *humustest.CA, addr string, srv testpb.TestServiceServer, listening func(), opts ...grpc.ServerOption) (stop func() bedrock.ExitStatus) {
+	t.Helper()
 	cert := ca.Issue(t, "ledger")
 	p, exit := grpcservertest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
 		settings := grpcserver.Settings{
@@ -397,10 +409,10 @@ func startPod(t *testing.T, h *humustest.Host, ca *humustest.CA, name string, op
 		if err != nil {
 			return nil, err
 		}
-		testpb.RegisterTestServiceServer(svc, &pod{name: name})
+		testpb.RegisterTestServiceServer(svc, srv)
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
-	<-h.Listening(addr)
+	}, humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(telemetry.NoopBuilder)))
+	listening()
 	return func() bedrock.ExitStatus {
 		<-p.Notified(syscall.SIGTERM)
 		p.Signal(syscall.SIGTERM)
@@ -828,5 +840,328 @@ func TestClient_the_dependencys_MaxConnectionAgeGrace_leaves_the_breaker_closed(
 		require.NoError(t, unary, "a call a second after the streams ended reaches the dependency")
 		require.Empty(t, subs.failedOpens(), "every subscription opens again")
 		require.True(t, resubscribed, "every subscription is open again")
+	})
+}
+
+// eagerPod is a pod whose streams send their first message before they
+// look at their context, as a handler that reads what it sends first
+// without the context does.
+type eagerPod struct {
+	pod
+}
+
+func (p *eagerPod) StreamingOutputCall(_ *testpb.StreamingOutputCallRequest, stream grpc.ServerStreamingServer[testpb.StreamingOutputCallResponse]) error {
+	return p.sendFirst(stream.Context(), stream.Send)
+}
+
+func (p *eagerPod) FullDuplexCall(stream grpc.BidiStreamingServer[testpb.StreamingOutputCallRequest, testpb.StreamingOutputCallResponse]) error {
+	return p.sendFirst(stream.Context(), stream.Send)
+}
+
+// sendFirst sends a message naming the pod, and then publishes until ctx
+// ends.
+func (p *eagerPod) sendFirst(ctx context.Context, send func(*testpb.StreamingOutputCallResponse) error) error {
+	if err := send(&testpb.StreamingOutputCallResponse{Payload: &testpb.Payload{Body: []byte(p.name)}}); err != nil {
+		return err
+	}
+	return p.publish(ctx, send)
+}
+
+// podKinds are the two ways a dependency's stream may start: by looking at
+// its context, as a pod's does, or by sending, as an eagerPod's does.
+var podKinds = []struct {
+	name  string
+	serve func(name string) testpb.TestServiceServer
+}{
+	{name: "on pods that look at their context before they send", serve: func(name string) testpb.TestServiceServer { return &pod{name: name} }},
+	{name: "on pods that send before they look at their context", serve: func(name string) testpb.TestServiceServer { return &eagerPod{pod{name: name}} }},
+}
+
+// reopenCase is the streams the end user's job opens on the pod a rollout
+// replaces.
+type reopenCase struct {
+	name    string
+	streams int
+	open    opener
+}
+
+var reopenCases = []reopenCase{
+	{name: "a server stream", streams: 1, open: serverStream},
+	{name: "a bidirectional stream", streams: 1, open: bidiStream},
+	{name: "8 server streams", streams: 8, open: serverStream},
+}
+
+// eachReopenCase runs f in a subtest for every reopenCase, on each of
+// podKinds, without and then with a connection to the pod held in its TLS
+// handshake through the rollout, as a client that dials just before the
+// listener closes holds one.
+func eachReopenCase(t *testing.T, f func(t *testing.T, tc reopenCase, serve func(name string) testpb.TestServiceServer, handshaking bool)) {
+	for _, tc := range reopenCases {
+		for _, pods := range podKinds {
+			for _, handshaking := range []bool{false, true} {
+				name := tc.name + " " + pods.name
+				if handshaking {
+					name += ", while a connection to the pod is in its handshake"
+				}
+				t.Run(name, func(t *testing.T) { f(t, tc, pods.serve, handshaking) })
+			}
+		}
+	}
+}
+
+// reopened is what happened to one of the end user's streams.
+type reopened struct {
+	first       string // the pod the stream first heard from
+	ended       error  // how the stream ended
+	connsBefore int32  // the connections the Client had begun when it opened the stream again
+	again       string // the pod the stream opened again first heard from
+	againErr    error  // how the stream opened again ended before its first message, if it did
+}
+
+// reopenOnce runs the end user's App on host: a Client of ledger:9090, and
+// a job that opens n streams with open and closes opened once each has
+// heard from a pod. Each stream then receives until it ends, is opened
+// again at once, and receives once. reopenOnce returns what happened to
+// each, once the App has exited 0.
+func reopenOnce(t *testing.T, host humus.Host, ca *humustest.CA, n int, open opener, opened chan<- struct{}) <-chan []reopened {
+	t.Helper()
+	got := make(chan []reopened, 1)
+	counter := &rpcCounter{}
+	_, exit := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		ledger, err := grpcclient.NewClient(s, settingsFor(ca, "ledger:9090"), grpc.WithStatsHandler(counter))
+		if err != nil {
+			return nil, err
+		}
+		return []humus.Service{job.NewService(s, func(ctx context.Context) error {
+			c := testpb.NewTestServiceClient(ledger)
+			rs := make([]reopened, n)
+			var heard, done sync.WaitGroup
+			heard.Add(n)
+			for i := range rs {
+				done.Go(func() {
+					r := &rs[i]
+					recv, err := open(ctx, c)
+					if err == nil {
+						var resp *testpb.StreamingOutputCallResponse
+						if resp, err = recv(); err == nil {
+							r.first = string(resp.GetPayload().GetBody())
+						}
+					}
+					heard.Done()
+					if err != nil {
+						r.ended = err
+						return
+					}
+					for {
+						if _, err := recv(); err != nil {
+							r.ended = err
+							break
+						}
+					}
+					r.connsBefore = counter.connsBegun.Load()
+					recv, err = open(ctx, c)
+					if err == nil {
+						var resp *testpb.StreamingOutputCallResponse
+						if resp, err = recv(); err == nil {
+							r.again = string(resp.GetPayload().GetBody())
+						}
+					}
+					r.againErr = err
+				})
+			}
+			heard.Wait()
+			close(opened)
+			done.Wait()
+			got <- rs
+			return nil
+		})}, nil
+	}, humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(telemetry.NoopBuilder)))
+	out := make(chan []reopened, 1)
+	go func() {
+		rs := <-got
+		st := <-exit
+		if st.Code() != 0 {
+			t.Errorf("the end user's App exited %d: %v", st.Code(), st.Cause())
+		}
+		out <- rs
+	}()
+	return out
+}
+
+// rollout is a dependency of two pods, ledger-a and ledger-b, behind a
+// Service whose endpoints are ledger-a.
+type rollout struct {
+	// host is the end user's App's Host, which dials ledger:9090 through
+	// the Service.
+	host humus.Host
+	// route puts ledger-b alone in the Service's endpoints.
+	route func()
+	// hold opens a connection to ledger-a that waits in its TLS
+	// handshake.
+	hold         func() net.Conn
+	stopA, stopB func() bedrock.ExitStatus
+}
+
+// run rolls ledger-a out from under tc's streams: it opens them, holds a
+// connection to ledger-a in its handshake if handshaking, routes the
+// Service to ledger-b, and sends ledger-a SIGTERM. It requires that every
+// stream first heard from ledger-a, was ended by its Shutdown, and, opened
+// again, first heard from ledger-b, and that both pods exited 0.
+func (ro rollout) run(t *testing.T, ca *humustest.CA, tc reopenCase, handshaking bool) {
+	t.Helper()
+	start := time.Now()
+	var events []string
+	note := func(format string, args ...any) {
+		events = append(events, fmt.Sprintf("+%07.3fs ", time.Since(start).Seconds())+fmt.Sprintf(format, args...))
+	}
+
+	opened := make(chan struct{})
+	got := reopenOnce(t, ro.host, ca, tc.streams, tc.open, opened)
+	<-opened
+	note("%d stream(s) opened", tc.streams)
+
+	var held net.Conn
+	if handshaking {
+		held = ro.hold()
+		note("a connection to ledger-a waits in its TLS handshake")
+	}
+
+	ro.route()
+	note("ledger-a leaves the endpoints, and is sent SIGTERM")
+	exitA := make(chan bedrock.ExitStatus, 1)
+	go func() { exitA <- ro.stopA() }()
+
+	rs := <-got
+	for i, r := range rs {
+		note("stream %d heard from %s, and ended: %v", i, r.first, r.ended)
+		if r.againErr != nil {
+			note("stream %d opened again with %d connection(s) begun, and ended before its first message: %v", i, r.connsBefore, r.againErr)
+		} else {
+			note("stream %d opened again with %d connection(s) begun, and heard from %s", i, r.connsBefore, r.again)
+		}
+	}
+	var closeErr error
+	if held != nil {
+		closeErr = held.Close()
+		note("the connection in its handshake closes: %v", closeErr)
+	}
+	stA := <-exitA
+	note("ledger-a exited %d", stA.Code())
+	stB := ro.stopB()
+	for _, e := range events {
+		t.Log(e)
+	}
+
+	landed := make([]string, len(rs))
+	want := make([]string, len(rs))
+	for i, r := range rs {
+		require.Equal(t, "ledger-a", r.first, "stream %d", i)
+		require.Equal(t, codes.Unavailable, status.Code(r.ended), "stream %d: %v", i, r.ended)
+		require.Equal(t, "server is shutting down", status.Convert(r.ended).Message(), "stream %d", i)
+		landed[i] = r.again
+		want[i] = "ledger-b"
+	}
+	require.Equal(t, want, landed, "every stream opened again lands on the next pod, and hears from it")
+	require.NoError(t, closeErr)
+	require.Zero(t, stA.Code(), "cause: %v", stA.Cause())
+	require.Zero(t, stB.Code(), "cause: %v", stB.Cause())
+}
+
+func TestClient_a_stream_opened_again_when_Shutdown_ends_it_lands_on_the_next_pod(t *testing.T) {
+	eachReopenCase(t, func(t *testing.T, tc reopenCase, serve func(string) testpb.TestServiceServer, handshaking bool) {
+		synctest.Test(t, func(t *testing.T) {
+			ca := humustest.NewCA(t)
+			h := humustest.NewHost(t)
+			svc := &service{}
+			svc.route("ledger-a")
+			start := func(name string) func() bedrock.ExitStatus {
+				return startPodServing(t, h.Host(), ca, name+":9090", serve(name), func() { <-h.Listening(name + ":9090") })
+			}
+			rollout{
+				host:  svc.host(h),
+				route: func() { svc.route("ledger-b") },
+				hold: func() net.Conn {
+					conn, err := h.Host().Dial(t.Context(), "tcp", "ledger-a:9090")
+					require.NoError(t, err)
+					synctest.Wait()
+					return conn
+				},
+				stopA: start("ledger-a"),
+				stopB: start("ledger-b"),
+			}.run(t, ca, tc, handshaking)
+		})
+	})
+}
+
+// osService is the dependency's ClusterIP Service on the OS's network. A
+// Dial of ledger:9090, through the Host that host returns, reaches the
+// address in its endpoints at the time.
+type osService struct {
+	mu   sync.Mutex
+	addr string
+}
+
+func (s *osService) route(addr string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.addr = addr
+}
+
+func (s *osService) host() humus.Host {
+	host := humus.OSHost()
+	dial := host.Dial
+	host.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		if address == "ledger:9090" {
+			s.mu.Lock()
+			address = s.addr
+			s.mu.Unlock()
+		}
+		return dial(ctx, network, address)
+	}
+	return host
+}
+
+// freeAddr returns a loopback address with a port no one listens on.
+func freeAddr(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := l.Addr().String()
+	require.NoError(t, l.Close())
+	return addr
+}
+
+// listensOnOS waits until addr accepts connections.
+func listensOnOS(t *testing.T, addr string) func() {
+	return func() {
+		require.Eventually(t, func() bool {
+			conn, err := net.Dial("tcp", addr)
+			if err != nil {
+				return false
+			}
+			_ = conn.Close()
+			return true
+		}, 10*time.Second, 10*time.Millisecond, "%s listens", addr)
+	}
+}
+
+func TestClient_a_stream_opened_again_when_Shutdown_ends_it_lands_on_the_next_pod_over_TCP(t *testing.T) {
+	eachReopenCase(t, func(t *testing.T, tc reopenCase, serve func(string) testpb.TestServiceServer, handshaking bool) {
+		t.Parallel()
+		ca := humustest.NewCA(t)
+		addrA, addrB := freeAddr(t), freeAddr(t)
+		svc := &osService{}
+		svc.route(addrA)
+		rollout{
+			host:  svc.host(),
+			route: func() { svc.route(addrB) },
+			hold: func() net.Conn {
+				conn, err := net.Dial("tcp", addrA)
+				require.NoError(t, err)
+				return conn
+			},
+			stopA: startPodServing(t, humus.OSHost(), ca, addrA, serve("ledger-a"), listensOnOS(t, addrA)),
+			stopB: startPodServing(t, humus.OSHost(), ca, addrB, serve("ledger-b"), listensOnOS(t, addrB)),
+		}.run(t, ca, tc, handshaking)
 	})
 }
