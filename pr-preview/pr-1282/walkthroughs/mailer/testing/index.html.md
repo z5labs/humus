@@ -370,7 +370,8 @@ func TestInit_passes_the_shared_cases_against_RabbitMQ_and_WireMock(t *testing.T
 ```
 
 Another runs `Parallel` four times over at once, then checks that the App
-is still running and that none of its Publishers' breakers opened:
+is still running, and that its Publishers' breakers counted calls but none
+opened:
 
 ```go
 select {
@@ -380,7 +381,9 @@ default:
 }
 rm, err := m.tel.Metrics(t.Context())
 require.NoError(t, err)
-transitions := sumBy(metricsOf(rm, rabbitmqScope)["humus.circuit.transitions"], "humus.circuit.state")
+ms := metricsOf(rm, rabbitmqScope)
+require.Positive(t, sumBy(ms["humus.circuit.calls"], "humus.circuit.outcome")["success"], "the Publishers' breakers counted no calls")
+transitions := sumBy(ms["humus.circuit.transitions"], "humus.circuit.state")
 require.Zero(t, transitions["open"], "a Publisher's breaker opened")
 ```
 
