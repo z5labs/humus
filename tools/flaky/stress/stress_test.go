@@ -73,8 +73,8 @@ type pkgCPU struct {
 
 func newFakeRunner() *fakeRunner {
 	return &fakeRunner{
-		buildTook: func(int) time.Duration { return time.Second },
-		runTook:   func(int, int) time.Duration { return 100 * time.Millisecond },
+		buildTook:   func(int) time.Duration { return time.Second },
+		runTook:     func(int, int) time.Duration { return 100 * time.Millisecond },
 		fail:        func(int, int) bool { return false },
 		hang:        func(int, int) bool { return false },
 		packageFail: func(int, int) bool { return false },
