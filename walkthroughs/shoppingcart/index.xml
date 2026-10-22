@@ -194,9 +194,8 @@ Read it, then forward Grafana&amp;rsquo;s port:&lt;/p&gt;
 &lt;h2 id="an-adds-trace"&gt;An add&amp;rsquo;s trace&lt;/h2&gt;
 &lt;p&gt;Add an item to a cart, as
 &lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/deploying/#calling-the-cart"&gt;Deploying&lt;/a&gt;
-shows. Each server span is named after its method and &lt;code&gt;/&lt;/code&gt;, the pattern the
-API is served under, so in &lt;strong&gt;Explore&lt;/strong&gt;, with &lt;strong&gt;Tempo&lt;/strong&gt;, find the adds by
-their path:&lt;/p&gt;</description></item><item><title>Production-ready</title><link>https://z5labs.github.io/humus/walkthroughs/shoppingcart/production-ready/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/shoppingcart/production-ready/</guid><description>&lt;p&gt;The cart and the catalog meet each item. Check your own API against them:&lt;/p&gt;
+shows. Each server span is named after its method and the operation&amp;rsquo;s route,
+so in &lt;strong&gt;Explore&lt;/strong&gt;, with &lt;strong&gt;Tempo&lt;/strong&gt;, find the adds by their name:&lt;/p&gt;</description></item><item><title>Production-ready</title><link>https://z5labs.github.io/humus/walkthroughs/shoppingcart/production-ready/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/shoppingcart/production-ready/</guid><description>&lt;p&gt;The cart and the catalog meet each item. Check your own API against them:&lt;/p&gt;
 &lt;table&gt;
  &lt;thead&gt;
  &lt;tr&gt;

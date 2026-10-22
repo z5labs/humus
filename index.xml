@@ -1717,9 +1717,8 @@ Read it, then forward Grafana&amp;rsquo;s port:&lt;/p&gt;
 &lt;h2 id="an-adds-trace"&gt;An add&amp;rsquo;s trace&lt;/h2&gt;
 &lt;p&gt;Add an item to a cart, as
 &lt;a href="https://z5labs.github.io/humus/walkthroughs/shoppingcart/deploying/#calling-the-cart"&gt;Deploying&lt;/a&gt;
-shows. Each server span is named after its method and &lt;code&gt;/&lt;/code&gt;, the pattern the
-API is served under, so in &lt;strong&gt;Explore&lt;/strong&gt;, with &lt;strong&gt;Tempo&lt;/strong&gt;, find the adds by
-their path:&lt;/p&gt;</description></item><item><title>Observing</title><link>https://z5labs.github.io/humus/walkthroughs/wallet/observing/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/wallet/observing/</guid><description>&lt;h2 id="opening-grafana"&gt;Opening Grafana&lt;/h2&gt;
+shows. Each server span is named after its method and the operation&amp;rsquo;s route,
+so in &lt;strong&gt;Explore&lt;/strong&gt;, with &lt;strong&gt;Tempo&lt;/strong&gt;, find the adds by their name:&lt;/p&gt;</description></item><item><title>Observing</title><link>https://z5labs.github.io/humus/walkthroughs/wallet/observing/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/wallet/observing/</guid><description>&lt;h2 id="opening-grafana"&gt;Opening Grafana&lt;/h2&gt;
 &lt;p&gt;&lt;code&gt;up.sh&lt;/code&gt; generates Grafana&amp;rsquo;s admin password into the &lt;code&gt;grafana-admin&lt;/code&gt; Secret.
 Read it, then forward Grafana&amp;rsquo;s port:&lt;/p&gt;
 &lt;div class="highlight"&gt;&lt;pre tabindex="0" class="chroma"&gt;&lt;code class="language-sh" data-lang="sh"&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;kubectl --context kind-kind --namespace wallet get secret grafana-admin &lt;span class="se"&gt;\
