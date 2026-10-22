@@ -351,8 +351,8 @@ short list per scenario.>
   **Container tests are required** when the bug only shows against the real system; say what
   each shows that the fake can't.
 - **A flaky test's story is checked with `flaky stress`.** A report is of a flaky test when the
-  test fails on some runs and passes on others, as every report `flaky report` posts is. Then the
-  story asks for `flaky stress -run '<the test>' -count <n> <package>` to report no failures or
+  test fails on some runs and passes on others. `flaky report` posts only reports of flaky tests,
+  so every report it posts is one. Then the story asks for `flaky stress -run '<the test>' -count <n> <package>` to report no failures or
   hangs at any pair of CPU count and load, and for its pull request to give that output. So the
   fix is shown to hold at every CPU count and load, not only at the one a hand-written command
   tried.
