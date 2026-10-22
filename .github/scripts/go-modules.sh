@@ -13,13 +13,20 @@
 #
 # A module with no Go packages, such as the Hugo module under docs/, has
 # nothing to build, lint or test; it is reported on stderr and left out.
+#
+# The flaky module under tools/ is listed like any other, so CI lints, builds
+# and tests it.
 
 set -euo pipefail
 
 root=$(git rev-parse --show-toplevel)
 cd "$root"
 
-mapfile -t modules < <(git ls-files -- 'go.mod' '**/go.mod' | xargs -n1 dirname | sort -u)
+# A go.mod under a testdata directory, or under a directory whose name begins
+# with . or _, is a test's fixture rather than a module of the repository, as
+# the Go tool ignores those directories too.
+mapfile -t modules < <(git ls-files -- 'go.mod' '**/go.mod' |
+  grep -Ev '(^|/)(testdata|[._][^/]*)/' | xargs -n1 dirname | sort -u)
 
 for module in "${modules[@]}"; do
   # A failing go list is a broken module, not an empty one, so it fails
