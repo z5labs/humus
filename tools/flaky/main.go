@@ -6,8 +6,9 @@
 // Command flaky runs the repository's tests until they fail, so a flaky test
 // is found before it turns CI red. A maintainer runs it by hand, on Linux.
 //
-//	flaky stress [-cpu 1,2,4] [-load 1,2] [-count n] [-timeout d] [-keep n]
-//	             [-run regexp] [-skip regexp] [-o dir] [-json] [packages]
+//	flaky stress [-cpu 1,2,4] [-load 1,2] [-count n] [-confirm n] [-timeout d]
+//	             [-keep n] [-run regexp] [-skip regexp] [-o dir] [-json]
+//	             [packages]
 //
 // flaky stress builds every package's test binary with go test -c -race
 // -cover, then runs each one -count times at each pair of -cpu and -load
@@ -15,8 +16,15 @@
 // so both GOMAXPROCS and runtime.NumCPU() are that count, as on a GitHub
 // runner with that many vCPUs. At load 1 a run has its cores to itself; at
 // load L, up to L runs are pinned to each of its cores, so they compete for
-// them. It reports each test that failed or hung, at each pair, and exits 1
-// if any did.
+// them.
+//
+// Once every one of those runs has ended, it confirms each test that failed
+// or hung: it runs the test alone, by its own -run pattern, -confirm times at
+// each pair, including the pairs where it never failed. With -run, there are
+// no confirm runs: the matching tests run -count times at each pair.
+//
+// It reports each test that failed or hung, at each pair, and exits 1 if any
+// did.
 //
 // Packages are patterns from the repository's root, such as ./grpc/... or
 // ./example/wallet/app. With none, it runs every module that
@@ -60,8 +68,10 @@ const usage = `usage: flaky stress [flags] [packages]
 
 flaky stress runs every package's tests -count times at each pair of -cpu and
 -load values, each run pinned to as many cores as its CPU count and sharing
-each of them with up to its load of runs, and reports each test that failed or
-hung.
+each of them with up to its load of runs. Then it runs each test that failed
+or hung alone, -confirm times at each pair, and reports each test that failed
+or hung. With -run, it runs the matching tests -count times at each pair, and
+confirms none.
 `
 
 func flaky(ctx context.Context, p bedrock.Process) bedrock.ExitStatus {
@@ -84,6 +94,7 @@ type stressFlags struct {
 	cpus     []int
 	loads    []int
 	count    int
+	confirm  int
 	timeout  time.Duration
 	keep     int
 	run      string
@@ -112,6 +123,7 @@ func parseStress(p bedrock.Process, args []string) (stressFlags, error) {
 		return err
 	})
 	fs.IntVar(&f.count, "count", 500, "how many times to run each package at each pair of CPU count and load")
+	fs.IntVar(&f.confirm, "confirm", 1000, "how many times to run each test that failed or hung alone, at each pair of CPU count and load, once the sweep has ended; with -run, none is")
 	fs.DurationVar(&f.timeout, "timeout", defaultTimeout, "each run's -test.timeout; a run still going 30s later is killed")
 	fs.IntVar(&f.keep, "keep", 8, "how many cores to keep back from the lanes")
 	fs.StringVar(&f.run, "run", "", "run only the tests that match, as go test -run")
@@ -123,6 +135,9 @@ func parseStress(p bedrock.Process, args []string) (stressFlags, error) {
 	}
 	if f.count < 1 {
 		return f, fmt.Errorf("-count must be at least 1, not %d", f.count)
+	}
+	if f.confirm < 1 {
+		return f, fmt.Errorf("-confirm must be at least 1, not %d", f.confirm)
 	}
 	if f.timeout <= 0 {
 		return f, fmt.Errorf("-timeout must be positive, not %s", f.timeout)
@@ -247,8 +262,14 @@ func stressRun(ctx context.Context, p bedrock.Process, f stressFlags) (results.R
 	for i, pkg := range pkgs {
 		r.bins[i] = filepath.Join(bins, fmt.Sprintf("%d-%s.test", i, filepath.Base(pkg.Dir)))
 	}
+	confirm := f.confirm
+	if f.run != "" {
+		// -run asks for the matching tests at -count, so there is no
+		// sweep to confirm.
+		confirm = 0
+	}
 	res := results.New(results.Config{
-		Packages: pkgs, CPUs: f.cpus, Loads: f.loads, Count: f.count,
+		Packages: pkgs, CPUs: f.cpus, Loads: f.loads, Count: f.count, Confirm: confirm,
 		Timeout: f.timeout, DefaultTimeout: defaultTimeout, Out: f.out,
 	})
 	phases, err := stress.Stress(ctx, stress.Config{
@@ -256,6 +277,7 @@ func stressRun(ctx context.Context, p bedrock.Process, f stressFlags) (results.R
 		CPUs:     f.cpus,
 		Loads:    f.loads,
 		Count:    f.count,
+		Confirm:  confirm,
 		Lanes:    laneCores,
 		Builds:   max(len(cores)/4, 1),
 		Log:      p.Stderr,
@@ -273,6 +295,9 @@ func stressRun(ctx context.Context, p bedrock.Process, f stressFlags) (results.R
 		results.NewPhase("discovery", discovery),
 		results.NewPhase("build", phases.Build),
 		results.NewPhase("sweep", phases.Sweep),
+	}
+	if confirm > 0 {
+		rep.Phases = append(rep.Phases, results.NewPhase("confirm", phases.Confirm))
 	}
 	return rep, nil
 }
@@ -310,7 +335,13 @@ func (r *execRunner) List(ctx context.Context, pkg int) ([]string, error) {
 	return run.List(ctx, r.bins[pkg], filepath.Join(r.root, r.pkgs[pkg].Dir), r.env)
 }
 
-func (r *execRunner) Run(ctx context.Context, pkg, cpu int, cores []int) run.Result {
+// Run runs the package pkg's binary once. A confirm run runs test alone, by
+// its own -run pattern; a sweep run, with test "", runs what -run matches.
+func (r *execRunner) Run(ctx context.Context, pkg int, test string, cpu int, cores []int) run.Result {
+	pattern := r.run
+	if test != "" {
+		pattern = results.RunPattern(test)
+	}
 	return run.Exec(ctx, run.Spec{
 		Binary:     r.bins[pkg],
 		Dir:        filepath.Join(r.root, r.pkgs[pkg].Dir),
@@ -319,7 +350,7 @@ func (r *execRunner) Run(ctx context.Context, pkg, cpu int, cores []int) run.Res
 		CPU:        cpu,
 		Timeout:    r.timeout,
 		Grace:      grace,
-		Run:        r.run,
+		Run:        pattern,
 		Skip:       r.skip,
 		Env:        r.env,
 		Test2JSON:  r.test2json,
