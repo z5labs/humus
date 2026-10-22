@@ -165,9 +165,10 @@
 //
 // It serves through the drain. Once the App starts shutting down, readiness
 // answers NOT_SERVING, not a refused connection, and liveness still answers
-// SERVING, until the App shuts the Service down. Shutdown ends every stream,
-// a Watch included, with codes.Unavailable, as a grpcserver.Service does,
-// and then stops the server gracefully.
+// SERVING, until the App shuts the Service down. Shutdown stops the server
+// gracefully, and ends every stream, a Watch included, with
+// codes.Unavailable once it has sent every client a GOAWAY, as a
+// grpcserver.Service does.
 //
 // A probes port isn't for the public. The server answers anyone who can
 // reach the port, and every RPC checks a monitor. The port is the

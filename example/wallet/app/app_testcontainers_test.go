@@ -138,3 +138,16 @@ func TestInit_passes_the_shared_cases_against_PostgreSQL(t *testing.T) {
 
 	h.stop(t)
 }
+
+func TestInit_keeps_every_watch_open_through_a_rollout_of_the_ledger_while_a_connection_to_each_replica_is_in_its_handshake(t *testing.T) {
+	h := startHarness(t, onOSHost(t))
+	for _, r := range h.ledger.replicas {
+		conn, err := net.Dial("tcp", r.addr)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = conn.Close() })
+	}
+
+	cases.ARolloutOfTheLedger(t, h.target)
+
+	h.stop(t)
+}

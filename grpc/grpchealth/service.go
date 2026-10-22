@@ -63,10 +63,10 @@ func NewService(s *humus.Setup, settings Settings, opts ...health.Option) (*Serv
 
 	hs := health.NewService(opts...)
 
-	// No credentials and no stats handler: the server speaks plain text,
-	// and a probe records no span and no metric. A recovered panic is
+	// Plain-text credentials and no stats handler: the server speaks plain
+	// text, and a probe records no span and no metric. A recovered panic is
 	// logged under this package's scope.
-	srv, err := grpcsrv.New(s, loggerName, settings.Addr)
+	srv, err := grpcsrv.New(s, loggerName, settings.Addr, nil)
 	if err != nil {
 		return nil, fmt.Errorf("grpchealth: NewService: %w", err)
 	}
@@ -135,13 +135,14 @@ func (svc *Service) Serve(ctx context.Context) error {
 	return nil
 }
 
-// Shutdown marks the Service not ready for good, then ends every stream, a
-// Watch included, with codes.Unavailable, and stops the server gracefully:
-// it stops accepting connections, sends every client a GOAWAY, and waits
-// for the RPCs in flight. If ctx is done first, or is done already, it
-// closes every connection, cancels every RPC, waits for every handler to
-// return, and returns an error that wraps ctx's error. Calling it again
-// returns nil.
+// Shutdown marks the Service not ready for good, then stops the server
+// gracefully: it closes every connection still in its handshake, stops
+// accepting connections, sends every client a GOAWAY, and waits for the
+// RPCs in flight. Once every connection has sent its GOAWAY, it ends every
+// stream, a Watch included, with codes.Unavailable. If ctx is done first,
+// or is done already, it closes every connection, cancels every RPC, waits
+// for every handler to return, and returns an error that wraps ctx's
+// error. Calling it again returns nil.
 func (svc *Service) Shutdown(ctx context.Context) error {
 	svc.stopReadiness()
 	if err := svc.srv.Shutdown(ctx); err != nil {
