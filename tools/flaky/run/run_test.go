@@ -193,6 +193,12 @@ func TestExec_shuffles_a_run_with_its_seed_and_the_seed_reproduces_its_failure(t
 	require.False(t, res.Failed(), "in their order, TestFailsAfterTestDirties runs first:\n%s", res.Output)
 	require.Nil(t, res.Seed)
 
+	three := int64(3)
+	spec.Seed = &three
+	res = run.Exec(t.Context(), spec)
+	three = 4
+	require.Equal(t, int64(3), *res.Seed, "the result keeps a copy of the run's seed, not the spec's")
+
 	var failing, passing *int64
 	for seed := int64(1); seed <= 64 && (failing == nil || passing == nil); seed++ {
 		spec.Seed = &seed

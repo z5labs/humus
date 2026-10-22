@@ -164,7 +164,10 @@ func CoreList(cores []int) string {
 // with the error as its output.
 func Exec(ctx context.Context, s Spec) Result {
 	res := execute(ctx, s)
-	res.Seed = s.Seed
+	if s.Seed != nil {
+		seed := *s.Seed
+		res.Seed = &seed
+	}
 	return res
 }
 
