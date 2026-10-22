@@ -119,6 +119,31 @@ func TestNewHandler_on_a_mux(t *testing.T) {
 	})
 }
 
+func TestNewHandler_keeps_the_route_its_handler_sets_for_the_span(t *testing.T) {
+	var names []string
+	synctest.Test(t, func(t *testing.T) {
+		creds, secrets := newCredentials(user{name: "root"})
+		basic := auth.Basic("basic", "admin", creds.verifyBasic)
+		s := serve(t, func(s *humus.Setup) (http.Handler, error) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("GET /admin/users/{name}", func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.WriteString(w, r.PathValue("name"))
+			})
+			return auth.NewHandler(s, mux, answers, auth.Require(basic))
+		}, nil)
+
+		r := s.get("/admin/users/alice", basicAuth("root", secrets["root"]))
+		require.Equal(t, http.StatusOK, r.status)
+		require.Equal(t, "alice", r.body)
+
+		s.stop()
+		for _, span := range serverSpans(s.tel) {
+			names = append(names, span.Name())
+		}
+	})
+	require.Equal(t, []string{"GET /admin/users/{name}"}, names)
+}
+
 // everyKey is a list with one requirement for each way to send a bearer
 // token, Basic credentials and an API key, and the credentials they take.
 type everyKey struct {

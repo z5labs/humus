@@ -124,6 +124,25 @@ func TestInit_traces_an_add_across_the_cart_and_the_catalog(t *testing.T) {
 	})
 }
 
+func TestInit_names_an_adds_server_spans_after_their_routes(t *testing.T) {
+	var addName, productName string
+	synctest.Test(t, func(t *testing.T) {
+		s := startObserved(t)
+		s.stock(t)
+		token := s.token(t, endpoint.ScopeWrite)
+		cartID := s.createCart(t, token)
+		a := s.addItem(t, cartID, token)
+		require.Equal(t, http.StatusCreated, a.code, "%s", a.body)
+		s.stop(t)
+
+		addName = serverSpan(t, s.cart.Spans(), http.MethodPost, "/items").Name()
+		productName = serverSpan(t, s.catalog.Spans(), http.MethodGet, "/products/"+sku).Name()
+	})
+	t.Logf("the add's span %q, the catalog's span %q", addName, productName)
+	require.Equal(t, "POST /carts/{cartId}/items", addName)
+	require.Equal(t, "GET /products/{productId}", productName)
+}
+
 func TestInit_records_a_forwarded_scenarios_evaluations_on_the_catalogs_spans(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s := startObserved(t)

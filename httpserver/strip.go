@@ -29,7 +29,9 @@ const stripEvent = "humus.fit.strip"
 // and each strip adds a humus.fit.strip event to the request's span.
 //
 // It runs inside recordPanics, so a panic of trust is recorded and fails
-// the request, as a panic of the handler does.
+// the request, as a panic of the handler does. When it strips, it passes on
+// a copy of the request, and sets the Pattern the handler set on that copy
+// back on the request it was given, so the span is still named after it.
 type stripScenarios struct {
 	next   http.Handler
 	faults fault.Injector
@@ -38,9 +40,16 @@ type stripScenarios struct {
 
 func (h stripScenarios) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, carried := h.faults.Strip(r.Context())
-	if carried && (h.trust == nil || !h.trust(r)) {
-		trace.SpanFromContext(ctx).AddEvent(stripEvent)
-		r = r.WithContext(ctx)
+	if !carried || (h.trust != nil && h.trust(r)) {
+		h.next.ServeHTTP(w, r)
+		return
 	}
-	h.next.ServeHTTP(w, r)
+	trace.SpanFromContext(ctx).AddEvent(stripEvent)
+	stripped := r.WithContext(ctx)
+	defer func() {
+		if stripped.Pattern != "" {
+			r.Pattern = stripped.Pattern
+		}
+	}()
+	h.next.ServeHTTP(w, stripped)
 }

@@ -27,20 +27,19 @@ Sign in at <http://localhost:3000> as `admin`.
 
 Add an item to a cart, as
 [Deploying]({{< relref "walkthroughs/shoppingcart/deploying#calling-the-cart" >}})
-shows. Each server span is named after its method and `/`, the pattern the
-API is served under, so in **Explore**, with **Tempo**, find the adds by
-their path:
+shows. Each server span is named after its method and the operation's route,
+so in **Explore**, with **Tempo**, find the adds by their name:
 
 ```text
-{resource.service.name="cart" && kind=server && span.http.request.method="POST" && span.url.path=~"/carts/.+/items"}
+{resource.service.name="cart" && kind=server && name="POST /carts/{cartId}/items"}
 ```
 
 | Span | Service | What it is |
 |---|---|---|
-| `POST /` | cart | the add |
+| `POST /carts/{cartId}/items` | cart | the add |
 | `GET`, with `server.address` `wiremock` | cart | a fetch of the key set, when the Verifier needs keys |
 | `GET`, with `server.address` `catalog` | cart | each attempt at the catalog, under the add |
-| `GET /` | catalog | the catalog's answer, a child of the cart's attempt |
+| `GET /products/{productId}` | catalog | the catalog's answer, a child of the cart's attempt |
 
 So one trace holds both services. A test of the App checks it:
 

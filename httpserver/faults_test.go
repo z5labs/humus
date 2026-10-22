@@ -248,6 +248,42 @@ func TestService_strips_a_failure_scenario(t *testing.T) {
 	})
 }
 
+func TestService_names_a_requests_span_after_its_route_whether_its_scenario_is_stripped_or_not(t *testing.T) {
+	testCases := []struct {
+		name  string
+		run   faultsRun
+		strip bool
+	}{
+		{name: "no scenario", run: faultsRun{faults: true}},
+		{name: "a trusted caller keeps its scenario", run: faultsRun{faults: true, scenario: true, trust: func(*http.Request) bool { return true }}},
+		{name: "a caller nothing trusts, its scenario stripped", run: faultsRun{faults: true, scenario: true}, strip: true},
+		{name: "a caller TrustScenario doesn't trust, its scenario stripped", run: faultsRun{faults: true, scenario: true, trust: func(*http.Request) bool { return false }}, strip: true},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var name string
+			var strips int
+			var routes []string
+			synctest.Test(t, func(t *testing.T) {
+				res := runFaults(t, tc.run)
+				span := requireServed(t, res)
+				name = span.Name()
+				strips = len(eventsNamed(span, stripEvent))
+				routes = durationRoutes(t, res.tel)
+			})
+			t.Logf("span %q, %d strip events, http.server.request.duration routes %q", name, strips, routes)
+			if tc.strip {
+				require.Equal(t, 1, strips)
+			} else {
+				require.Zero(t, strips)
+			}
+			require.Equal(t, "GET /orders", name)
+			require.Equal(t, []string{"/orders"}, routes)
+		})
+	}
+}
+
 func TestService_asks_TrustScenario_only_when_it_must(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

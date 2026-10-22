@@ -340,7 +340,10 @@
 //
 // The API adds no spans or metrics: httpserver gives every request a
 // server span, named after the operation's route, such as
-// GET /carts/{cartId}. The package never reads or sets OpenTelemetry's
+// GET /carts/{cartId}, and records http.server.request.duration with that
+// route as its http.route. That holds under a ServeMux, and behind handlers
+// that pass the API a copy of the request, such as http.MaxBytesHandler and
+// http.TimeoutHandler. The package never reads or sets OpenTelemetry's
 // globals. It logs through the Setup's LoggerProvider, under the logger
 // name github.com/z5labs/humus/openapi/v3.
 //

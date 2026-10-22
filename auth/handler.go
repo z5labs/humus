@@ -118,11 +118,21 @@ type handler struct {
 //
 // It recovers nothing: a verifier's panic passes to httpserver, which
 // records it and aborts the response.
+//
+// next is served a copy of r, which carries the authenticated principal.
+// The Pattern next sets on that copy, as an http.ServeMux does, is set back
+// on r, so httpserver's span is still named after the route.
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	res := h.list.Authenticate(r.Context(), authn.HTTPSource(r))
 	switch res.Outcome {
 	case authn.Served:
-		h.next.ServeHTTP(w, r.WithContext(res.Context))
+		authenticated := r.WithContext(res.Context)
+		defer func() {
+			if authenticated.Pattern != "" {
+				r.Pattern = authenticated.Pattern
+			}
+		}()
+		h.next.ServeHTTP(w, authenticated)
 	case authn.Unauthenticated:
 		challenge(w, res.Challenges)
 		h.answers.Unauthenticated.ServeHTTP(w, r)
