@@ -19,9 +19,11 @@ import (
 // returns context.Cause of its context returns it too.
 var errShuttingDown = status.Error(codes.Unavailable, "server is shutting down")
 
-// streams ends every streaming RPC at Shutdown. Its interceptor gives each
-// stream's handler a context of its own, derived from the RPC's, which
-// stop cancels, with errShuttingDown as its cause.
+// streams ends every streaming RPC at Shutdown, which calls stop once
+// every connection has written its client a GOAWAY, so each stream's
+// trailers follow the GOAWAY. Its interceptor gives each stream's handler
+// a context of its own, derived from the RPC's, which stop cancels, with
+// errShuttingDown as its cause.
 type streams struct {
 	// stopping is cancelled by stop. Each stream's context is cancelled
 	// after it.

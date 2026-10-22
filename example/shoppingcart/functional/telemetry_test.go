@@ -123,13 +123,9 @@ func TestShoppingcart_sends_its_telemetry_to_the_LGTM_stack_on_kind(t *testing.T
 		}
 		for _, want := range []struct{ uid, typ string }{{"mimir", "prometheus"}, {"loki", "loki"}, {"tempo", "tempo"}} {
 			if !slices.Contains(sources, dataSource{UID: want.uid, Type: want.typ}) {
-				return false, nil
+				return false, fmt.Errorf("Grafana has no %s data source %s, only %v", want.typ, want.uid, sources)
 			}
-			var health struct {
-				Status string `json:"status"`
-			}
-			ok, err := getJSON(ctx, admin, grafana+"/api/datasources/uid/"+want.uid+"/health", &health)
-			if !ok || err != nil || health.Status != "OK" {
+			if err := healthy(ctx, admin, grafana, want.uid); err != nil {
 				return false, err
 			}
 		}
@@ -140,6 +136,20 @@ func TestShoppingcart_sends_its_telemetry_to_the_LGTM_stack_on_kind(t *testing.T
 type dataSource struct {
 	UID  string `json:"uid"`
 	Type string `json:"type"`
+}
+
+func healthy(ctx context.Context, admin *http.Client, grafana, uid string) error {
+	var health struct {
+		Status  string `json:"status"`
+		Message string `json:"message"`
+	}
+	if _, err := getJSON(ctx, admin, grafana+"/api/datasources/uid/"+uid+"/health", &health); err != nil {
+		return fmt.Errorf("the data source %s: %w", uid, err)
+	}
+	if health.Status != "OK" {
+		return fmt.Errorf("the data source %s is %s: %s", uid, health.Status, health.Message)
+	}
+	return nil
 }
 
 func openTheCatalogsBreaker(t *testing.T, target cases.Target) []string {
@@ -296,14 +306,10 @@ func getJSON(ctx context.Context, client *http.Client, u string, v any) (bool, e
 	if err != nil {
 		return false, err
 	}
-	switch resp.StatusCode {
-	case http.StatusOK:
-		return true, json.Unmarshal(body, v)
-	case http.StatusNotFound:
-		return false, nil
-	default:
+	if resp.StatusCode != http.StatusOK {
 		return false, fmt.Errorf("GET %s: %s: %s", u, resp.Status, body)
 	}
+	return true, json.Unmarshal(body, v)
 }
 
 func eventually(ctx context.Context, t *testing.T, what string, found func(ctx context.Context) (bool, error)) {

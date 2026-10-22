@@ -11,7 +11,6 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
-	"errors"
 	"maps"
 	"net"
 	"slices"
@@ -22,8 +21,10 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/twmb/franz-go/pkg/kmsg"
 	"go.opentelemetry.io/otel/metric/noop"
 
 	"github.com/z5labs/humus"
@@ -138,6 +139,12 @@ func (c *cli) dial(ctx context.Context, network, address string) (net.Conn, erro
 
 func (c *cli) readAll(t *testing.T, k *kfake.Cluster, topic string) []*kgo.Record {
 	t.Helper()
+	ends := map[int32]int64{}
+	for _, p := range k.PartitionInfos(topic) {
+		if p.HighWatermark > p.LogStartOffset {
+			ends[p.Partition] = p.HighWatermark
+		}
+	}
 	cl, err := kgo.NewClient(
 		kgo.SeedBrokers(k.ListenAddrs()...),
 		kgo.Dialer(c.dial),
@@ -146,25 +153,23 @@ func (c *cli) readAll(t *testing.T, k *kfake.Cluster, topic string) []*kgo.Recor
 	)
 	require.NoError(t, err)
 	defer cl.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
 	var out []*kgo.Record
-	for {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	for len(ends) > 0 {
 		fetches := cl.PollFetches(ctx)
-		cancel()
+		require.NoError(t, ctx.Err(), "reading %s: partitions %v are never read to their ends", topic, ends)
 		fetches.EachError(func(_ string, _ int32, err error) {
-			if !errors.Is(err, context.DeadlineExceeded) {
-				require.NoError(t, err, "reading %s", topic)
-			}
+			require.NoError(t, err, "reading %s", topic)
 		})
-		n := 0
 		fetches.EachRecord(func(r *kgo.Record) {
 			out = append(out, r)
-			n++
+			if r.Offset+1 >= ends[r.Partition] {
+				delete(ends, r.Partition)
+			}
 		})
-		if n == 0 {
-			return out
-		}
 	}
+	return out
 }
 
 func pemOf(t *testing.T, c *humustest.Certificate) []byte {
@@ -334,6 +339,97 @@ func TestInit_without_an_order_ID_makes_a_random_one_and_prints_it(t *testing.T)
 		require.Equal(t, projector.Placed, statuses[firstID].Status)
 		require.Equal(t, projector.Placed, statuses[secondID].Status)
 		require.Equal(t, []string{statusTopic, statusTopic}, topics)
+	})
+}
+
+func withRecords(k *kfake.Cluster, topic string) []int32 {
+	var ps []int32
+	for _, p := range k.PartitionInfos(topic) {
+		if p.HighWatermark > p.LogStartOffset {
+			ps = append(ps, p.Partition)
+		}
+	}
+	return ps
+}
+
+func failListOffsetsOnce(k *kfake.Cluster, topic string, partition int32) {
+	k.Fault(kfake.Fault{
+		Keys:       []kmsg.Key{kmsg.ListOffsets},
+		Topic:      topic,
+		Partitions: []int32{partition},
+		Err:        kerr.OffsetNotAvailable,
+	})
+}
+
+func watchFetches(k *kfake.Cluster) func() [][]int32 {
+	var mu sync.Mutex
+	var fetches [][]int32
+	k.ControlKey(kmsg.Fetch.Int16(), func(req kmsg.Request) (kmsg.Response, error, bool) {
+		var ps []int32
+		for _, t := range req.(*kmsg.FetchRequest).Topics {
+			for _, p := range t.Partitions {
+				ps = append(ps, p.Partition)
+			}
+		}
+		slices.Sort(ps)
+		mu.Lock()
+		defer mu.Unlock()
+		fetches = append(fetches, ps)
+		return nil, nil, false
+	})
+	return func() [][]int32 {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(fetches)
+	}
+}
+
+func TestReadAll_reads_every_event_when_the_first_Fetch_leaves_out_their_partition(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c := newCLI(t, nil)
+		k := c.cluster(t)
+
+		types := []string{projector.Placed, projector.Paid, projector.Shipped, projector.Delivered}
+		got := c.start(t, nil, telemetry.NoopBuilder, append([]string{"-order-id", "order-1"}, types...)...)
+		require.Zero(t, got.code, "cause: %v", got.cause)
+
+		events := withRecords(k, eventsTopic)
+		require.Len(t, events, 1)
+		failListOffsetsOnce(k, eventsTopic, events[0])
+		fetches := watchFetches(k)
+
+		records := c.readAll(t, k, eventsTopic)
+		require.NotEmpty(t, fetches())
+		require.NotContains(t, fetches()[0], events[0], "the first Fetch leaves out the events' partition")
+		require.Len(t, records, len(types))
+	})
+}
+
+func TestReadAll_reads_both_orders_events_when_the_first_Fetch_leaves_out_one_of_their_partitions(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c := newCLI(t, nil)
+		k := c.cluster(t)
+
+		first := c.start(t, nil, telemetry.NoopBuilder, projector.Placed)
+		require.Zero(t, first.code, "cause: %v", first.cause)
+		second := c.start(t, nil, telemetry.NoopBuilder, projector.Placed)
+		require.Zero(t, second.code, "cause: %v", second.cause)
+		firstID := strings.TrimSuffix(first.stdout, "\n")
+		secondID := strings.TrimSuffix(second.stdout, "\n")
+
+		events := withRecords(k, eventsTopic)
+		require.NotEmpty(t, events)
+		failListOffsetsOnce(k, eventsTopic, events[0])
+		fetches := watchFetches(k)
+
+		records := c.readAll(t, k, eventsTopic)
+		require.NotEmpty(t, fetches())
+		require.NotContains(t, fetches()[0], events[0], "the first Fetch leaves out one of the events' partitions")
+		keys := make([]string, len(records))
+		for i, r := range records {
+			keys[i] = string(r.Key)
+		}
+		require.ElementsMatch(t, []string{firstID, secondID}, keys)
 	})
 }
 

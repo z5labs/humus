@@ -8,6 +8,7 @@ package kafka_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"strconv"
 	"sync"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/kmsg"
@@ -49,12 +51,23 @@ func produces(settings kafka.ProducerSettings, run func(ctx context.Context, p *
 }
 
 // readAll returns every record of topic, in each partition's order,
-// through a client that dials h with opts. It polls until a poll finds
-// nothing new for a second, which inside a bubble takes no real time, and
-// fails the test on any error but the poll's own deadline, so a client that
-// can't read the topic isn't mistaken for an empty one.
+// through a client that dials h with opts. It knows it has read the whole
+// topic when it has read each partition up to the high watermark c reports
+// for it as it starts, the offset after the partition's last record. A poll
+// that comes back empty isn't the end: a client makes a topic's partitions
+// fetchable one at a time, so its first fetch can leave out the one with the
+// records, and the cluster holds that fetch for kgo's FetchMaxWait. It fails
+// the test on any error, and if a minute passes before it reaches every end,
+// which inside a bubble takes no real time, so a client that can't read the
+// topic isn't mistaken for an empty one.
 func readAll(t *testing.T, h *humustest.Host, c *kfake.Cluster, topic string, opts ...kgo.Opt) []*kgo.Record {
 	t.Helper()
+	ends := map[int32]int64{}
+	for _, p := range c.PartitionInfos(topic) {
+		if p.HighWatermark > p.LogStartOffset {
+			ends[p.Partition] = p.HighWatermark
+		}
+	}
 	cl, err := kgo.NewClient(append([]kgo.Opt{
 		kgo.SeedBrokers(c.ListenAddrs()...),
 		kgo.Dialer(h.Dial),
@@ -64,25 +77,23 @@ func readAll(t *testing.T, h *humustest.Host, c *kfake.Cluster, topic string, op
 	require.NoError(t, err)
 	defer cl.Close()
 
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
 	var out []*kgo.Record
-	for {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	for len(ends) > 0 {
 		fetches := cl.PollFetches(ctx)
-		cancel()
+		require.NoError(t, ctx.Err(), "reading %s: partitions %v are never read to their ends", topic, ends)
 		fetches.EachError(func(_ string, _ int32, err error) {
-			if !errors.Is(err, context.DeadlineExceeded) {
-				require.NoError(t, err, "reading %s", topic)
-			}
+			require.NoError(t, err, "reading %s", topic)
 		})
-		n := 0
 		fetches.EachRecord(func(r *kgo.Record) {
 			out = append(out, r)
-			n++
+			if r.Offset+1 >= ends[r.Partition] {
+				delete(ends, r.Partition)
+			}
 		})
-		if n == 0 {
-			return out
-		}
 	}
+	return out
 }
 
 // holdProduce makes the cluster hold every Produce request until release is
@@ -208,6 +219,77 @@ func TestProduce_keeps_the_order_of_records_with_one_key(t *testing.T) {
 			require.Equal(t, strconv.Itoa(i), string(r.Value))
 			require.Equal(t, int64(i), r.Offset)
 		}
+	})
+}
+
+// watchFetches records the partitions each Fetch request c handles from now
+// on names, and lets c answer it as usual. The returned func returns them,
+// one sorted slice per request, in the order c handled them. A readAll
+// client consumes one topic, so a Fetch of its names only that topic.
+func watchFetches(c *kfake.Cluster) func() [][]int32 {
+	var mu sync.Mutex
+	var fetches [][]int32
+	c.ControlKey(kmsg.Fetch.Int16(), func(req kmsg.Request) (kmsg.Response, error, bool) {
+		var ps []int32
+		for _, t := range req.(*kmsg.FetchRequest).Topics {
+			for _, p := range t.Partitions {
+				ps = append(ps, p.Partition)
+			}
+		}
+		slices.Sort(ps)
+		mu.Lock()
+		defer mu.Unlock()
+		fetches = append(fetches, ps)
+		return nil, nil, false
+	})
+	return func() [][]int32 {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(fetches)
+	}
+}
+
+func TestReadAll_reads_every_record_when_the_first_Fetch_leaves_out_their_partition(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := humustest.NewHost(t)
+		c := cluster(t, h, 3)
+
+		records := make([]kafka.Record, 10)
+		for i := range records {
+			records[i] = kafka.Record{Topic: topic, Key: []byte("one key"), Value: []byte(strconv.Itoa(i))}
+		}
+		var err error
+		_, status := humustest.Start(t, produces(producerSettings(c.ListenAddrs()...), func(ctx context.Context, p *kafka.Producer) error {
+			err = p.Produce(ctx, records...)
+			return nil
+		}), humustest.WithApp(humus.WithHost(h.Host())))
+		st := <-status
+		require.Zero(t, st.Code(), "cause: %v", st.Cause())
+		require.NoError(t, err)
+
+		var stored []int32
+		for _, p := range c.PartitionInfos(topic) {
+			if p.HighWatermark > p.LogStartOffset {
+				stored = append(stored, p.Partition)
+			}
+		}
+		require.Len(t, stored, 1)
+		// Failing the records' partition in readAll's first ListOffsets
+		// makes kgo list it again a second later, so the first Fetch is
+		// sent without it, and the cluster holds that Fetch for kgo's
+		// FetchMaxWait of 5s.
+		c.Fault(kfake.Fault{
+			Keys:       []kmsg.Key{kmsg.ListOffsets},
+			Topic:      topic,
+			Partitions: []int32{stored[0]},
+			Err:        kerr.OffsetNotAvailable,
+		})
+		fetches := watchFetches(c)
+
+		got := readAll(t, h, c, topic)
+		require.NotEmpty(t, fetches())
+		require.NotContains(t, fetches()[0], stored[0], "the first Fetch leaves out the records' partition")
+		require.Len(t, got, 10)
 	})
 }
 

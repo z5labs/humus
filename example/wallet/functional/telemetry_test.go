@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -123,13 +124,9 @@ func TestWallet_sends_its_telemetry_to_the_LGTM_stack_on_kind(t *testing.T) {
 		}
 		for _, want := range []struct{ uid, typ string }{{"mimir", "prometheus"}, {"loki", "loki"}, {"tempo", "tempo"}} {
 			if !slices.Contains(sources, dataSource{UID: want.uid, Type: want.typ}) {
-				return false, nil
+				return false, fmt.Errorf("Grafana has no %s data source %s, only %v", want.typ, want.uid, sources)
 			}
-			var health struct {
-				Status string `json:"status"`
-			}
-			ok, err := getJSON(ctx, admin, grafana+"/api/datasources/uid/"+want.uid+"/health", &health)
-			if !ok || err != nil || health.Status != "OK" {
+			if err := healthy(ctx, admin, grafana, want.uid); err != nil {
 				return false, err
 			}
 		}
@@ -137,9 +134,91 @@ func TestWallet_sends_its_telemetry_to_the_LGTM_stack_on_kind(t *testing.T) {
 	})
 }
 
+func TestWallet_Grafana_serves_Mimir_Loki_and_Tempo_after_a_fresh_start_on_kind(t *testing.T) {
+	kubectl(t, "rollout", "restart", "deployment/grafana")
+	kubectl(t, "rollout", "status", "deployment/grafana", "--timeout", "5m")
+
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		out, err := run(context.WithoutCancel(t.Context()), "logs", "deployment/grafana")
+		if err != nil {
+			t.Logf("grafana logs: %v", err)
+			return
+		}
+		for line := range strings.Lines(string(out)) {
+			if strings.Contains(line, "logger=plugin.backgroundinstaller") || strings.Contains(line, "logger=plugin.installer") ||
+				strings.Contains(line, "plugin process exited") || strings.Contains(line, "notRegistered") {
+				t.Log(strings.TrimSpace(line))
+			}
+		}
+	})
+
+	restarted := time.Now()
+	hold, cancelHold := context.WithTimeout(t.Context(), 90*time.Second)
+	defer cancelHold()
+	for hold.Err() == nil {
+		out, err := run(hold, "logs", "deployment/grafana")
+		if err == nil && doneWithTempo(string(out)) {
+			t.Logf("Grafana's background plugin installer was done with tempo %s after the rollout", time.Since(restarted).Round(time.Second))
+			break
+		}
+		select {
+		case <-time.After(pollInterval):
+		case <-hold.Done():
+			t.Log("Grafana's background plugin installer logged nothing about tempo in 90s")
+		}
+	}
+
+	grafana := "http://" + forwardHTTP(t, "grafana", 3000)
+	admin := &http.Client{Timeout: 10 * time.Second, Transport: basicAuth{
+		username: string(secret(t, "grafana-admin", "username")),
+		password: string(secret(t, "grafana-admin", "password")),
+		next:     &http.Transport{},
+	}}
+
+	for _, uid := range []string{"mimir", "loki", "tempo"} {
+		t.Run(uid, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+			defer cancel()
+			eventually(ctx, t, "the data source "+uid+", healthy in Grafana", func(ctx context.Context) (bool, error) {
+				return true, healthy(ctx, admin, grafana, uid)
+			})
+		})
+	}
+}
+
+func doneWithTempo(logs string) bool {
+	for line := range strings.Lines(logs) {
+		if strings.Contains(line, `var="GF_PLUGINS_PREINSTALL_DISABLED=true"`) {
+			return true
+		}
+		if strings.Contains(line, "logger=plugin.backgroundinstaller") && strings.Contains(line, "pluginId=tempo") &&
+			(strings.Contains(line, "Plugin successfully installed") || strings.Contains(line, "Failed to install plugin")) {
+			return true
+		}
+	}
+	return false
+}
+
 type dataSource struct {
 	UID  string `json:"uid"`
 	Type string `json:"type"`
+}
+
+func healthy(ctx context.Context, admin *http.Client, grafana, uid string) error {
+	var health struct {
+		Status  string `json:"status"`
+		Message string `json:"message"`
+	}
+	if _, err := getJSON(ctx, admin, grafana+"/api/datasources/uid/"+uid+"/health", &health); err != nil {
+		return fmt.Errorf("the data source %s: %w", uid, err)
+	}
+	if health.Status != "OK" {
+		return fmt.Errorf("the data source %s is %s: %s", uid, health.Status, health.Message)
+	}
+	return nil
 }
 
 func sendWhileTheLedgersDatabaseIsDown(t *testing.T, target cases.Target) string {
@@ -291,14 +370,10 @@ func getJSON(ctx context.Context, client *http.Client, u string, v any) (bool, e
 	if err != nil {
 		return false, err
 	}
-	switch resp.StatusCode {
-	case http.StatusOK:
-		return true, json.Unmarshal(body, v)
-	case http.StatusNotFound:
-		return false, nil
-	default:
+	if resp.StatusCode != http.StatusOK {
 		return false, fmt.Errorf("GET %s: %s: %s", u, resp.Status, body)
 	}
+	return true, json.Unmarshal(body, v)
 }
 
 func eventually(ctx context.Context, t *testing.T, what string, found func(ctx context.Context) (bool, error)) {
