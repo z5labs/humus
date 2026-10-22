@@ -58,7 +58,7 @@ func binary(t *testing.T, name string) (string, string, run.Spec) {
 			buildErr = err
 			return
 		}
-		for _, pkg := range []string{"passes", "twocpus", "fourprocs", "testmain", "lingers"} {
+		for _, pkg := range []string{"passes", "twocpus", "fourprocs", "testmain", "lingers", "order"} {
 			if buildErr = run.Build(context.Background(), mod, "example.com/runs/"+pkg, filepath.Join(binDir, pkg+".test"), childEnv); buildErr != nil {
 				return
 			}
@@ -186,6 +186,46 @@ func TestExec_fails_outside_any_test_when_the_run_cannot_start(t *testing.T) {
 	require.Contains(t, string(res.Output), "test2json")
 }
 
+func TestExec_shuffles_a_run_with_its_seed_and_the_seed_reproduces_its_failure(t *testing.T) {
+	_, _, spec := binary(t, "order")
+	spec.Cores, spec.CPU = pin(t, 1), 1
+	res := run.Exec(t.Context(), spec)
+	require.False(t, res.Failed(), "in their order, TestFailsAfterTestDirties runs first:\n%s", res.Output)
+	require.Nil(t, res.Seed)
+
+	three := int64(3)
+	spec.Seed = &three
+	res = run.Exec(t.Context(), spec)
+	three = 4
+	require.Equal(t, int64(3), *res.Seed, "the result keeps a copy of the run's seed, not the spec's")
+
+	var failing, passing *int64
+	for seed := int64(1); seed <= 64 && (failing == nil || passing == nil); seed++ {
+		spec.Seed = &seed
+		res := run.Exec(t.Context(), spec)
+		require.Equal(t, &seed, res.Seed, "the run's result keeps its seed")
+		require.Contains(t, string(res.Output), "-test.shuffle "+strconv.FormatInt(seed, 10))
+		if res.Failed() {
+			failing = &seed
+		} else {
+			passing = &seed
+		}
+	}
+	require.NotNil(t, failing, "no seed from 1 to 64 ran TestDirties first")
+	require.NotNil(t, passing, "every seed from 1 to 64 ran TestDirties first")
+
+	for range 5 {
+		spec.Seed = failing
+		res := run.Exec(t.Context(), spec)
+		require.Equal(t, run.Fail, outcomes(res)["TestFailsAfterTestDirties"], "seed %d reproduces its failure:\n%s", *failing, res.Output)
+		require.Contains(t, strings.Join(res.Tests[1].Output, "\n"), "TestDirties ran before it")
+
+		spec.Seed = passing
+		res = run.Exec(t.Context(), spec)
+		require.False(t, res.Failed(), "seed %d runs the tests in an order that passes:\n%s", *passing, res.Output)
+	}
+}
+
 func TestSpec_Command_pins_the_binary_with_taskset(t *testing.T) {
 	spec := run.Spec{Binary: "/b/p.test", Cores: []int{4, 5}, CPU: 2, Timeout: 2 * time.Minute, Run: "^TestX$", Skip: "^TestY$"}
 	require.Equal(t, []string{
@@ -193,6 +233,14 @@ func TestSpec_Command_pins_the_binary_with_taskset(t *testing.T) {
 		"-test.count=1", "-test.cpu=2", "-test.timeout=2m0s", "-test.v=test2json",
 		"-test.run=^TestX$", "-test.skip=^TestY$",
 	}, spec.Command())
+
+	seed := int64(-42)
+	spec.Seed = &seed
+	require.Equal(t, []string{
+		"taskset", "-c", "4,5", "/b/p.test",
+		"-test.count=1", "-test.cpu=2", "-test.timeout=2m0s", "-test.v=test2json", "-test.shuffle=-42",
+		"-test.run=^TestX$", "-test.skip=^TestY$",
+	}, spec.Command(), "a seed shuffles the run")
 }
 
 func TestList_lists_a_binary_s_top_level_tests(t *testing.T) {

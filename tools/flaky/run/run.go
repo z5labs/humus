@@ -83,6 +83,9 @@ type Result struct {
 	Cancelled bool
 	// Took is how long the run took.
 	Took time.Duration
+	// Seed is the run's -test.shuffle seed, or nil when it ran its tests in
+	// their order.
+	Seed *int64
 }
 
 // Failed reports whether anything in the run failed or hung.
@@ -116,6 +119,9 @@ type Spec struct {
 	Grace time.Duration
 	// Run and Skip are the run's -test.run and -test.skip, when set.
 	Run, Skip string
+	// Seed is the run's -test.shuffle seed, or nil to run the tests in
+	// their order.
+	Seed *int64
 	// Env is the run's environment.
 	Env []string
 	// Test2JSON is the path of the test2json command.
@@ -131,6 +137,9 @@ func (s Spec) Command() []string {
 		"-test.cpu=" + strconv.Itoa(s.CPU),
 		"-test.timeout=" + s.Timeout.String(),
 		"-test.v=test2json",
+	}
+	if s.Seed != nil {
+		args = append(args, "-test.shuffle="+strconv.FormatInt(*s.Seed, 10))
 	}
 	if s.Run != "" {
 		args = append(args, "-test.run="+s.Run)
@@ -150,10 +159,19 @@ func CoreList(cores []int) string {
 	return strings.Join(parts, ",")
 }
 
-// Exec runs s and returns its result. A run that can't be started, or whose
-// output test2json can't read, fails outside any test, with the error as its
-// output.
+// Exec runs s and returns its result, which keeps s's seed. A run that can't
+// be started, or whose output test2json can't read, fails outside any test,
+// with the error as its output.
 func Exec(ctx context.Context, s Spec) Result {
+	res := execute(ctx, s)
+	if s.Seed != nil {
+		seed := *s.Seed
+		res.Seed = &seed
+	}
+	return res
+}
+
+func execute(ctx context.Context, s Spec) Result {
 	start := time.Now()
 	runCtx, cancel := context.WithTimeout(ctx, s.Timeout+s.Grace)
 	defer cancel()

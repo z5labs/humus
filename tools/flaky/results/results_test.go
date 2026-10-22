@@ -534,3 +534,123 @@ func TestWriteJSON_gives_the_confirm_runs(t *testing.T) {
 	require.Equal(t, true, x["confirmed"])
 	require.InDelta(t, 16, x["runs"], 0)
 }
+
+func seeded(seed int64, res run.Result) run.Result {
+	res.Seed = &seed
+	return res
+}
+
+// orderSweep adds a shuffled sweep of two runs at each pair, in which
+// TestX fails at cpu 2 load 1, with seed 7 and then seed 8, and passes every
+// other run, then two confirm runs of TestX alone at each pair, which pass.
+func orderSweep(t *testing.T, r *results.Results) {
+	r.Listed(0, []string{"TestX", "TestY"})
+	seed := int64(0)
+	for _, cpu := range []int{1, 2} {
+		for _, load := range []int{1, 2} {
+			for range 2 {
+				seed++
+				res := passed("TestY", "TestX")
+				if cpu == 2 && load == 1 {
+					res.Tests[1] = run.Test{Name: "TestX", Outcome: run.Fail, Output: []string{"    x_test.go:5: TestY ran before it"}}
+				}
+				require.NoError(t, r.Add(0, cpu, load, seeded(100+seed, res)))
+			}
+		}
+	}
+	for _, cpu := range []int{1, 2} {
+		for _, load := range []int{1, 2} {
+			for range 2 {
+				seed++
+				require.NoError(t, r.Confirmed(0, "TestX", cpu, load, seeded(100+seed, passed("TestX"))))
+			}
+		}
+	}
+}
+
+func TestReport_keeps_a_failure_s_seed_and_reproduces_what_its_run_ran_with_it(t *testing.T) {
+	testCases := []struct {
+		name       string
+		run, skip  string
+		wantFlaky  string
+		wantGoTest string
+	}{
+		{
+			name:       "the sweep ran every test",
+			wantFlaky:  "flaky stress -run . -shuffle=105 -cpu 2 -load 1 -count 2 ./grpc/grpchealth",
+			wantGoTest: "taskset -c 0-1 go -C grpc test -race -cover -count=2 -cpu 2 -timeout 2m0s -run . -shuffle=105 ./grpchealth",
+		},
+		{
+			name:       "the sweep ran what -run matched, and skipped what -skip matched",
+			run:        "^Test[XY]$",
+			skip:       "^TestZ$",
+			wantFlaky:  "flaky stress -run '^Test[XY]$' -skip '^TestZ$' -shuffle=105 -cpu 2 -load 1 -count 2 ./grpc/grpchealth",
+			wantGoTest: "taskset -c 0-1 go -C grpc test -race -cover -count=2 -cpu 2 -timeout 2m0s -run '^Test[XY]$' -skip '^TestZ$' -shuffle=105 ./grpchealth",
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := results.New(results.Config{
+				Packages: pkgs, CPUs: []int{1, 2}, Loads: []int{1, 2}, Count: 3, Confirm: 2,
+				Timeout: 2 * time.Minute, DefaultTimeout: 2 * time.Minute, Out: t.TempDir(),
+				Run: tc.run, Skip: tc.skip,
+			})
+			orderSweep(t, r)
+			rep := r.Report()
+			require.Len(t, rep.Flaky, 1)
+			x := rep.Flaky[0]
+			require.True(t, x.Confirmed)
+			require.Zero(t, x.Failures, "alone, it passed every confirm run")
+			require.Equal(t, int64(105), *x.FirstFailureSeed, "the first failure's seed")
+			require.Equal(t, int64(105), *x.Seed, "the seed of the first failure at the pair it failed most, in the sweep")
+			require.Equal(t, tc.wantFlaky, x.Reproduce, "a test that fails after another passes alone, so it reproduces what the sweep ran")
+			require.Equal(t, tc.wantGoTest, x.ReproduceGoTest)
+		})
+	}
+}
+
+func TestReport_reproduces_a_test_that_failed_alone_with_its_confirm_run_s_seed(t *testing.T) {
+	r, _ := newConfirmResults(t)
+	require.NoError(t, r.Add(0, 1, 1, seeded(1, run.Result{Tests: []run.Test{{Name: "TestX", Outcome: run.Fail}}})))
+	require.NoError(t, r.Confirmed(0, "TestX", 2, 2, seeded(2, passed("TestX"))))
+	require.NoError(t, r.Confirmed(0, "TestX", 2, 2, seeded(3, run.Result{Tests: []run.Test{{Name: "TestX", Outcome: run.Fail}}})))
+	require.NoError(t, r.Confirmed(0, "TestX", 2, 2, seeded(4, run.Result{Tests: []run.Test{{Name: "TestX", Outcome: run.Fail}}})))
+	rep := r.Report()
+	require.Len(t, rep.Flaky, 1)
+	x := rep.Flaky[0]
+	require.Equal(t, int64(1), *x.FirstFailureSeed)
+	require.Equal(t, int64(3), *x.Seed, "the first failed confirm run's seed")
+	require.Equal(t, "flaky stress -run '^TestX$' -shuffle=3 -cpu 2 -load 2 -count 4 ./grpc/grpchealth", x.Reproduce)
+	require.Equal(t, "taskset -c 0-1 go -C grpc test -race -cover -count=4 -cpu 2 -timeout 2m0s -run '^TestX$' -shuffle=3 ./grpchealth", x.ReproduceGoTest)
+}
+
+func TestWriteText_gives_a_shuffled_failure_s_seed(t *testing.T) {
+	r, _ := newConfirmResults(t)
+	orderSweep(t, r)
+	var buf bytes.Buffer
+	require.NoError(t, results.WriteText(&buf, r.Report()))
+	require.Contains(t, buf.String(), "    first failure, at cpu 2 load 1, seed 105:\n")
+	require.Contains(t, buf.String(), "    reproduce: flaky stress -run . -shuffle=105 -cpu 2 -load 1 -count 4 ./grpc/grpchealth\n")
+	require.Contains(t, buf.String(), " -run . -shuffle=105 ./grpchealth\n")
+}
+
+func TestWriteJSON_gives_a_shuffled_failure_s_seed(t *testing.T) {
+	r, _ := newConfirmResults(t)
+	orderSweep(t, r)
+	var buf bytes.Buffer
+	require.NoError(t, results.WriteJSON(&buf, r.Report()))
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &got))
+	x := got["flaky"].([]any)[0].(map[string]any)
+	require.InDelta(t, 105, x["firstFailureSeed"], 0)
+	require.InDelta(t, 105, x["seed"], 0)
+
+	r, _ = newConfirmResults(t)
+	confirmSweep(t, r)
+	buf.Reset()
+	require.NoError(t, results.WriteJSON(&buf, r.Report()))
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &got))
+	x = got["flaky"].([]any)[0].(map[string]any)
+	require.NotContains(t, x, "firstFailureSeed", "a run that wasn't shuffled has no seed")
+	require.NotContains(t, x, "seed")
+}
