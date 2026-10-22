@@ -1,0 +1,40 @@
+## What happens
+
+The test drains the app and checks every Service returned.
+
+At [6351c869](https://github.com/z5labs/humus/commit/6351c86978a51659d1d1dae16a9f4553bd64a712), with go1.27.2 on 4 cores, `flaky stress` ran it 150 times:
+
+|       | load 1 | load 2 |
+|-------|--------|--------|
+| cpu 1 | 0 / 25 | 0 / 25 |
+| cpu 2 | 1 / 25 | 1 / 25 |
+| cpu 4 | 0 / 25 | 0 / 25 |
+
+That is 1 failure and 1 hang. Its first failure:
+
+````text
+--- FAIL: TestMain_drains (0.31s)
+    main_test.go:40: the output had ``` in it
+````
+
+It reproduces with:
+
+```sh
+flaky stress -tags testcontainers -run '^TestMain_drains$' -shuffle=7 -cpu 2 -load 1 -count 25 ./.
+taskset -c 0-1 go -C . test -race -cover -tags testcontainers -count=25 -cpu 2 -timeout 10m0s -run '^TestMain_drains$' -shuffle=7 .
+```
+
+It failed only at cpu 2, at either load.
+
+## Why
+
+This hasn't been triaged.
+
+## Expected
+
+`TestMain_drains` passes on every run, at every CPU count and load.
+
+## References
+
+- [`TestMain_drains`](https://github.com/z5labs/humus/blob/6351c86978a51659d1d1dae16a9f4553bd64a712/main_test.go#L12)
+- https://github.com/z5labs/humus/discussions/959, the closed report that last named it
