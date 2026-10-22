@@ -36,8 +36,8 @@ func Track(r *http.Request) (*http.Request, func() string) {
 }
 
 // Record records pattern as the route of the request ctx is the context of,
-// when Track tracks it. A handler may run on after a handler above it has
-// returned, as one behind http.TimeoutHandler does, so the route is
+// when Track tracks it. A handler may still be running after a handler above
+// it has returned, as one behind http.TimeoutHandler can be, so the route is
 // recorded atomically.
 func Record(ctx context.Context, pattern string) {
 	found, ok := ctx.Value(ctxKey{}).(*atomic.Pointer[string])

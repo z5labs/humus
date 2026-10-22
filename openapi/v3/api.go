@@ -223,7 +223,7 @@ func NewAPI(s *humus.Setup, info Info, unmatched Unmatched, requestErrors Reques
 // again. It then sets the pattern chi found on r, and records it as the
 // request's route for httpserver, so that httpserver's spans, and the
 // http.route of its metrics, are named after the route, such as
-// GET /carts/{cartId}. They are whatever handlers above the API pass on a
+// GET /carts/{cartId}. That holds even when handlers above the API pass on a
 // copy of the request, such as http.MaxBytesHandler.
 func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	routed := r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, chi.NewRouteContext()))
