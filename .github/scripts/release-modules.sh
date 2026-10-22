@@ -53,6 +53,8 @@
 # module that holds no Go files of its own, such as the Hugo module under
 # docs/, has nothing to release and is skipped. So is every module under
 # example/: an example is an application to copy, not a library to require.
+# And so is every module under tools/: a tool is for the repository's
+# maintainers, not a library to require.
 
 set -euo pipefail
 
@@ -252,13 +254,17 @@ done
 root=$(module_path go.mod)
 [[ -n $root ]] || die "go.mod declares no module path"
 
-# An example's module stays among dirs above, so its Go files are its own and
-# not its parent's, but it is never released.
+# An example's or a tool's module stays among dirs above, so its Go files are
+# its own and not its parent's, but it is never released.
 modules=()
 for dir in "${dirs[@]}"; do
   case "$dir" in
   example | example/*)
     echo "skip $(gomod "$dir"): under example/, whose modules are never released" >&2
+    continue
+    ;;
+  tools | tools/*)
+    echo "skip $(gomod "$dir"): under tools/, whose modules are never released" >&2
     continue
     ;;
   esac

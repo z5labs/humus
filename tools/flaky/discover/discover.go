@@ -1,0 +1,232 @@
+// Copyright (c) 2026 Z5Labs and Contributors
+//
+// This software is released under the MIT License.
+// https://opensource.org/licenses/MIT
+
+// Package discover finds what flaky runs: the repository's modules, and the
+// packages in them that have tests. It keeps no list of either, so adding or
+// removing a module, a package or a test changes nothing in flaky.
+package discover
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
+)
+
+// Package is a package that has test files.
+type Package struct {
+	// Module is the directory of the package's module, relative to the
+	// repository's root, such as grpc, or . for the root module.
+	Module string `json:"module"`
+	// Dir is the package's directory, relative to the repository's root,
+	// such as grpc/grpchealth.
+	Dir string `json:"dir"`
+	// ImportPath is the package's import path.
+	ImportPath string `json:"importPath"`
+}
+
+// Root returns the root of the git repository that holds dir.
+func Root(ctx context.Context, dir string, env []string) (string, error) {
+	out, err := command(ctx, dir, env, "git", "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// Commit returns the commit checked out at root.
+func Commit(ctx context.Context, root string, env []string) (string, error) {
+	out, err := command(ctx, root, env, "git", "rev-parse", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// GoVersion returns the version of the local go command, such as go1.27.2.
+func GoVersion(ctx context.Context, root string, env []string) (string, error) {
+	out, err := command(ctx, root, env, "go", "env", "GOVERSION")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// Modules returns the directory of every module that the repository's
+// .github/scripts/go-modules.sh lists, as CI's matrices do.
+func Modules(ctx context.Context, root string, env []string) ([]string, error) {
+	out, err := command(ctx, root, env, filepath.Join(root, ".github", "scripts", "go-modules.sh"))
+	if err != nil {
+		return nil, err
+	}
+	modules := strings.Fields(out)
+	if len(modules) == 0 {
+		return nil, fmt.Errorf("go-modules.sh listed no modules in %s", root)
+	}
+	return modules, nil
+}
+
+// Packages returns the packages with test files, in the modules, that the
+// patterns match. A pattern is a directory from the repository's root, such as
+// ./grpc/grpchealth, or ends in /... to match every directory under it too,
+// such as ./grpc/... or ./... With no patterns, every package matches. Every
+// pattern must match at least one package.
+func Packages(ctx context.Context, root string, modules, patterns []string, env []string) ([]Package, error) {
+	matchers := make([]matcher, 0, len(patterns))
+	for _, p := range patterns {
+		m, err := parsePattern(p)
+		if err != nil {
+			return nil, err
+		}
+		matchers = append(matchers, m)
+	}
+	if len(matchers) == 0 {
+		matchers = append(matchers, matcher{all: true})
+	}
+
+	matched := make([]bool, len(matchers))
+	var pkgs []Package
+	for _, module := range modules {
+		if !slices.ContainsFunc(matchers, func(m matcher) bool { return m.overlaps(module) }) {
+			continue
+		}
+		found, err := modulePackages(ctx, root, module, env)
+		if err != nil {
+			return nil, err
+		}
+		for _, pkg := range found {
+			hit := false
+			for i, m := range matchers {
+				if m.matches(pkg.Dir) {
+					matched[i] = true
+					hit = true
+				}
+			}
+			if hit {
+				pkgs = append(pkgs, pkg)
+			}
+		}
+	}
+	for i, ok := range matched {
+		if !ok {
+			return nil, fmt.Errorf("%s matched no package with tests", patterns[i])
+		}
+	}
+	return pkgs, nil
+}
+
+// modulePackages returns the packages with test files in the module dir.
+func modulePackages(ctx context.Context, root, module string, env []string) ([]Package, error) {
+	out, err := command(ctx, filepath.Join(root, module), env,
+		"go", "list", "-f", "{{.ImportPath}}\t{{.Dir}}\t{{len .TestGoFiles}}\t{{len .XTestGoFiles}}", "./...")
+	if err != nil {
+		return nil, err
+	}
+	var pkgs []Package
+	sc := bufio.NewScanner(strings.NewReader(out))
+	for sc.Scan() {
+		fields := strings.Split(sc.Text(), "\t")
+		if len(fields) != 4 {
+			return nil, fmt.Errorf("go list in %s printed %q", module, sc.Text())
+		}
+		if fields[2] == "0" && fields[3] == "0" {
+			continue
+		}
+		dir, err := filepath.Rel(root, fields[1])
+		if err != nil {
+			return nil, err
+		}
+		pkgs = append(pkgs, Package{Module: module, Dir: filepath.ToSlash(dir), ImportPath: fields[0]})
+	}
+	return pkgs, nil
+}
+
+type matcher struct {
+	all    bool
+	dir    string
+	subdir bool
+}
+
+func parsePattern(p string) (matcher, error) {
+	if !strings.HasPrefix(p, "./") && p != "." {
+		return matcher{}, fmt.Errorf("package pattern %q must start with ./, from the repository's root", p)
+	}
+	clean := path.Clean(p)
+	if clean == ".." || strings.HasPrefix(clean, "../") || strings.Contains(clean, "/../") {
+		return matcher{}, fmt.Errorf("package pattern %q leaves the repository", p)
+	}
+	if clean == "..." {
+		return matcher{all: true}, nil
+	}
+	if dir, ok := strings.CutSuffix(clean, "/..."); ok {
+		return matcher{dir: dir, subdir: true}, nil
+	}
+	return matcher{dir: clean}, nil
+}
+
+func (m matcher) matches(dir string) bool {
+	if m.all || dir == m.dir {
+		return true
+	}
+	return m.subdir && strings.HasPrefix(dir, m.dir+"/")
+}
+
+// overlaps reports whether the module in the directory module could hold a
+// package m matches.
+func (m matcher) overlaps(module string) bool {
+	if m.all || module == "." || module == m.dir || strings.HasPrefix(m.dir, module+"/") {
+		return true
+	}
+	return m.subdir && strings.HasPrefix(module, m.dir+"/")
+}
+
+var goVersionLine = regexp.MustCompile(`go-version:\s*['"]?([0-9][0-9.]*)['"]?`)
+
+// CIGoVersion returns the Go version that the repository's
+// .github/workflows/build.yaml sets, such as 1.27.2.
+func CIGoVersion(root string) (string, error) {
+	b, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "build.yaml"))
+	if err != nil {
+		return "", err
+	}
+	m := goVersionLine.FindSubmatch(b)
+	if m == nil {
+		return "", fmt.Errorf("%s sets no go-version", filepath.Join(".github", "workflows", "build.yaml"))
+	}
+	return string(m[1]), nil
+}
+
+// CheckGoVersion returns a warning when the local Go, such as go1.27.0,
+// isn't the version build.yaml sets at root, or "" when it is.
+func CheckGoVersion(root, local string) string {
+	want, err := CIGoVersion(root)
+	if err != nil {
+		return fmt.Sprintf("warning: can't tell which Go CI uses: %v", err)
+	}
+	if "go"+want != local {
+		return fmt.Sprintf("warning: the local Go is %s, but build.yaml sets %s", local, want)
+	}
+	return ""
+}
+
+func command(ctx context.Context, dir string, env []string, name string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+	cmd.Env = env
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("%s %s in %s: %w: %s", name, strings.Join(args, " "), dir, err, strings.TrimSpace(stderr.String()))
+	}
+	return string(out), nil
+}

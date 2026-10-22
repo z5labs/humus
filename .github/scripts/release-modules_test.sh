@@ -153,6 +153,24 @@ run "$repo" v0.16.0
 expect_status 0 "examples tag"
 [[ $(remote_tags "$repo") == "refs/tags/grpc/v0.16.0 " ]] || fail "examples tag: remote tags are $(remote_tags "$repo")"
 
+# No module under tools/ is released, whatever it requires, and saying so for
+# each one; a tool's Go files are still its own, not its parent's.
+repo=$(newrepo -.=$root grpc=$root/grpc tools/flaky=$root/tools/flaky tools/other=$root/tools/other)
+printf '\nrequire github.com/z5labs/humus/grpc v0.15.0\n' >>"$repo/tools/flaky/go.mod"
+commit "$repo" tools
+run "$repo" --dry-run v0.16.0
+expect_status 0 "tools"
+expect_output "skip tools/flaky/go.mod: under tools/, whose modules are never released" "tools"
+expect_output "skip tools/other/go.mod: under tools/, whose modules are never released" "tools"
+expect_output "skip go.mod: it holds no Go packages" "tools"
+expect_output "would create grpc/v0.16.0" "tools"
+grep -v '^skip tools/' <<<"$out" | grep -q tools && fail "tools: names a tool outside its skip:"$'\n'"$out"
+out=$(cd "$repo" && "$script" --list v0.16.0 2>/dev/null) || fail "tools list: exit $?"
+[[ $out == "$root/grpc" ]] || fail "tools list: got"$'\n'"$out"
+run "$repo" v0.16.0
+expect_status 0 "tools tag"
+[[ $(remote_tags "$repo") == "refs/tags/grpc/v0.16.0 " ]] || fail "tools tag: remote tags are $(remote_tags "$repo")"
+
 # Tagging pushes the root tag and every nested tag at the release commit.
 repo=$(newrepo .=$root grpc=$root/grpc queue/kafka=$root/queue/kafka -docs=$root)
 run "$repo" v0.16.0
