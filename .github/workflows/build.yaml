@@ -54,7 +54,7 @@ jobs:
 
         - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
           with:
-            go-version: '1.27.2'
+            go-version: '1.27.3'
             cache: false
 
         - id: go-cache
@@ -93,7 +93,7 @@ jobs:
 
         - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
           with:
-            go-version: '1.27.2'
+            go-version: '1.27.3'
             cache: false
 
         - id: go-cache
@@ -136,7 +136,7 @@ jobs:
 
         - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
           with:
-            go-version: '1.27.2'
+            go-version: '1.27.3'
             cache: false
 
         - id: go-cache
@@ -177,7 +177,7 @@ jobs:
 
         - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
           with:
-            go-version: '1.27.2'
+            go-version: '1.27.3'
             cache: false
 
         - id: go-cache
@@ -226,7 +226,7 @@ jobs:
 
         - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
           with:
-            go-version: '1.27.2'
+            go-version: '1.27.3'
             cache: false
 
         - id: go-cache
@@ -276,7 +276,7 @@ jobs:
 
         - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
           with:
-            go-version: '1.27.2'
+            go-version: '1.27.3'
             cache: false
 
         - id: go-cache
@@ -318,7 +318,7 @@ jobs:
 
         - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
           with:
-            go-version: '1.27.2'
+            go-version: '1.27.3'
             cache: false
 
         - id: go-cache
@@ -347,7 +347,7 @@ jobs:
         # The release script runs go mod edit.
         - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
           with:
-            go-version: '1.27.2'
+            go-version: '1.27.3'
             cache: false
 
         - name: Test the coverage gate
@@ -400,7 +400,7 @@ jobs:
 
         - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
           with:
-            go-version: '1.27.2'
+            go-version: '1.27.3'
             cache: false
 
         - id: go-cache
@@ -435,7 +435,7 @@ jobs:
 
         - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
           with:
-            go-version: '1.27.2'
+            go-version: '1.27.3'
             cache: false
 
         - id: go-cache
@@ -472,7 +472,7 @@ jobs:
 
         - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
           with:
-            go-version: '1.27.2'
+            go-version: '1.27.3'
             cache: false
 
         - id: go-cache
@@ -507,7 +507,7 @@ jobs:
 
         - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
           with:
-            go-version: '1.27.2'
+            go-version: '1.27.3'
             cache: false
 
         - id: go-cache
@@ -542,7 +542,7 @@ jobs:
 
         - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
           with:
-            go-version: '1.27.2'
+            go-version: '1.27.3'
             cache: false
 
         - id: go-cache
@@ -587,7 +587,7 @@ jobs:
 
         - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
           with:
-            go-version: '1.27.2'
+            go-version: '1.27.3'
             cache: false
 
         - id: go-cache
@@ -640,7 +640,7 @@ jobs:
 
         - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
           with:
-            go-version: '1.27.2'
+            go-version: '1.27.3'
             cache: false
 
         - id: go-cache
@@ -681,7 +681,7 @@ jobs:
 
         - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
           with:
-            go-version: '1.27.2'
+            go-version: '1.27.3'
             cache: false
 
         - id: go-cache
@@ -743,7 +743,7 @@ jobs:
 
         - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
           with:
-            go-version: '1.27.2'
+            go-version: '1.27.3'
             cache: false
 
         - id: go-cache
@@ -787,7 +787,7 @@ jobs:
 
         - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
           with:
-            go-version: '1.27.2'
+            go-version: '1.27.3'
             cache: false
 
         - id: go-cache
@@ -844,7 +844,7 @@ jobs:
 
         - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
           with:
-            go-version: '1.27.2'
+            go-version: '1.27.3'
             cache: false
 
         - id: go-cache
@@ -883,7 +883,7 @@ jobs:
 
         - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
           with:
-            go-version: '1.27.2'
+            go-version: '1.27.3'
             cache: false
 
         - id: go-cache
@@ -937,7 +937,7 @@ jobs:
 
         - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
           with:
-            go-version: '1.27.2'
+            go-version: '1.27.3'
             cache: false
 
         - id: go-cache
@@ -985,7 +985,7 @@ jobs:
 
         - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
           with:
-            go-version: '1.27.2'
+            go-version: '1.27.3'
             cache: false
 
         - id: go-cache
@@ -1055,7 +1055,7 @@ jobs:
 
         - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
           with:
-            go-version: '1.27.2'
+            go-version: '1.27.3'
             cache: false
 
         - id: go-cache
@@ -1134,7 +1134,7 @@ jobs:
 
         - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
           with:
-            go-version: '1.27.2'
+            go-version: '1.27.3'
             cache: false
 
         - id: go-cache
