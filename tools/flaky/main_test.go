@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -122,6 +123,40 @@ func TestStress_writes_the_report_as_JSON(t *testing.T) {
 	require.Regexp(t, `/flaky-\d{8}T\d{6}$`, rep.Output, "the output goes under TMPDIR by default")
 }
 
+func TestStress_shuffles_each_run_and_a_failure_s_seed_reproduces_it(t *testing.T) {
+	repo := repotest.New(t, "0.0.1")
+	order, err := os.ReadFile(filepath.Join("testdata", "runs", "order", "order_test.go"))
+	require.NoError(t, err)
+	repotest.Write(t, repo, "order/order_test.go", string(order))
+
+	st, stdout, stderr := stressIn(t, repo, "stress", "-shuffle", "-cpu", "1", "-load", "1", "-count", "40", "-confirm", "3", "-keep", "0", "-json", "./order")
+	require.Equal(t, 1, st.Code(), "TestFailsAfterTestDirties fails in about half the shuffled runs:\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	var rep results.Report
+	require.NoError(t, json.Unmarshal([]byte(stdout), &rep))
+	require.Empty(t, rep.Failing)
+	require.Len(t, rep.Flaky, 1)
+	x := rep.Flaky[0]
+	require.Equal(t, "TestFailsAfterTestDirties", x.Test)
+	require.Equal(t, []results.Pair{{CPU: 1, Load: 1, Runs: 3}}, x.Pairs, "alone, it passes every confirm run")
+	require.NotNil(t, x.FirstFailureSeed)
+	require.NotNil(t, x.Seed)
+	seed := strconv.FormatInt(*x.Seed, 10)
+	require.Equal(t, "flaky stress -run . -shuffle="+seed+" -cpu 1 -load 1 -count 3 ./order", x.Reproduce)
+	require.Equal(t, "taskset -c 0 go -C . test -race -cover -count=3 -cpu 1 -timeout 2m0s -run . -shuffle="+seed+" ./order", x.ReproduceGoTest)
+
+	args := strings.Fields(x.Reproduce)[1:]
+	args = append(args[:len(args)-1:len(args)-1], "-keep", "0", "-json", args[len(args)-1])
+	st, stdout, stderr = stressIn(t, repo, args...)
+	require.Equal(t, 1, st.Code(), "stdout:\n%s\nstderr:\n%s", stdout, stderr)
+	rep = results.Report{}
+	require.NoError(t, json.Unmarshal([]byte(stdout), &rep))
+	require.Empty(t, rep.Flaky)
+	require.Len(t, rep.Failing, 1, "its seed fails it every run")
+	require.Equal(t, "TestFailsAfterTestDirties", rep.Failing[0].Test)
+	require.Equal(t, []results.Pair{{CPU: 1, Load: 1, Runs: 3, Failures: 3}}, rep.Failing[0].Pairs)
+	require.Equal(t, *x.Seed, *rep.Failing[0].Seed)
+}
+
 func TestStress_exits_0_when_every_test_passed_every_run(t *testing.T) {
 	repo := repotest.New(t, "0.0.1")
 	st, stdout, stderr := stressIn(t, repo, "stress", "-cpu", "1", "-count", "3", "-keep", "0", "-run", "^TestA$", "./a", "./b/...")
@@ -150,6 +185,7 @@ func TestStress_exits_2_when_it_cannot_run(t *testing.T) {
 		{"a timeout that isn't positive", []string{"stress", "-timeout", "0s"}, "-timeout must be positive"},
 		{"a CPU count that isn't one", []string{"stress", "-cpu", "1,x"}, `"x" is not a CPU count`},
 		{"a load that isn't one", []string{"stress", "-load", "0"}, `"0" is not a load`},
+		{"a shuffle that isn't on, off or a seed", []string{"stress", "-shuffle=x"}, `"x" is not on, off or a seed`},
 		{"no lane", []string{"stress", "-keep", "100000"}, "leave no lane"},
 		{"a pattern that matches nothing", []string{"stress", "-keep", "0", "-cpu", "1", "./nothing"}, "./nothing matched no package with tests"},
 		{"no command", nil, "usage: flaky stress"},
@@ -181,4 +217,27 @@ func TestFlaky_prints_its_usage_when_asked(t *testing.T) {
 	st, _, stderr := stressIn(t, repo, "stress", "-h")
 	require.Equal(t, 0, st.Code())
 	require.Contains(t, stderr, "-keep int")
+}
+
+func TestShuffle_is_off_on_or_a_seed(t *testing.T) {
+	var s shuffle
+	require.Equal(t, "off", s.String())
+	require.Nil(t, s.next(), "off, a run isn't shuffled")
+
+	require.NoError(t, s.Set("true"))
+	require.Equal(t, "on", s.String())
+	seeds := map[int64]bool{}
+	for range 8 {
+		seeds[*s.next()] = true
+	}
+	require.Greater(t, len(seeds), 1, "on, each run has a seed of its own")
+
+	require.NoError(t, s.Set("-3"))
+	require.Equal(t, "-3", s.String())
+	require.Equal(t, int64(-3), *s.next())
+	require.Equal(t, int64(-3), *s.next(), "with a seed, every run has that seed")
+
+	require.NoError(t, s.Set("off"))
+	require.Nil(t, s.next())
+	require.Error(t, s.Set("sometimes"))
 }

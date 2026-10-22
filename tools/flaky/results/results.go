@@ -45,6 +45,8 @@ type Config struct {
 	// DefaultTimeout is -timeout's default, which the reproducing
 	// commands leave out.
 	DefaultTimeout time.Duration
+	// Run and Skip are the sweep runs' -run and -skip, when set.
+	Run, Skip string
 	// Out is the directory failures' output is saved under.
 	Out string
 }
@@ -67,6 +69,7 @@ type entry struct {
 	pairs     map[pair]*counts
 	first     []string
 	firstPair pair
+	firstSeed *int64
 	saved     int
 	// confirm are the test's confirm runs, or nil when it wasn't
 	// confirmed.
@@ -93,6 +96,9 @@ type pair struct {
 
 type counts struct {
 	runs, failures, hangs int
+	// seed is the -test.shuffle seed of the first run that failed or
+	// hung, or nil when that run wasn't shuffled.
+	seed *int64
 }
 
 // New returns empty results for the sweep cfg.
@@ -133,12 +139,13 @@ func (r *Results) Add(pkg, cpu, load int, res run.Result) error {
 
 func (r *Results) count(k key, at pair, outcome run.Outcome, output []string, res run.Result) error {
 	e := r.entry(k)
-	if !tally(e.pairs, at, outcome) {
+	if !tally(e.pairs, at, outcome, res.Seed) {
 		return nil
 	}
 	if e.first == nil {
 		e.first = firstLines(outcome, output, res)
 		e.firstPair = at
+		e.firstSeed = res.Seed
 	}
 	e.saved++
 	return r.save(k, fmt.Sprintf("cpu%d-load%d-%d.txt", at.cpu, at.load, e.saved), res.Output)
@@ -181,7 +188,7 @@ func (r *Results) Confirmed(pkg int, test string, cpu, load int, res run.Result)
 		e.confirm = map[pair]*counts{}
 	}
 	at := pair{cpu, load}
-	if !tally(e.confirm, at, outcome) {
+	if !tally(e.confirm, at, outcome, res.Seed) {
 		return nil
 	}
 	e.confirmSaved++
@@ -197,9 +204,9 @@ func (r *Results) entry(k key) *entry {
 	return e
 }
 
-// tally counts a run at at with outcome in table, and reports whether it
-// failed or hung.
-func tally(table map[pair]*counts, at pair, outcome run.Outcome) bool {
+// tally counts a run at at with outcome and seed in table, and reports
+// whether it failed or hung.
+func tally(table map[pair]*counts, at pair, outcome run.Outcome, seed *int64) bool {
 	c := table[at]
 	if c == nil {
 		c = &counts{}
@@ -213,6 +220,9 @@ func tally(table map[pair]*counts, at pair, outcome run.Outcome) bool {
 		c.hangs++
 	default:
 		return false
+	}
+	if c.failures+c.hangs == 1 {
+		c.seed = seed
 	}
 	return true
 }
@@ -333,6 +343,9 @@ type Test struct {
 	// its first failure.
 	FirstFailureCPU  int `json:"firstFailureCPU"`
 	FirstFailureLoad int `json:"firstFailureLoad"`
+	// FirstFailureSeed is its first failure's -test.shuffle seed, or nil
+	// when that run wasn't shuffled.
+	FirstFailureSeed *int64 `json:"firstFailureSeed,omitempty"`
 	// Output is the directory its failures' whole output was saved to.
 	Output string `json:"output"`
 	// Reproduce is the command that reproduces it with flaky stress, at
@@ -343,6 +356,10 @@ type Test struct {
 	// under taskset, at the CPU count of that pair. It can't reproduce a
 	// load.
 	ReproduceGoTest string `json:"reproduceGoTest"`
+	// Seed is the -test.shuffle seed that both commands name: that of the
+	// first run at that pair that failed or hung. It is nil when that run
+	// wasn't shuffled.
+	Seed *int64 `json:"seed,omitempty"`
 }
 
 // Pair is a test's runs, failures and hangs at one pair of CPU count and
@@ -433,6 +450,7 @@ func (r *Results) test(k key, e *entry) (Test, bool) {
 		FirstFailure:     e.first,
 		FirstFailureCPU:  e.firstPair.cpu,
 		FirstFailureLoad: e.firstPair.load,
+		FirstFailureSeed: e.firstSeed,
 		Output:           filepath.Join(r.cfg.Out, r.dir(k)),
 	}
 	table, count := e.pairs, r.cfg.Count
@@ -457,12 +475,17 @@ func (r *Results) test(k key, e *entry) (Test, bool) {
 		}
 	}
 	worst, rate := r.worst(table)
+	sweep := e.confirm == nil
 	if rate <= 0 {
 		// It passed every confirm run, so its sweep runs say where it
 		// fails.
-		worst, _ = r.worst(e.pairs)
+		table, sweep = e.pairs, true
+		worst, _ = r.worst(table)
 	}
-	t.Reproduce, t.ReproduceGoTest = r.reproduce(pkg, k.test, worst, count)
+	if c := table[worst]; c != nil {
+		t.Seed = c.seed
+	}
+	t.Reproduce, t.ReproduceGoTest = r.reproduce(pkg, k.test, worst, count, t.Seed, sweep)
 	return t, failing
 }
 
@@ -489,12 +512,35 @@ func (r *Results) worst(table map[pair]*counts) (pair, float64) {
 // reproduce returns the commands that run test, or the whole package when
 // test is "", at the pair at, count times. The go test command runs at at's
 // CPU count, since it can't reproduce a load.
-func (r *Results) reproduce(pkg discover.Package, test string, at pair, count int) (string, string) {
+//
+// With a seed, both commands shuffle with it. A seed reproduces the order of
+// the tests that ran, so when it is a sweep run's, from the sweep, they run
+// what the sweep run ran, by its -run and -skip, rather than test alone: a
+// test that fails only after another passes alone. The flaky command's -run
+// is then "." when the sweep had none, so it runs the package count times
+// rather than sweeping and confirming.
+func (r *Results) reproduce(pkg discover.Package, test string, at pair, count int, seed *int64, sweep bool) (string, string) {
 	cpu := at.cpu
-	pattern := RunPattern(test)
+	pattern, skip := RunPattern(test), ""
+	shuffle := ""
+	if seed != nil {
+		shuffle = "-shuffle=" + strconv.FormatInt(*seed, 10)
+		if sweep {
+			pattern, skip = r.cfg.Run, r.cfg.Skip
+			if pattern == "" {
+				pattern = "."
+			}
+		}
+	}
 	flaky := []string{"flaky", "stress"}
 	if pattern != "" {
 		flaky = append(flaky, "-run", quote(pattern))
+	}
+	if skip != "" {
+		flaky = append(flaky, "-skip", quote(skip))
+	}
+	if shuffle != "" {
+		flaky = append(flaky, shuffle)
 	}
 	flaky = append(flaky, "-cpu", strconv.Itoa(cpu), "-load", strconv.Itoa(at.load), "-count", strconv.Itoa(count))
 	if r.cfg.Timeout != r.cfg.DefaultTimeout {
@@ -517,6 +563,12 @@ func (r *Results) reproduce(pkg discover.Package, test string, at pair, count in
 		"-count=" + strconv.Itoa(count), "-cpu", strconv.Itoa(cpu), "-timeout", r.cfg.Timeout.String()}
 	if pattern != "" {
 		goTest = append(goTest, "-run", quote(pattern))
+	}
+	if skip != "" {
+		goTest = append(goTest, "-skip", quote(skip))
+	}
+	if shuffle != "" {
+		goTest = append(goTest, shuffle)
 	}
 	goTest = append(goTest, rel)
 	return strings.Join(flaky, " "), strings.Join(goTest, " ")
@@ -611,7 +663,11 @@ func (p *printer) test(t Test) {
 		runs = plural(t.Runs, "confirm run", "confirm runs")
 	}
 	p.printf("    %s, %s in %s\n", plural(t.Failures, "failure", "failures"), plural(t.Hangs, "hang", "hangs"), runs)
-	p.printf("    first failure, at cpu %d load %d:\n", t.FirstFailureCPU, t.FirstFailureLoad)
+	seed := ""
+	if t.FirstFailureSeed != nil {
+		seed = ", seed " + strconv.FormatInt(*t.FirstFailureSeed, 10)
+	}
+	p.printf("    first failure, at cpu %d load %d%s:\n", t.FirstFailureCPU, t.FirstFailureLoad, seed)
 	for _, l := range t.FirstFailure {
 		p.printf("        %s\n", l)
 	}

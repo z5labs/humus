@@ -7,8 +7,8 @@
 // is found before it turns CI red. A maintainer runs it by hand, on Linux.
 //
 //	flaky stress [-cpu 1,2,4] [-load 1,2] [-count n] [-confirm n] [-timeout d]
-//	             [-keep n] [-run regexp] [-skip regexp] [-o dir] [-json]
-//	             [packages]
+//	             [-keep n] [-shuffle] [-run regexp] [-skip regexp] [-o dir]
+//	             [-json] [packages]
 //
 // flaky stress builds every package's test binary with go test -c -race
 // -cover, then runs each one -count times at each pair of -cpu and -load
@@ -22,6 +22,11 @@
 // or hung: it runs the test alone, by its own -run pattern, -confirm times at
 // each pair, including the pairs where it never failed. With -run, there are
 // no confirm runs: the matching tests run -count times at each pair.
+//
+// With -shuffle, each run shuffles its tests with a seed of its own, as
+// go test -shuffle does, so a test that fails only after another is found.
+// -shuffle=<seed> shuffles every run with that seed. A failure's seed is kept
+// with its result, and the commands that reproduce it name it.
 //
 // It reports each test that failed or hung, at each pair, and exits 1 if any
 // did.
@@ -37,6 +42,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -71,7 +77,8 @@ flaky stress runs every package's tests -count times at each pair of -cpu and
 each of them with up to its load of runs. Then it runs each test that failed
 or hung alone, -confirm times at each pair, and reports each test that failed
 or hung. With -run, it runs the matching tests -count times at each pair, and
-confirms none.
+confirms none. With -shuffle, each run shuffles its tests with a seed of its
+own.
 `
 
 func flaky(ctx context.Context, p bedrock.Process) bedrock.ExitStatus {
@@ -97,6 +104,7 @@ type stressFlags struct {
 	confirm  int
 	timeout  time.Duration
 	keep     int
+	shuffle  shuffle
 	run      string
 	skip     string
 	out      string
@@ -126,6 +134,7 @@ func parseStress(p bedrock.Process, args []string) (stressFlags, error) {
 	fs.IntVar(&f.confirm, "confirm", 1000, "how many times to run each test that failed or hung alone, at each pair of CPU count and load, once the sweep has ended; with -run, none is")
 	fs.DurationVar(&f.timeout, "timeout", defaultTimeout, "each run's -test.timeout; a run still going 30s later is killed")
 	fs.IntVar(&f.keep, "keep", 8, "how many cores to keep back from the lanes")
+	fs.Var(&f.shuffle, "shuffle", "shuffle each run's tests with a seed of its own, or with -shuffle=<seed>, every run's with that seed")
 	fs.StringVar(&f.run, "run", "", "run only the tests that match, as go test -run")
 	fs.StringVar(&f.skip, "skip", "", "skip the tests that match, as go test -skip")
 	fs.StringVar(&f.out, "o", "", "the directory to save failures' output under (default $TMPDIR/flaky-<time>)")
@@ -144,6 +153,55 @@ func parseStress(p bedrock.Process, args []string) (stressFlags, error) {
 	}
 	f.patterns = fs.Args()
 	return f, nil
+}
+
+// shuffle is -shuffle's value. It is off, on, or a seed, as go test's
+// -shuffle is, but on gives each run a seed of its own.
+type shuffle struct {
+	on   bool
+	seed *int64
+}
+
+func (s *shuffle) String() string {
+	switch {
+	case s.seed != nil:
+		return strconv.FormatInt(*s.seed, 10)
+	case s.on:
+		return "on"
+	}
+	return "off"
+}
+
+func (s *shuffle) Set(v string) error {
+	switch v {
+	case "off", "false":
+		*s = shuffle{}
+	case "on", "true":
+		*s = shuffle{on: true}
+	default:
+		seed, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return fmt.Errorf("%q is not on, off or a seed", v)
+		}
+		*s = shuffle{on: true, seed: &seed}
+	}
+	return nil
+}
+
+// IsBoolFlag lets -shuffle be given alone, to mean on.
+func (s *shuffle) IsBoolFlag() bool { return true }
+
+// next returns the seed of a run, or nil when runs aren't shuffled.
+func (s *shuffle) next() *int64 {
+	switch {
+	case s.seed != nil:
+		seed := *s.seed
+		return &seed
+	case s.on:
+		seed := rand.Int64()
+		return &seed
+	}
+	return nil
 }
 
 // parseCounts parses a comma-separated list of positive numbers, each a what.
@@ -256,7 +314,7 @@ func stressRun(ctx context.Context, p bedrock.Process, f stressFlags) (results.R
 
 	r := &execRunner{
 		root: root, pkgs: pkgs, env: childEnv, test2json: test2json,
-		timeout: f.timeout, run: f.run, skip: f.skip,
+		timeout: f.timeout, run: f.run, skip: f.skip, shuffle: f.shuffle,
 		bins: make([]string, len(pkgs)),
 	}
 	for i, pkg := range pkgs {
@@ -271,6 +329,7 @@ func stressRun(ctx context.Context, p bedrock.Process, f stressFlags) (results.R
 	res := results.New(results.Config{
 		Packages: pkgs, CPUs: f.cpus, Loads: f.loads, Count: f.count, Confirm: confirm,
 		Timeout: f.timeout, DefaultTimeout: defaultTimeout, Out: f.out,
+		Run: f.run, Skip: f.skip,
 	})
 	phases, err := stress.Stress(ctx, stress.Config{
 		Packages: len(pkgs),
@@ -325,6 +384,7 @@ type execRunner struct {
 	test2json string
 	timeout   time.Duration
 	run, skip string
+	shuffle   shuffle
 }
 
 func (r *execRunner) Build(ctx context.Context, pkg int) error {
@@ -337,6 +397,7 @@ func (r *execRunner) List(ctx context.Context, pkg int) ([]string, error) {
 
 // Run runs the package pkg's binary once. A confirm run runs test alone, by
 // its own -run pattern; a sweep run, with test "", runs what -run matches.
+// With -shuffle, either shuffles, with the seed -shuffle gives it.
 func (r *execRunner) Run(ctx context.Context, pkg int, test string, cpu int, cores []int) run.Result {
 	pattern := r.run
 	if test != "" {
@@ -352,6 +413,7 @@ func (r *execRunner) Run(ctx context.Context, pkg int, test string, cpu int, cor
 		Grace:      grace,
 		Run:        pattern,
 		Skip:       r.skip,
+		Seed:       r.shuffle.next(),
 		Env:        r.env,
 		Test2JSON:  r.test2json,
 	})
