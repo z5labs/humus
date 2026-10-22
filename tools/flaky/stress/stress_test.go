@@ -202,11 +202,15 @@ func TestStress_writes_its_progress(t *testing.T) {
 	f.fail = func(int, int) bool { return true }
 	var log bytes.Buffer
 	synctest.Test(t, func(t *testing.T) {
+		// The runs end 60s, 120s and 180s into the sweep, and the progress
+		// is written at 50s, 100s and 150s, so no write ties with a run's
+		// end, whose order in the bubble would be up to the scheduler.
 		_, err := stress.Stress(t.Context(), stress.Config{
-			Packages: 1, CPUs: []int{1}, Count: 3, Lanes: [][]int{{0}}, Log: &log, Progress: 90 * time.Second,
+			Packages: 1, CPUs: []int{1}, Count: 3, Lanes: [][]int{{0}}, Log: &log, Progress: 50 * time.Second,
 		}, f, newResults(t, 1, []int{1}, 3))
 		require.NoError(t, err)
 	})
+	require.Contains(t, log.String(), "swept 0 of 3 runs, 0 failed or hung\n")
 	require.Contains(t, log.String(), "swept 1 of 3 runs, 1 failed or hung\n")
 	require.Contains(t, log.String(), "swept 2 of 3 runs, 2 failed or hung\n")
 }
