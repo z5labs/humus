@@ -164,7 +164,7 @@ reads what WireMock was sent for the request's address:
 ```go
 func Sent(t testing.TB, target Target) {
 	ctx := bounded(t, target)
-	b := watch(ctx, t, target)
+	b := watch(t, target)
 	r := newRequest("example.com")
 
 	b.publish(ctx, t, r)
@@ -210,15 +210,15 @@ arrived, what WireMock's journal holds for the address is final.
 Before it publishes, the case binds a queue of its own to each exchange:
 
 ```go
-func watch(ctx context.Context, t testing.TB, target Target) *broker {
+func watch(t testing.TB, target Target) *broker {
 	t.Helper()
 	conn := dial(t, target)
 
 	ch, err := conn.Channel()
 	require.NoError(t, err)
-	events := bind(ctx, t, ch, eventsExchange, "#")
-	dead := bind(ctx, t, ch, deadExchange, "")
-	retry := bind(ctx, t, ch, retryExchange, sendKey)
+	events := bind(t, ch, eventsExchange, "#")
+	dead := bind(t, ch, deadExchange, "")
+	retry := bind(t, ch, retryExchange, sendKey)
 
 	publishing, err := conn.Channel()
 	require.NoError(t, err)
@@ -226,6 +226,24 @@ func watch(ctx context.Context, t testing.TB, target Target) *broker {
 	returns := publishing.NotifyReturn(make(chan amqp.Return, 1))
 
 	return &broker{publishing: publishing, returns: returns, eventsIn: events, deadIn: dead, retryIn: retry}
+}
+```
+
+Each queue is exclusive, so it goes away when the case's connection closes.
+The case unbinds it first, since RabbitMQ nacks a publish routed to a queue
+that goes away, and the mailer's Publishers count a nack against their
+breakers:
+
+```go
+func bind(t testing.TB, ch *amqp.Channel, exchange, key string) <-chan amqp.Delivery {
+	t.Helper()
+	q, err := ch.QueueDeclare("", false, false, true, false, nil)
+	require.NoError(t, err)
+	require.NoError(t, ch.QueueBind(q.Name, key, exchange, false, nil))
+	t.Cleanup(func() { _ = ch.QueueUnbind(q.Name, key, exchange, nil) })
+	deliveries, err := ch.Consume(q.Name, "", true, true, false, false, nil)
+	require.NoError(t, err)
+	return deliveries
 }
 ```
 
@@ -283,11 +301,12 @@ r.ctl(t, "set_policy", "--vhost", "/", "--priority", "1", "--apply-to", "queues"
 return r
 ```
 
-The test generates the mailer's login and the cases', then starts the App
-with `humustest.Start`:
+A helper generates the mailer's login and the cases', then starts the App
+with `humustest.Start` and humustest's telemetry:
 
 ```go
-func TestInit_passes_the_shared_cases_against_RabbitMQ_and_WireMock(t *testing.T) {
+func startSharedMailer(t *testing.T) *sharedMailer {
+	t.Helper()
 	broker := startRabbitMQ(t)
 	provider := startWireMock(t)
 	mailer := broker.addUser(t, `^$`, `^mail\.(retry|dead|events)$`, `^mail\.send$`)
@@ -296,8 +315,9 @@ func TestInit_passes_the_shared_cases_against_RabbitMQ_and_WireMock(t *testing.T
 	ca := humustest.NewCA(t)
 	dir := t.TempDir()
 	probesAddr := freeAddr(t)
+	tel := humustest.NewTelemetry()
 	p, status := humustest.Start(t, app.Init,
-		humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(app.Faults)),
+		humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(tel.Builder()), humus.WithFaults(app.Faults)),
 		humustest.WithEnv(map[string]string{
 			"RABBITMQ_ADDR":           broker.addr,
 			"RABBITMQ_USERNAME":       mailer.username,
@@ -312,34 +332,66 @@ func TestInit_passes_the_shared_cases_against_RabbitMQ_and_WireMock(t *testing.T
 	)
 ```
 
-Once the probes say it's ready, the cases run against it:
+Once the probes say it's ready, it returns the `Target`, with the App's
+process and telemetry:
 
 ```go
-target := cases.Target{
-	Addr:             broker.addr,
-	Vhost:            "/",
-	Username:         cased.username,
-	Password:         cased.password,
-	WireMock:         provider,
-	Client:           &http.Client{Timeout: waitLimit},
-	ProviderPoint:    "http:" + provider.Host,
-	ScenarioKey:      "acme.fault",
-	CloseConnections: broker.closeConnections,
-	Timeout:          waitLimit,
+return &sharedMailer{
+	target: cases.Target{
+		Addr:             broker.addr,
+		Vhost:            "/",
+		Username:         cased.username,
+		Password:         cased.password,
+		WireMock:         provider,
+		Client:           &http.Client{Timeout: waitLimit},
+		ProviderPoint:    "http:" + provider.Host,
+		ScenarioKey:      "acme.fault",
+		CloseConnections: broker.closeConnections,
+		Timeout:          waitLimit,
+	},
+	tel:    tel,
+	p:      p,
+	status: status,
 }
-t.Run("in parallel", func(t *testing.T) {
-	for _, c := range cases.Parallel {
+```
+
+The test runs the cases against it, then stops the App:
+
+```go
+func TestInit_passes_the_shared_cases_against_RabbitMQ_and_WireMock(t *testing.T) {
+	m := startSharedMailer(t)
+
+	t.Run("in parallel", func(t *testing.T) {
+		for _, c := range cases.Parallel {
+			t.Run(c.Name, func(t *testing.T) {
+				t.Parallel()
+				c.Run(t, m.target)
+			})
+		}
+	})
+	for _, c := range cases.Alone {
 		t.Run(c.Name, func(t *testing.T) {
-			t.Parallel()
-			c.Run(t, target)
+			c.Run(t, m.target)
 		})
 	}
-})
-for _, c := range cases.Alone {
-	t.Run(c.Name, func(t *testing.T) {
-		c.Run(t, target)
-	})
+
+	stop(t, m.p, m.status)
 }
+```
+
+Another runs `Parallel` four times over at once, then checks that the App
+is still running and that none of its Publishers' breakers opened:
+
+```go
+select {
+case st := <-m.status:
+	require.FailNowf(t, "the mailer exited", "exit %d: %v", st.Code(), st.Cause())
+default:
+}
+rm, err := m.tel.Metrics(t.Context())
+require.NoError(t, err)
+transitions := sumBy(metricsOf(rm, rabbitmqScope)["humus.circuit.transitions"], "humus.circuit.state")
+require.Zero(t, transitions["open"], "a Publisher's breaker opened")
 ```
 
 ```sh
@@ -443,7 +495,7 @@ func rehearsal(t testing.TB, target Target, rules ...fit.Rule) request {
 ```go
 func ProviderDown(t testing.TB, target Target) {
 	ctx := bounded(t, target)
-	b := watch(ctx, t, target)
+	b := watch(t, target)
 	r := rehearsal(t, target, abort(providerPoint(t, target)))
 
 	b.publish(ctx, t, r)
