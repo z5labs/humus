@@ -6,15 +6,17 @@
 // Command flaky runs the repository's tests until they fail, so a flaky test
 // is found before it turns CI red. A maintainer runs it by hand, on Linux.
 //
-//	flaky stress [-tags unit,testcontainers] [-cpu 1,2,4] [-load 1,2]
+//	flaky stress [-tags unit,testcontainers,functional] [-cpu 1,2,4] [-load 1,2]
 //	             [-count n] [-confirm n] [-timeout d] [-keep n] [-containers n]
-//	             [-shuffle] [-run regexp] [-skip regexp] [-o dir] [-json]
-//	             [packages]
+//	             [-clusters n] [-shuffle] [-run regexp] [-skip regexp] [-o dir]
+//	             [-json] [packages]
 //
-// -tags picks the levels, both by default. The unit level runs the untagged
-// tests, as CI's Test jobs do. The testcontainers level builds with that tag,
-// as CI's testcontainers jobs do, and runs only the tests its binary lists and
-// the untagged binary doesn't, by -test.run, so no unit test runs at both.
+// -tags picks the levels, all three by default. The unit level runs the
+// untagged tests, as CI's Test jobs do. The testcontainers level builds with
+// that tag, as CI's testcontainers jobs do, and runs only the tests its binary
+// lists and the untagged binary doesn't, by -test.run, so no unit test runs at
+// both. The functional level does the same with its tag, and runs each
+// walkthrough's functional tests against a kind cluster, as CI's kind jobs do.
 //
 // flaky stress builds every package's test binary at each level with go test
 // -c -race -cover, then runs each one -count times at each pair of -cpu and
@@ -30,14 +32,27 @@
 // so only the code under test gets each run's CPU count and load.
 // -containers caps how many testcontainers runs go at once.
 //
-// -count, -confirm and -timeout are 500, 1000 and 2m at the unit level, and
-// 25, 50 and 10m at the testcontainers level. Given, each applies to every
-// level.
+// A walkthrough is a module with a Dockerfile and a deploy/kind/up.sh, and its
+// functional tests are its packages at the functional level. Its image is
+// built with the test binaries, from the repository's root, and tagged with
+// its directory's name. Its functional runs go on a kind cluster of its own,
+// flaky-<walkthrough>, whose node is pinned to one lane's 4 cores. up.sh
+// deploys onto it, with KIND_CLUSTER_NAME set, and once its Deployments have
+// rolled out, the runs follow one at a time, each with KIND_CLUSTER_NAME set
+// and pinned to the same 4 cores, at load 1. Then the cluster is deleted. Its
+// CPU count and load aren't varied. -clusters caps how many clusters are up
+// at once, and clusters start before every other run. A walkthrough whose
+// cluster doesn't come up is reported by name.
+//
+// -count, -confirm and -timeout are 500, 1000 and 2m at the unit level, 25,
+// 50 and 10m at the testcontainers level, and 10, 50 and 15m at the
+// functional level. Given, each applies to every level.
 //
 // Once every one of those runs has ended, it confirms each test that failed
 // or hung: it runs the test alone, by its own -run pattern, -confirm times at
-// each pair, including the pairs where it never failed. With -run, there are
-// no confirm runs: the matching tests run -count times at each pair.
+// each pair, including the pairs where it never failed. A functional test gets
+// a fresh cluster for its confirm runs. With -run, there are no confirm runs:
+// the matching tests run -count times at each pair.
 //
 // With -shuffle, each run shuffles its tests with a seed of its own, as
 // go test -shuffle does, so a test that fails only after another is found.
@@ -87,6 +102,17 @@ const grace = 30 * time.Second
 // whose containers are pinned to the kept-back cores.
 const testcontainers = "testcontainers"
 
+// functional is the level of the tests behind the functional tag, which run
+// on their walkthrough's kind cluster.
+const functional = "functional"
+
+// upTimeout bounds how long a cluster takes to come up, and downTimeout how
+// long it takes to be deleted.
+const (
+	upTimeout   = 20 * time.Minute
+	downTimeout = 5 * time.Minute
+)
+
 // levelDefaults are each level's -count, -confirm and -timeout, in the order
 // -tags lists them by default.
 var levelDefaults = []struct {
@@ -96,6 +122,7 @@ var levelDefaults = []struct {
 }{
 	{discover.Unit, 500, 1000, 2 * time.Minute},
 	{testcontainers, 25, 50, 10 * time.Minute},
+	{functional, 10, 50, 15 * time.Minute},
 }
 
 func main() {
@@ -107,8 +134,9 @@ const usage = `usage: flaky stress [flags] [packages]
 flaky stress runs every package's tests at each level of -tags -count times
 at each pair of -cpu and -load values, each run pinned to as many cores as its
 CPU count and sharing each of them with up to its load of runs. The
-testcontainers containers run on the -keep cores kept back from the runs.
-Then it runs each test that failed or hung alone, -confirm times at each pair,
+testcontainers containers run on the -keep cores kept back from the runs, and
+each walkthrough's functional tests on a kind cluster of its own, pinned to a
+lane's 4 cores. Then it runs each test that failed or hung alone, -confirm times at each pair,
 and reports each test that failed or hung. With -run, it runs the matching
 tests -count times at each pair, and confirms none. With -shuffle, each run
 shuffles its tests with a seed of its own.
@@ -139,6 +167,7 @@ type stressFlags struct {
 	timeout    time.Duration
 	keep       int
 	containers int
+	clusters   int
 	shuffle    shuffle
 	run        string
 	skip       string
@@ -159,6 +188,9 @@ func (f stressFlags) level(name string) results.Level {
 		}
 	}
 	l.DefaultTimeout = l.Timeout
+	if name == functional {
+		l.CPU, l.Load = stress.ClusterCPU, 1
+	}
 	if f.set["count"] {
 		l.Count = f.count
 	}
@@ -182,7 +214,7 @@ func parseStress(p bedrock.Process, args []string) (stressFlags, error) {
 		say(fs.Output(), "%s\nflags:\n", usage)
 		fs.PrintDefaults()
 	}
-	fs.Func("tags", "the levels to run, comma-separated: unit, the untagged tests, and testcontainers, the tests behind that tag (default unit,testcontainers)", func(s string) error {
+	fs.Func("tags", "the levels to run, comma-separated: unit, the untagged tests, and testcontainers and functional, the tests behind those tags (default unit,testcontainers,functional)", func(s string) error {
 		levels, err := parseLevels(s)
 		f.levels = levels
 		return err
@@ -197,11 +229,12 @@ func parseStress(p bedrock.Process, args []string) (stressFlags, error) {
 		f.loads = loads
 		return err
 	})
-	fs.IntVar(&f.count, "count", 0, "how many times to run each package at each pair of CPU count and load (default 500 at the unit level, 25 at the testcontainers level)")
-	fs.IntVar(&f.confirm, "confirm", 0, "how many times to run each test that failed or hung alone, at each pair of CPU count and load, once the sweep has ended; with -run, none is (default 1000 at the unit level, 50 at the testcontainers level)")
-	fs.DurationVar(&f.timeout, "timeout", 0, "each run's -test.timeout; a run still going 30s later is killed (default 2m at the unit level, 10m at the testcontainers level)")
+	fs.IntVar(&f.count, "count", 0, "how many times to run each package at each pair of CPU count and load (default 500 at the unit level, 25 at the testcontainers level, 10 at the functional level)")
+	fs.IntVar(&f.confirm, "confirm", 0, "how many times to run each test that failed or hung alone, at each pair of CPU count and load, once the sweep has ended; with -run, none is (default 1000 at the unit level, 50 at the testcontainers and functional levels)")
+	fs.DurationVar(&f.timeout, "timeout", 0, "each run's -test.timeout; a run still going 30s later is killed (default 2m at the unit level, 10m at the testcontainers level, 15m at the functional level)")
 	fs.IntVar(&f.keep, "keep", 8, "how many cores to keep back from the lanes, for flaky, dockerd and the testcontainers containers")
 	fs.IntVar(&f.containers, "containers", 4, "how many testcontainers runs, at most, go at once")
+	fs.IntVar(&f.clusters, "clusters", 2, "how many walkthroughs' kind clusters, at most, are up at once")
 	fs.Var(&f.shuffle, "shuffle", "shuffle each run's tests with a seed of its own, or with -shuffle=<seed>, every run's with that seed")
 	fs.StringVar(&f.run, "run", "", "run only the tests that match, as go test -run")
 	fs.StringVar(&f.skip, "skip", "", "skip the tests that match, as go test -skip")
@@ -222,6 +255,9 @@ func parseStress(p bedrock.Process, args []string) (stressFlags, error) {
 	}
 	if f.containers < 1 {
 		return f, fmt.Errorf("-containers must be at least 1, not %d", f.containers)
+	}
+	if f.clusters < 1 {
+		return f, fmt.Errorf("-clusters must be at least 1, not %d", f.clusters)
 	}
 	f.patterns = fs.Args()
 	return f, nil
@@ -278,15 +314,16 @@ func (s *shuffle) next() *int64 {
 
 // parseLevels parses -tags: a comma-separated list of levels, each once.
 func parseLevels(s string) ([]string, error) {
+	names := make([]string, len(levelDefaults))
+	for i, d := range levelDefaults {
+		names[i] = d.name
+	}
 	var levels []string
 	for part := range strings.SplitSeq(s, ",") {
 		level := strings.TrimSpace(part)
-		known := false
-		for _, d := range levelDefaults {
-			known = known || d.name == level
-		}
-		if !known {
-			return nil, fmt.Errorf("%q is not a level: the levels are unit and testcontainers", part)
+		if !slices.Contains(names, level) {
+			last := len(names) - 1
+			return nil, fmt.Errorf("%q is not a level: the levels are %s and %s", part, strings.Join(names[:last], ", "), names[last])
 		}
 		if !slices.Contains(levels, level) {
 			levels = append(levels, level)
@@ -371,10 +408,6 @@ func stressRun(ctx context.Context, p bedrock.Process, f stressFlags) (results.R
 	if err != nil {
 		return results.Report{}, err
 	}
-	laneCores, err := lanes.Split(cores, f.keep, maxOf(f.cpus))
-	if err != nil {
-		return results.Report{}, err
-	}
 
 	start := time.Now()
 	modules, err := discover.Modules(ctx, root, childEnv)
@@ -396,14 +429,37 @@ func stressRun(ctx context.Context, p bedrock.Process, f stressFlags) (results.R
 		}
 		atLevel[i] = fmt.Sprintf("%d %s", n, level)
 	}
+	walkthroughs, walkOf, err := pkgWalkthroughs(root, modules, pkgs)
+	if err != nil {
+		return results.Report{}, err
+	}
 	say(log, "found %d packages with tests (%s) in %s\n", len(pkgs), strings.Join(atLevel, ", "), discovery.Round(time.Millisecond))
+
+	// A lane is as wide as the largest CPU count, and as a cluster when
+	// there is one.
+	width := maxOf(f.cpus)
+	if len(walkthroughs) > 0 {
+		width = max(width, stress.ClusterCPU)
+	}
+	laneCores, err := lanes.Split(cores, f.keep, width)
+	if err != nil {
+		return results.Report{}, err
+	}
+	if len(walkthroughs) > 0 {
+		if err := docker.Check(ctx, functional, childEnv); err != nil {
+			return results.Report{}, err
+		}
+		if err := docker.CheckKind(); err != nil {
+			return results.Report{}, err
+		}
+	}
 
 	if slices.ContainsFunc(pkgs, func(pkg discover.Package) bool { return pkg.Level == testcontainers }) {
 		kept := lanes.Kept(cores, f.keep)
 		if len(kept) == 0 {
 			return results.Report{}, errors.New("-keep 0 keeps back no cores for the testcontainers containers")
 		}
-		if err := docker.Check(ctx, childEnv); err != nil {
+		if err := docker.Check(ctx, testcontainers, childEnv); err != nil {
 			return results.Report{}, err
 		}
 		pinner, err := docker.Pin(ctx, kept, childEnv, log)
@@ -449,31 +505,37 @@ func stressRun(ctx context.Context, p bedrock.Process, f stressFlags) (results.R
 			Confirm: levels[i].Confirm,
 			Own:     name != discover.Unit,
 		}
-		if name == testcontainers {
+		switch name {
+		case testcontainers:
 			stressLevels[i].Limit = f.containers
+		case functional:
+			stressLevels[i].Limit = f.clusters
 		}
 	}
 	r, err := newExecRunner(root, pkgs, bins, levels, f, childEnv, test2json)
 	if err != nil {
 		return results.Report{}, err
 	}
+	r.walkthroughs, r.walkOf, r.log = walkthroughs, walkOf, log
 	res := results.New(results.Config{
 		Packages: pkgs, CPUs: f.cpus, Loads: f.loads, Levels: levels, Out: f.out,
-		Run: f.run, Skip: f.skip,
+		Walkthroughs: walkthroughs,
+		Run:          f.run, Skip: f.skip,
 	})
 	pkgLevels := make([]int, len(pkgs))
 	for i, pkg := range pkgs {
 		pkgLevels[i] = slices.Index(f.levels, pkg.Level)
 	}
 	phases, err := stress.Stress(ctx, stress.Config{
-		Levels:   stressLevels,
-		Packages: pkgLevels,
-		CPUs:     f.cpus,
-		Loads:    f.loads,
-		Lanes:    laneCores,
-		Builds:   max(len(cores)/4, 1),
-		Log:      log,
-		Progress: time.Minute,
+		Levels:       stressLevels,
+		Packages:     pkgLevels,
+		Walkthroughs: walkOf,
+		CPUs:         f.cpus,
+		Loads:        f.loads,
+		Lanes:        laneCores,
+		Builds:       max(len(cores)/4, 1),
+		Log:          log,
+		Progress:     time.Minute,
 	}, r, res)
 	if err != nil {
 		return results.Report{}, err
@@ -492,6 +554,43 @@ func stressRun(ctx context.Context, p bedrock.Process, f stressFlags) (results.R
 		rep.Phases = append(rep.Phases, results.NewPhase("confirm", phases.Confirm))
 	}
 	return rep, nil
+}
+
+// pkgWalkthroughs returns the walkthroughs that the packages at the
+// functional level, of pkgs, are the functional tests of, and for each
+// package, the index of its walkthrough among them, or -1 when it isn't at the
+// functional level. A package at the functional level outside a walkthrough
+// has no cluster to run on, and is an error.
+func pkgWalkthroughs(root string, modules []string, pkgs []discover.Package) ([]discover.Walkthrough, []int, error) {
+	walkOf := make([]int, len(pkgs))
+	if !slices.ContainsFunc(pkgs, func(pkg discover.Package) bool { return pkg.Level == functional }) {
+		for i := range walkOf {
+			walkOf[i] = -1
+		}
+		return nil, walkOf, nil
+	}
+	all, err := discover.Walkthroughs(root, modules)
+	if err != nil {
+		return nil, nil, err
+	}
+	var used []discover.Walkthrough
+	for i, pkg := range pkgs {
+		walkOf[i] = -1
+		if pkg.Level != functional {
+			continue
+		}
+		j := slices.IndexFunc(all, func(w discover.Walkthrough) bool { return w.Module == pkg.Module })
+		if j < 0 {
+			return nil, nil, fmt.Errorf("%s has functional tests, but its module %s isn't a walkthrough, with a Dockerfile and a deploy/kind/up.sh, so it has no cluster to run on", pkg.Dir, pkg.Module)
+		}
+		k := slices.Index(used, all[j])
+		if k < 0 {
+			k = len(used)
+			used = append(used, all[j])
+		}
+		walkOf[i] = k
+	}
+	return used, walkOf, nil
 }
 
 // syncWriter is a writer safe for concurrent use.
@@ -539,6 +638,12 @@ type execRunner struct {
 	// own are the tests each package at a tagged level runs, once it is
 	// listed.
 	own [][]string
+	// walkthroughs are the walkthroughs whose clusters the packages at the
+	// functional level run on, and walkOf the index of each package's, or
+	// -1. log is where a cluster's coming up and going down is written.
+	walkthroughs []discover.Walkthrough
+	walkOf       []int
+	log          io.Writer
 }
 
 func newExecRunner(root string, pkgs []discover.Package, bins string, levels []results.Level, f stressFlags, childEnv []string, test2json string) (*execRunner, error) {
@@ -645,9 +750,64 @@ func (r *execRunner) Run(ctx context.Context, pkg int, test string, cpu int, cor
 		Run:        pattern,
 		Skip:       r.skip,
 		Seed:       r.shuffle.next(),
-		Env:        r.env,
+		Env:        r.runEnv(pkg),
 		Test2JSON:  r.test2json,
 	})
+}
+
+// runEnv returns the environment of a run of the package pkg: a run on a
+// walkthrough's cluster has KIND_CLUSTER_NAME set to the cluster's name, as
+// up.sh did.
+func (r *execRunner) runEnv(pkg int) []string {
+	if r.walkOf == nil || r.walkOf[pkg] < 0 {
+		return r.env
+	}
+	return env.With(r.env, "KIND_CLUSTER_NAME", r.clusterName(r.walkOf[pkg]))
+}
+
+func (r *execRunner) clusterName(w int) string {
+	return docker.ClusterName(r.walkthroughs[w].Name)
+}
+
+// Image builds the image of the walkthrough w from its Dockerfile, with the
+// repository's root as the context, tagged with its directory's name.
+func (r *execRunner) Image(ctx context.Context, w int) error {
+	wt := r.walkthroughs[w]
+	if err := docker.Build(ctx, r.root, wt.Dockerfile(r.root), wt.Name, r.env); err != nil {
+		return fmt.Errorf("building the image of the walkthrough %s: %w", wt.Module, err)
+	}
+	return nil
+}
+
+// Up brings up the cluster flaky-<walkthrough> for the walkthrough w, pinned
+// to cores, with its up.sh.
+func (r *execRunner) Up(ctx context.Context, w int, cores []int) error {
+	wt := r.walkthroughs[w]
+	name := r.clusterName(w)
+	say(r.log, "bringing %s up for %s on cores %s\n", name, wt.Module, run.CoreList(cores))
+	ctx, cancel := context.WithTimeout(ctx, upTimeout)
+	defer cancel()
+	err := docker.Up(ctx, docker.Cluster{
+		Name:  name,
+		Up:    wt.Up(r.root),
+		Dir:   filepath.Join(r.root, filepath.FromSlash(wt.Module)),
+		Cores: cores,
+	}, r.env)
+	if err != nil {
+		return fmt.Errorf("bringing %s up for the walkthrough %s: %w", name, wt.Module, err)
+	}
+	return nil
+}
+
+// Down deletes the cluster of the walkthrough w, though ctx is done, so an
+// interrupted sweep leaves no cluster behind.
+func (r *execRunner) Down(ctx context.Context, w int) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), downTimeout)
+	defer cancel()
+	if err := docker.Down(ctx, r.clusterName(w), r.env); err != nil {
+		return fmt.Errorf("deleting %s: %w", r.clusterName(w), err)
+	}
+	return nil
 }
 
 // ownPattern returns the -run pattern that runs exactly the top-level tests

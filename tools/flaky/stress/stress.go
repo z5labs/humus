@@ -11,6 +11,16 @@
 //
 // Each package is at a level, which sets how many times its runs and confirm
 // runs go, and may cap how many of them go at once.
+//
+// A walkthrough's functional tests run on a kind cluster of its own. Its image
+// is built in the build phase, beside the test binaries. Its cluster holds
+// ClusterCPU cores of one lane at load 1, from the moment it comes up until it
+// is deleted, and is one of its level's runs, so the level's cap is how many
+// clusters are up at once. Clusters start before every other run. A cluster
+// serves one run at a time, each pinned to its cores at CPU count ClusterCPU,
+// since a run that rolls the walkthrough's Deployments out would be seen by
+// another. A test of a walkthrough that failed or hung gets a fresh cluster for
+// its confirm runs.
 package stress
 
 import (
@@ -28,8 +38,13 @@ import (
 	"github.com/z5labs/humus/tools/flaky/run"
 )
 
-// Runner builds and runs the packages' test binaries. Packages are named by
-// their index.
+// ClusterCPU is the CPU count of a cluster's runs, and how many cores of its
+// lane a cluster holds: a GitHub runner's.
+const ClusterCPU = 4
+
+// Runner builds and runs the packages' test binaries, and builds the
+// walkthroughs' images and brings their clusters up. Packages and
+// walkthroughs are named by their index.
 type Runner interface {
 	// Build builds the test binary of the package pkg.
 	Build(ctx context.Context, pkg int) error
@@ -43,6 +58,16 @@ type Runner interface {
 	// that test's own -run pattern. It is called only once every package
 	// is built.
 	Run(ctx context.Context, pkg int, test string, cpu int, cores []int) run.Result
+	// Image builds the image of the walkthrough w, in the build phase.
+	Image(ctx context.Context, w int) error
+	// Up brings a fresh cluster up for the walkthrough w, its node pinned
+	// to cores, and deploys the walkthrough onto it. The runs of its
+	// packages follow, on the same cores, until Down.
+	Up(ctx context.Context, w int, cores []int) error
+	// Down deletes the cluster of the walkthrough w. It follows every Up,
+	// whether or not Up succeeded, and must delete the cluster though ctx
+	// is done.
+	Down(ctx context.Context, w int) error
 }
 
 // Level is how the packages at one level run.
@@ -70,6 +95,11 @@ type Config struct {
 	// Packages are the index in Levels of each package's level, one for
 	// each package.
 	Packages []int
+	// Walkthroughs are, for each package, the index of the walkthrough on
+	// whose cluster it runs, or -1 when it needs no cluster. Nil means no
+	// package does. A walkthrough's packages are at one level, whose
+	// Limit caps how many clusters are up at once.
+	Walkthroughs []int
 	// CPUs are the CPU counts each package runs at.
 	CPUs []int
 	// Loads are the loads each package runs at: how many runs, at most,
@@ -84,6 +114,15 @@ type Config struct {
 	// Progress is how often the sweep's progress is written to Log, or 0
 	// for never.
 	Progress time.Duration
+}
+
+// walkthrough returns the index of the walkthrough on whose cluster the
+// package pkg runs, or -1.
+func (cfg Config) walkthrough(pkg int) int {
+	if cfg.Walkthroughs == nil {
+		return -1
+	}
+	return cfg.Walkthroughs[pkg]
 }
 
 // Phases are how long each phase of a sweep took.
@@ -112,11 +151,24 @@ func Stress(ctx context.Context, cfg Config, r Runner, res *results.Results) (Ph
 	a := &adapter{r: r, res: res, cancel: cancel, cfg: cfg, targets: map[target]bool{}}
 
 	var tasks []lanes.Task
+	onCluster := map[int][]clusterRun{}
 	for pkg, level := range cfg.Packages {
-		if runs[pkg] {
+		switch w := cfg.walkthrough(pkg); {
+		case !runs[pkg]:
+		case w >= 0:
+			onCluster[w] = append(onCluster[w], clusterRun{pkg: pkg})
+		default:
 			tasks = append(tasks, atEachPair(cfg, lanes.Pair{Package: pkg, Level: level}, cfg.Levels[level].Count)...)
 		}
 	}
+	// A walkthrough's sweep is one cluster, which runs each of its
+	// packages in turn, its level's count times over.
+	sessions := map[int][][]clusterRun{}
+	for w, pkgs := range onCluster {
+		count := cfg.Levels[cfg.Packages[pkgs[0].pkg]].Count
+		sessions[w] = [][]clusterRun{slices.Repeat(pkgs, count)}
+	}
+	tasks = append(tasks, a.clusterTasks(sessions)...)
 	start = time.Now()
 	err = a.schedule(ctx, cfg, "swept", tasks)
 	phases.Sweep = time.Since(start)
@@ -131,12 +183,19 @@ func Stress(ctx context.Context, cfg Config, r Runner, res *results.Results) (Ph
 		return phases, nil
 	}
 	tasks = tasks[:0]
+	sessions = map[int][][]clusterRun{}
 	confirming := make([]int, len(cfg.Levels))
 	for _, t := range targets {
 		level := cfg.Packages[t.pkg]
 		confirming[level]++
+		if w := cfg.walkthrough(t.pkg); w >= 0 {
+			// The test gets a fresh cluster for its confirm runs.
+			sessions[w] = append(sessions[w], slices.Repeat([]clusterRun{{pkg: t.pkg, test: t.test}}, cfg.Levels[level].Confirm))
+			continue
+		}
 		tasks = append(tasks, atEachPair(cfg, lanes.Pair{Package: t.pkg, Test: t.test, Level: level}, cfg.Levels[level].Confirm)...)
 	}
+	tasks = append(tasks, a.clusterTasks(sessions)...)
 	var parts []string
 	for i, n := range confirming {
 		if n > 0 {
@@ -163,7 +222,8 @@ func atEachPair(cfg Config, p lanes.Pair, count int) []lanes.Task {
 	return tasks
 }
 
-// build builds every package, and once every one is built, lists each one's
+// build builds every package, and the image of every walkthrough a package
+// runs on the cluster of, and once every one is built, lists each package's
 // tests. It reports which packages run: those at a level that runs only its
 // own tests run only when they list some.
 func build(ctx context.Context, cfg Config, r Runner, res *results.Results) ([]bool, error) {
@@ -177,7 +237,22 @@ func build(ctx context.Context, cfg Config, r Runner, res *results.Results) ([]b
 			errs[pkg] = r.Build(ctx, pkg)
 		})
 	}
+	var walkthroughs []int
+	for pkg := range cfg.Packages {
+		if w := cfg.walkthrough(pkg); w >= 0 && !slices.Contains(walkthroughs, w) {
+			walkthroughs = append(walkthroughs, w)
+		}
+	}
+	imageErrs := make([]error, len(walkthroughs))
+	for i, w := range walkthroughs {
+		wg.Go(func() {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			imageErrs[i] = r.Image(ctx, w)
+		})
+	}
 	wg.Wait()
+	errs = append(errs, imageErrs...)
 	if err := errors.Join(errs...); err != nil {
 		return nil, &BuildError{err}
 	}
@@ -206,6 +281,29 @@ func (e *BuildError) Error() string { return e.Err.Error() }
 
 func (e *BuildError) Unwrap() error { return e.Err }
 
+// clusterTasks returns a task for each walkthrough in sessions, whose one run
+// brings up a fresh cluster for each of the walkthrough's sessions in turn,
+// and runs the session's runs on it, one at a time. The task goes first, and
+// holds ClusterCPU cores of a lane at load 1. It sets the adapter's clusters
+// to sessions' tasks.
+func (a *adapter) clusterTasks(sessions map[int][][]clusterRun) []lanes.Task {
+	a.clusters = map[int]cluster{}
+	var tasks []lanes.Task
+	for w, ss := range sessions {
+		// The task is named by the first package it runs, so that no
+		// two tasks have the same pair.
+		pkg := ss[0][0].pkg
+		a.clusters[pkg] = cluster{walkthrough: w, sessions: ss}
+		tasks = append(tasks, lanes.Task{
+			Pair:  lanes.Pair{Package: pkg, CPU: ClusterCPU, Load: 1, Level: a.cfg.Packages[pkg]},
+			Count: 1,
+			First: true,
+		})
+	}
+	slices.SortFunc(tasks, func(x, y lanes.Task) int { return x.Pair.Package - y.Pair.Package })
+	return tasks
+}
+
 // schedule runs every task, and writes its progress as what.
 func (a *adapter) schedule(ctx context.Context, cfg Config, what string, tasks []lanes.Task) error {
 	a.mu.Lock()
@@ -213,7 +311,14 @@ func (a *adapter) schedule(ctx context.Context, cfg Config, what string, tasks [
 	a.mu.Unlock()
 	total := 0
 	for _, t := range tasks {
-		total += t.Count
+		c, ok := a.clusters[t.Pair.Package]
+		if !ok || cfg.walkthrough(t.Pair.Package) < 0 {
+			total += t.Count
+			continue
+		}
+		for _, session := range c.sessions {
+			total += len(session)
+		}
 	}
 	limits := map[int]int{}
 	for i, l := range cfg.Levels {
@@ -237,11 +342,29 @@ type adapter struct {
 	cancel context.CancelCauseFunc
 	cfg    Config
 
+	// clusters are the clusters of the pass running, by the package that
+	// names each one's task.
+	clusters map[int]cluster
+
 	mu           sync.Mutex
 	done, failed int
 	// targets are the tests that failed or hung in a sweep run, which
 	// are confirmed once every sweep run has ended.
 	targets map[target]bool
+}
+
+// cluster is the work of a walkthrough's cluster in a pass: each session is
+// a fresh cluster, and the runs it serves, in order.
+type cluster struct {
+	walkthrough int
+	sessions    [][]clusterRun
+}
+
+// clusterRun is one run on a cluster: of the package pkg's tests, when test
+// is "", or of test alone.
+type clusterRun struct {
+	pkg  int
+	test string
 }
 
 // target is a test to confirm.
@@ -251,8 +374,45 @@ type target struct {
 }
 
 func (a *adapter) Run(ctx context.Context, lr lanes.Run) {
+	if c, ok := a.clusters[lr.Pair.Package]; ok && a.cfg.walkthrough(lr.Pair.Package) >= 0 {
+		a.cluster(ctx, c, lr)
+		return
+	}
 	p := lr.Pair
-	result := a.r.Run(ctx, p.Package, p.Test, p.CPU, lr.Cores)
+	a.record(p, a.r.Run(ctx, p.Package, p.Test, p.CPU, lr.Cores))
+}
+
+// cluster brings up a fresh cluster on lr's cores for each of c's sessions,
+// runs the session's runs on it one at a time, and deletes it. A cluster that
+// doesn't come up is recorded, and its session's runs don't run.
+func (a *adapter) cluster(ctx context.Context, c cluster, lr lanes.Run) {
+	for _, session := range c.sessions {
+		if ctx.Err() != nil {
+			return
+		}
+		if err := a.r.Up(ctx, c.walkthrough, lr.Cores); err != nil {
+			if ctx.Err() == nil {
+				if err := a.res.UpFailed(c.walkthrough, err); err != nil {
+					a.cancel(fmt.Errorf("saving a cluster's output: %w", err))
+				}
+			}
+		} else {
+			for _, cr := range session {
+				if ctx.Err() != nil {
+					break
+				}
+				p := lanes.Pair{Package: cr.pkg, Test: cr.test, CPU: ClusterCPU, Load: 1, Level: lr.Pair.Level}
+				a.record(p, a.r.Run(ctx, cr.pkg, cr.test, ClusterCPU, lr.Cores))
+			}
+		}
+		if err := a.r.Down(ctx, c.walkthrough); err != nil {
+			logf(a.cfg.Log, "warning: %v\n", err)
+		}
+	}
+}
+
+// record counts a run of the pair p that ended with result.
+func (a *adapter) record(p lanes.Pair, result run.Result) {
 	if result.Cancelled {
 		return
 	}

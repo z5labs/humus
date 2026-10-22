@@ -9,7 +9,11 @@ package docker_test
 
 import (
 	"bytes"
+	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -58,7 +62,7 @@ func cpuset(t *testing.T, id string) string {
 
 func TestPin_puts_a_testcontainers_container_on_the_kept_back_cores(t *testing.T) {
 	childEnv := env.Child(bedrock.OSEnvironment{})
-	require.NoError(t, docker.Check(t.Context(), childEnv))
+	require.NoError(t, docker.Check(t.Context(), "testcontainers", childEnv))
 	cores, err := run.Affinity()
 	require.NoError(t, err)
 	if len(cores) < 2 {
@@ -79,4 +83,32 @@ func TestPin_puts_a_testcontainers_container_on_the_kept_back_cores(t *testing.T
 	}, 30*time.Second, 100*time.Millisecond, "the container labelled %s lands on the kept-back cores %v; log:\n%s", docker.Label, kept, log.String())
 	require.Empty(t, cpuset(t, unlabelled), "a container without the label isn't pinned")
 	require.Empty(t, log.String())
+}
+
+func TestUp_puts_a_cluster_s_node_container_on_its_lane(t *testing.T) {
+	childEnv := env.Child(bedrock.OSEnvironment{})
+	require.NoError(t, docker.Check(t.Context(), "functional", childEnv))
+	require.NoError(t, docker.CheckKind())
+	cores, err := run.Affinity()
+	require.NoError(t, err)
+	if len(cores) < 2 {
+		t.Skipf("this process may run on %d cores, and the test needs 2", len(cores))
+	}
+	laneOf, err := lanes.Split(cores, 1, min(len(cores)-1, 4))
+	require.NoError(t, err)
+	lane := laneOf[0]
+
+	dir := t.TempDir()
+	up := filepath.Join(dir, "up.sh")
+	require.NoError(t, os.WriteFile(up, []byte("#!/usr/bin/env bash\necho \"$KIND_CLUSTER_NAME\" >\"$(dirname \"$0\")/cluster\"\n"), 0o755))
+	name := docker.ClusterName("dockertest-" + strconv.FormatInt(time.Now().UnixNano()%1_000_000, 10))
+	t.Cleanup(func() {
+		require.NoError(t, docker.Down(context.WithoutCancel(t.Context()), name, childEnv))
+	})
+	require.NoError(t, docker.Up(t.Context(), docker.Cluster{Name: name, Up: up, Dir: dir, Cores: lane}, childEnv))
+
+	require.Equal(t, run.CoreList(lane), cpuset(t, name+"-control-plane"), "the cluster's node lands on its lane's cores")
+	cluster, err := os.ReadFile(filepath.Join(dir, "cluster"))
+	require.NoError(t, err)
+	require.Equal(t, name+"\n", string(cluster), "up.sh runs with KIND_CLUSTER_NAME set to the cluster's name")
 }

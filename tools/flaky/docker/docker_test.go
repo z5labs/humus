@@ -6,6 +6,9 @@
 package docker_test
 
 import (
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -89,10 +92,84 @@ func TestPin_fails_with_no_cores_or_no_docker_command(t *testing.T) {
 func TestCheck_fails_when_docker_cannot_reach_a_daemon(t *testing.T) {
 	dir := dockertest.Fake(t)
 	childEnv := env.Child(bedrock.OSEnvironment{})
-	require.NoError(t, docker.Check(t.Context(), childEnv))
+	require.NoError(t, docker.Check(t.Context(), "testcontainers", childEnv))
 
 	dockertest.Touch(t, dir, "down", "")
-	err := docker.Check(t.Context(), childEnv)
+	err := docker.Check(t.Context(), "testcontainers", childEnv)
 	require.ErrorContains(t, err, "the testcontainers level needs Docker")
 	require.ErrorContains(t, err, "Cannot connect to the Docker daemon")
+}
+
+func TestClusterName_and_Context_are_kind_s(t *testing.T) {
+	require.Equal(t, "flaky-wallet", docker.ClusterName("wallet"))
+	require.Equal(t, "kind-flaky-wallet", docker.Context("flaky-wallet"))
+}
+
+func TestBuild_builds_an_image_from_the_repository_s_root_tagged_as_asked(t *testing.T) {
+	dir := dockertest.Fake(t)
+	root := t.TempDir()
+	childEnv := env.Child(bedrock.OSEnvironment{})
+	require.NoError(t, docker.Build(t.Context(), root, root+"/example/wallet/Dockerfile", "wallet", childEnv))
+	require.Equal(t, "build --file "+root+"/example/wallet/Dockerfile --tag wallet . in "+root+"\n", dockertest.Read(t, dir, "builds"))
+
+	dockertest.Touch(t, dir, "build-fails", "")
+	err := docker.Build(t.Context(), root, root+"/example/wallet/Dockerfile", "wallet", childEnv)
+	require.ErrorContains(t, err, "docker build --file "+root+"/example/wallet/Dockerfile --tag wallet .: exit status 1\nfailed to solve: no Dockerfile")
+}
+
+// upScript writes an up.sh to a new directory that records the
+// KIND_CLUSTER_NAME it ran with beside it, and exits with code, and returns
+// its path.
+func upScript(t *testing.T, code int) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "up.sh")
+	script := "#!/usr/bin/env bash\necho \"$KIND_CLUSTER_NAME in $PWD\" >>\"$(dirname \"$0\")/up.log\"\necho deploying\nexit " + strconv.Itoa(code) + "\n"
+	require.NoError(t, os.WriteFile(path, []byte(script), 0o755))
+	return path
+}
+
+func TestUp_creates_the_cluster_pins_its_node_runs_up_sh_on_it_and_waits_for_its_Deployments(t *testing.T) {
+	dir := dockertest.Fake(t)
+	up := upScript(t, 0)
+	work := t.TempDir()
+	childEnv := env.With(env.Child(bedrock.OSEnvironment{}), "KIND_CLUSTER_NAME", "kind")
+	require.NoError(t, docker.Up(t.Context(), docker.Cluster{Name: "flaky-wallet", Up: up, Dir: work, Cores: []int{4, 5, 6, 7}}, childEnv))
+
+	require.Equal(t, "create flaky-wallet\n", dockertest.Read(t, dir, "kind.log"))
+	require.Equal(t, "update --cpuset-cpus 4,5,6,7 flaky-wallet-control-plane\n", dockertest.Read(t, dir, "updates"), "its node lands on its cores")
+	require.Equal(t, "flaky-wallet in "+work+"\n", dockertest.Read(t, filepath.Dir(up), "up.log"), "up.sh runs with KIND_CLUSTER_NAME set, in place of the one flaky was given")
+	kubectl := strings.Split(strings.TrimSpace(dockertest.Read(t, dir, "kubectl.log")), "\n")
+	require.Len(t, kubectl, 3)
+	require.Contains(t, kubectl[0], "--context kind-flaky-wallet get deployments --all-namespaces")
+	require.Equal(t, []string{
+		"--context kind-flaky-wallet --namespace app rollout status deployment/web --timeout 5m",
+		"--context kind-flaky-wallet --namespace kube-system rollout status deployment/coredns --timeout 5m",
+	}, kubectl[1:], "it waits for every Deployment on the cluster")
+
+	require.NoError(t, docker.Down(t.Context(), "flaky-wallet", childEnv))
+	require.Equal(t, "create flaky-wallet\ndelete flaky-wallet\n", dockertest.Read(t, dir, "kind.log"))
+}
+
+func TestUp_fails_with_what_the_step_that_failed_printed(t *testing.T) {
+	dir := dockertest.Fake(t)
+	childEnv := env.Child(bedrock.OSEnvironment{})
+	up := upScript(t, 3)
+	err := docker.Up(t.Context(), docker.Cluster{Name: "flaky-mailer", Up: up, Dir: t.TempDir(), Cores: []int{0}}, childEnv)
+	require.ErrorContains(t, err, up+": exit status 3\ndeploying")
+	require.Empty(t, dockertest.Read(t, dir, "kubectl.log"), "it waits for no Deployment once up.sh has failed")
+
+	dockertest.Touch(t, dir, "create-fails-flaky-billing", "")
+	err = docker.Up(t.Context(), docker.Cluster{Name: "flaky-billing", Up: up, Dir: t.TempDir(), Cores: []int{0}}, childEnv)
+	require.ErrorContains(t, err, "kind create cluster --name flaky-billing --wait 2m: exit status 1\nERROR: failed to create cluster")
+	require.NotContains(t, dockertest.Read(t, dir, "updates"), "flaky-billing", "it pins nothing once the cluster can't be created")
+}
+
+func TestCheckKind_needs_kind_and_kubectl_on_PATH(t *testing.T) {
+	dir := dockertest.Fake(t)
+	require.NoError(t, docker.CheckKind())
+
+	require.NoError(t, os.Remove(filepath.Join(dir, "kubectl")))
+	t.Setenv("PATH", dir)
+	require.ErrorContains(t, docker.CheckKind(), `the functional level needs kind and kubectl: exec: "kubectl": executable file not found in $PATH`)
 }

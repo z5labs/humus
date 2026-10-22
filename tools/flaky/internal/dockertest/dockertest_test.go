@@ -18,9 +18,11 @@ import (
 
 func TestFake_puts_a_docker_command_first_on_PATH_that_keeps_its_state_beside_it(t *testing.T) {
 	dir := dockertest.Fake(t)
-	path, err := exec.LookPath("docker")
-	require.NoError(t, err)
-	require.Equal(t, dir+"/docker", path)
+	for _, name := range []string{"docker", "kind", "kubectl"} {
+		path, err := exec.LookPath(name)
+		require.NoError(t, err)
+		require.Equal(t, dir+"/"+name, path)
+	}
 
 	require.Empty(t, dockertest.Read(t, dir, "updates"), "a file it hasn't written reads as empty")
 	out, err := exec.CommandContext(t.Context(), "docker", "update", "--cpuset-cpus", "0", "abc").CombinedOutput()

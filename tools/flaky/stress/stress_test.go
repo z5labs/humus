@@ -13,6 +13,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -45,6 +46,11 @@ type fakeRunner struct {
 	confirmFail func(pkg, cpu int) bool
 	// noTests are the packages whose binaries list no tests.
 	noTests map[int]bool
+	// walkOf is the walkthrough on whose cluster each package runs, for
+	// the packages that run on one. upFails reports that the nth Up of a
+	// walkthrough's cluster, from 1, fails.
+	walkOf  map[int]int
+	upFails func(w, n int) bool
 
 	mu           sync.Mutex
 	firstList    time.Time
@@ -61,6 +67,23 @@ type fakeRunner struct {
 	maxPinned    int
 	running      int
 	maxRunning   int
+	// images are how many times each walkthrough's image was built, and
+	// lastImage when the last build ended.
+	images    map[int]int
+	lastImage time.Time
+	// ups and downs are how many times each walkthrough's cluster came
+	// up, or tried to, and was deleted. up holds the cores of each
+	// cluster up now, upCores the cores of every Up in turn, and upAt
+	// when each began. maxUp is the most clusters up at once.
+	ups, downs map[int]int
+	up         map[int][]int
+	upCores    [][]int
+	upAt       []time.Time
+	maxUp      int
+	// onCluster is how many runs are running on each walkthrough's
+	// cluster, and violations what broke a cluster's rules.
+	onCluster  map[int]int
+	violations []string
 }
 
 // confirmRun is a confirm run of one test at a CPU count.
@@ -89,7 +112,89 @@ func newFakeRunner() *fakeRunner {
 		runningPkg:  map[int]int{},
 		maxPkg:      map[int]int{},
 		pinned:      map[int]int{},
+		upFails:     func(int, int) bool { return false },
+		images:      map[int]int{},
+		ups:         map[int]int{},
+		downs:       map[int]int{},
+		up:          map[int][]int{},
+		onCluster:   map[int]int{},
 	}
+}
+
+func (f *fakeRunner) Image(ctx context.Context, w int) error {
+	time.Sleep(5 * time.Second)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.images[w]++
+	if now := time.Now(); now.After(f.lastImage) {
+		f.lastImage = now
+	}
+	return nil
+}
+
+func (f *fakeRunner) Up(ctx context.Context, w int, cores []int) error {
+	f.mu.Lock()
+	f.ups[w]++
+	n := f.ups[w]
+	if _, ok := f.up[w]; ok {
+		f.violations = append(f.violations, fmt.Sprintf("walkthrough %d's cluster came up while it was up", w))
+	}
+	for _, c := range cores {
+		if f.pinned[c] > 0 {
+			f.violations = append(f.violations, fmt.Sprintf("walkthrough %d's cluster came up on core %d, which a run is pinned to", w, c))
+		}
+	}
+	f.up[w] = slices.Clone(cores)
+	f.upCores = append(f.upCores, slices.Clone(cores))
+	f.upAt = append(f.upAt, time.Now())
+	f.maxUp = max(f.maxUp, len(f.up))
+	f.mu.Unlock()
+	time.Sleep(time.Minute)
+	if f.upFails(w, n) {
+		return fmt.Errorf("up.sh of walkthrough %d: exit status 1", w)
+	}
+	return nil
+}
+
+func (f *fakeRunner) Down(ctx context.Context, w int) error {
+	time.Sleep(10 * time.Second)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.downs[w]++
+	delete(f.up, w)
+	return nil
+}
+
+// checkCluster records a violation when a run of pkg on cores breaks a
+// cluster's rules: a run on a cluster runs alone on it, on its cores and at
+// its CPU count, and no other run is pinned to a cluster's cores. It is called
+// with f.mu held, and returns the walkthrough pkg runs on the cluster of, or
+// -1.
+func (f *fakeRunner) checkCluster(pkg, cpu int, cores []int) int {
+	w, ok := f.walkOf[pkg]
+	if !ok {
+		for other, upCores := range f.up {
+			for _, c := range cores {
+				if slices.Contains(upCores, c) {
+					f.violations = append(f.violations, fmt.Sprintf("package %d ran on core %d of walkthrough %d's cluster", pkg, c, other))
+				}
+			}
+		}
+		return -1
+	}
+	upCores, up := f.up[w]
+	switch {
+	case !up:
+		f.violations = append(f.violations, fmt.Sprintf("package %d ran with walkthrough %d's cluster down", pkg, w))
+	case !slices.Equal(upCores, cores):
+		f.violations = append(f.violations, fmt.Sprintf("package %d ran on cores %v, not its cluster's %v", pkg, cores, upCores))
+	case cpu != stress.ClusterCPU:
+		f.violations = append(f.violations, fmt.Sprintf("package %d ran on its cluster at CPU count %d", pkg, cpu))
+	case f.onCluster[w] > 0:
+		f.violations = append(f.violations, fmt.Sprintf("package %d ran beside another run on walkthrough %d's cluster", pkg, w))
+	}
+	f.onCluster[w]++
+	return w
 }
 
 func (f *fakeRunner) Build(ctx context.Context, pkg int) error {
@@ -136,10 +241,14 @@ func (f *fakeRunner) Run(ctx context.Context, pkg int, test string, cpu int, cor
 	f.maxRunning = max(f.maxRunning, f.running)
 	f.runningPkg[pkg]++
 	f.maxPkg[pkg] = max(f.maxPkg[pkg], f.runningPkg[pkg])
+	w := f.checkCluster(pkg, cpu, cores)
 	f.mu.Unlock()
 	defer func() {
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		if w >= 0 {
+			f.onCluster[w]--
+		}
 		for _, c := range cores {
 			f.pinned[c]--
 		}
@@ -534,4 +643,137 @@ func TestBuildError_unwraps(t *testing.T) {
 	err := &stress.BuildError{Err: cause}
 	require.ErrorIs(t, err, cause)
 	require.Equal(t, "cause", err.Error())
+}
+
+func TestStress_runs_each_walkthrough_s_tests_on_a_cluster_of_its_own_one_run_at_a_time_on_its_own_lane(t *testing.T) {
+	cpus, loads := []int{1, 2, 4}, []int{1, 2}
+	lanesOf, err := lanes.Split(cores(16), 0, 4)
+	require.NoError(t, err)
+	f := newFakeRunner()
+	// p0 and p1 are unit packages. p2 and p3 are the functional tests of
+	// walkthrough 0, p4 of walkthrough 1 and p5 of walkthrough 2, whose
+	// cluster never comes up. p2 and p3 fail their first sweep run and pass
+	// every other run.
+	f.walkOf = map[int]int{2: 0, 3: 0, 4: 1, 5: 2}
+	f.upFails = func(w, _ int) bool { return w == 2 }
+	var mu sync.Mutex
+	failed := map[int]bool{}
+	f.fail = func(pkg, cpu int) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		if (pkg == 2 || pkg == 3) && !failed[pkg] {
+			failed[pkg] = true
+			return true
+		}
+		return false
+	}
+	f.runTook = func(pkg, cpu int) time.Duration {
+		if _, ok := f.walkOf[pkg]; ok {
+			return 30 * time.Second
+		}
+		return time.Second
+	}
+	pkgs := []discover.Package{
+		{Module: ".", Dir: "p0", ImportPath: "example.com/p0", Level: "unit"},
+		{Module: ".", Dir: "p1", ImportPath: "example.com/p1", Level: "unit"},
+		{Module: "w0", Dir: "w0/p2", ImportPath: "example.com/w0/p2", Level: "functional"},
+		{Module: "w0", Dir: "w0/p3", ImportPath: "example.com/w0/p3", Level: "functional"},
+		{Module: "w1", Dir: "w1/p4", ImportPath: "example.com/w1/p4", Level: "functional"},
+		{Module: "w2", Dir: "w2/p5", ImportPath: "example.com/w2/p5", Level: "functional"},
+	}
+	res := results.New(results.Config{
+		Packages: pkgs, CPUs: cpus, Loads: loads, Out: t.TempDir(),
+		Levels: []results.Level{
+			{Name: "unit", Count: 4},
+			{Name: "functional", Count: 3, Confirm: 2, CPU: stress.ClusterCPU, Load: 1},
+		},
+		Walkthroughs: []discover.Walkthrough{{Module: "w0", Name: "w0"}, {Module: "w1", Name: "w1"}, {Module: "w2", Name: "w2"}},
+	})
+	var log bytes.Buffer
+	synctest.Test(t, func(t *testing.T) {
+		_, err = stress.Stress(t.Context(), stress.Config{
+			Levels: []stress.Level{
+				{Name: "unit", Count: 4},
+				{Name: "functional", Count: 3, Confirm: 2, Limit: 2, Own: true},
+			},
+			Packages:     []int{0, 0, 1, 1, 1, 1},
+			Walkthroughs: []int{-1, -1, 0, 0, 1, 2},
+			CPUs:         cpus, Loads: loads, Lanes: lanesOf, Builds: 4, Log: &log,
+		}, f, res)
+	})
+	require.NoError(t, err)
+	require.Empty(t, f.violations, "a cluster serves one run at a time, on its own cores")
+	require.Equal(t, map[int]int{0: 1, 1: 1, 2: 1}, f.images, "each walkthrough's image is built once")
+	require.False(t, f.upAt[0].Before(f.lastImage), "no cluster comes up before every image is built")
+	require.False(t, f.firstRun.Before(f.lastImage), "no run starts before every image is built")
+	require.Equal(t, 2, f.maxUp, "no more clusters are up at once than the cap")
+	require.ElementsMatch(t, [][]int{lanesOf[0], lanesOf[1]}, f.upCores[:2], "the clusters start before every other run, on the first lanes, and each holds a whole lane")
+
+	require.Equal(t, map[int]int{0: 3, 1: 1, 2: 1}, f.ups, "walkthrough 0 gets a fresh cluster for each of its tests' confirm runs, and walkthrough 2's cluster isn't retried")
+	require.Equal(t, f.ups, f.downs, "every cluster is deleted, the one that didn't come up too")
+	require.Equal(t, map[pkgCPU]int{
+		{0, 1}: 8, {0, 2}: 8, {0, 4}: 8, {1, 1}: 8, {1, 2}: 8, {1, 4}: 8,
+		{2, 4}: 3, {3, 4}: 3, {4, 4}: 3,
+	}, f.runs, "a cluster's packages run its level's count times, at its CPU count alone, and walkthrough 2's not at all")
+	require.Equal(t, map[confirmRun]int{{2, "TestA", 4}: 2, {3, "TestA", 4}: 2}, f.confirms)
+	require.Contains(t, log.String(), "confirming 2 functional tests, 2 times at each pair of CPU count and load\n")
+
+	rep := res.Report()
+	require.True(t, rep.Failed())
+	require.Len(t, rep.UpFailures, 1)
+	require.Equal(t, "w2", rep.UpFailures[0].Walkthrough, "the walkthrough whose cluster didn't come up is reported by name")
+	require.Equal(t, []string{"up.sh of walkthrough 2: exit status 1"}, rep.UpFailures[0].Error)
+	require.Len(t, rep.Flaky, 2)
+	require.Equal(t, []results.Pair{{CPU: stress.ClusterCPU, Load: 1, Runs: 2}}, rep.Flaky[0].Pairs, "a functional test's table has its one pair")
+	require.Equal(t, "flaky stress -tags functional -run '^TestA$' -count 2 ./w0/p2", rep.Flaky[0].Reproduce, "its command gives no -cpu or -load, which its runs ignore")
+}
+
+func TestStress_runs_nothing_when_a_walkthrough_s_image_does_not_build(t *testing.T) {
+	f := &imageFails{fakeRunner: newFakeRunner()}
+	var err error
+	synctest.Test(t, func(t *testing.T) {
+		_, err = stress.Stress(t.Context(), stress.Config{
+			Levels: []stress.Level{{Name: "unit", Count: 1}, {Name: "functional", Count: 1, Own: true}}, Packages: []int{0, 1}, Walkthroughs: []int{-1, 0},
+			CPUs: []int{1}, Loads: []int{1}, Lanes: [][]int{{0, 1, 2, 3}},
+		}, f, newResults(t, 2, []int{1}, []int{1}, 1))
+	})
+	var buildErr *stress.BuildError
+	require.ErrorAs(t, err, &buildErr)
+	require.ErrorContains(t, err, "building the image of walkthrough 0")
+	require.Empty(t, f.runs)
+	require.Empty(t, f.ups)
+}
+
+// imageFails is a fakeRunner whose images don't build.
+type imageFails struct{ *fakeRunner }
+
+func (f *imageFails) Image(ctx context.Context, w int) error {
+	return fmt.Errorf("building the image of walkthrough %d", w)
+}
+
+func TestStress_deletes_a_cluster_and_stops_when_its_context_is_done(t *testing.T) {
+	f := newFakeRunner()
+	f.walkOf = map[int]int{0: 0}
+	f.runTook = func(int, int) time.Duration { return time.Minute }
+	res := results.New(results.Config{
+		Packages: []discover.Package{{Module: "w", Dir: "w/p", ImportPath: "example.com/w/p", Level: "functional"}},
+		CPUs:     []int{1}, Loads: []int{1}, Out: t.TempDir(),
+		Levels:       []results.Level{{Name: "functional", Count: 10, CPU: stress.ClusterCPU, Load: 1}},
+		Walkthroughs: []discover.Walkthrough{{Module: "w", Name: "w"}},
+	})
+	var err error
+	synctest.Test(t, func(t *testing.T) {
+		// The image is built at 5s, the cluster is up at 65s, and its
+		// runs end every minute from then.
+		ctx, cancel := context.WithTimeout(t.Context(), 200*time.Second)
+		defer cancel()
+		_, err = stress.Stress(ctx, stress.Config{
+			Levels: []stress.Level{{Name: "functional", Count: 10, Own: true}}, Packages: []int{0}, Walkthroughs: []int{0},
+			CPUs: []int{1}, Loads: []int{1}, Lanes: [][]int{{0, 1, 2, 3}},
+		}, f, res)
+	})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Equal(t, map[int]int{0: 1}, f.downs, "the cluster is deleted though the sweep was cut short")
+	require.Equal(t, 3, f.runs[pkgCPU{0, stress.ClusterCPU}])
+	require.Empty(t, res.Report().UpFailures)
 }

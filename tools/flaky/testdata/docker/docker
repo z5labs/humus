@@ -13,6 +13,12 @@
 #   events.args  docker events writes its arguments here
 #   updates      docker update appends its arguments here, and fails for an
 #                ID that starts with bad
+#   builds       docker build appends its arguments, and the directory it
+#                ran in, here
+#   build-fails  when it exists, docker build fails
+#
+# kind and kubectl beside it are stand-ins too, which keep their state in the
+# same directory.
 
 dir=$(dirname "$0")
 case "$1" in
@@ -31,6 +37,13 @@ case "$1" in
       exit 1
     fi
     exec sleep 600
+    ;;
+  build)
+    echo "$* in $PWD" >>"$dir/builds"
+    if [[ -e $dir/build-fails ]]; then
+      echo "failed to solve: no Dockerfile" >&2
+      exit 1
+    fi
     ;;
   update)
     echo "$*" >>"$dir/updates"

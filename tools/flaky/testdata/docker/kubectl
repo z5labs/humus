@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 Z5Labs and Contributors
+#
+# This software is released under the MIT License.
+# https://opensource.org/licenses/MIT
+
+# A stand-in for the kubectl command, for the tests that need no Docker. Its
+# state is in files beside it:
+#
+#   kubectl.log  kubectl appends its arguments here
+#
+# kubectl get deployments lists two Deployments, app/web and
+# kube-system/coredns, and kubectl rollout status succeeds.
+
+dir=$(dirname "$0")
+echo "$*" >>"$dir/kubectl.log"
+case "$*" in
+  *" get deployments "*)
+    printf 'app web\nkube-system coredns\n'
+    ;;
+  *" rollout status "*)
+    ;;
+  *)
+    echo "kubectl: unknown command $*" >&2
+    exit 1
+    ;;
+esac

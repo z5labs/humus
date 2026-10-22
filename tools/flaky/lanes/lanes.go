@@ -24,7 +24,8 @@
 // it has started, so every pair has the same share of its runs started at any
 // moment, whatever its count. Ties go to the pair whose runs have taken longest
 // on average, measured as they finish, so the longest runs don't all come
-// last.
+// last. A task marked first goes before every task that isn't, whatever its
+// share: a cluster holds its lane for longest, so it starts first.
 //
 // A level's runs can be capped: once as many of them are running as its cap,
 // the queue passes over its pairs, and a lane holding one of them waits, until
@@ -59,6 +60,9 @@ type Pair struct {
 type Task struct {
 	Pair  Pair
 	Count int
+	// First reports that the queue runs the task before every task that
+	// isn't first.
+	First bool
 }
 
 // Run is one run of a pair, pinned to its cores.
@@ -292,6 +296,7 @@ type queue struct {
 
 type pairState struct {
 	pair     Pair
+	first    bool
 	count    int
 	issued   int
 	finished int
@@ -301,7 +306,7 @@ type pairState struct {
 func newQueue(tasks []Task) *queue {
 	q := &queue{pairs: make([]pairState, len(tasks))}
 	for i, t := range tasks {
-		q.pairs[i] = pairState{pair: t.Pair, count: t.Count}
+		q.pairs[i] = pairState{pair: t.Pair, first: t.First, count: t.Count}
 	}
 	return q
 }
@@ -316,8 +321,9 @@ func (q *queue) remaining() bool {
 	return false
 }
 
-// next takes one run of the pair furthest behind its count, ties going to the
-// longest runs, passing over the pairs that skip reports.
+// next takes one run of the pair furthest behind its count, a first pair
+// before any other and ties going to the longest runs, passing over the pairs
+// that skip reports.
 func (q *queue) next(skip func(Pair) bool) (Pair, bool) {
 	best := -1
 	for i, p := range q.pairs {
@@ -335,9 +341,13 @@ func (q *queue) next(skip func(Pair) bool) (Pair, bool) {
 	return q.pairs[best].pair, true
 }
 
-// before reports whether a is further behind its count than b, by the share
-// of its runs started, or as far behind and its runs take longer.
+// before reports whether a is first and b isn't, or, when both or neither
+// are, whether a is further behind its count than b, by the share of its runs
+// started, or as far behind and its runs take longer.
 func (q *queue) before(a, b pairState) bool {
+	if a.first != b.first {
+		return a.first
+	}
 	if x, y := a.issued*b.count, b.issued*a.count; x != y {
 		return x < y
 	}

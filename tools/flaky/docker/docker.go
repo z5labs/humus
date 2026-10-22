@@ -4,7 +4,8 @@
 // https://opensource.org/licenses/MIT
 
 // Package docker keeps the containers that the testcontainers tests start off
-// the lanes' cores.
+// the lanes' cores, and builds the walkthroughs' images and brings up their
+// kind clusters, each one's node pinned to a lane's cores.
 //
 // A testcontainers test's containers, such as Kafka, PostgreSQL or k3s, are
 // started by dockerd, so pinning the test's process doesn't pin them. So
@@ -33,14 +34,15 @@ import (
 // Label is the label testcontainers-go puts on every container it starts.
 const Label = "org.testcontainers"
 
-// Check returns an error when the docker command can't reach a daemon.
-func Check(ctx context.Context, env []string) error {
+// Check returns an error when the docker command can't reach a daemon, which
+// the level named level needs.
+func Check(ctx context.Context, level string, env []string) error {
 	cmd := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}")
 	cmd.Env = env
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("the testcontainers level needs Docker: docker version: %w: %s", err, strings.TrimSpace(stderr.String()))
+		return fmt.Errorf("the %s level needs Docker: docker version: %w: %s", level, err, strings.TrimSpace(stderr.String()))
 	}
 	return nil
 }

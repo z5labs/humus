@@ -119,7 +119,8 @@ func TestStress_writes_the_report_as_JSON(t *testing.T) {
 	require.Equal(t, []results.Level{
 		{Name: "unit", Count: 1, Confirm: 2, TimeoutSeconds: 60},
 		{Name: "testcontainers", Count: 1, Confirm: 2, TimeoutSeconds: 60},
-	}, rep.Levels, "-count, -confirm and -timeout, given, apply to every level")
+		{Name: "functional", Count: 1, Confirm: 2, TimeoutSeconds: 60, CPU: 4, Load: 1},
+	}, rep.Levels, "-count, -confirm and -timeout, given, apply to every level, and the functional level runs at CPU count 4 and load 1 alone")
 	require.Equal(t, 1, rep.Confirmed)
 	require.Equal(t, 2, rep.ConfirmRuns)
 	require.Len(t, rep.Phases, 4)
@@ -179,7 +180,7 @@ func TestStress_runs_the_testcontainers_level_s_own_tests_with_its_containers_on
 
 	st, stdout, stderr := stressIn(t, repo, "stress", "-cpu", "1,2", "-load", "1", "-count", "2", "-confirm", "3", "-keep", "1", "./a", "./c")
 	require.Equal(t, 1, st.Code(), "stdout:\n%s\nstderr:\n%s", stdout, stderr)
-	require.Contains(t, stderr, "found 3 packages with tests (1 unit, 2 testcontainers)", "c has tests only behind the tag")
+	require.Contains(t, stderr, "found 3 packages with tests (1 unit, 2 testcontainers, 0 functional)", "c has tests only behind the tag")
 	require.Contains(t, stderr, "pinning the testcontainers containers to cores "+strconv.Itoa(cores[0])+"\n", "-keep 1 keeps back the first core")
 	require.Contains(t, dockertest.Read(t, docker, "events.args"), "--filter label=org.testcontainers", "it watches Docker's events")
 	require.Contains(t, stderr, "built 3 test binaries")
@@ -259,8 +260,11 @@ func TestParseLevels_takes_each_known_level_once(t *testing.T) {
 	levels, err := parseLevels("testcontainers, unit,testcontainers")
 	require.NoError(t, err)
 	require.Equal(t, []string{"testcontainers", "unit"}, levels)
-	_, err = parseLevels("unit,functional")
-	require.ErrorContains(t, err, `"functional" is not a level: the levels are unit and testcontainers`)
+	levels, err = parseLevels("functional")
+	require.NoError(t, err)
+	require.Equal(t, []string{"functional"}, levels)
+	_, err = parseLevels("unit,nope")
+	require.ErrorContains(t, err, `"nope" is not a level: the levels are unit, testcontainers and functional`)
 }
 
 func TestStress_exits_0_when_every_test_passed_every_run(t *testing.T) {
@@ -291,6 +295,7 @@ func TestStress_exits_2_when_it_cannot_run(t *testing.T) {
 		{"a timeout that isn't positive", []string{"stress", "-timeout", "0s"}, "-timeout must be positive"},
 		{"a level it doesn't know", []string{"stress", "-tags", "unit,nope"}, `"nope" is not a level`},
 		{"a containers cap below 1", []string{"stress", "-containers", "0"}, "-containers must be at least 1"},
+		{"a clusters cap below 1", []string{"stress", "-clusters", "0"}, "-clusters must be at least 1"},
 		{"a -run that doesn't compile", []string{"stress", "-keep", "0", "-cpu", "1", "-run", "(", "./a"}, "-run: error parsing regexp"},
 		{"a -run whose subtest part doesn't compile", []string{"stress", "-keep", "0", "-cpu", "1", "-run", "TestA/x/(", "./a"}, "-run: error parsing regexp"},
 		{"a CPU count that isn't one", []string{"stress", "-cpu", "1,x"}, `"x" is not a CPU count`},
@@ -350,4 +355,68 @@ func TestShuffle_is_off_on_or_a_seed(t *testing.T) {
 	require.NoError(t, s.Set("off"))
 	require.Nil(t, s.next())
 	require.Error(t, s.Set("sometimes"))
+}
+
+// walkthrough writes a module, name, to the repository repo, with a
+// Dockerfile, a deploy/kind/up.sh that records the KIND_CLUSTER_NAME it ran
+// with beside it and exits with code, and functional tests behind the
+// functional tag. TestOnTheCluster passes when it runs on the cluster
+// flaky-<name>, on 4 CPUs, and TestFails fails every run.
+func walkthrough(t *testing.T, repo, name string, code int) {
+	repotest.Write(t, repo, name+"/go.mod", "module example.com/repo/"+name+"\n\ngo 1.27.0\n")
+	repotest.Write(t, repo, name+"/main.go", "package main\n\nfunc main() {}\n")
+	repotest.Write(t, repo, name+"/Dockerfile", "FROM scratch\n")
+	repotest.Write(t, repo, name+"/deploy/kind/up.sh", "#!/usr/bin/env bash\necho \"$KIND_CLUSTER_NAME\" >>\"$(dirname \"$0\")/up.log\"\necho \"deploying "+name+"\"\nexit "+strconv.Itoa(code)+"\n")
+	require.NoError(t, os.Chmod(filepath.Join(repo, name, "deploy", "kind", "up.sh"), 0o755))
+	repotest.Write(t, repo, name+"/functional/functional_test.go", "//go:build functional\n\npackage functional\n\nimport (\n\t\"os\"\n\t\"runtime\"\n\t\"testing\"\n)\n\n"+
+		"func TestOnTheCluster(t *testing.T) {\n\tif got := os.Getenv(\"KIND_CLUSTER_NAME\"); got != \"flaky-"+name+"\" {\n\t\tt.Errorf(\"KIND_CLUSTER_NAME is %q\", got)\n\t}\n"+
+		"\tif n := runtime.NumCPU(); n != 4 {\n\t\tt.Errorf(\"runtime.NumCPU() is %d\", n)\n\t}\n}\n\n"+
+		"func TestFails(t *testing.T) {\n\tt.Error(\"always\")\n}\n")
+	repotest.Commit(t, repo)
+}
+
+func TestStress_runs_each_walkthrough_s_functional_tests_on_a_kind_cluster_of_its_own(t *testing.T) {
+	needCores(t, 8)
+	docker := dockertest.Fake(t)
+	repo := repotest.New(t, "0.0.1")
+	walkthrough(t, repo, "wallet", 0)
+	walkthrough(t, repo, "mailer", 1)
+
+	st, stdout, stderr := stressIn(t, repo, "stress", "-count", "2", "-confirm", "1", "-keep", "0", "./mailer/...", "./wallet/...")
+	require.Equal(t, 1, st.Code(), "stdout:\n%s\nstderr:\n%s", stdout, stderr)
+	require.Contains(t, stderr, "found 2 packages with tests (0 unit, 0 testcontainers, 2 functional)", "-tags has functional by default")
+	require.Contains(t, stderr, "built 2 test binaries")
+
+	builds := dockertest.Read(t, docker, "builds")
+	require.Contains(t, builds, "build --file "+repo+"/wallet/Dockerfile --tag wallet . in "+repo+"\n", "each walkthrough's image is built from the repository's root, tagged with its directory's name")
+	require.Contains(t, builds, "build --file "+repo+"/mailer/Dockerfile --tag mailer . in "+repo+"\n")
+
+	kind := dockertest.Read(t, docker, "kind.log")
+	require.Equal(t, 2, strings.Count(kind, "create flaky-wallet\n"), "the wallet's cluster comes up for the sweep, and afresh for TestFails' confirm runs")
+	require.Equal(t, 2, strings.Count(kind, "delete flaky-wallet\n"))
+	require.Equal(t, 1, strings.Count(kind, "create flaky-mailer\n"), "the mailer's cluster isn't retried")
+	require.Equal(t, 1, strings.Count(kind, "delete flaky-mailer\n"), "the cluster that didn't come up is deleted too")
+	require.Regexp(t, `update --cpuset-cpus \d+,\d+,\d+,\d+ flaky-wallet-control-plane\n`, dockertest.Read(t, docker, "updates"), "its node lands on 4 cores of a lane")
+	require.Equal(t, "flaky-wallet\nflaky-wallet\n", dockertest.Read(t, filepath.Join(repo, "wallet", "deploy", "kind"), "up.log"), "up.sh runs with KIND_CLUSTER_NAME set")
+	require.Contains(t, dockertest.Read(t, docker, "kubectl.log"), "--context kind-flaky-wallet --namespace app rollout status deployment/web --timeout 5m\n", "it waits for the cluster's Deployments")
+	require.Contains(t, stderr, "bringing flaky-wallet up for wallet on cores ")
+
+	require.True(t, strings.HasPrefix(stdout, "UP FAILED: a walkthrough's cluster didn't come up, so its tests didn't run on it\n\nmailer  mailer\n"), stdout)
+	require.Contains(t, stdout, "deploying mailer")
+	require.Contains(t, stdout, "FAILING: failed or hung every run at some pair of CPU count and load\n\nwallet/functional  TestFails  (functional)\n")
+	require.Contains(t, stdout, "    cpu 4 load 1           1         0         1\n", "its confirm runs are at CPU count 4 and load 1 alone")
+	require.Contains(t, stdout, "reproduce: flaky stress -tags functional -run '^TestFails$' -count 1 ./wallet/functional\n")
+	require.Contains(t, stdout, "taskset -c 0-3 go -C wallet test -race -cover -tags functional -count=1 -cpu 4 -timeout 15m0s -run '^TestFails$' ./functional\n", "the level's timeout is 15m")
+	require.Contains(t, stdout, "1 test passed every run\n", "TestOnTheCluster ran on its cluster, with KIND_CLUSTER_NAME set and pinned to 4 cores")
+}
+
+func TestStress_exits_2_when_a_package_has_functional_tests_outside_a_walkthrough(t *testing.T) {
+	dockertest.Fake(t)
+	repo := repotest.New(t, "0.0.1")
+	walkthrough(t, repo, "wallet", 0)
+	require.NoError(t, os.Remove(filepath.Join(repo, "wallet", "Dockerfile")))
+	repotest.Commit(t, repo)
+	st, _, stderr := stressIn(t, repo, "stress", "-count", "1", "-keep", "0", "./wallet/...")
+	require.Equal(t, 2, st.Code())
+	require.Contains(t, stderr, "wallet/functional has functional tests, but its module wallet isn't a walkthrough")
 }

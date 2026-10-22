@@ -37,6 +37,9 @@ type Config struct {
 	CPUs     []int
 	Loads    []int
 	Levels   []Level
+	// Walkthroughs are the walkthroughs whose clusters it brought up, which
+	// UpFailed names by their index.
+	Walkthroughs []discover.Walkthrough
 	// Run and Skip are the sweep runs' -run and -skip, when set.
 	Run, Skip string
 	// Out is the directory failures' output is saved under.
@@ -61,6 +64,25 @@ type Level struct {
 	DefaultTimeout time.Duration `json:"-"`
 	// TimeoutSeconds is Timeout in seconds.
 	TimeoutSeconds float64 `json:"timeoutSeconds"`
+	// CPU and Load are the one CPU count and load its packages ran at, as
+	// a cluster's do, or 0 when they ran at each pair of the sweep's.
+	CPU  int `json:"cpu,omitempty"`
+	Load int `json:"load,omitempty"`
+}
+
+// pairs returns the pairs of CPU count and load that the packages at level ran
+// at.
+func (r *Results) pairs(level Level) []pair {
+	if level.CPU > 0 {
+		return []pair{{level.CPU, level.Load}}
+	}
+	pairs := make([]pair, 0, len(r.cfg.CPUs)*len(r.cfg.Loads))
+	for _, cpu := range r.cfg.CPUs {
+		for _, load := range r.cfg.Loads {
+			pairs = append(pairs, pair{cpu, load})
+		}
+	}
+	return pairs
 }
 
 // Results counts a sweep's runs. It is safe for concurrent use.
@@ -70,6 +92,7 @@ type Results struct {
 	mu     sync.Mutex
 	listed [][]string
 	tests  map[key]*entry
+	ups    []UpFailure
 }
 
 type key struct {
@@ -222,6 +245,26 @@ func (r *Results) Confirmed(pkg int, test string, cpu, load int, res run.Result)
 	return r.save(k, fmt.Sprintf("confirm-cpu%d-load%d-%d.txt", at.cpu, at.load, e.confirmSaved), res.Output)
 }
 
+// UpFailed records that the cluster of the walkthrough at index w didn't come
+// up, with err, and saves err's whole text under the walkthrough's directory.
+func (r *Results) UpFailed(w int, err error) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	wt := r.cfg.Walkthroughs[w]
+	text := err.Error()
+	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
+	if len(lines) > maxLines {
+		lines = append([]string{"…"}, lines[len(lines)-maxLines:]...)
+	}
+	dir := filepath.Join(r.cfg.Out, wt.Module, "up")
+	file := filepath.Join(dir, fmt.Sprintf("up-%d.txt", len(r.ups)+1))
+	r.ups = append(r.ups, UpFailure{Walkthrough: wt.Name, Module: wt.Module, Error: lines, Output: file})
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(file, []byte(text+"\n"), 0o644)
+}
+
 func (r *Results) entry(k key) *entry {
 	e := r.tests[k]
 	if e == nil {
@@ -333,6 +376,9 @@ type Report struct {
 	// Failing are the tests that failed or hung every run at some pair of
 	// CPU count and load.
 	Failing []Test `json:"failing"`
+	// UpFailures are the clusters that didn't come up, so their
+	// walkthroughs' tests didn't run on them.
+	UpFailures []UpFailure `json:"upFailures"`
 	// Passed is the number of top-level tests that ran and passed every
 	// run, with every subtest.
 	Passed int `json:"passed"`
@@ -340,9 +386,22 @@ type Report struct {
 	Phases []Phase `json:"phases"`
 }
 
-// Failed reports whether any test failed or hung.
+// Failed reports whether any test failed or hung, or any cluster didn't come
+// up.
 func (r Report) Failed() bool {
-	return len(r.Flaky) > 0 || len(r.Failing) > 0
+	return len(r.Flaky) > 0 || len(r.Failing) > 0 || len(r.UpFailures) > 0
+}
+
+// UpFailure is a walkthrough's cluster that didn't come up.
+type UpFailure struct {
+	// Walkthrough is the walkthrough's name, such as wallet.
+	Walkthrough string `json:"walkthrough"`
+	// Module is its module's directory, relative to the repository's root.
+	Module string `json:"module"`
+	// Error is the error's last lines.
+	Error []string `json:"error"`
+	// Output is the file its whole text was saved to.
+	Output string `json:"output"`
 }
 
 // Test is a test that failed or hung.
@@ -423,6 +482,9 @@ func (r *Results) Report() Report {
 		Output:   r.cfg.Out,
 		Flaky:    []Test{},
 		Failing:  []Test{},
+		// The slice is copied, since a cluster may yet fail to come up
+		// once the report is returned.
+		UpFailures: append([]UpFailure{}, r.ups...),
 	}
 	bad := map[key]bool{}
 	keys := make([]key, 0, len(r.tests))
@@ -487,28 +549,26 @@ func (r *Results) test(k key, e *entry) (Test, bool) {
 		t.Confirmed = true
 	}
 	failing := false
-	for _, cpu := range r.cfg.CPUs {
-		for _, load := range r.cfg.Loads {
-			c := table[pair{cpu, load}]
-			if c == nil {
-				c = &counts{}
-			}
-			t.Pairs = append(t.Pairs, Pair{CPU: cpu, Load: load, Runs: c.runs, Failures: c.failures, Hangs: c.hangs})
-			t.Runs += c.runs
-			t.Failures += c.failures
-			t.Hangs += c.hangs
-			if c.runs > 0 && c.failures+c.hangs == c.runs {
-				failing = true
-			}
+	for _, at := range r.pairs(level) {
+		c := table[at]
+		if c == nil {
+			c = &counts{}
+		}
+		t.Pairs = append(t.Pairs, Pair{CPU: at.cpu, Load: at.load, Runs: c.runs, Failures: c.failures, Hangs: c.hangs})
+		t.Runs += c.runs
+		t.Failures += c.failures
+		t.Hangs += c.hangs
+		if c.runs > 0 && c.failures+c.hangs == c.runs {
+			failing = true
 		}
 	}
-	worst, rate := r.worst(table)
+	worst, rate := r.worst(level, table)
 	sweep := e.confirm == nil
 	if rate <= 0 {
 		// It passed every confirm run, so its sweep runs say where it
 		// fails.
 		table, sweep = e.pairs, true
-		worst, _ = r.worst(table)
+		worst, _ = r.worst(level, table)
 	}
 	if c := table[worst]; c != nil {
 		t.Seed = c.seed
@@ -517,21 +577,18 @@ func (r *Results) test(k key, e *entry) (Test, bool) {
 	return t, failing
 }
 
-// worst returns the pair at which the runs in table failed or hung most
-// often, and that rate, or -1 when table has no runs.
-func (r *Results) worst(table map[pair]*counts) (pair, float64) {
+// worst returns the pair of level's at which the runs in table failed or hung
+// most often, and that rate, or -1 when table has no runs.
+func (r *Results) worst(level Level, table map[pair]*counts) (pair, float64) {
 	var worst pair
 	worstRate := -1.0
-	for _, cpu := range r.cfg.CPUs {
-		for _, load := range r.cfg.Loads {
-			at := pair{cpu, load}
-			c := table[at]
-			if c == nil || c.runs == 0 {
-				continue
-			}
-			if rate := float64(c.failures+c.hangs) / float64(c.runs); rate > worstRate {
-				worst, worstRate = at, rate
-			}
+	for _, at := range r.pairs(level) {
+		c := table[at]
+		if c == nil || c.runs == 0 {
+			continue
+		}
+		if rate := float64(c.failures+c.hangs) / float64(c.runs); rate > worstRate {
+			worst, worstRate = at, rate
 		}
 	}
 	return worst, worstRate
@@ -548,6 +605,9 @@ func (r *Results) worst(table map[pair]*counts) (pair, float64) {
 // test that fails only after another passes alone. The flaky command's -run
 // is then "." when the sweep had none, so it runs the package count times
 // rather than sweeping and confirming.
+//
+// At a level whose packages run at one pair, as a cluster's do, the flaky
+// command gives no -cpu or -load, since its runs ignore them.
 func (r *Results) reproduce(pkg discover.Package, level Level, test string, at pair, count int, seed *int64, sweep bool) (string, string) {
 	cpu := at.cpu
 	pattern, skip := RunPattern(test), ""
@@ -571,7 +631,10 @@ func (r *Results) reproduce(pkg discover.Package, level Level, test string, at p
 	if shuffle != "" {
 		flaky = append(flaky, shuffle)
 	}
-	flaky = append(flaky, "-cpu", strconv.Itoa(cpu), "-load", strconv.Itoa(at.load), "-count", strconv.Itoa(count))
+	if level.CPU == 0 {
+		flaky = append(flaky, "-cpu", strconv.Itoa(cpu), "-load", strconv.Itoa(at.load))
+	}
+	flaky = append(flaky, "-count", strconv.Itoa(count))
 	if level.Timeout != level.DefaultTimeout {
 		flaky = append(flaky, "-timeout", level.Timeout.String())
 	}
@@ -638,6 +701,19 @@ func WriteJSON(w io.Writer, rep Report) error {
 // WriteText writes rep for a person to read to w.
 func WriteText(w io.Writer, rep Report) error {
 	p := &printer{w: w}
+	if len(rep.UpFailures) > 0 {
+		p.printf("UP FAILED: a walkthrough's cluster didn't come up, so its tests didn't run on it\n")
+		for _, u := range rep.UpFailures {
+			p.printf("\n%s  %s\n", u.Module, u.Walkthrough)
+			for _, l := range u.Error {
+				p.printf("        %s\n", l)
+			}
+			p.printf("    output:    %s\n", u.Output)
+		}
+		if len(rep.Flaky) > 0 || len(rep.Failing) > 0 {
+			p.printf("\n")
+		}
+	}
 	if len(rep.Flaky) > 0 {
 		p.printf("FLAKY: failed or hung in some runs\n")
 		for _, t := range rep.Flaky {

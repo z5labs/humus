@@ -6,7 +6,11 @@
 // Package env builds the environment of the processes flaky starts.
 package env
 
-import "github.com/z5labs/bedrock"
+import (
+	"strings"
+
+	"github.com/z5labs/bedrock"
+)
 
 // names are the variables a child process is given, when they are set. A
 // bedrock.Environment can't be listed, so the go command, git and the test
@@ -19,7 +23,7 @@ var names = []string{
 	"GOTOOLCHAIN", "GOWORK", "GOEXPERIMENT", "GODEBUG", "GOAMD64", "GOARM64",
 	"CGO_ENABLED", "CC", "CXX", "PKG_CONFIG",
 	"DOCKER_HOST", "DOCKER_CONFIG", "DOCKER_CERT_PATH", "DOCKER_TLS_VERIFY",
-	"KUBECONFIG", "KIND_CLUSTER_NAME",
+	"KUBECONFIG", "KIND_CLUSTER_NAME", "KIND_EXPERIMENTAL_PROVIDER",
 }
 
 // Child returns the environment of a child process: every variable in names
@@ -33,4 +37,16 @@ func Child(e bedrock.Environment) []string {
 		}
 	}
 	return out
+}
+
+// With returns a copy of env, an environment as Child returns, with the
+// variable name set to value, in place of any value env gives it.
+func With(env []string, name, value string) []string {
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, name+"=") {
+			out = append(out, kv)
+		}
+	}
+	return append(out, name+"="+value)
 }
