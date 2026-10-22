@@ -8,6 +8,9 @@
 // and load, packed into lanes of cores, and counts the results. Then, once
 // every sweep run has ended, it confirms each test that failed or hung: it runs
 // the test alone at each pair, many more times.
+//
+// Each package is at a level, which sets how many times its runs and confirm
+// runs go, and may cap how many of them go at once.
 package stress
 
 import (
@@ -31,7 +34,7 @@ type Runner interface {
 	// Build builds the test binary of the package pkg.
 	Build(ctx context.Context, pkg int) error
 	// List returns the top-level tests that the binary of the package pkg
-	// lists. It is called only once the package is built.
+	// runs. It is called only once every package is built.
 	List(ctx context.Context, pkg int) ([]string, error)
 	// Run runs the binary of the package pkg once, at CPU count cpu,
 	// pinned to cores. Other runs may be pinned to the same cores, as many
@@ -42,22 +45,36 @@ type Runner interface {
 	Run(ctx context.Context, pkg int, test string, cpu int, cores []int) run.Result
 }
 
+// Level is how the packages at one level run.
+type Level struct {
+	// Name is the level's name, which the log gives.
+	Name string
+	// Count is how many times each of its packages runs at each pair of
+	// CPU count and load.
+	Count int
+	// Confirm is how many times each of its tests that failed or hung in
+	// the sweep runs alone at each pair of CPU count and load, once every
+	// sweep run has ended, or 0 for no confirm runs.
+	Confirm int
+	// Limit caps how many of its runs go at once, or is 0 for no cap.
+	Limit int
+	// Own reports that its packages run only tests of their own, so a
+	// package whose binary lists none, or can't be listed, doesn't run.
+	Own bool
+}
+
 // Config is a sweep.
 type Config struct {
-	// Packages is how many packages there are.
-	Packages int
+	// Levels are the packages' levels.
+	Levels []Level
+	// Packages are the index in Levels of each package's level, one for
+	// each package.
+	Packages []int
 	// CPUs are the CPU counts each package runs at.
 	CPUs []int
 	// Loads are the loads each package runs at: how many runs, at most,
 	// are pinned to each of a run's cores.
 	Loads []int
-	// Count is how many times each package runs at each pair of CPU count
-	// and load.
-	Count int
-	// Confirm is how many times each test that failed or hung in the sweep
-	// runs alone at each pair of CPU count and load, once every sweep run
-	// has ended, or 0 for no confirm runs.
-	Confirm int
 	// Lanes are the cores runs are pinned to, split into lanes.
 	Lanes [][]int
 	// Builds is how many builds run at once.
@@ -83,24 +100,27 @@ type Phases struct {
 func Stress(ctx context.Context, cfg Config, r Runner, res *results.Results) (Phases, error) {
 	var phases Phases
 	start := time.Now()
-	if err := build(ctx, cfg, r, res); err != nil {
+	runs, err := build(ctx, cfg, r, res)
+	if err != nil {
 		return phases, err
 	}
 	phases.Build = time.Since(start)
-	logf(cfg.Log, "built %d test binaries in %s\n", cfg.Packages, phases.Build.Round(time.Millisecond))
+	logf(cfg.Log, "built %d test binaries in %s\n", len(cfg.Packages), phases.Build.Round(time.Millisecond))
 
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	a := &adapter{r: r, res: res, cancel: cancel, confirm: cfg.Confirm > 0, targets: map[target]bool{}}
+	a := &adapter{r: r, res: res, cancel: cancel, cfg: cfg, targets: map[target]bool{}}
 
-	pairs := make([]lanes.Pair, 0, cfg.Packages*len(cfg.CPUs)*len(cfg.Loads))
-	for pkg := range cfg.Packages {
-		pairs = append(pairs, atEachPair(cfg, lanes.Pair{Package: pkg})...)
+	var tasks []lanes.Task
+	for pkg, level := range cfg.Packages {
+		if runs[pkg] {
+			tasks = append(tasks, atEachPair(cfg, lanes.Pair{Package: pkg, Level: level}, cfg.Levels[level].Count)...)
+		}
 	}
 	start = time.Now()
-	err := a.schedule(ctx, cfg, "swept", pairs, cfg.Count)
+	err = a.schedule(ctx, cfg, "swept", tasks)
 	phases.Sweep = time.Since(start)
-	if err != nil || cfg.Confirm == 0 {
+	if err != nil || !slices.ContainsFunc(cfg.Levels, func(l Level) bool { return l.Confirm > 0 }) {
 		return phases, err
 	}
 
@@ -110,53 +130,73 @@ func Stress(ctx context.Context, cfg Config, r Runner, res *results.Results) (Ph
 	if len(targets) == 0 {
 		return phases, nil
 	}
-	pairs = pairs[:0]
+	tasks = tasks[:0]
+	confirming := make([]int, len(cfg.Levels))
 	for _, t := range targets {
-		pairs = append(pairs, atEachPair(cfg, lanes.Pair{Package: t.pkg, Test: t.test})...)
+		level := cfg.Packages[t.pkg]
+		confirming[level]++
+		tasks = append(tasks, atEachPair(cfg, lanes.Pair{Package: t.pkg, Test: t.test, Level: level}, cfg.Levels[level].Confirm)...)
 	}
-	logf(cfg.Log, "confirming %d tests, %d times at each pair of CPU count and load\n", len(targets), cfg.Confirm)
+	var parts []string
+	for i, n := range confirming {
+		if n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s tests, %d times", n, cfg.Levels[i].Name, cfg.Levels[i].Confirm))
+		}
+	}
+	logf(cfg.Log, "confirming %s at each pair of CPU count and load\n", strings.Join(parts, ", and "))
 	start = time.Now()
-	err = a.schedule(ctx, cfg, "confirmed", pairs, cfg.Confirm)
+	err = a.schedule(ctx, cfg, "confirmed", tasks)
 	phases.Confirm = time.Since(start)
 	return phases, err
 }
 
-// atEachPair returns p at each pair of cfg's CPU counts and loads.
-func atEachPair(cfg Config, p lanes.Pair) []lanes.Pair {
-	pairs := make([]lanes.Pair, 0, len(cfg.CPUs)*len(cfg.Loads))
+// atEachPair returns p at each pair of cfg's CPU counts and loads, each to
+// run count times.
+func atEachPair(cfg Config, p lanes.Pair, count int) []lanes.Task {
+	tasks := make([]lanes.Task, 0, len(cfg.CPUs)*len(cfg.Loads))
 	for _, cpu := range cfg.CPUs {
 		for _, load := range cfg.Loads {
 			p.CPU, p.Load = cpu, load
-			pairs = append(pairs, p)
+			tasks = append(tasks, lanes.Task{Pair: p, Count: count})
 		}
 	}
-	return pairs
+	return tasks
 }
 
-func build(ctx context.Context, cfg Config, r Runner, res *results.Results) error {
+// build builds every package, and once every one is built, lists each one's
+// tests. It reports which packages run: those at a level that runs only its
+// own tests run only when they list some.
+func build(ctx context.Context, cfg Config, r Runner, res *results.Results) ([]bool, error) {
 	sem := make(chan struct{}, max(cfg.Builds, 1))
-	errs := make([]error, cfg.Packages)
+	errs := make([]error, len(cfg.Packages))
 	var wg sync.WaitGroup
 	for pkg := range cfg.Packages {
 		wg.Go(func() {
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			if err := r.Build(ctx, pkg); err != nil {
-				errs[pkg] = err
-				return
-			}
+			errs[pkg] = r.Build(ctx, pkg)
+		})
+	}
+	wg.Wait()
+	if err := errors.Join(errs...); err != nil {
+		return nil, &BuildError{err}
+	}
+
+	runs := make([]bool, len(cfg.Packages))
+	for pkg, level := range cfg.Packages {
+		wg.Go(func() {
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			tests, err := r.List(ctx, pkg)
 			if err != nil {
 				logf(cfg.Log, "warning: %v\n", err)
 			}
 			res.Listed(pkg, tests)
+			runs[pkg] = !cfg.Levels[level].Own || len(tests) > 0
 		})
 	}
 	wg.Wait()
-	if err := errors.Join(errs...); err != nil {
-		return &BuildError{err}
-	}
-	return nil
+	return runs, nil
 }
 
 // BuildError reports that a package's test binary didn't build.
@@ -166,13 +206,21 @@ func (e *BuildError) Error() string { return e.Err.Error() }
 
 func (e *BuildError) Unwrap() error { return e.Err }
 
-// schedule runs every pair count times, and writes its progress as what.
-func (a *adapter) schedule(ctx context.Context, cfg Config, what string, pairs []lanes.Pair, count int) error {
+// schedule runs every task, and writes its progress as what.
+func (a *adapter) schedule(ctx context.Context, cfg Config, what string, tasks []lanes.Task) error {
 	a.mu.Lock()
 	a.done, a.failed = 0, 0
 	a.mu.Unlock()
-	stop := a.progress(cfg, what, len(pairs)*count)
-	err := lanes.Schedule(ctx, cfg.Lanes, pairs, count, a)
+	total := 0
+	for _, t := range tasks {
+		total += t.Count
+	}
+	limits := map[int]int{}
+	for i, l := range cfg.Levels {
+		limits[i] = l.Limit
+	}
+	stop := a.progress(cfg, what, total)
+	err := lanes.Schedule(ctx, cfg.Lanes, tasks, limits, a)
 	stop()
 	if err != nil {
 		if cause := context.Cause(ctx); cause != nil && !errors.Is(cause, context.Canceled) {
@@ -184,10 +232,10 @@ func (a *adapter) schedule(ctx context.Context, cfg Config, what string, pairs [
 }
 
 type adapter struct {
-	r       Runner
-	res     *results.Results
-	cancel  context.CancelCauseFunc
-	confirm bool
+	r      Runner
+	res    *results.Results
+	cancel context.CancelCauseFunc
+	cfg    Config
 
 	mu           sync.Mutex
 	done, failed int
@@ -223,7 +271,7 @@ func (a *adapter) Run(ctx context.Context, lr lanes.Run) {
 	if result.Failed() {
 		a.failed++
 	}
-	if p.Test != "" || !a.confirm {
+	if p.Test != "" || a.cfg.Levels[p.Level].Confirm == 0 {
 		return
 	}
 	// A failure outside any test has no test to run alone, so it isn't

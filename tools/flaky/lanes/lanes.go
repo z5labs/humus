@@ -22,8 +22,13 @@
 //
 // The queue runs first the pair furthest behind its count, counting the runs
 // it has started, so every pair has the same share of its runs started at any
-// moment. Ties go to the pair whose runs have taken longest on average,
-// measured as they finish, so the longest runs don't all come last.
+// moment, whatever its count. Ties go to the pair whose runs have taken longest
+// on average, measured as they finish, so the longest runs don't all come
+// last.
+//
+// A level's runs can be capped: once as many of them are running as its cap,
+// the queue passes over its pairs, and a lane holding one of them waits, until
+// one ends.
 package lanes
 
 import (
@@ -45,6 +50,15 @@ type Pair struct {
 	// Load is how many runs, at most, are pinned to each of the run's
 	// cores.
 	Load int
+	// Level is the index of the pair's level, whose runs Schedule's limits
+	// may cap.
+	Level int
+}
+
+// Task is a pair, to run Count times.
+type Task struct {
+	Pair  Pair
+	Count int
 }
 
 // Run is one run of a pair, pinned to its cores.
@@ -81,23 +95,35 @@ func Split(cores []int, keep, width int) ([][]int, error) {
 	return lanes, nil
 }
 
-// Schedule runs every pair count times on r, packed into lanes, and returns
-// once every run has ended. Every pair's CPU count must be at most the width
-// of every lane, and its load at least 1. When ctx is done, Schedule starts no more runs, waits for
-// those running, and returns ctx's error.
-func Schedule(ctx context.Context, lanes [][]int, pairs []Pair, count int, r Runner) error {
+// Kept returns the keep cores that Split keeps back from cores: the first
+// ones.
+func Kept(cores []int, keep int) []int {
+	n := min(max(keep, 0), len(cores))
+	return cores[:n:n]
+}
+
+// Schedule runs each task's pair its count times on r, packed into lanes, and
+// returns once every run has ended. Every pair's CPU count must be at most the
+// width of every lane, and its load at least 1. limits caps how many runs of
+// each level run at once; a level it doesn't name, or caps at 0, isn't capped.
+// When ctx is done, Schedule starts no more runs, waits for those running, and
+// returns ctx's error.
+func Schedule(ctx context.Context, lanes [][]int, tasks []Task, limits map[int]int, r Runner) error {
 	s := &scheduler{
-		ctx:    ctx,
-		runner: r,
-		queue:  newQueue(pairs, count),
-		ended:  make(chan ended),
-		lanes:  make([]*lane, len(lanes)),
+		ctx:     ctx,
+		runner:  r,
+		queue:   newQueue(tasks),
+		ended:   make(chan ended),
+		lanes:   make([]*lane, len(lanes)),
+		limits:  limits,
+		running: map[int]int{},
 	}
-	if len(lanes) == 0 && len(pairs) > 0 && count > 0 {
-		return fmt.Errorf("no lanes to run %d pairs on", len(pairs))
+	if len(lanes) == 0 && s.queue.remaining() {
+		return fmt.Errorf("no lanes to run %d pairs on", len(tasks))
 	}
 	for i, cores := range lanes {
-		for _, p := range pairs {
+		for _, t := range tasks {
+			p := t.Pair
 			if p.CPU > len(cores) || p.CPU < 1 {
 				return fmt.Errorf("a run at CPU count %d can't fit a lane of %d cores", p.CPU, len(cores))
 			}
@@ -111,23 +137,34 @@ func Schedule(ctx context.Context, lanes [][]int, pairs []Pair, count int, r Run
 		if ctx.Err() == nil {
 			s.fill()
 		}
-		if s.running == 0 {
+		if s.runs == 0 {
 			return ctx.Err()
 		}
 		e := <-s.ended
-		s.running--
+		s.runs--
+		s.running[e.run.Pair.Level]--
 		e.lane.release(e.slots)
 		s.queue.finished(e.run.Pair, e.took)
 	}
 }
 
 type scheduler struct {
-	ctx     context.Context
-	runner  Runner
-	queue   *queue
-	lanes   []*lane
-	ended   chan ended
-	running int
+	ctx    context.Context
+	runner Runner
+	queue  *queue
+	lanes  []*lane
+	ended  chan ended
+	limits map[int]int
+	// runs is how many runs are running, and running how many of them
+	// are at each level.
+	runs    int
+	running map[int]int
+}
+
+// capped reports whether as many runs of p's level are running as its limit.
+func (s *scheduler) capped(p Pair) bool {
+	limit := s.limits[p.Level]
+	return limit > 0 && s.running[p.Level] >= limit
 }
 
 type ended struct {
@@ -144,7 +181,7 @@ func (s *scheduler) fill() {
 		changed = false
 		for _, l := range s.lanes {
 			if l.held != nil {
-				if !l.fits(*l.held) {
+				if !l.fits(*l.held) || s.capped(*l.held) {
 					continue
 				}
 				s.start(l, *l.held)
@@ -152,7 +189,7 @@ func (s *scheduler) fill() {
 				changed = true
 			}
 			for l.held == nil && l.room() {
-				p, ok := s.queue.next()
+				p, ok := s.queue.next(s.capped)
 				if !ok {
 					break
 				}
@@ -174,7 +211,8 @@ func (s *scheduler) start(l *lane, p Pair) {
 		cores[i] = l.cores[slot]
 	}
 	run := Run{Pair: p, Cores: cores}
-	s.running++
+	s.runs++
+	s.running[p.Level]++
 	go func() {
 		start := time.Now()
 		s.runner.Run(s.ctx, run)
@@ -250,30 +288,40 @@ func (l *lane) release(slots []int) {
 
 type queue struct {
 	pairs []pairState
-	count int
 }
 
 type pairState struct {
 	pair     Pair
+	count    int
 	issued   int
 	finished int
 	took     time.Duration
 }
 
-func newQueue(pairs []Pair, count int) *queue {
-	q := &queue{count: count, pairs: make([]pairState, len(pairs))}
-	for i, p := range pairs {
-		q.pairs[i] = pairState{pair: p}
+func newQueue(tasks []Task) *queue {
+	q := &queue{pairs: make([]pairState, len(tasks))}
+	for i, t := range tasks {
+		q.pairs[i] = pairState{pair: t.Pair, count: t.Count}
 	}
 	return q
 }
 
+// remaining reports whether any pair has runs left to start.
+func (q *queue) remaining() bool {
+	for _, p := range q.pairs {
+		if p.issued < p.count {
+			return true
+		}
+	}
+	return false
+}
+
 // next takes one run of the pair furthest behind its count, ties going to the
-// longest runs.
-func (q *queue) next() (Pair, bool) {
+// longest runs, passing over the pairs that skip reports.
+func (q *queue) next(skip func(Pair) bool) (Pair, bool) {
 	best := -1
 	for i, p := range q.pairs {
-		if p.issued >= q.count {
+		if p.issued >= p.count || skip(p.pair) {
 			continue
 		}
 		if best < 0 || q.before(p, q.pairs[best]) {
@@ -287,9 +335,11 @@ func (q *queue) next() (Pair, bool) {
 	return q.pairs[best].pair, true
 }
 
+// before reports whether a is further behind its count than b, by the share
+// of its runs started, or as far behind and its runs take longer.
 func (q *queue) before(a, b pairState) bool {
-	if a.issued != b.issued {
-		return a.issued < b.issued
+	if x, y := a.issued*b.count, b.issued*a.count; x != y {
+		return x < y
 	}
 	return a.mean() > b.mean()
 }

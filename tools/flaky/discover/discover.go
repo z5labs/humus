@@ -4,8 +4,14 @@
 // https://opensource.org/licenses/MIT
 
 // Package discover finds what flaky runs: the repository's modules, and the
-// packages in them that have tests. It keeps no list of either, so adding or
-// removing a module, a package or a test changes nothing in flaky.
+// packages in them that have tests at each level. It keeps no list of either,
+// so adding or removing a module, a package or a test changes nothing in
+// flaky.
+//
+// A level is the tests a build tag adds. The unit level is the untagged
+// tests; any other level is named after its tag, such as testcontainers, and
+// its tests are the ones a binary built with the tag has and the untagged
+// binary doesn't.
 package discover
 
 import (
@@ -22,7 +28,19 @@ import (
 	"strings"
 )
 
-// Package is a package that has test files.
+// Unit is the level of the untagged tests.
+const Unit = "unit"
+
+// Tag returns the build tag that the binaries of level are built with: none
+// for Unit, and the level's name for any other.
+func Tag(level string) string {
+	if level == Unit {
+		return ""
+	}
+	return level
+}
+
+// Package is a package that has test files at a level.
 type Package struct {
 	// Module is the directory of the package's module, relative to the
 	// repository's root, such as grpc, or . for the root module.
@@ -32,6 +50,12 @@ type Package struct {
 	Dir string `json:"dir"`
 	// ImportPath is the package's import path.
 	ImportPath string `json:"importPath"`
+	// Level is the level whose tests the package's binary runs.
+	Level string `json:"level"`
+	// Untagged reports, of a package at a tagged level, that it has test
+	// files without the tag too, so its binary built without the tag may
+	// have tests of its own, which its level's binary has too.
+	Untagged bool `json:"-"`
 }
 
 // Root returns the root of the git repository that holds dir.
@@ -75,12 +99,20 @@ func Modules(ctx context.Context, root string, env []string) ([]string, error) {
 	return modules, nil
 }
 
-// Packages returns the packages with test files, in the modules, that the
-// patterns match. A pattern is a directory from the repository's root, such as
+// Packages returns the packages with test files at each of levels, in the
+// modules, that the patterns match, module by module and, in each, level by
+// level.
+//
+// A package is at the unit level when it has test files. It is at any other
+// level when its tag changes its test files, so that its binary built with
+// the tag may have tests the untagged one doesn't; which tests those are is
+// known only once both are built.
+//
+// A pattern is a directory from the repository's root, such as
 // ./grpc/grpchealth, or ends in /... to match every directory under it too,
 // such as ./grpc/... or ./... With no patterns, every package matches. Every
-// pattern must match at least one package.
-func Packages(ctx context.Context, root string, modules, patterns []string, env []string) ([]Package, error) {
+// pattern must match at least one package, at some level.
+func Packages(ctx context.Context, root string, modules, patterns, levels []string, env []string) ([]Package, error) {
 	matchers := make([]matcher, 0, len(patterns))
 	for _, p := range patterns {
 		m, err := parsePattern(p)
@@ -99,7 +131,7 @@ func Packages(ctx context.Context, root string, modules, patterns []string, env 
 		if !slices.ContainsFunc(matchers, func(m matcher) bool { return m.overlaps(module) }) {
 			continue
 		}
-		found, err := modulePackages(ctx, root, module, env)
+		found, err := levelPackages(ctx, root, module, levels, env)
 		if err != nil {
 			return nil, err
 		}
@@ -124,28 +156,74 @@ func Packages(ctx context.Context, root string, modules, patterns []string, env 
 	return pkgs, nil
 }
 
-// modulePackages returns the packages with test files in the module dir.
-func modulePackages(ctx context.Context, root, module string, env []string) ([]Package, error) {
-	out, err := command(ctx, filepath.Join(root, module), env,
-		"go", "list", "-f", "{{.ImportPath}}\t{{.Dir}}\t{{len .TestGoFiles}}\t{{len .XTestGoFiles}}", "./...")
+// levelPackages returns the packages with test files at each of levels in
+// the module dir, level by level.
+func levelPackages(ctx context.Context, root, module string, levels []string, env []string) ([]Package, error) {
+	untagged, err := modulePackages(ctx, root, module, "", env)
 	if err != nil {
 		return nil, err
 	}
+	files := make(map[string]string, len(untagged))
+	for _, l := range untagged {
+		files[l.ImportPath] = l.files
+	}
 	var pkgs []Package
+	for _, level := range levels {
+		listed := untagged
+		if tag := Tag(level); tag != "" {
+			if listed, err = modulePackages(ctx, root, module, tag, env); err != nil {
+				return nil, err
+			}
+		}
+		for _, l := range listed {
+			untagged, ok := files[l.ImportPath]
+			if Tag(level) != "" && untagged == l.files {
+				continue
+			}
+			l.Level = level
+			l.Untagged = Tag(level) != "" && ok
+			pkgs = append(pkgs, l.Package)
+		}
+	}
+	return pkgs, nil
+}
+
+// listed is a package with test files, and those files.
+type listed struct {
+	Package
+	files string
+}
+
+// modulePackages returns the packages with test files in the module dir,
+// built with tag, or with none when tag is "".
+func modulePackages(ctx context.Context, root, module, tag string, env []string) ([]listed, error) {
+	args := []string{"list"}
+	if tag != "" {
+		args = append(args, "-tags", tag)
+	}
+	args = append(args, "-f", "{{.ImportPath}}\t{{.Dir}}\t{{join .TestGoFiles \",\"}}\t{{join .XTestGoFiles \",\"}}", "./...")
+	out, err := command(ctx, filepath.Join(root, module), env, "go", args...)
+	if err != nil {
+		return nil, err
+	}
+	var pkgs []listed
 	sc := bufio.NewScanner(strings.NewReader(out))
 	for sc.Scan() {
 		fields := strings.Split(sc.Text(), "\t")
 		if len(fields) != 4 {
 			return nil, fmt.Errorf("go list in %s printed %q", module, sc.Text())
 		}
-		if fields[2] == "0" && fields[3] == "0" {
+		if fields[2] == "" && fields[3] == "" {
 			continue
 		}
 		dir, err := filepath.Rel(root, fields[1])
 		if err != nil {
 			return nil, err
 		}
-		pkgs = append(pkgs, Package{Module: module, Dir: filepath.ToSlash(dir), ImportPath: fields[0]})
+		pkgs = append(pkgs, listed{
+			Package: Package{Module: module, Dir: filepath.ToSlash(dir), ImportPath: fields[0]},
+			files:   fields[2] + "\t" + fields[3],
+		})
 	}
 	return pkgs, nil
 }

@@ -94,6 +94,15 @@ func (f *fakeRunner) Run(ctx context.Context, r Run) {
 	f.started[i].end = time.Now()
 }
 
+// tasks returns each of pairs, to run count times.
+func tasks(pairs []Pair, count int) []Task {
+	out := make([]Task, len(pairs))
+	for i, p := range pairs {
+		out[i] = Task{Pair: p, Count: count}
+	}
+	return out
+}
+
 func cores(from, n int) []int {
 	out := make([]int, n)
 	for i := range out {
@@ -116,6 +125,13 @@ func TestSplit_keeps_back_the_first_cores_and_splits_the_rest_into_lanes(t *test
 	lanes, err = Split([]int{3, 5, 7, 9}, 0, 2)
 	require.NoError(t, err)
 	require.Equal(t, [][]int{{3, 5}, {7, 9}}, lanes, "the cores are the ones given, not 0..n")
+}
+
+func TestKept_returns_the_cores_Split_keeps_back(t *testing.T) {
+	require.Equal(t, []int{0, 1, 2}, Kept(cores(0, 8), 3))
+	require.Equal(t, []int{3, 5}, Kept([]int{3, 5, 7, 9}, 2))
+	require.Empty(t, Kept(cores(0, 8), 0))
+	require.Equal(t, cores(0, 2), Kept(cores(0, 2), 4), "it keeps back no more cores than there are")
 }
 
 func TestSplit_refuses_cores_that_leave_no_lane(t *testing.T) {
@@ -153,7 +169,7 @@ func TestSchedule_never_pins_more_runs_to_a_core_than_its_lane_s_load_and_runs_e
 			var schedErr error
 			synctest.Test(t, func(t *testing.T) {
 				f = newFakeRunner(lanes, func(r Run) time.Duration { return took[r.Pair] })
-				schedErr = Schedule(t.Context(), lanes, pairs, count, f)
+				schedErr = Schedule(t.Context(), lanes, tasks(pairs, count), nil, f)
 			})
 			require.NoError(t, schedErr)
 			require.Empty(t, f.violations)
@@ -182,7 +198,7 @@ func TestSchedule_holds_a_task_that_does_not_fit_and_starts_it_as_soon_as_its_la
 			}
 			return 3 * time.Second
 		})
-		require.NoError(t, Schedule(t.Context(), lanes, pairs, 2, f))
+		require.NoError(t, Schedule(t.Context(), lanes, tasks(pairs, 2), nil, f))
 	})
 	require.Len(t, f.started, 4)
 	// The lane takes the run at cpu 1, then the run at cpu 4, which
@@ -203,7 +219,7 @@ func TestSchedule_keeps_other_lanes_taking_tasks_while_one_holds(t *testing.T) {
 	var f *fakeRunner
 	synctest.Test(t, func(t *testing.T) {
 		f = newFakeRunner(lanes, func(r Run) time.Duration { return time.Second })
-		require.NoError(t, Schedule(t.Context(), lanes, pairs, 1, f))
+		require.NoError(t, Schedule(t.Context(), lanes, tasks(pairs, 1), nil, f))
 	})
 	// Lane 0 takes package 0 at cpu 1, then holds package 1 at cpu 2.
 	// Lane 1 takes package 2 meanwhile.
@@ -225,7 +241,7 @@ func TestSchedule_runs_first_the_pair_furthest_behind_and_breaks_ties_by_the_lon
 		f = newFakeRunner(lanes, func(r Run) time.Duration {
 			return time.Duration(r.Pair.Package+1) * time.Second
 		})
-		require.NoError(t, Schedule(t.Context(), lanes, pairs, 3, f))
+		require.NoError(t, Schedule(t.Context(), lanes, tasks(pairs, 3), nil, f))
 	})
 	var order []int
 	for _, s := range f.started {
@@ -255,7 +271,7 @@ func TestSchedule_pins_up_to_load_runs_to_each_core_of_a_lane(t *testing.T) {
 			var err error
 			synctest.Test(t, func(t *testing.T) {
 				f = newFakeRunner(lanes, func(r Run) time.Duration { return time.Second })
-				err = Schedule(t.Context(), lanes, []Pair{tc.pair}, tc.atOnce, f)
+				err = Schedule(t.Context(), lanes, tasks([]Pair{tc.pair}, tc.atOnce), nil, f)
 			})
 			require.NoError(t, err)
 			require.Empty(t, f.violations)
@@ -278,7 +294,7 @@ func TestSchedule_holds_a_task_at_another_load_until_its_lane_has_drained(t *tes
 		f = newFakeRunner(lanes, func(r Run) time.Duration {
 			return time.Duration(r.Pair.Load) * time.Second
 		})
-		require.NoError(t, Schedule(t.Context(), lanes, pairs, 1, f))
+		require.NoError(t, Schedule(t.Context(), lanes, tasks(pairs, 1), nil, f))
 	})
 	require.Empty(t, f.violations)
 	require.Len(t, f.started, 2)
@@ -299,7 +315,7 @@ func TestSchedule_runs_first_the_package_CPU_count_and_load_furthest_behind(t *t
 		f = newFakeRunner(lanes, func(r Run) time.Duration {
 			return time.Duration(3-r.Pair.Load) * time.Second
 		})
-		require.NoError(t, Schedule(t.Context(), lanes, pairs, 3, f))
+		require.NoError(t, Schedule(t.Context(), lanes, tasks(pairs, 3), nil, f))
 	})
 	require.Empty(t, f.violations)
 	var loads []int
@@ -320,18 +336,90 @@ func TestSchedule_stops_starting_runs_when_its_context_is_done(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 2500*time.Millisecond)
 		defer cancel()
 		f = newFakeRunner(lanes, func(r Run) time.Duration { return time.Second })
-		err = Schedule(ctx, lanes, pairs, 100, f)
+		err = Schedule(ctx, lanes, tasks(pairs, 100), nil, f)
 	})
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.Len(t, f.started, 3, "the run going at the deadline is waited for, and no more start")
 }
 
 func TestSchedule_refuses_a_run_wider_than_a_lane_a_load_below_1_and_pairs_with_no_lanes(t *testing.T) {
-	err := Schedule(t.Context(), [][]int{{0, 1}}, []Pair{{Package: 0, CPU: 4, Load: 1}}, 1, newFakeRunner(nil, nil))
+	err := Schedule(t.Context(), [][]int{{0, 1}}, tasks([]Pair{{Package: 0, CPU: 4, Load: 1}}, 1), nil, newFakeRunner(nil, nil))
 	require.ErrorContains(t, err, "a run at CPU count 4 can't fit a lane of 2 cores")
-	err = Schedule(t.Context(), [][]int{{0, 1}}, []Pair{{Package: 0, CPU: 1, Load: 0}}, 1, newFakeRunner(nil, nil))
+	err = Schedule(t.Context(), [][]int{{0, 1}}, tasks([]Pair{{Package: 0, CPU: 1, Load: 0}}, 1), nil, newFakeRunner(nil, nil))
 	require.ErrorContains(t, err, "a run can't be at load 0")
-	err = Schedule(t.Context(), nil, []Pair{{Package: 0, CPU: 1, Load: 1}}, 1, newFakeRunner(nil, nil))
+	err = Schedule(t.Context(), nil, tasks([]Pair{{Package: 0, CPU: 1, Load: 1}}, 1), nil, newFakeRunner(nil, nil))
 	require.ErrorContains(t, err, "no lanes")
-	require.NoError(t, Schedule(t.Context(), [][]int{{0}}, nil, 1, newFakeRunner(nil, nil)))
+	require.NoError(t, Schedule(t.Context(), [][]int{{0}}, tasks(nil, 1), nil, newFakeRunner(nil, nil)))
+}
+
+func TestSchedule_runs_first_the_pair_furthest_behind_by_the_share_of_its_count_started(t *testing.T) {
+	lanes := [][]int{{0}}
+	var f *fakeRunner
+	synctest.Test(t, func(t *testing.T) {
+		f = newFakeRunner(lanes, func(r Run) time.Duration { return time.Second })
+		require.NoError(t, Schedule(t.Context(), lanes, []Task{
+			{Pair: Pair{Package: 0, CPU: 1, Load: 1}, Count: 4},
+			{Pair: Pair{Package: 1, CPU: 1, Load: 1}, Count: 2},
+		}, nil, f))
+	})
+	var order []int
+	for _, s := range f.started {
+		order = append(order, s.run.Pair.Package)
+	}
+	// Package 1 runs half as many times as package 0, so it runs once for
+	// each two runs of package 0, and both finish together.
+	require.Equal(t, []int{0, 1, 0, 0, 1, 0}, order)
+}
+
+func TestSchedule_runs_no_more_of_a_level_s_runs_at_once_than_its_limit(t *testing.T) {
+	lanes := [][]int{{0}, {1}, {2}, {3}}
+	capped := Pair{Package: 0, CPU: 1, Load: 1, Level: 1}
+	other := Pair{Package: 1, CPU: 1, Load: 1}
+	var c *countingRunner
+	synctest.Test(t, func(t *testing.T) {
+		c = &countingRunner{level: 1, f: newFakeRunner(lanes, func(r Run) time.Duration {
+			if r.Pair.Level == 1 {
+				return 3 * time.Second
+			}
+			return time.Second
+		})}
+		require.NoError(t, Schedule(t.Context(), lanes, []Task{{Pair: capped, Count: 6}, {Pair: other, Count: 6}}, map[int]int{1: 2}, c))
+	})
+	require.Empty(t, c.f.violations)
+	require.Equal(t, 2, c.most, "no more than 2 of level 1's runs at once")
+	require.Equal(t, 6, c.f.runs[capped])
+	require.Equal(t, 6, c.f.runs[other])
+	var firstOther time.Time
+	for _, s := range c.f.started {
+		if s.run.Pair == other {
+			firstOther = s.start
+			break
+		}
+	}
+	require.Equal(t, c.f.started[0].start, firstOther, "the lanes the cap leaves take the other level's runs at once")
+}
+
+// countingRunner runs on f, and counts the most runs of level running at
+// once.
+type countingRunner struct {
+	f     *fakeRunner
+	level int
+
+	mu            sync.Mutex
+	running, most int
+}
+
+func (c *countingRunner) Run(ctx context.Context, r Run) {
+	if r.Pair.Level == c.level {
+		c.mu.Lock()
+		c.running++
+		c.most = max(c.most, c.running)
+		c.mu.Unlock()
+		defer func() {
+			c.mu.Lock()
+			c.running--
+			c.mu.Unlock()
+		}()
+	}
+	c.f.Run(ctx, r)
 }

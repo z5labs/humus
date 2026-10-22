@@ -31,24 +31,36 @@ const maxLines = 50
 
 // Config is what a sweep ran.
 type Config struct {
+	// Packages are the packages it ran, each at the level of Levels that
+	// its Level names.
 	Packages []discover.Package
 	CPUs     []int
 	Loads    []int
-	// Count is how many times each package ran at each pair of CPU count
-	// and load.
-	Count int
-	// Confirm is how many times each test that failed or hung in the sweep
-	// ran alone at each pair of CPU count and load, or 0 for no confirm
-	// runs.
-	Confirm int
-	Timeout time.Duration
-	// DefaultTimeout is -timeout's default, which the reproducing
-	// commands leave out.
-	DefaultTimeout time.Duration
+	Levels   []Level
 	// Run and Skip are the sweep runs' -run and -skip, when set.
 	Run, Skip string
 	// Out is the directory failures' output is saved under.
 	Out string
+}
+
+// Level is how a sweep ran the packages at one level.
+type Level struct {
+	// Name is the level's name, such as unit or testcontainers.
+	Name string `json:"name"`
+	// Count is how many times each package ran at each pair of CPU count
+	// and load.
+	Count int `json:"count"`
+	// Confirm is how many times each test that failed or hung in the sweep
+	// ran alone at each pair of CPU count and load, or 0 for no confirm
+	// runs.
+	Confirm int `json:"confirm"`
+	// Timeout is each run's -test.timeout.
+	Timeout time.Duration `json:"-"`
+	// DefaultTimeout is the level's default -timeout, which the
+	// reproducing commands leave out.
+	DefaultTimeout time.Duration `json:"-"`
+	// TimeoutSeconds is Timeout in seconds.
+	TimeoutSeconds float64 `json:"timeoutSeconds"`
 }
 
 // Results counts a sweep's runs. It is safe for concurrent use.
@@ -103,11 +115,26 @@ type counts struct {
 
 // New returns empty results for the sweep cfg.
 func New(cfg Config) *Results {
+	cfg.Levels = slices.Clone(cfg.Levels)
+	for i := range cfg.Levels {
+		cfg.Levels[i].TimeoutSeconds = cfg.Levels[i].Timeout.Seconds()
+	}
 	return &Results{
 		cfg:    cfg,
 		listed: make([][]string, len(cfg.Packages)),
 		tests:  map[key]*entry{},
 	}
+}
+
+// level returns the level of the package at index pkg.
+func (r *Results) level(pkg int) Level {
+	name := r.cfg.Packages[pkg].Level
+	for _, l := range r.cfg.Levels {
+		if l.Name == name {
+			return l
+		}
+	}
+	return Level{Name: name}
 }
 
 // Listed records the top-level tests that the binary of the package at
@@ -287,13 +314,11 @@ type Report struct {
 	CPUs []int `json:"cpus"`
 	// Loads are the loads it ran each package at.
 	Loads []int `json:"loads"`
-	// Count is how many times it ran each package at each pair of CPU
-	// count and load.
-	Count int `json:"count"`
-	// Confirm is how many times it ran each test that failed or hung in
-	// the sweep alone, at each pair of CPU count and load, or 0 when it
-	// had no confirm runs, as with -run.
-	Confirm int `json:"confirm"`
+	// Levels are the levels it ran, and how: how many times it ran each
+	// of their packages at each pair of CPU count and load, and how many
+	// times it ran each of their tests that failed or hung in the sweep
+	// alone, or 0 times when it had no confirm runs, as with -run.
+	Levels []Level `json:"levels"`
 	// Confirmed is the number of tests it confirmed, and ConfirmRuns the
 	// number of their confirm runs.
 	Confirmed   int `json:"confirmed"`
@@ -326,6 +351,8 @@ type Test struct {
 	// repository's root.
 	Package    string `json:"package"`
 	ImportPath string `json:"importPath"`
+	// Level is the level the test ran at.
+	Level string `json:"level"`
 	// Test is the test's full name, or "" for a failure outside any test.
 	Test string `json:"test"`
 	// Confirmed reports that the test was confirmed, so Runs, Failures,
@@ -391,8 +418,7 @@ func (r *Results) Report() Report {
 	rep := Report{
 		CPUs:     r.cfg.CPUs,
 		Loads:    r.cfg.Loads,
-		Count:    r.cfg.Count,
-		Confirm:  r.cfg.Confirm,
+		Levels:   r.cfg.Levels,
 		Packages: r.cfg.Packages,
 		Output:   r.cfg.Out,
 		Flaky:    []Test{},
@@ -443,9 +469,11 @@ func (r *Results) Report() Report {
 
 func (r *Results) test(k key, e *entry) (Test, bool) {
 	pkg := r.cfg.Packages[k.pkg]
+	level := r.level(k.pkg)
 	t := Test{
 		Package:          pkg.Dir,
 		ImportPath:       pkg.ImportPath,
+		Level:            level.Name,
 		Test:             k.test,
 		FirstFailure:     e.first,
 		FirstFailureCPU:  e.firstPair.cpu,
@@ -453,9 +481,9 @@ func (r *Results) test(k key, e *entry) (Test, bool) {
 		FirstFailureSeed: e.firstSeed,
 		Output:           filepath.Join(r.cfg.Out, r.dir(k)),
 	}
-	table, count := e.pairs, r.cfg.Count
+	table, count := e.pairs, level.Count
 	if e.confirm != nil {
-		table, count = e.confirm, r.cfg.Confirm
+		table, count = e.confirm, level.Confirm
 		t.Confirmed = true
 	}
 	failing := false
@@ -485,7 +513,7 @@ func (r *Results) test(k key, e *entry) (Test, bool) {
 	if c := table[worst]; c != nil {
 		t.Seed = c.seed
 	}
-	t.Reproduce, t.ReproduceGoTest = r.reproduce(pkg, k.test, worst, count, t.Seed, sweep)
+	t.Reproduce, t.ReproduceGoTest = r.reproduce(pkg, level, k.test, worst, count, t.Seed, sweep)
 	return t, failing
 }
 
@@ -510,8 +538,9 @@ func (r *Results) worst(table map[pair]*counts) (pair, float64) {
 }
 
 // reproduce returns the commands that run test, or the whole package when
-// test is "", at the pair at, count times. The go test command runs at at's
-// CPU count, since it can't reproduce a load.
+// test is "", at level and at the pair at, count times. The go test command
+// runs at at's CPU count, since it can't reproduce a load, and with the
+// level's tag.
 //
 // With a seed, both commands shuffle with it. A seed reproduces the order of
 // the tests that ran, so when it is a sweep run's, from the sweep, they run
@@ -519,7 +548,7 @@ func (r *Results) worst(table map[pair]*counts) (pair, float64) {
 // test that fails only after another passes alone. The flaky command's -run
 // is then "." when the sweep had none, so it runs the package count times
 // rather than sweeping and confirming.
-func (r *Results) reproduce(pkg discover.Package, test string, at pair, count int, seed *int64, sweep bool) (string, string) {
+func (r *Results) reproduce(pkg discover.Package, level Level, test string, at pair, count int, seed *int64, sweep bool) (string, string) {
 	cpu := at.cpu
 	pattern, skip := RunPattern(test), ""
 	shuffle := ""
@@ -532,7 +561,7 @@ func (r *Results) reproduce(pkg discover.Package, test string, at pair, count in
 			}
 		}
 	}
-	flaky := []string{"flaky", "stress"}
+	flaky := []string{"flaky", "stress", "-tags", level.Name}
 	if pattern != "" {
 		flaky = append(flaky, "-run", quote(pattern))
 	}
@@ -543,8 +572,8 @@ func (r *Results) reproduce(pkg discover.Package, test string, at pair, count in
 		flaky = append(flaky, shuffle)
 	}
 	flaky = append(flaky, "-cpu", strconv.Itoa(cpu), "-load", strconv.Itoa(at.load), "-count", strconv.Itoa(count))
-	if r.cfg.Timeout != r.cfg.DefaultTimeout {
-		flaky = append(flaky, "-timeout", r.cfg.Timeout.String())
+	if level.Timeout != level.DefaultTimeout {
+		flaky = append(flaky, "-timeout", level.Timeout.String())
 	}
 	flaky = append(flaky, "./"+pkg.Dir)
 
@@ -559,8 +588,11 @@ func (r *Results) reproduce(pkg discover.Package, test string, at pair, count in
 	if cpu > 1 {
 		cores = "0-" + strconv.Itoa(cpu-1)
 	}
-	goTest := []string{"taskset", "-c", cores, "go", "-C", pkg.Module, "test", "-race", "-cover",
-		"-count=" + strconv.Itoa(count), "-cpu", strconv.Itoa(cpu), "-timeout", r.cfg.Timeout.String()}
+	goTest := []string{"taskset", "-c", cores, "go", "-C", pkg.Module, "test", "-race", "-cover"}
+	if tag := discover.Tag(level.Name); tag != "" {
+		goTest = append(goTest, "-tags", tag)
+	}
+	goTest = append(goTest, "-count="+strconv.Itoa(count), "-cpu", strconv.Itoa(cpu), "-timeout", level.Timeout.String())
 	if pattern != "" {
 		goTest = append(goTest, "-run", quote(pattern))
 	}
@@ -625,7 +657,7 @@ func WriteText(w io.Writer, rep Report) error {
 		p.printf("\n")
 	}
 	p.printf("%s passed every run\n", plural(rep.Passed, "test", "tests"))
-	if rep.Confirm > 0 {
+	if slices.ContainsFunc(rep.Levels, func(l Level) bool { return l.Confirm > 0 }) {
 		p.printf("confirmed %s in %s\n", plural(rep.Confirmed, "test", "tests"), plural(rep.ConfirmRuns, "run", "runs"))
 	}
 	phases := make([]string, len(rep.Phases))
@@ -652,6 +684,9 @@ func (p *printer) test(t Test) {
 	name := t.Test
 	if name == "" {
 		name = "(outside any test)"
+	}
+	if t.Level != "" && t.Level != discover.Unit {
+		name += "  (" + t.Level + ")"
 	}
 	p.printf("\n%s  %s\n", t.Package, name)
 	p.printf("    %-14s %9s %9s %9s\n", "", "failures", "hangs", "runs")

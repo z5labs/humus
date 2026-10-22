@@ -43,8 +43,13 @@ type fakeRunner struct {
 	hang        func(pkg, cpu int) bool
 	packageFail func(pkg, cpu int) bool
 	confirmFail func(pkg, cpu int) bool
+	// noTests are the packages whose binaries list no tests.
+	noTests map[int]bool
 
 	mu           sync.Mutex
+	firstList    time.Time
+	runningPkg   map[int]int
+	maxPkg       map[int]int
 	lastBuilt    time.Time
 	builds       int
 	firstRun     time.Time
@@ -81,6 +86,8 @@ func newFakeRunner() *fakeRunner {
 		confirmFail: func(int, int) bool { return false },
 		runs:        map[pkgCPU]int{},
 		confirms:    map[confirmRun]int{},
+		runningPkg:  map[int]int{},
+		maxPkg:      map[int]int{},
 		pinned:      map[int]int{},
 	}
 }
@@ -97,6 +104,14 @@ func (f *fakeRunner) Build(ctx context.Context, pkg int) error {
 }
 
 func (f *fakeRunner) List(ctx context.Context, pkg int) ([]string, error) {
+	f.mu.Lock()
+	if f.firstList.IsZero() {
+		f.firstList = time.Now()
+	}
+	f.mu.Unlock()
+	if f.noTests[pkg] {
+		return nil, f.listErr[pkg]
+	}
 	return []string{"TestA"}, f.listErr[pkg]
 }
 
@@ -119,6 +134,8 @@ func (f *fakeRunner) Run(ctx context.Context, pkg int, test string, cpu int, cor
 	}
 	f.running++
 	f.maxRunning = max(f.maxRunning, f.running)
+	f.runningPkg[pkg]++
+	f.maxPkg[pkg] = max(f.maxPkg[pkg], f.runningPkg[pkg])
 	f.mu.Unlock()
 	defer func() {
 		f.mu.Lock()
@@ -127,6 +144,7 @@ func (f *fakeRunner) Run(ctx context.Context, pkg int, test string, cpu int, cor
 			f.pinned[c]--
 		}
 		f.running--
+		f.runningPkg[pkg]--
 		if now := time.Now(); test == "" && now.After(f.lastSweepEnd) {
 			f.lastSweepEnd = now
 		}
@@ -159,9 +177,9 @@ func newResults(t *testing.T, n int, cpus, loads []int, count int) *results.Resu
 func newConfirmResults(t *testing.T, n int, cpus, loads []int, count, confirm int) *results.Results {
 	pkgs := make([]discover.Package, n)
 	for i := range pkgs {
-		pkgs[i] = discover.Package{Module: ".", Dir: fmt.Sprintf("p%d", i), ImportPath: fmt.Sprintf("example.com/p%d", i)}
+		pkgs[i] = discover.Package{Module: ".", Dir: fmt.Sprintf("p%d", i), ImportPath: fmt.Sprintf("example.com/p%d", i), Level: "unit"}
 	}
-	return results.New(results.Config{Packages: pkgs, CPUs: cpus, Loads: loads, Count: count, Confirm: confirm, Out: t.TempDir()})
+	return results.New(results.Config{Packages: pkgs, CPUs: cpus, Loads: loads, Out: t.TempDir(), Levels: []results.Level{{Name: "unit", Count: count, Confirm: confirm}}})
 }
 
 func TestStress_starts_no_run_before_every_build_has_finished_and_runs_each_pair_count_times(t *testing.T) {
@@ -183,11 +201,12 @@ func TestStress_starts_no_run_before_every_build_has_finished_and_runs_each_pair
 	var stressErr error
 	synctest.Test(t, func(t *testing.T) {
 		phases, stressErr = stress.Stress(t.Context(), stress.Config{
-			Packages: n, CPUs: cpus, Loads: loads, Count: count, Lanes: lanesOf, Builds: 3,
+			Levels: []stress.Level{{Name: "unit", Count: count}}, Packages: make([]int, n), CPUs: cpus, Loads: loads, Lanes: lanesOf, Builds: 3,
 		}, f, res)
 	})
 	require.NoError(t, stressErr)
 	require.Equal(t, n, f.builds)
+	require.False(t, f.firstList.Before(f.lastBuilt), "a binary was listed at %s, before the last build finished at %s", f.firstList, f.lastBuilt)
 	require.False(t, f.firstRun.Before(f.lastBuilt), "a run started at %s, before the last build finished at %s", f.firstRun, f.lastBuilt)
 	require.Equal(t, 2, f.maxPinned, "runs at load 2 share their cores, and no core has more than 2")
 	require.Len(t, f.runs, n*len(cpus))
@@ -235,7 +254,7 @@ func TestStress_confirms_each_test_that_failed_or_hung_only_once_every_sweep_run
 	var stressErr error
 	synctest.Test(t, func(t *testing.T) {
 		phases, stressErr = stress.Stress(t.Context(), stress.Config{
-			Packages: n, CPUs: cpus, Loads: loads, Count: count, Confirm: confirm, Lanes: lanesOf, Builds: 3, Log: &log,
+			Levels: []stress.Level{{Name: "unit", Count: count, Confirm: confirm}}, Packages: make([]int, n), CPUs: cpus, Loads: loads, Lanes: lanesOf, Builds: 3, Log: &log,
 		}, f, res)
 	})
 	require.NoError(t, stressErr)
@@ -252,10 +271,10 @@ func TestStress_confirms_each_test_that_failed_or_hung_only_once_every_sweep_run
 	}
 	require.Equal(t, want, f.confirms, "each test that failed or hung runs alone confirm times at every pair, and a failure outside any test isn't confirmed")
 	require.Positive(t, phases.Confirm)
-	require.Contains(t, log.String(), "confirming 2 tests, 7 times at each pair of CPU count and load\n")
+	require.Contains(t, log.String(), "confirming 2 unit tests, 7 times at each pair of CPU count and load\n")
 
 	rep := res.Report()
-	require.Equal(t, confirm, rep.Confirm)
+	require.Equal(t, confirm, rep.Levels[0].Confirm)
 	require.Equal(t, 2, rep.Confirmed)
 	require.Equal(t, 2*len(cpus)*len(loads)*confirm, rep.ConfirmRuns)
 	require.Len(t, rep.Failing, 2, "p1 failed every confirm run at cpu 4, and p5 every sweep run")
@@ -275,7 +294,56 @@ func TestStress_confirms_each_test_that_failed_or_hung_only_once_every_sweep_run
 	require.True(t, p4.Confirmed)
 	require.Equal(t, len(cpus)*len(loads)*confirm, p4.Runs)
 	require.Zero(t, p4.Hangs+p4.Failures, "it passed every confirm run")
-	require.Equal(t, "flaky stress -run '^TestA$' -cpu 1 -load 1 -count 7 ./p4", p4.Reproduce, "with no confirm failure, the sweep's pair reproduces it")
+	require.Equal(t, "flaky stress -tags unit -run '^TestA$' -cpu 1 -load 1 -count 7 ./p4", p4.Reproduce, "with no confirm failure, the sweep's pair reproduces it")
+}
+
+func TestStress_runs_each_level_s_packages_its_count_and_confirm_times_no_more_at_once_than_its_limit(t *testing.T) {
+	cpus, loads := []int{1, 2}, []int{1, 2}
+	lanesOf, err := lanes.Split(cores(12), 4, 4)
+	require.NoError(t, err)
+	f := newFakeRunner()
+	f.runTook = func(pkg, cpu int) time.Duration { return time.Duration(1+pkg) * time.Second }
+	// p0 is at the unit level, and p1 and p2 at the testcontainers level,
+	// which runs only tests of its own: p2's binary has none. p1 fails at
+	// cpu 1, in its sweep runs and its confirm runs.
+	f.noTests = map[int]bool{2: true}
+	f.fail = func(pkg, cpu int) bool { return pkg == 1 && cpu == 1 }
+	f.confirmFail = f.fail
+	pkgs := []discover.Package{
+		{Module: ".", Dir: "p0", ImportPath: "example.com/p0", Level: "unit"},
+		{Module: ".", Dir: "p1", ImportPath: "example.com/p1", Level: "testcontainers"},
+		{Module: ".", Dir: "p2", ImportPath: "example.com/p2", Level: "testcontainers"},
+	}
+	res := results.New(results.Config{Packages: pkgs, CPUs: cpus, Loads: loads, Out: t.TempDir(), Levels: []results.Level{
+		{Name: "unit", Count: 6}, {Name: "testcontainers", Count: 2, Confirm: 3},
+	}})
+	var log bytes.Buffer
+	synctest.Test(t, func(t *testing.T) {
+		_, err = stress.Stress(t.Context(), stress.Config{
+			Levels: []stress.Level{
+				{Name: "unit", Count: 6},
+				{Name: "testcontainers", Count: 2, Confirm: 3, Limit: 1, Own: true},
+			},
+			Packages: []int{0, 1, 1}, CPUs: cpus, Loads: loads, Lanes: lanesOf, Builds: 3, Log: &log,
+		}, f, res)
+	})
+	require.NoError(t, err)
+	require.Equal(t, 3, f.builds, "p2 is built and listed, though it doesn't run")
+	require.Equal(t, map[pkgCPU]int{
+		{0, 1}: 6 * len(loads), {0, 2}: 6 * len(loads),
+		{1, 1}: 2 * len(loads), {1, 2}: 2 * len(loads),
+	}, f.runs, "each level's packages run its count times, and p2 not at all")
+	require.Equal(t, map[confirmRun]int{
+		{1, "TestA", 1}: 3 * len(loads), {1, "TestA", 2}: 3 * len(loads),
+	}, f.confirms, "a test confirms its level's confirm times, and the unit level confirms none")
+	require.Equal(t, 1, f.maxPkg[1], "no more than 1 of the testcontainers level's runs at once")
+	require.Greater(t, f.maxPkg[0], 1, "the unit level isn't capped")
+	require.Contains(t, log.String(), "confirming 1 testcontainers tests, 3 times at each pair of CPU count and load\n")
+
+	rep := res.Report()
+	require.Len(t, rep.Failing, 1)
+	require.Equal(t, "testcontainers", rep.Failing[0].Level)
+	require.Equal(t, "flaky stress -tags testcontainers -run '^TestA$' -cpu 1 -load 1 -count 3 ./p1", rep.Failing[0].Reproduce)
 }
 
 func TestStress_confirms_nothing_when_its_confirm_count_is_0(t *testing.T) {
@@ -286,7 +354,7 @@ func TestStress_confirms_nothing_when_its_confirm_count_is_0(t *testing.T) {
 	var err error
 	synctest.Test(t, func(t *testing.T) {
 		phases, err = stress.Stress(t.Context(), stress.Config{
-			Packages: 2, CPUs: []int{1}, Loads: []int{1, 2}, Count: 3, Lanes: [][]int{{0}},
+			Levels: []stress.Level{{Name: "unit", Count: 3}}, Packages: make([]int, 2), CPUs: []int{1}, Loads: []int{1, 2}, Lanes: [][]int{{0}},
 		}, f, res)
 	})
 	require.NoError(t, err)
@@ -304,7 +372,7 @@ func TestStress_confirms_nothing_when_every_test_passed(t *testing.T) {
 	var err error
 	synctest.Test(t, func(t *testing.T) {
 		_, err = stress.Stress(t.Context(), stress.Config{
-			Packages: 2, CPUs: []int{1}, Loads: []int{1}, Count: 3, Confirm: 5, Lanes: [][]int{{0}}, Log: &log,
+			Levels: []stress.Level{{Name: "unit", Count: 3, Confirm: 5}}, Packages: make([]int, 2), CPUs: []int{1}, Loads: []int{1}, Lanes: [][]int{{0}}, Log: &log,
 		}, f, newConfirmResults(t, 2, []int{1}, []int{1}, 3, 5))
 	})
 	require.NoError(t, err)
@@ -321,7 +389,7 @@ func TestStress_stops_before_confirming_when_its_context_is_done_during_the_swee
 		ctx, cancel := context.WithTimeout(t.Context(), 150*time.Second)
 		defer cancel()
 		_, err = stress.Stress(ctx, stress.Config{
-			Packages: 1, CPUs: []int{1}, Loads: []int{1}, Count: 10, Confirm: 5, Lanes: [][]int{{0}},
+			Levels: []stress.Level{{Name: "unit", Count: 10, Confirm: 5}}, Packages: make([]int, 1), CPUs: []int{1}, Loads: []int{1}, Lanes: [][]int{{0}},
 		}, f, newConfirmResults(t, 1, []int{1}, []int{1}, 10, 5))
 	})
 	require.ErrorIs(t, err, context.DeadlineExceeded)
@@ -334,7 +402,7 @@ func TestStress_pins_one_run_to_each_core_at_load_1(t *testing.T) {
 	f := newFakeRunner()
 	synctest.Test(t, func(t *testing.T) {
 		_, err = stress.Stress(t.Context(), stress.Config{
-			Packages: 3, CPUs: []int{1, 2, 4}, Loads: []int{1}, Count: 4, Lanes: lanesOf, Builds: 3,
+			Levels: []stress.Level{{Name: "unit", Count: 4}}, Packages: make([]int, 3), CPUs: []int{1, 2, 4}, Loads: []int{1}, Lanes: lanesOf, Builds: 3,
 		}, f, newResults(t, 3, []int{1, 2, 4}, []int{1}, 4))
 	})
 	require.NoError(t, err)
@@ -355,7 +423,7 @@ func TestStress_runs_nothing_when_a_package_does_not_build(t *testing.T) {
 	var err error
 	synctest.Test(t, func(t *testing.T) {
 		_, err = stress.Stress(t.Context(), stress.Config{
-			Packages: 3, CPUs: []int{1}, Loads: []int{1}, Count: 1, Lanes: [][]int{{0}},
+			Levels: []stress.Level{{Name: "unit", Count: 1}}, Packages: make([]int, 3), CPUs: []int{1}, Loads: []int{1}, Lanes: [][]int{{0}},
 		}, f, newResults(t, 3, []int{1}, []int{1}, 1))
 	})
 	var buildErr *stress.BuildError
@@ -373,7 +441,7 @@ func TestStress_warns_of_a_binary_that_does_not_list_its_tests_and_runs_it(t *te
 	var err error
 	synctest.Test(t, func(t *testing.T) {
 		_, err = stress.Stress(t.Context(), stress.Config{
-			Packages: 1, CPUs: []int{1}, Loads: []int{1}, Count: 2, Lanes: [][]int{{0}}, Log: &log,
+			Levels: []stress.Level{{Name: "unit", Count: 2}}, Packages: make([]int, 1), CPUs: []int{1}, Loads: []int{1}, Lanes: [][]int{{0}}, Log: &log,
 		}, f, newResults(t, 1, []int{1}, []int{1}, 2))
 	})
 	require.NoError(t, err)
@@ -392,7 +460,7 @@ func TestStress_writes_its_progress(t *testing.T) {
 		// is written at 50s, 100s and 150s, so no write ties with a run's
 		// end, whose order in the bubble would be up to the scheduler.
 		_, err := stress.Stress(t.Context(), stress.Config{
-			Packages: 1, CPUs: []int{1}, Loads: []int{1}, Count: 3, Lanes: [][]int{{0}}, Log: &log, Progress: 50 * time.Second,
+			Levels: []stress.Level{{Name: "unit", Count: 3}}, Packages: make([]int, 1), CPUs: []int{1}, Loads: []int{1}, Lanes: [][]int{{0}}, Log: &log, Progress: 50 * time.Second,
 		}, f, newResults(t, 1, []int{1}, []int{1}, 3))
 		require.NoError(t, err)
 	})
@@ -412,7 +480,7 @@ func TestStress_writes_its_confirm_runs_progress(t *testing.T) {
 		// 180s. Each pass writes its progress every 50s from its start:
 		// the sweep at 50s, and the confirm runs at 110s and 170s.
 		_, err := stress.Stress(t.Context(), stress.Config{
-			Packages: 1, CPUs: []int{1}, Loads: []int{1}, Count: 1, Confirm: 2, Lanes: [][]int{{0}}, Log: &log, Progress: 50 * time.Second,
+			Levels: []stress.Level{{Name: "unit", Count: 1, Confirm: 2}}, Packages: make([]int, 1), CPUs: []int{1}, Loads: []int{1}, Lanes: [][]int{{0}}, Log: &log, Progress: 50 * time.Second,
 		}, f, newConfirmResults(t, 1, []int{1}, []int{1}, 1, 2))
 		require.NoError(t, err)
 	})
@@ -431,7 +499,7 @@ func TestStress_stops_when_its_context_is_done_and_counts_no_cancelled_run(t *te
 		ctx, cancel := context.WithTimeout(t.Context(), 150*time.Second)
 		defer cancel()
 		_, err = stress.Stress(ctx, stress.Config{
-			Packages: 1, CPUs: []int{1}, Loads: []int{1}, Count: 10, Lanes: [][]int{{0}},
+			Levels: []stress.Level{{Name: "unit", Count: 10}}, Packages: make([]int, 1), CPUs: []int{1}, Loads: []int{1}, Lanes: [][]int{{0}},
 		}, f, res)
 	})
 	require.ErrorIs(t, err, context.DeadlineExceeded)
@@ -445,15 +513,16 @@ func TestStress_stops_when_a_run_s_output_cannot_be_saved(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "file")
 	require.NoError(t, os.WriteFile(file, nil, 0o644))
 	res := results.New(results.Config{
-		Packages: []discover.Package{{Module: ".", Dir: "p", ImportPath: "example.com/p"}},
-		CPUs:     []int{1}, Loads: []int{1}, Count: 5, Out: file,
+		Packages: []discover.Package{{Module: ".", Dir: "p", ImportPath: "example.com/p", Level: "unit"}},
+		CPUs:     []int{1}, Loads: []int{1}, Out: file,
+		Levels: []results.Level{{Name: "unit", Count: 5}},
 	})
 	f := newFakeRunner()
 	f.fail = func(int, int) bool { return true }
 	var err error
 	synctest.Test(t, func(t *testing.T) {
 		_, err = stress.Stress(t.Context(), stress.Config{
-			Packages: 1, CPUs: []int{1}, Loads: []int{1}, Count: 5, Lanes: [][]int{{0}},
+			Levels: []stress.Level{{Name: "unit", Count: 5}}, Packages: make([]int, 1), CPUs: []int{1}, Loads: []int{1}, Lanes: [][]int{{0}},
 		}, f, res)
 	})
 	require.ErrorContains(t, err, "saving a run's output")

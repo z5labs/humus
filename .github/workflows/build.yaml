@@ -242,6 +242,7 @@ jobs:
             go -C queue/kafka vet -tags testcontainers ./... || failed=1
             go -C queue/rabbitmq vet -tags testcontainers ./... || failed=1
             go -C kube vet -tags testcontainers ./... || failed=1
+            go -C tools/flaky vet -tags testcontainers ./... || failed=1
             for module in $(jq -r '.[] | select(startswith("example/"))' <<<"$MODULES"); do
               echo "::group::go vet -tags testcontainers ($module)"
               go -C "$module" vet -tags testcontainers ./... || failed=1
@@ -516,6 +517,41 @@ jobs:
 
         - name: Test
           run: go -C example/shoppingcart test -count=1 -race -tags testcontainers ./...
+
+        - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
+          uses: ./.github/actions/save-go-cache
+          with:
+            key: ${{ steps.go-cache.outputs.key }}
+            path: ${{ steps.go-cache.outputs.path }}
+
+  # flaky's tests behind the testcontainers build tag start containers on the
+  # runner's Docker, and check that flaky pins each one labelled
+  # org.testcontainers to the cores it keeps back from its runs. The ruleset
+  # doesn't require this job, and Build doesn't wait on it; Vet the
+  # testcontainers tests vets them.
+  flaky-testcontainers:
+    name: flaky (testcontainers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: write
+      contents: read
+    steps:
+        - name: Checkout
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+          with:
+            go-version: '1.27.2'
+            cache: false
+
+        - id: go-cache
+          uses: ./.github/actions/restore-go-cache
+          with:
+            name: flaky-testcontainers
+
+        - name: Test
+          run: go -C tools/flaky test -count=1 -race -tags testcontainers ./...
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache

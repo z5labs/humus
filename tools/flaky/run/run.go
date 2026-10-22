@@ -369,9 +369,15 @@ func lines(s string) []string {
 }
 
 // Build builds the test binary of the package importPath, in the module
-// directory dir, with CI's flags, to out.
-func Build(ctx context.Context, dir, importPath, out string, env []string) error {
-	cmd := exec.CommandContext(ctx, "go", "test", "-c", "-race", "-cover", "-o", out, importPath)
+// directory dir, with CI's flags and the build tag tag, or none when tag is
+// "", to out.
+func Build(ctx context.Context, dir, importPath, tag, out string, env []string) error {
+	args := []string{"test", "-c", "-race", "-cover"}
+	if tag != "" {
+		args = append(args, "-tags", tag)
+	}
+	args = append(args, "-o", out, importPath)
+	cmd := exec.CommandContext(ctx, "go", args...)
 	cmd.Dir = dir
 	cmd.Env = env
 	output, err := cmd.CombinedOutput()

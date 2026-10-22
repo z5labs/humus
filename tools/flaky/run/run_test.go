@@ -59,7 +59,7 @@ func binary(t *testing.T, name string) (string, string, run.Spec) {
 			return
 		}
 		for _, pkg := range []string{"passes", "twocpus", "fourprocs", "testmain", "lingers", "order"} {
-			if buildErr = run.Build(context.Background(), mod, "example.com/runs/"+pkg, filepath.Join(binDir, pkg+".test"), childEnv); buildErr != nil {
+			if buildErr = run.Build(context.Background(), mod, "example.com/runs/"+pkg, "", filepath.Join(binDir, pkg+".test"), childEnv); buildErr != nil {
 				return
 			}
 		}
@@ -254,10 +254,26 @@ func TestList_lists_a_binary_s_top_level_tests(t *testing.T) {
 	require.ErrorContains(t, err, "setup failed", "TestMain runs before the list")
 }
 
+func TestBuild_builds_with_the_tag_it_is_given(t *testing.T) {
+	mod, err := filepath.Abs(runs)
+	require.NoError(t, err)
+	dir := filepath.Join(mod, "tagged")
+	childEnv := env.Child(bedrock.OSEnvironment{})
+	list := func(tag string) []string {
+		bin := filepath.Join(t.TempDir(), "tagged.test")
+		require.NoError(t, run.Build(t.Context(), mod, "example.com/runs/tagged", tag, bin, childEnv))
+		tests, err := run.List(t.Context(), bin, dir, childEnv)
+		require.NoError(t, err)
+		return tests
+	}
+	require.Equal(t, []string{"TestUntagged"}, list(""))
+	require.Equal(t, []string{"TestTagged", "TestUntagged"}, list("testcontainers"))
+}
+
 func TestBuild_reports_a_package_that_does_not_build(t *testing.T) {
 	mod, err := filepath.Abs(runs)
 	require.NoError(t, err)
-	err = run.Build(t.Context(), mod, "example.com/runs/missing", filepath.Join(t.TempDir(), "x.test"), env.Child(bedrock.OSEnvironment{}))
+	err = run.Build(t.Context(), mod, "example.com/runs/missing", "", filepath.Join(t.TempDir(), "x.test"), env.Child(bedrock.OSEnvironment{}))
 	require.ErrorContains(t, err, "building example.com/runs/missing")
 }
 
