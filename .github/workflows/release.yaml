@@ -224,7 +224,7 @@ jobs:
 
           pr=$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number // empty')
           if [ -z "$pr" ]; then
-            body="Sets every requirement between humus modules to $VERSION, so each module resolves at $VERSION once it is tagged.
+            body="Sets every requirement on a released humus module to $VERSION, the examples' and tools' included, so each module resolves at $VERSION once it is tagged and every example and tool still builds.
 
           Opened by the [Release workflow]($RUN_URL), which merges this pull request once every check passes, then tags every module at $VERSION and publishes the release. Close it to abandon the release."
             url=$(gh pr create --base main --head "$branch" --title "$title" --body "$body")

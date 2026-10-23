@@ -384,7 +384,7 @@ grep -qF "replace github.com/z5labs/humus => ../.." "$repo/queue/kafka/go.mod" |
 
 run "$repo" --bump v0.16.0
 expect_status 0 "bump again"
-expect_output "every requirement between humus modules already names v0.16.0" "bump again"
+expect_output "every requirement on a released humus module already names v0.16.0" "bump again"
 
 commit "$repo" bump
 run "$repo" v0.16.0

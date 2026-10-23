@@ -335,7 +335,7 @@ done
 
 if [[ $mode == bump ]]; then
   if [[ ${#stale[@]} -eq 0 ]]; then
-    echo "every requirement between humus modules already names $version"
+    echo "every requirement on a released humus module already names $version"
     exit 0
   fi
   for entry in "${stale[@]}"; do
@@ -352,7 +352,7 @@ if [[ ${#stale[@]} -gt 0 ]]; then
       read -r file path have <<<"$entry"
       echo "release-modules: $file requires $path $have, want $version" >&2
     done
-    die "every requirement between humus modules must name $version at the release commit $sha: set them with release-modules.sh --bump $version and merge the change first"
+    die "every requirement on a released humus module must name $version at the release commit $sha: set them with release-modules.sh --bump $version and merge the change first"
   fi
   for entry in "${stale[@]}"; do
     read -r file path have <<<"$entry"
