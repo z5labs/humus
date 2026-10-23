@@ -1,5 +1,6 @@
 ---
 title: Health
+linkTitle: Health
 description: >
   How a humus service reports its health: monitors and how they combine,
   what liveness and readiness each check, the health Service that owns an
@@ -7,7 +8,7 @@ description: >
   expose the probes to Kubernetes, attached to a server the pod runs or on a
   probes port, with their answers, manifests, startup probes and tests.
 type: docs
-weight: 14
+weight: 40
 ---
 
 A service reports its health as [monitors](#monitors) it combines into two
@@ -103,7 +104,7 @@ probes := health.Probes{
 ## The health Service
 
 A [`health.Service`](https://pkg.go.dev/github.com/z5labs/humus/health#Service)
-is a [Service]({{< relref "lifecycle#service" >}}) that owns an App's
+is a [Service]({{< relref "/fundamentals/lifecycle#service" >}}) that owns an App's
 readiness. It is built for [probes attached](#attached-probes) to a server
 the App already runs: a [probes server](#probes-servers) owns readiness
 itself, so a pod with one returns no health Service. The end user's `Init`
@@ -137,7 +138,7 @@ before the App runs. `Liveness` and `Readiness` panic on a nil monitor.
 
 ### Readiness through the lifecycle
 
-The Service's own readiness follows the [lifecycle]({{< relref "lifecycle#what-run-does-in-order" >}}):
+The Service's own readiness follows the [lifecycle]({{< relref "/fundamentals/lifecycle#what-run-does-in-order" >}}):
 
 1. **Not ready until it is serving.** It is not ready from `NewService`
    until the App calls its `Serve`.
@@ -242,7 +243,7 @@ recovers no panic of a monitor: the server it is attached to does.
 
 [`grpchealth.NewServer`](https://pkg.go.dev/github.com/z5labs/humus/grpc/grpchealth#NewServer)
 is the gRPC health v1 server. It is registered on the end user's
-[`grpcserver.Service`]({{< relref "grpc" >}}), next to their own services,
+[`grpcserver.Service`]({{< relref "/services/grpc/serving" >}}), next to their own services,
 and answers from a health Service returned next to it:
 
 ```go
@@ -273,9 +274,9 @@ only the API's operations, and `auth.NewHandler` only the handler it is
 given, so it wraps the API rather than the whole mux. `grpchealth.NewServer`
 passes through `grpcauth`'s interceptors like every RPC, so its `Check`,
 `Watch` and `List` are opened by name with `auth.Disabled()`, as
-[gRPC services]({{< relref "grpc#authentication" >}}) shows. A probes server
+[Serving gRPC]({{< relref "/services/grpc/serving#authentication" >}}) shows. A probes server
 has no authentication.
-[Authentication and authorization]({{< relref "auth#probes-and-other-open-paths" >}})
+[Authentication and authorization]({{< relref "/hardening/auth#probes-and-other-open-paths" >}})
 covers both.
 
 ### Probes servers
@@ -319,7 +320,7 @@ liveness probe is still answered healthy.
 `grpchealth.Settings` one, `Addr`. None has a default, so neither package
 has a `DefaultSettings`, and the end user sources every field, with no
 `.Default` in their chains, as
-[Configuring a humus service]({{< relref "configuration" >}}) describes.
+[Configuring a humus service]({{< relref "/fundamentals/configuration" >}}) describes.
 Each field has a check that reports what is wrong with a value without
 naming the field: `CheckAddr` in both packages, and `httphealth.CheckTLS`.
 An unset variable then fails as not found, with exit 78:
@@ -338,7 +339,7 @@ if err != nil {
 ```
 
 `readFile` and `serverTLS` are the end user's helpers, as on
-[Serving HTTP]({{< relref "http#tls" >}}). `CheckAddr` rejects an address
+[Serving HTTP]({{< relref "/services/http/serving#tls" >}}). `CheckAddr` rejects an address
 that isn't `host:port`, `""` included, and a port that isn't a number from
 0 to 65535. `NewService` runs every check again, rejects a nil `Option`,
 and listens on `Addr` through the Setup's Host, in `Init`.
@@ -421,7 +422,7 @@ included, with `Unavailable` once it has sent every client a GOAWAY, as a
   credential's user, and a probe port is reachable by anything that can
   reach the pod. The error is in the log, as [Telemetry](#telemetry)
   describes.
-- **The paths are humus's from before the reset.** No path is a standard
+- **The paths are humus's own.** No path is a standard
   for workloads: `/livez` and `/readyz` are what Kubernetes' own components
   serve.
 
@@ -508,7 +509,7 @@ On a cluster with `GRPCContainerProbeTLS` on, the same `grpc` probes go to
 the `grpcserver.Service`'s own port instead, where `grpchealth.NewServer`
 is registered, with the TLS setting the gate adds; see Kubernetes'
 [Use TLS with gRPC probes](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/#grpc-probe-tls)
-and [gRPC services]({{< relref "grpc#health-probes" >}}).
+and [Serving gRPC]({{< relref "/services/grpc/serving#health-probes" >}}).
 
 ### Startup probes
 
@@ -577,7 +578,7 @@ before it has started. One that starts fast needs none.
 ### A consumer's readiness
 
 **A Kafka consumer is ready once it has joined its group.**
-[`Joined`]({{< relref "kafka#readiness" >}}) returns a `health.Monitor`
+[`Joined`]({{< relref "/services/kafka#readiness" >}}) returns a `health.Monitor`
 that is unhealthy until franz-go first hands the member an assignment,
 empty or not, and healthy from then until `Serve` returns. A consumer's pod
 has no server of its own, so its probes go on a probes server, with
@@ -603,7 +604,7 @@ first join doesn't make the consumer unready: it hits every pod at once, and
 would only block a rollout that might be the fix.
 
 **A RabbitMQ consumer is ready once it consumes.**
-[`Consuming`]({{< relref "rabbitmq#readiness" >}}) returns a `health.Monitor`
+[`Consuming`]({{< relref "/services/rabbitmq#readiness" >}}) returns a `health.Monitor`
 that is unhealthy until the broker first answers the Service's
 `basic.consume`, and healthy from then until `Serve` returns, through any
 lost connection. It goes in the same place, as
@@ -612,9 +613,9 @@ lost connection. It goes in the same place, as
 ### A gRPC dependency's readiness
 
 **A service that calls a gRPC dependency is ready once its Client has
-connected.** [`Connected`]({{< relref "grpc-client#readiness-connected" >}})
+connected.** [`Connected`]({{< relref "/dependencies/grpc#readiness-connected" >}})
 returns a `health.Monitor` that is unhealthy until the
-[`grpcclient`]({{< relref "grpc-client" >}}) Client's connection to its
+[`grpcclient`]({{< relref "/dependencies/grpc" >}}) Client's connection to its
 `Addr` is first ready, its TLS handshake done, and healthy from then until
 the connection is closed. It makes no RPC. Here a gRPC service, on a cluster
 whose `grpc` probes can't use TLS, puts it in the readiness of its probes
@@ -657,7 +658,7 @@ answer instead of its own error, and the parts of it that don't need the
 dependency would stop too, and it would block a rollout that might be the
 fix. A monitor that calls the dependency's `grpc.health.v1` service is the
 end user's own, and turns unhealthy in exactly that outage, as
-[Calling gRPC services]({{< relref "grpc-client#a-monitor-of-the-dependencys-grpchealthv1" >}})
+[Calling gRPC services]({{< relref "/dependencies/grpc#a-monitor-of-the-dependencys-grpchealthv1" >}})
 shows. **`Connected` is for readiness only:** restarting the pod doesn't
 bring a dependency back.
 
@@ -678,7 +679,7 @@ Service: nothing in the lifecycle asks for readiness.
 
 A long-running job that wants a liveness probe returns
 `httphealth.NewService`'s Service next to its
-[`job.Service`]({{< relref "jobs#more-than-the-job" >}}), and stays on
+[`job.Service`]({{< relref "/services/jobs#more-than-the-job" >}}), and stays on
 `humus.Main`. The probe is only as good as its liveness monitor: with none,
 it checks only that the process answers, so a job that can hang gives it a
 monitor of its own progress, here `progress`, which the run keeps healthy
@@ -700,7 +701,7 @@ When the job finishes, the App ends, and the probes server with it.
 ### Testing the probes
 
 A probes server is tested in a whole App, run with
-[`humustest.Start`]({{< relref "testing" >}}) on a humustest Host, under
+[`humustest.Start`]({{< relref "/fundamentals/testing" >}}) on a humustest Host, under
 `testing/synctest`, with a certificate from `humustest.NewCA`. This is
 `httphealth`'s own test that an API's pod with a probes port is not ready
 during the drain:
@@ -773,7 +774,7 @@ func kubelet(h *humustest.Host, ca *humustest.CA) *http.Client {
 ```
 
 A gRPC probes port is asked with
-[`grpcservertest.NewClient`]({{< relref "grpc#a-plaintext-server" >}}),
+[`grpcservertest.NewClient`]({{< relref "/services/grpc/serving#a-plaintext-server" >}}),
 given `insecure.NewCredentials()` and `nil` roots, since the port serves
 plain text, as the kubelet's probes speak it:
 
@@ -792,7 +793,7 @@ An attached server is asked the same way, with the CA's pool in place of
 `nil` and no transport credentials, over TLS on the Service's port.
 
 Both probes servers pass the Service contract, checked with
-[`humustest.TestService`]({{< relref "testing#checking-a-service" >}}). They
+[`humustest.TestService`]({{< relref "/fundamentals/testing#checking-a-service" >}}). They
 keep serving after `Serve`'s context is done, so its subtest for `Shutdown`
 after `Serve` has returned on its own reports SKIP:
 
@@ -810,24 +811,11 @@ func TestService(t *testing.T) {
 }
 ```
 
-### Migration from `rest.Liveness`, `rest.Readiness` and `internal/grpchealth`
-
-| Before the reset | Now |
-|---|---|
-| `GET /health/liveness` and `/health/readiness` on every `rest.Api`, 200 by default | `httphealth.NewHandler` attached to the API's mux, or `httphealth.NewService` on a port of its own, answering from a health Service |
-| `rest.Liveness(h)`, `rest.Readiness(h)` with a handler of the end user's | `health.Liveness(m)`, `health.Readiness(m)` with a `Monitor`, given to the probes server, or to the health Service when the probes are attached |
-| `grpc.Api.RegisterService` health-checking an implementation that is a `health.Monitor` | nothing implicit: the monitor goes in the health Service's readiness |
-| `internal/grpchealth` | `grpchealth.NewServer`, or `grpchealth.NewService` on a plaintext port |
-| no answer for the service `""` | `""` is readiness, and `liveness` and `readiness` are named |
-| a monitor's error as `SERVICE_UNKNOWN` | `NOT_SERVING`, and the error logged |
-| `Watch` polling every 10s, per stream | every second, once per server and name |
-| the global `humus.Logger` | `s.Telemetry.LoggerProvider` |
-
 ## Testing
 
 A health Service is tested in a whole App, with
 [bedrocktest](https://pkg.go.dev/github.com/z5labs/bedrock/bedrocktest)'s
-fake process and a [humustest]({{< relref "testing" >}}) Host, under
+fake process and a [humustest]({{< relref "/fundamentals/testing" >}}) Host, under
 [`testing/synctest`](https://pkg.go.dev/testing/synctest), so the drain
 passes in fake time and readiness can be checked while it runs. This is
 `health`'s own test that the Service is not ready during the drain:

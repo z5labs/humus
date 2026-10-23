@@ -6,7 +6,7 @@ description: >
   Builder sources telemetry.Settings and calls telemetry.New, the App hands
   the SDK to Init, and humus never reads or sets OpenTelemetry's globals.
 type: docs
-weight: 22
+weight: 30
 ---
 
 A humus App builds its OpenTelemetry providers before `Init`, hands them to
@@ -15,11 +15,11 @@ A humus App builds its OpenTelemetry providers before `Init`, hands them to
 builds them from a plain `Settings` value. `humus.Main` builds them from
 `telemetry.DefaultSettings()` unless the service passes a `Builder` of its
 own, which sources that value the same way `Init` sources any other
-package's [settings]({{< relref "configuration" >}}).
+package's [settings]({{< relref "/fundamentals/configuration" >}}).
 
 The design behind everything on this page is in
 [Proposal: OpenTelemetry without globals, Revision 2](https://github.com/z5labs/humus/discussions/632#discussioncomment-18966249).
-[The lifecycle]({{< relref "lifecycle#telemetry" >}}) describes when the App
+[The lifecycle]({{< relref "/fundamentals/lifecycle#telemetry" >}}) describes when the App
 builds its telemetry and shuts it down.
 
 ## Where the providers come from
@@ -103,7 +103,7 @@ The end user's `Builder` is given the context a signal cancels, the
    bad variable does, and the error names the variable;
 3. calls `telemetry.New` with the `Settings`, `dial` and `p.Stdout`.
 
-[Configuring a humus service]({{< relref "configuration#sourcing-settings-in-init" >}})
+[Configuring a humus service]({{< relref "/fundamentals/configuration#sourcing-settings-in-init" >}})
 explains the pattern. This `Builder` keeps the OpenTelemetry specification's
 variable names, but the names are yours to choose:
 
@@ -159,7 +159,7 @@ included. `humustest`'s recorder is built that way.
 ## Settings
 
 [`telemetry.Settings`](https://pkg.go.dev/github.com/z5labs/humus/telemetry#Settings)
-follows the [shape every humus package's settings take]({{< relref "configuration#what-a-package-with-settings-exports" >}}):
+follows the [shape every humus package's settings take]({{< relref "/fundamentals/configuration#what-a-package-with-settings-exports" >}}):
 plain values, `DefaultSettings()`, and a check for each field with a valid
 range. A zero field means zero, never "use the default".
 
@@ -198,7 +198,7 @@ has no effect on an App unless its `Builder` reads them.
 SDK's own default where `Settings` has no field, so the SDK's own reads of the
 real environment are overridden too. The few that still take effect, such as
 `OTEL_GO_X_*`, are listed under
-[the lifecycle's ambient leaks]({{< relref "lifecycle#ambient-leaks" >}}).
+[the lifecycle's ambient leaks]({{< relref "/fundamentals/lifecycle#ambient-leaks" >}}).
 
 ## The defaults
 
@@ -336,7 +336,7 @@ Kubernetes, the run starts a new trace.
 
 These are trace context, not settings: the `OTEL_*` variables in the
 [table above](#settings) are still read only by a `Builder` that maps them.
-[Jobs]({{< relref "jobs#joining-the-trace-that-started-the-job" >}}) covers
+[Jobs]({{< relref "/services/jobs#joining-the-trace-that-started-the-job" >}}) covers
 the run's span in full.
 
 ## Other settings
@@ -437,7 +437,7 @@ or name: an object's reconciles are its spans. Both histograms take
 OpenTelemetry's advice for a duration in seconds. A standby replica records
 them too, with every object waiting in its `queue.depth`, since it runs no
 workers, so `queue.depth` is read per replica.
-[Writing a Kubernetes controller]({{< relref "kubernetes#the-controllers-instruments" >}})
+[Writing a Kubernetes controller]({{< relref "/services/kubernetes#the-controllers-instruments" >}})
 says what each counts, and what the work queue's own metrics it doesn't
 record would have.
 
@@ -453,10 +453,10 @@ OpenTelemetry's instrumentation breaks calls down already.
 
 | Client | Meter scope | The dependency's attributes |
 |---|---|---|
-| [`httpclient`]({{< relref "http-client#humuss-own-instruments" >}}) | `github.com/z5labs/humus/httpclient` | `server.address` and `server.port` of `BaseURL`'s origin |
-| [`grpcclient`]({{< relref "grpc-client#humuss-own-instruments" >}}) | `github.com/z5labs/humus/grpc/grpcclient` | `server.address` and `server.port` of `Addr` |
-| [Kafka `Producer`]({{< relref "kafka#humuss-own-instruments" >}}) | `github.com/z5labs/humus/queue/kafka` | `messaging.system`, set to `kafka`, and `server.address` and `server.port` of the first of `ProducerSettings.Brokers` |
-| [RabbitMQ `Publisher`]({{< relref "rabbitmq#humuss-own-instruments" >}}) | `github.com/z5labs/humus/queue/rabbitmq` | `server.address` and `server.port` of `Connection.Addr` |
+| [`httpclient`]({{< relref "/dependencies/http#humuss-own-instruments" >}}) | `github.com/z5labs/humus/httpclient` | `server.address` and `server.port` of `BaseURL`'s origin |
+| [`grpcclient`]({{< relref "/dependencies/grpc#humuss-own-instruments" >}}) | `github.com/z5labs/humus/grpc/grpcclient` | `server.address` and `server.port` of `Addr` |
+| [Kafka `Producer`]({{< relref "/services/kafka#humuss-own-instruments" >}}) | `github.com/z5labs/humus/queue/kafka` | `messaging.system`, set to `kafka`, and `server.address` and `server.port` of the first of `ProducerSettings.Brokers` |
+| [RabbitMQ `Publisher`]({{< relref "/services/rabbitmq#humuss-own-instruments" >}}) | `github.com/z5labs/humus/queue/rabbitmq` | `server.address` and `server.port` of `Connection.Addr` |
 
 The HTTP and gRPC scopes hold no other instrument: `otelhttp` and `otelgrpc`
 record in scopes of their own. The Kafka and RabbitMQ scopes also hold
@@ -710,7 +710,7 @@ require.Equal(t, map[string]int64{"closed": 0, "open": 1, "half-open": 0}, bySta
 
 `getN` is a helper of the test's that sends five GETs, and the dependency is
 a second App on the same humustest `Host`, as
-[Outbound HTTP clients]({{< relref "http-client#testing" >}}) describes.
+[Outbound HTTP clients]({{< relref "/dependencies/http#testing" >}}) describes.
 Each data point also carries the dependency's attributes, so a test of two
 clients of different dependencies tells them apart by `server.address` and
 `server.port`.
@@ -763,7 +763,7 @@ go, and standard error, where a bad variable goes. The root package's
 [examples](https://pkg.go.dev/github.com/z5labs/humus#pkg-examples) run the
 `Builder` above that way.
 
-[Testing a humus App]({{< relref "testing" >}}) covers the rest of a whole-App
+[Testing a humus App]({{< relref "/fundamentals/testing" >}}) covers the rest of a whole-App
 test.
 
 ## The error handler
@@ -788,4 +788,4 @@ call to `otel.SetErrorHandler`. Being process-wide, it has two consequences:
 
 OpenTelemetry's internal logger is separate from the handler, and writes its
 own errors to the real standard error. It is on
-[the lifecycle's list of ambient leaks]({{< relref "lifecycle#ambient-leaks" >}}).
+[the lifecycle's list of ambient leaks]({{< relref "/fundamentals/lifecycle#ambient-leaks" >}}).

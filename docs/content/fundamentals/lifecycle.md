@@ -1,6 +1,6 @@
 ---
 title: The App lifecycle
-linkTitle: App lifecycle
+linkTitle: The App lifecycle
 description: >
   How humus.Main builds a humus.App, and how the App reads its settings,
   builds its telemetry and its dependencies, runs its Services, drains and
@@ -30,10 +30,10 @@ needs nothing more.
 
 Telemetry is part of the lifecycle: the App builds it before `Init`, logs
 through it, and shuts it down last. See [Telemetry](#telemetry) below, and
-the [Telemetry]({{< relref "telemetry" >}}) page for what a service does with
+the [Telemetry]({{< relref "/fundamentals/telemetry" >}}) page for what a service does with
 it. Health is a Service like any other: an App's `Init` returns the `health`
 package's Service next to its other Services, and
-[Health]({{< relref "health" >}}) explains what it does to readiness through
+[Health]({{< relref "/fundamentals/health" >}}) explains what it does to readiness through
 the lifecycle.
 
 The design behind everything on this page is in
@@ -75,7 +75,7 @@ a `func(*humus.App)`. humus has one for each field `Main` defaults:
 | `humus.WithTelemetry(b)` | `App.Telemetry`, the App's `telemetry.Builder` |
 | `humus.WithShutdownGracePeriod(d)` | `App.ShutdownGracePeriod`, the grace period when `HUMUS_SHUTDOWN_GRACE_PERIOD` is not set |
 | `humus.WithDrain(d)` | `App.Drain`, the [drain](#the-drain) when `HUMUS_SHUTDOWN_DRAIN_DELAY` is not set. `humus.WithDrain(nil)` removes a drain that an earlier option set |
-| `humus.WithFaults(f)` | `App.Faults`, the function that returns the App's [failure injection]({{< relref "failure-injection" >}}) settings |
+| `humus.WithFaults(f)` | `App.Faults`, the function that returns the App's [failure injection]({{< relref "/hardening/failure-injection" >}}) settings |
 
 An option changes exported fields, so an end user or a runtime package can
 write one of their own as a function literal, and one option may set several
@@ -128,8 +128,8 @@ wait. An operator overrides the grace period and the drain through their
 
 ## Runtime packages
 
-A [job]({{< relref "jobs" >}}), a queue consumer, of
-[Kafka]({{< relref "kafka" >}}) or [RabbitMQ]({{< relref "rabbitmq" >}}),
+A [job]({{< relref "/services/jobs" >}}), a queue consumer, of
+[Kafka]({{< relref "/services/kafka" >}}) or [RabbitMQ]({{< relref "/services/rabbitmq" >}}),
 and the health Service stop on `Serve`'s context, so they run on `humus.Main`'s defaults and need no `Main` of their own. A
 runtime package whose Services need a drain, such as an HTTP or gRPC server
 that keeps serving until `Shutdown`, wraps `Main` instead:
@@ -143,10 +143,10 @@ that keeps serving until `Shutdown`, wraps `Main` instead:
 The HTTP server's `Main` and defaults are `httpserver.Main` and
 `httpserver.Defaults`, with a 5s drain and a 10s grace period, which fit
 inside the 25s budget with telemetry's 5s:
-[Serving HTTP]({{< relref "http#the-defaults" >}}) explains them. The gRPC
+[Serving HTTP]({{< relref "/services/http/serving#the-defaults" >}}) explains them. The gRPC
 server's are `grpcserver.Main` and `grpcserver.Defaults`, with a 5s drain and
 a 15s grace period, which use the whole 25s budget with telemetry's 5s:
-[gRPC services]({{< relref "grpc#the-defaults" >}}) explains them. The root
+[Serving gRPC]({{< relref "/services/grpc/serving#the-defaults" >}}) explains them. The root
 package's tests don't import a runtime package, so the samples on this page
 use stand-ins of the same shape:
 
@@ -170,7 +170,7 @@ func httpMain(init func(ctx context.Context, s *humus.Setup) ([]humus.Service, e
 
 The end user's `main` calls the package's `Main`, and its test passes the
 package's defaults with `humustest.WithApp(httpDefaults())`, as
-[Testing]({{< relref "testing#runtime-packages" >}}) shows, or with the
+[Testing]({{< relref "/fundamentals/testing#runtime-packages" >}}) shows, or with the
 package's own `Start`, such as `httpservertest.Start` or
 `grpcservertest.Start`:
 
@@ -194,7 +194,7 @@ passes `humus.WithShutdownGracePeriod` after the package's defaults. On
 `httpserver.Main`'s defaults that fits within the 25s budget up to a 15s grace
 period. `grpcserver.Main`'s defaults already use the whole 25s, so a longer
 grace period there needs `terminationGracePeriodSeconds` raised to match, as
-[gRPC services]({{< relref "grpc#terminationgraceperiodseconds" >}})
+[Serving gRPC]({{< relref "/services/grpc/serving#terminationgraceperiodseconds" >}})
 describes. An HTTP and a gRPC server in one process use either package's `Main`.
 Each package's defaults set both the drain and the grace period, so passing
 the other package's defaults as well replaces both: the last one wins.
@@ -209,7 +209,7 @@ An App has six fields:
 | `ShutdownGracePeriod` | yes, unless `HUMUS_SHUTDOWN_GRACE_PERIOD` is set | the grace period when `HUMUS_SHUTDOWN_GRACE_PERIOD` is not set: 20s under `Main`. It must be positive, so the zero value fails startup |
 | `Drain` | no | the [drain](#the-drain) when `HUMUS_SHUTDOWN_DRAIN_DELAY` is not set: a `humus.Drain`, such as `humus.DrainDelay(5 * time.Second)`, that runs between shutdown starting and `Shutdown` being called on the Services, and whose context is done once every `Serve` has returned. A nil `Drain`, `Main`'s default, means no pause |
 | `Telemetry` | yes | the [`telemetry.Builder`](https://pkg.go.dev/github.com/z5labs/humus/telemetry#Builder) that builds the App's telemetry: under `Main`, its [default](#the-defaults) or the end user's own `Builder`, and in tests also `telemetry.NoopBuilder` or the `Builder` of humustest's recorder, `humustest.Telemetry` |
-| `Faults` | no | returns the App's [failure injection]({{< relref "failure-injection" >}}) settings, from which the App builds the `fault.Injector` in `Setup.Faults` before `Init`. A nil `Faults`, `Main`'s default, means no failure injection |
+| `Faults` | no | returns the App's [failure injection]({{< relref "/hardening/failure-injection" >}}) settings, from which the App builds the `fault.Injector` in `Setup.Faults` before `Init`. A nil `Faults`, `Main`'s default, means no failure injection |
 | `Init` | yes | builds the App's dependencies and returns the Services to run |
 
 `ShutdownGracePeriod` and `Drain` are defaults: an operator overrides
@@ -224,8 +224,8 @@ none.
 
 A [`Service`](https://pkg.go.dev/github.com/z5labs/humus#Service) is a
 long-running part of an App: an HTTP server, a gRPC server, a
-queue consumer, of [Kafka]({{< relref "kafka" >}}) or
-[RabbitMQ]({{< relref "rabbitmq" >}}), or a job. It has two methods, `Serve` and `Shutdown`, and the App gives it two
+queue consumer, of [Kafka]({{< relref "/services/kafka" >}}) or
+[RabbitMQ]({{< relref "/services/rabbitmq" >}}), or a job. It has two methods, `Serve` and `Shutdown`, and the App gives it two
 shutdown signals, at different times:
 
 1. **`Serve`'s context is done** as soon as the App starts shutting down,
@@ -234,10 +234,10 @@ shutdown signals, at different times:
    its context's deadline.
 
 A Service may stop on the first, as a
-[job]({{< relref "jobs#the-two-signals" >}}), a
-queue consumer, of [Kafka]({{< relref "kafka#shutdown-and-rebalances" >}})
-or [RabbitMQ]({{< relref "rabbitmq#shutdown" >}}), or the
-[health Service]({{< relref "health#the-health-service" >}}) does: the health
+[job]({{< relref "/services/jobs#the-two-signals" >}}), a
+queue consumer, of [Kafka]({{< relref "/services/kafka#shutdown-and-rebalances" >}})
+or [RabbitMQ]({{< relref "/services/rabbitmq#shutdown" >}}), or the
+[health Service]({{< relref "/fundamentals/health#the-health-service" >}}) does: the health
 Service turns not ready then, so a load balancer stops sending the App new
 traffic. Or it may keep serving until the second, as an HTTP or gRPC Service
 does, so that a load balancer still draining connections towards it is
@@ -308,7 +308,7 @@ return until after the drain. So, for an App with a Drain set:
 | a job, finished on its own | nothing: Run doesn't call the Drain |
 | a job, finished on its own, next to the health Service | nothing: Run calls the Drain, and its context is done at once |
 | a job, interrupted by a signal | until the run returns, at most the Drain's delay |
-| a queue consumer, of [Kafka]({{< relref "kafka#shutdown-and-rebalances" >}}) or [RabbitMQ]({{< relref "rabbitmq#shutdown" >}}) | until its messages in flight are done, at most the Drain's delay |
+| a queue consumer, of [Kafka]({{< relref "/services/kafka#shutdown-and-rebalances" >}}) or [RabbitMQ]({{< relref "/services/rabbitmq#shutdown" >}}) | until its messages in flight are done, at most the Drain's delay |
 | an HTTP or gRPC server, with or without the health Service | the Drain's whole delay |
 | a job and an HTTP server | the Drain's whole delay, unless both return first |
 
@@ -474,7 +474,7 @@ the context each is given is done when the grace period runs out.
    is in the error chain, or 1 otherwise.
 4. Sets OpenTelemetry's process-wide error handler, which writes each export
    error to standard error.
-5. Builds the [failure injection]({{< relref "failure-injection" >}}), when
+5. Builds the [failure injection]({{< relref "/hardening/failure-injection" >}}), when
    `App.Faults` is set: calls it with the context a signal cancels and the
    `Setup` that `Init` is then given, builds the `fault.Injector` from the
    settings it returns with `fault.New`, and puts it in `Setup.Faults`. If
@@ -538,7 +538,7 @@ however it likes and calls `telemetry.New`. A test run with `humustest.Start`
 keeps `Main`'s default unless it passes `telemetry.NoopBuilder`, or the
 `Builder` of humustest's recorder, `humustest.Telemetry`, when the test
 asserts on what the App emits.
-[Telemetry]({{< relref "telemetry" >}}) explains how to write the `Builder`,
+[Telemetry]({{< relref "/fundamentals/telemetry" >}}) explains how to write the `Builder`,
 what the defaults are, the console log format, and how logs get their trace
 context.
 
@@ -730,7 +730,7 @@ test body, which makes it a leak detector for Services. For an HTTP Service
 the cost is that handlers must honour `r.Context()`, because a handler that
 ignores it after the server force-closes the connection outlives the test.
 
-[Testing a humus App]({{< relref "testing" >}}) covers `humustest.Start` in
+[Testing a humus App]({{< relref "/fundamentals/testing" >}}) covers `humustest.Start` in
 full, and runs Apps that serve real HTTP, on a humustest Host whose network
 and filesystem the test controls.
 
@@ -766,8 +766,8 @@ explicitly from `Setup`:
   `Settings.TLS` has no `RootCAs` reads them. A service that calls only its
   own services sets `RootCAs` to its CA, and a test sets it to the pool of a
   CA from `humustest.NewCA`, as
-  [Calling HTTP services]({{< relref "http-client#tls-and-plain-text" >}})
-  and [Calling gRPC services]({{< relref "grpc-client#tls-and-plain-text" >}})
+  [Calling HTTP services]({{< relref "/dependencies/http#tls-and-plain-text" >}})
+  and [Calling gRPC services]({{< relref "/dependencies/grpc#tls-and-plain-text" >}})
   describe.
 - `slog.Default` writes to the real standard error unless it is replaced, and
   replacing it is process-wide state.
@@ -788,14 +788,14 @@ explicitly from `Setup`:
   real standard error. Replacing it means `grpclog.SetLoggerV2`, which is
   process-wide state, so `grpcserver` sets none: an end user who wants
   grpc-go's logs in their telemetry sets the logger in `main`, as
-  [gRPC services]({{< relref "grpc#grpc-gos-logger" >}}) describes.
+  [Serving gRPC]({{< relref "/services/grpc/serving#grpc-gos-logger" >}}) describes.
 - **amqp091's logger.** amqp091-go, RabbitMQ's Go client, logs through
   `amqp.Logger`, a package-level variable that `amqp.SetLogger` replaces,
   and that logs nothing until it is. Replacing it is process-wide state,
   shared by every App and every test in the process, and it writes wherever
   the logger it is given writes, not through the Setup's `LoggerProvider`.
   So `queue/rabbitmq` never sets it, as
-  [Consuming and publishing with RabbitMQ]({{< relref "rabbitmq#amqp091s-logger" >}})
+  [Consuming and publishing with RabbitMQ]({{< relref "/services/rabbitmq#amqp091s-logger" >}})
   describes, and an end user who wants its messages sets it once, in
   `main`.
 - **client-go's feature gates.** client-go, Kubernetes' own client, which
@@ -804,7 +804,7 @@ explicitly from `Setup`:
   gate is used. The only way to replace them is
   `features.ReplaceFeatureGates`, which is process-wide state, so `kube`
   never calls it, and lint denies it in every humus module, as
-  [Writing a Kubernetes controller]({{< relref "kubernetes#what-client-go-still-reaches" >}})
+  [Writing a Kubernetes controller]({{< relref "/services/kubernetes#what-client-go-still-reaches" >}})
   describes.
 - **klog's global logger.** client-go logs through klog, and a code path
   with no logger in its context falls back to klog's global logger, which

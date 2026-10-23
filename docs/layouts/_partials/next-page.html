@@ -1,0 +1,17 @@
+{{- /*
+  The page after the one it is given in the site's reading order, or false
+  for the last page. The last page of a section is followed by the first of
+  the next section, which is that section's landing page.
+*/ -}}
+{{- $page := . -}}
+{{- $next := false -}}
+{{- $found := false -}}
+{{- range partialCached "reading-order.html" site.Home -}}
+  {{- if and $found (not $next) -}}
+    {{- $next = . -}}
+  {{- end -}}
+  {{- if eq .RelPermalink $page.RelPermalink -}}
+    {{- $found = true -}}
+  {{- end -}}
+{{- end -}}
+{{- return $next -}}

@@ -7,7 +7,7 @@ description: >
   a delay, and dead-letters what never will. These pages build it step by
   step.
 type: docs
-weight: 20
+weight: 50
 ---
 
 The mailer consumes requests for emails from RabbitMQ. For each one, it:

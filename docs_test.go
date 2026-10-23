@@ -194,7 +194,7 @@ func TestSampleProblems(t *testing.T) {
 
 	const (
 		step    = walkthroughs + "/job/billing/step.md"
-		feature = docsContent + "/jobs.md"
+		feature = docsContent + "/services/jobs.md"
 	)
 	cases := []struct {
 		name  string

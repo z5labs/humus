@@ -196,7 +196,7 @@ dashboard is `deploy/dashboard.json`. Grafana provisions both:
     - ../dashboard.json
 ```
 
-[Observing]({{< relref "walkthroughs/job/billing/observing" >}}) shows each.
+[Observing]({{< relref "/walkthroughs/job/billing/observing" >}}) shows each.
 
 ## Its failures say why
 
@@ -219,9 +219,9 @@ func (s *Store) SettleFailed(ctx context.Context, id uuid.UUID, answer string) (
 
 ## Its failures are rehearsed
 
-The [failure injection cases]({{< relref "walkthroughs/job/billing/testing#the-failure-injection-cases" >}})
+The [failure injection cases]({{< relref "/walkthroughs/job/billing/testing#the-failure-injection-cases" >}})
 run in containers and on kind, and a
-[rehearsal]({{< relref "walkthroughs/job/billing/deploying#a-rehearsal" >}})
+[rehearsal]({{< relref "/walkthroughs/job/billing/deploying#a-rehearsal" >}})
 runs a scenario wherever the job is deployed:
 
 ```go

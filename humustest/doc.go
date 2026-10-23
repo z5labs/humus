@@ -132,7 +132,7 @@
 // and no goroutine the Service started outlives Serve.
 //
 // The docs site's page "Testing a humus App",
-// https://z5labs.github.io/humus/testing/, covers the same ground, with
+// https://z5labs.github.io/humus/fundamentals/testing/, covers the same ground, with
 // the requirements every package's tests meet. The design is Proposal:
 // humustest: https://github.com/z5labs/humus/discussions/633
 package humustest

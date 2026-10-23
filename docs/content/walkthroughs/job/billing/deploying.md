@@ -464,7 +464,7 @@ kubectl --namespace billing create job billing-kind --from=cronjob/billing
 kubectl --namespace billing wait --for=condition=Complete --timeout=5m job/billing-kind
 ```
 
-Then run the [shared cases]({{< relref "walkthroughs/job/billing/testing" >}})
+Then run the [shared cases]({{< relref "/walkthroughs/job/billing/testing" >}})
 against it:
 
 ```sh

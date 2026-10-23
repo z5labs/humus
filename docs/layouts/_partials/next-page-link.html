@@ -1,0 +1,6 @@
+{{- /* A link to the next page in the reading order, at the end of a page. */ -}}
+{{- with partial "next-page.html" . }}
+<nav class="td-next-page mt-5" aria-label="Next page">
+  <a class="btn btn-primary" href="{{ .RelPermalink }}">Next: {{ .Title }}<span class="ms-1">→</span></a>
+</nav>
+{{- end }}

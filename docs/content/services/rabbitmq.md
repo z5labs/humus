@@ -11,7 +11,7 @@ description: >
   circuit breaker, what both record, and how to test an App that uses
   RabbitMQ, which humus ships no fake broker for.
 type: docs
-weight: 17
+weight: 50
 ---
 
 The [`queue/rabbitmq`](https://pkg.go.dev/github.com/z5labs/humus/queue/rabbitmq)
@@ -38,6 +38,10 @@ package and no fake broker. The design behind it is in
 [Proposal: RabbitMQ](https://github.com/z5labs/humus/discussions/765), with
 its [revision 1](https://github.com/z5labs/humus/discussions/765#discussioncomment-19009926).
 
+The [mailer walkthrough]({{< relref "/walkthroughs/rabbitmq/mailer" >}})
+builds a production-ready worker on `queue/rabbitmq`, step by step, and its
+code is [`example/rabbitmq/mailer`](https://github.com/z5labs/humus/tree/main/example/rabbitmq/mailer).
+
 ## The contract
 
 The end user writes the same thing for RabbitMQ as for any broker: a
@@ -54,7 +58,7 @@ says when a message is acknowledged, `queue.AtLeastOnce` after `Process` has
 returned `nil` for it, or `queue.AtMostOnce` before `Process` is called. The
 rules every broker package's Service keeps, and why a `Processor` under
 `AtLeastOnce` must be idempotent, are on the Kafka page, under
-[The contract]({{< relref "kafka#the-contract" >}}); they hold here
+[The contract]({{< relref "/services/kafka#the-contract" >}}); they hold here
 unchanged. What RabbitMQ adds is in [Delivery](#delivery).
 
 **So a `Processor` under `AtLeastOnce` must be idempotent.** This one
@@ -121,7 +125,7 @@ message, as [Dead letters](#dead-letters) describes.
 
 The end user's `Init` sources `rabbitmq.Settings` with
 [`config.Struct`](https://pkg.go.dev/github.com/z5labs/bedrock/config#Struct),
-as [Configuring a humus service]({{< relref "configuration" >}}) describes,
+as [Configuring a humus service]({{< relref "/fundamentals/configuration" >}}) describes,
 builds the `Publisher` and the `Processor`, and returns the Service that
 `rabbitmq.NewService` builds:
 
@@ -170,7 +174,7 @@ humus defines none of them. `publisherOn` is the end user's helper too, as
 
 The consumer's `main` is one call to `humus.Main`, here with a telemetry
 `Builder` that names the service, as
-[Telemetry]({{< relref "telemetry#writing-the-builder" >}}) describes:
+[Telemetry]({{< relref "/fundamentals/telemetry#writing-the-builder" >}}) describes:
 
 ```go
 humus.Main(Init, humus.WithTelemetry(buildTelemetry))
@@ -193,7 +197,7 @@ runs, such as a second consumer or a probes server, as
 ## Settings
 
 `rabbitmq.Settings` follows the
-[settings convention]({{< relref "configuration#what-a-package-with-settings-exports" >}}):
+[settings convention]({{< relref "/fundamentals/configuration#what-a-package-with-settings-exports" >}}):
 plain Go values, a check for each field, and `rabbitmq.DefaultSettings()` for
 the defaults. Every field's zero value means zero, never "use the default",
 so an `Init` starts from `DefaultSettings()` and changes the fields it
@@ -258,7 +262,7 @@ init: config RABBITMQ_ADDR: is a URI, not host:port
 a bad field fails `Init` too, naming every field at fault, such as
 `rabbitmq: NewService: Settings.Queue must not be empty`. That error is no
 `*config.Error`, so the App exits 1: the fault is in the code, not in the
-configuration. [How a bad value fails]({{< relref "configuration#how-a-bad-value-fails" >}})
+configuration. [How a bad value fails]({{< relref "/fundamentals/configuration#how-a-bad-value-fails" >}})
 explains the exit codes.
 
 ### The `Delivery` setting
@@ -284,7 +288,7 @@ and plain text on 5672.
 
 The end user decodes the certificates from files, read through `s.Host.FS`
 so that a test reads them from its own directory and production from the
-real disk, as [Reading a file]({{< relref "configuration#reading-a-file" >}})
+real disk, as [Reading a file]({{< relref "/fundamentals/configuration#reading-a-file" >}})
 describes. This chain reads the broker's CA from the PEM file
 `RABBITMQ_TLS_CA_FILE` names, and the client's certificate chain and private
 key from the one `RABBITMQ_TLS_CERT_FILE` names, and logs in with the client
@@ -301,13 +305,13 @@ k.Connection.SASL = &amqp.ExternalAuth{}
 
 `readFile` and `clientTLS` are the end user's own helpers, the same ones the
 Kafka page shows under
-[TLS and mTLS]({{< relref "kafka#tls-and-mtls" >}}): `Connection.TLS` is a
+[TLS and mTLS]({{< relref "/services/kafka#tls-and-mtls" >}}): `Connection.TLS` is a
 plain `*tls.Config`, as Kafka's `Settings.TLS` is. A missing variable, a
 missing file and a file that holds no certificate each fail as a config
 error with exit 78, named after its variable. A broker whose certificate a
 public CA signed needs no `RootCAs`, and a config with no `RootCAs` reads the
 system's roots, which are an
-[ambient leak]({{< relref "lifecycle#ambient-leaks" >}}). A broker that
+[ambient leak]({{< relref "/fundamentals/lifecycle#ambient-leaks" >}}). A broker that
 needs TLS but no client certificate takes a config with only `RootCAs`, and
 a login of the next section.
 
@@ -395,7 +399,7 @@ Declaring them from `Settings` would grow into RabbitMQ's whole topology
 API, queue types, arguments, exchanges and dead-lettering, and would put the
 App in charge of something a deployment already owns.
 
-The [mailer walkthrough]({{< relref "walkthroughs/rabbitmq/mailer/topology" >}})
+The [mailer walkthrough]({{< relref "/walkthroughs/rabbitmq/mailer/topology" >}})
 keeps its topology in a definitions file that the broker's team imports,
 with its delays and limits in policies.
 
@@ -542,14 +546,14 @@ to get one:
 Which messages are worth stopping for, and where the others go, is the end
 user's decision.
 
-The [mailer walkthrough]({{< relref "walkthroughs/rabbitmq/mailer/retries" >}}) uses
+The [mailer walkthrough]({{< relref "/walkthroughs/rabbitmq/mailer/retries" >}}) uses
 both: its `Processor` parks a request that failed for now in a delay queue
 and dead-letters one that never will succeed, and its queue's delivery limit
 dead-letters a request that stops the Service.
 
 ## Shutdown
 
-A Service gets the lifecycle's [two signals]({{< relref "lifecycle#service" >}}).
+A Service gets the lifecycle's [two signals]({{< relref "/fundamentals/lifecycle#service" >}}).
 When `Serve`'s context is done, or `Shutdown` is called, the Service:
 
 1. cancels its consumer, with `basic.cancel`, so the broker sends nothing
@@ -669,8 +673,8 @@ if err != nil {
 return []humus.Service{consumer, probes}, nil
 ```
 
-Health shows the [probes server]({{< relref "health#a-consumers-readiness" >}})
-and [the manifest]({{< relref "health#manifests" >}}) for a Kafka consumer,
+Health shows the [probes server]({{< relref "/fundamentals/health#a-consumers-readiness" >}})
+and [the manifest]({{< relref "/fundamentals/health#manifests" >}}) for a Kafka consumer,
 and a RabbitMQ consumer's are the same but for the monitor. A new pod is then
 held not ready until it has consumed from its queue once, so a rollout whose
 new pods have a wrong broker address stalls, and is reported failed at its
@@ -731,7 +735,7 @@ variables of its own. A process that publishes to two brokers builds two
 `Publisher`s.
 
 `PublisherSettings` follows the
-[settings convention]({{< relref "configuration#what-a-package-with-settings-exports" >}}),
+[settings convention]({{< relref "/fundamentals/configuration#what-a-package-with-settings-exports" >}}),
 like `Settings`: `rabbitmq.DefaultPublisherSettings()` gives the defaults,
 with `DefaultSettings`' `Connection`, every field's zero value means zero,
 and the package reads no variable of its own.
@@ -915,7 +919,7 @@ operator's bad value fails startup naming its variable, with exit 78.
 policy, so `DefaultPublisherSettings` holds humus's, and the end user
 replaces it in their `Init`. A policy whose `Trip` always returns `false`
 turns the breaker off, as on the Kafka page's
-[circuit breaker]({{< relref "kafka#the-circuit-breaker" >}}).
+[circuit breaker]({{< relref "/services/kafka#the-circuit-breaker" >}}).
 
 Each change of the breaker's state is a log record, as
 [The logs](#the-logs) lists. The `Publisher` measures the breaker and the
@@ -943,7 +947,7 @@ If the end user's `Init` fails after `NewPublisher`, the lifecycle runs the
 
 ## The defaults
 
-The consumer runs on `humus.Main`'s [defaults]({{< relref "lifecycle#the-defaults" >}}),
+The consumer runs on `humus.Main`'s [defaults]({{< relref "/fundamentals/lifecycle#the-defaults" >}}),
 which are a consumer's, so `queue/rabbitmq` has no `Main` and no defaults of
 its own:
 
@@ -973,7 +977,7 @@ and the telemetry not yet exported is lost.
 
 An operator changes the grace period with `HUMUS_SHUTDOWN_GRACE_PERIOD`, and
 adds a drain with `HUMUS_SHUTDOWN_DRAIN_DELAY`, without a rebuild, as for any
-App. [The lifecycle's settings]({{< relref "lifecycle#settings" >}})
+App. [The lifecycle's settings]({{< relref "/fundamentals/lifecycle#settings" >}})
 describes both variables.
 
 ### Two queues, two Services
@@ -988,7 +992,7 @@ after its deliveries in flight. One `Publisher` serves both.
 ### Which `Main`
 
 Which `Main` the process uses depends on what a load balancer routes to, as
-[the lifecycle's runtime packages]({{< relref "lifecycle#runtime-packages" >}})
+[the lifecycle's runtime packages]({{< relref "/fundamentals/lifecycle#runtime-packages" >}})
 explains for mixed processes:
 
 - **On its own, or next to a probes or metrics server,** a consumer stays on
@@ -996,9 +1000,9 @@ explains for mixed processes:
   the exit.
 - **Next to a server a load balancer routes to,** such as an API, the
   process uses that server's package's `Main`: `httpserver.Main` for
-  [an HTTP server]({{< relref "http#the-defaults" >}}), with a 5s drain and a
+  [an HTTP server]({{< relref "/services/http/serving#the-defaults" >}}), with a 5s drain and a
   10s grace period, or `grpcserver.Main` for
-  [a gRPC server]({{< relref "grpc#the-defaults" >}}), with a 5s drain and a
+  [a gRPC server]({{< relref "/services/grpc/serving#the-defaults" >}}), with a 5s drain and a
   15s grace period. The consumer still cancels its consumer as soon as
   shutdown starts, and its deliveries in flight then have the drain and that
   package's grace period to finish, rather than `humus.Main`'s 20s.
@@ -1176,7 +1180,7 @@ increase(humus_retry_decisions_total{humus_retry_decision="throttled"}[5m]) > 0
 A View in the end user's telemetry `Builder` drops or renames any of them.
 humus has no setting to turn them off. A test reads them as it reads any
 metric, with `humustest.Telemetry`'s `Metrics`, filtered to the scope.
-[humus's own instruments]({{< relref "telemetry#humuss-own-instruments" >}})
+[humus's own instruments]({{< relref "/fundamentals/telemetry#humuss-own-instruments" >}})
 on the Telemetry page lists what each of humus's clients records, with the
 View and the test written out.
 
@@ -1221,7 +1225,7 @@ counts say how; an alert on a metric, `humus.circuit.state`, is in
 `amqp.SetLogger` replaces, and which logs nothing by default. humus never
 sets it: replacing it is process-wide state, which every App and every test
 in the process would share, so it is on the lifecycle's
-[ambient leaks]({{< relref "lifecycle#ambient-leaks" >}}), and humus's lint
+[ambient leaks]({{< relref "/fundamentals/lifecycle#ambient-leaks" >}}), and humus's lint
 forbids `SetLogger` in its own code. Left alone, amqp091's few messages,
 such as a failure to answer the broker's close of a channel, are dropped,
 and most of what it would log comes from its experimental recovery, which
@@ -1247,7 +1251,7 @@ delivery is trusted. The `user-id` comes only from the publisher, so a
 scenario a humus service forwards is trusted by `UserID` only when its
 `Publish` sets `Publishing.UserID` to the user its `Publisher` logs in as,
 as [A call](#a-call) shows. Without `humus.WithFaults`, nothing is evaluated or
-stripped. [Failure injection]({{< relref "failure-injection" >}}) explains
+stripped. [Failure injection]({{< relref "/hardening/failure-injection" >}}) explains
 the model, whom to trust and how, and how to test a scenario.
 
 ## Testing
@@ -1267,10 +1271,10 @@ whole inside `synctest` on a test Host: an App that uses RabbitMQ can't, and
 the charter's
 [revision 10](https://github.com/z5labs/humus/discussions/629#discussioncomment-19009924)
 records the exception.
-[Testing a humus App]({{< relref "testing#runtime-packages" >}}) says the
+[Testing a humus App]({{< relref "/fundamentals/testing#runtime-packages" >}}) says the
 same for every runtime package.
 
-The [mailer walkthrough]({{< relref "walkthroughs/rabbitmq/mailer/testing" >}})
+The [mailer walkthrough]({{< relref "/walkthroughs/rabbitmq/mailer/testing" >}})
 tests its `Processor` both ways, and runs the same black-box cases against
 the App in process and against its deployment on kind.
 
@@ -1498,7 +1502,7 @@ of their own, and every test that doesn't need a broker outside the tag.
 ### The Service contract
 
 `queue/rabbitmq`'s own tests hold `rabbitmq.Service` to the Service contract
-with [`humustest.TestService`]({{< relref "testing#checking-a-service" >}}),
+with [`humustest.TestService`]({{< relref "/fundamentals/testing#checking-a-service" >}}),
 with nothing listening at `Addr`, so it shuts down as the lifecycle expects
 while it waits for a broker:
 
@@ -1516,29 +1520,3 @@ func TestService_passes_the_Service_contract_with_no_broker(t *testing.T) {
 
 A Service of the end user's own that wraps a consumer is checked the same
 way.
-
-## Migration from amqp091-go
-
-humus had no RabbitMQ package before the reset. A consumer written on
-amqp091-go directly moves over like this:
-
-| On amqp091-go | With `queue/rabbitmq` |
-|---|---|
-| `amqp.Dial(os.Getenv("AMQP_URL"))` | `Settings.Connection`, sourced in `Init`, dialled through `s.Host`; a URI parsed with `amqp.ParseURI`, as [An AMQP URI](#an-amqp-uri) shows |
-| `ch.Qos(n, 0, false)` | `Settings.Prefetch` |
-| `ch.Consume(q, "", autoAck, ...)` and a loop over the deliveries | `Settings.Queue`, `Settings.Delivery`, and a `queue.Processor[rabbitmq.Message]` |
-| `d.Ack(false)`, `d.Nack(false, true)` | the Service, as `Delivery` says |
-| `conn.NotifyClose` and a reconnect loop | the Service, as [Connection loss](#connection-loss) describes |
-| `ch.QueueDeclare`, `ch.ExchangeDeclare`, `ch.QueueBind` at startup | the end user's infrastructure, set up before the App starts |
-| `ch.PublishWithContext` | `Publisher.Publish`, with confirms, returns, retries and a breaker |
-| `amqp.SetLogger`, OpenTelemetry's globals | `s.Telemetry` |
-
-Two behaviours change for such a consumer:
-
-- **Under at-least-once, a processing error now stops the App,** and the
-  message is rejected and delivered again, where a hand-written consumer
-  often nacked it and carried on, or acked it and lost it.
-- **Auto-ack is no longer how at-most-once is done.** `AtMostOnce` acks a
-  batch of up to `Prefetch` deliveries, and waits for the broker to have the
-  ack, before it processes any of them, so a backlog no longer fills the
-  process's memory.

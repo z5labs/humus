@@ -50,7 +50,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 ```
 
 The catalog's client comes next, as
-[Calling the catalog]({{< relref "walkthroughs/http/shoppingcart/calling-the-catalog#the-clients-settings" >}})
+[Calling the catalog]({{< relref "/walkthroughs/http/shoppingcart/calling-the-catalog#the-clients-settings" >}})
 shows, then the tokens' settings and the server's:
 
 ```go
@@ -333,7 +333,7 @@ func openPostgres(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (end
 ```
 
 What pgx still reads from the real process is in
-[pgx's ambient leaks]({{< relref "openapi#pgxs-ambient-leaks" >}}). The URL
+[pgx's ambient leaks]({{< relref "/services/http/openapi#pgxs-ambient-leaks" >}}). The URL
 sets every field the service uses, so nothing is left for pgx to find.
 
 ## `Init`
@@ -368,8 +368,8 @@ func initWith(ctx context.Context, s *humus.Setup, open openStore, newCatalog ne
 ```
 
 Then it verifies tokens and builds the API, as
-[Who may do what]({{< relref "walkthroughs/http/shoppingcart/access#verifying-tokens" >}})
-and [The cart's API]({{< relref "walkthroughs/http/shoppingcart/api#the-api" >}})
+[Who may do what]({{< relref "/walkthroughs/http/shoppingcart/access#verifying-tokens" >}})
+and [The cart's API]({{< relref "/walkthroughs/http/shoppingcart/api#the-api" >}})
 show. The catalog's `Init` is the same, with `InitWith` and no catalog to
 open.
 
@@ -395,7 +395,7 @@ return []humus.Service{svc}, nil
 ```
 
 Both latch, as the
-[catalog's]({{< relref "walkthroughs/http/shoppingcart/catalog#the-probes" >}})
+[catalog's]({{< relref "/walkthroughs/http/shoppingcart/catalog#the-probes" >}})
 does:
 
 - a release that can't reach a dependency never turns ready, so its
@@ -431,7 +431,7 @@ func trustTokens(faults fault.Injector, verify func(context.Context, string) (en
 
 The token is verified with the scenario stripped, since the scenario isn't
 trusted yet. The catalog trusts a verified client certificate instead, as
-[The catalog]({{< relref "walkthroughs/http/shoppingcart/catalog#the-scenarios-it-trusts" >}})
+[The catalog]({{< relref "/walkthroughs/http/shoppingcart/catalog#the-scenarios-it-trusts" >}})
 shows.
 
 ## `BuildTelemetry`

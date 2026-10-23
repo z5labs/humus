@@ -7,7 +7,7 @@ description: >
   config package, so that a bad value fails startup with exit 78 and an error
   naming the variable.
 type: docs
-weight: 21
+weight: 20
 ---
 
 humus packages are configured with plain Go values. They read no environment
@@ -51,7 +51,7 @@ reads the value adds the name.
 The samples on this page use a stand-in, declared in the root package's
 tests in the shape every package gives it. The
 [`telemetry`](https://pkg.go.dev/github.com/z5labs/humus/telemetry) package's
-`Settings` has the same shape, and [Telemetry]({{< relref "telemetry#writing-the-builder" >}})
+`Settings` has the same shape, and [Telemetry]({{< relref "/fundamentals/telemetry#writing-the-builder" >}})
 sources it with the same pattern, in the App's telemetry `Builder` rather than
 in `Init`:
 
@@ -100,7 +100,7 @@ func CheckMaxConns(n int) error {
 
 In a real service these come from the package, as `httpserver.Settings`,
 `httpserver.DefaultSettings()` and `httpserver.CheckReadTimeout`, and you
-never copy a range out of godoc. [Serving HTTP]({{< relref "http#settings" >}})
+never copy a range out of godoc. [Serving HTTP]({{< relref "/services/http/serving#settings" >}})
 sources `httpserver.Settings` this way.
 
 ## Sourcing Settings in Init
@@ -220,7 +220,7 @@ When one is in the chain of the error `Init` returns, the App exits 78
 is `READ_TIMEOUT` in the run above. A test that checks every bad variable
 walks the joined error, whose `Unwrap() []error` returns one `*config.Error`
 per variable, or compares the whole of the record the App logged. The
-[lifecycle's exit codes]({{< relref "lifecycle#exit-codes" >}}) list the rest.
+[lifecycle's exit codes]({{< relref "/fundamentals/lifecycle#exit-codes" >}}) list the rest.
 
 ## Building Settings in code
 
@@ -285,7 +285,7 @@ package:
     to an App that has none. When it is not set, the App's `Drain` is the
     drain.
 
-  [The lifecycle's settings]({{< relref "lifecycle#settings" >}}) describes
+  [The lifecycle's settings]({{< relref "/fundamentals/lifecycle#settings" >}}) describes
   them.
 - **`job` reads the variables its propagator's keys name.** A job's run
   joins the trace of the process that started it: `job.Service` extracts a
@@ -296,7 +296,7 @@ package:
   `BAGGAGE`; a `Builder` with a propagator of another kind, such as B3,
   changes them. When none is set, or the value is malformed, the run starts
   a new trace and nothing fails.
-  [Jobs]({{< relref "jobs#joining-the-trace-that-started-the-job" >}})
+  [Jobs]({{< relref "/services/jobs#joining-the-trace-that-started-the-job" >}})
   describes them.
 
 Apart from the lifecycle's two, humus still defines no variable names. The
@@ -304,7 +304,7 @@ names `job` reads are OpenTelemetry's: its specification names them, from
 the propagator's keys, so a process that starts a job sets the same
 variables whatever language the job is written in. The `telemetry` package
 reads no `OTEL_*` variable either: a `Builder` that wants them maps them onto
-`telemetry.Settings` itself, as [Telemetry]({{< relref "telemetry#settings" >}})
+`telemetry.Settings` itself, as [Telemetry]({{< relref "/fundamentals/telemetry#settings" >}})
 shows.
 
 ## Logging and secrets
@@ -353,9 +353,9 @@ in production, and a `HUMUS_SHUTDOWN_GRACE_PERIOD` or
 `HUMUS_SHUTDOWN_DRAIN_DELAY` the test passes in `WithEnv` overrides it, as an
 operator's would. `WithEnv` given twice keeps only the last map, so a test
 that adds to a base environment merges the maps itself, as
-[Testing a humus App]({{< relref "testing#a-base-environment" >}}) shows.
+[Testing a humus App]({{< relref "/fundamentals/testing#a-base-environment" >}}) shows.
 
 A relative name given to the humustest Host's `FS` is relative to the test's
 temp directory, and an absolute one, from `h.Path`, must be inside it, so a
 setting naming a file never reaches the real disk.
-[Testing a humus App]({{< relref "testing" >}}) covers the Host in full.
+[Testing a humus App]({{< relref "/fundamentals/testing" >}}) covers the Host in full.

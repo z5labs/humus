@@ -642,7 +642,7 @@ go -C example/grpc/wallet test -tags testcontainers ./...
 
 Behind the `functional` tag, the same cases run against the kind overlay
 that `up.sh` brings up, which
-[Deploying]({{< relref "walkthroughs/grpc/wallet/deploying" >}}) covers:
+[Deploying]({{< relref "/walkthroughs/grpc/wallet/deploying" >}}) covers:
 
 ```go
 func TestWallet_passes_the_shared_cases_on_kind(t *testing.T) {

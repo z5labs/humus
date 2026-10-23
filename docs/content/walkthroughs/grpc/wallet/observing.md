@@ -26,7 +26,7 @@ Sign in at <http://localhost:3000> as `admin`.
 ## A send's trace
 
 Send from alice's account to bob's, as
-[Deploying]({{< relref "walkthroughs/grpc/wallet/deploying#trying-it-with-walletctl" >}})
+[Deploying]({{< relref "/walkthroughs/grpc/wallet/deploying#trying-it-with-walletctl" >}})
 shows. Each server span is named after its method, so in **Explore**, with
 **Tempo**, find the sends by name:
 
@@ -63,7 +63,7 @@ A watch is one span on each side, `wallet.v1.Wallet/WatchAccount` and
 
 A rehearsed failure is in the trace too. A send whose scenario aborts
 `postgresql:ledger`, as the case `TheLedgersDatabaseIsDown` in
-[The failure injection cases]({{< relref "walkthroughs/grpc/wallet/testing#the-failure-injection-cases" >}})
+[The failure injection cases]({{< relref "/walkthroughs/grpc/wallet/testing#the-failure-injection-cases" >}})
 sends, has one attempt for each of the Client's `MaxAttempts`:
 
 ```go

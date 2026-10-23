@@ -6,7 +6,7 @@ description: >
   it step by step: the bar every one meets, which its pages close with as a
   checklist, and the three levels of tests it runs.
 type: docs
-weight: 30
+weight: 60
 ---
 
 A walkthrough is an example application that is production-ready, with pages
@@ -16,27 +16,27 @@ type, and every sample on its pages is quoted from that code.
 
 ## The walkthroughs
 
-- [Billing job]({{< relref "walkthroughs/job/billing" >}}): a job, run daily by
-  a CronJob, that bills a month of subscriptions in PostgreSQL through a
-  payments API, once, however often it runs.
-- [Mailer]({{< relref "walkthroughs/rabbitmq/mailer" >}}): a RabbitMQ worker that
-  sends the emails other services ask for through a provider's API, retries
-  what fails for now after a delay, and dead-letters what never will.
-- [Order status processor]({{< relref "walkthroughs/kafka/orderstatus" >}}): a
-  Kafka processor that projects orders' events into their statuses in
-  PostgreSQL, produces each change of status, retries what fails for now
-  through a retry topic, and dead-letters what never will.
-- [Databases controller]({{< relref "walkthroughs/kube/databases" >}}): a
-  Kubernetes controller that provisions a database and the role that owns it
-  in PostgreSQL for each `Database`, writes the role's credentials to a
-  Secret, and drops both on delete, as the `Database` says.
-- [Shoppingcart]({{< relref "walkthroughs/http/shoppingcart" >}}): an API for
+- [Shoppingcart]({{< relref "/walkthroughs/http/shoppingcart" >}}): an API for
   shopping carts, behind JWT bearer tokens, that prices each item from a
   catalog service of its own over mTLS, both on PostgreSQL.
-- [Wallet]({{< relref "walkthroughs/grpc/wallet" >}}): a gRPC service for each
+- [Wallet]({{< relref "/walkthroughs/grpc/wallet" >}}): a gRPC service for each
   caller's own account, behind JWT bearer tokens, on a ledger service of its
   own that it calls over mTLS, which keeps the accounts and the transfers
   between them in PostgreSQL.
+- [Billing job]({{< relref "/walkthroughs/job/billing" >}}): a job, run daily by
+  a CronJob, that bills a month of subscriptions in PostgreSQL through a
+  payments API, once, however often it runs.
+- [Order status processor]({{< relref "/walkthroughs/kafka/orderstatus" >}}): a
+  Kafka processor that projects orders' events into their statuses in
+  PostgreSQL, produces each change of status, retries what fails for now
+  through a retry topic, and dead-letters what never will.
+- [Mailer]({{< relref "/walkthroughs/rabbitmq/mailer" >}}): a RabbitMQ worker that
+  sends the emails other services ask for through a provider's API, retries
+  what fails for now after a delay, and dead-letters what never will.
+- [Databases controller]({{< relref "/walkthroughs/kube/databases" >}}): a
+  Kubernetes controller that provisions a database and the role that owns it
+  in PostgreSQL for each `Database`, writes the role's credentials to a
+  Secret, and drops both on delete, as the `Database` says.
 
 ## The bar
 

@@ -71,7 +71,7 @@ a `GET`, so it is safe to retry:
 | a 500 | no | a failure |
 
 A 404 is the catalog working, so it counts for the catalog, not against it.
-[Calling HTTP services]({{< relref "http-client#how-an-attempts-result-counts" >}})
+[Calling HTTP services]({{< relref "/dependencies/http#how-an-attempts-result-counts" >}})
 describes the default.
 
 ## `ForwardScenario`
@@ -221,5 +221,5 @@ func readiness(client *http.Client, u *url.URL) func(context.Context) error {
 
 So it proves what adding an item needs: the URL, a catalog certificate the
 CA signed, a client certificate the catalog trusts, and a catalog that has
-reached its own database. [`Init`]({{< relref "walkthroughs/http/shoppingcart/init#readiness" >}})
+reached its own database. [`Init`]({{< relref "/walkthroughs/http/shoppingcart/init#readiness" >}})
 latches it.

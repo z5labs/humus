@@ -1,6 +1,6 @@
 ---
 title: Calling gRPC services
-linkTitle: Calling gRPC services
+linkTitle: gRPC services
 description: >
   How to call gRPC dependencies with the grpcclient package: one Client per
   dependency, built in Init from grpcclient.Settings sourced with
@@ -11,7 +11,7 @@ description: >
   records, streams, what it records, readiness with Connected, and how to
   test the end user's whole App next to a grpcserver backend.
 type: docs
-weight: 19
+weight: 20
 ---
 
 The [`grpcclient`](https://pkg.go.dev/github.com/z5labs/humus/grpc/grpcclient)
@@ -24,7 +24,7 @@ end user's `Classify` decides, and fail at once while a circuit breaker says
 the dependency keeps failing.
 
 The package is in the nested module `github.com/z5labs/humus/grpc`, next to
-[`grpcserver`]({{< relref "grpc" >}}): `grpcserver` is the server half, and
+[`grpcserver`]({{< relref "/services/grpc/serving" >}}): `grpcserver` is the server half, and
 `grpcclient` the client half. The `Client` dials only through the Setup's
 Host, so a test runs the end user's whole App, its outbound calls included,
 on humustest's network, as [Testing](#testing) shows.
@@ -33,7 +33,7 @@ The design behind everything on this page is in
 [Proposal: outbound gRPC clients](https://github.com/z5labs/humus/discussions/763),
 with its [revision 1](https://github.com/z5labs/humus/discussions/763#discussioncomment-19009949).
 
-The [wallet walkthrough]({{< relref "walkthroughs/grpc/wallet" >}}) builds a
+The [wallet walkthrough]({{< relref "/walkthroughs/grpc/wallet" >}}) builds a
 production-ready service that calls another on `grpcclient`, step by step:
 a wallet whose Client for its ledger retries every transfer safely, turns
 the ledger's answers into its own, and gates its readiness on `Connected`.
@@ -115,7 +115,7 @@ func (a *api) UnaryCall(ctx context.Context, _ *testpb.SimpleRequest) (*testpb.S
 }
 ```
 
-The service's `main` is the server's, as [gRPC services]({{< relref "grpc#a-service" >}})
+The service's `main` is the server's, as [Serving gRPC]({{< relref "/services/grpc/serving#a-service" >}})
 describes:
 
 ```go
@@ -180,7 +180,7 @@ calls still go through. Each `Client` opens a connection of its own.
 ## Settings
 
 `grpcclient.Settings` follows the
-[settings convention]({{< relref "configuration#what-a-package-with-settings-exports" >}}):
+[settings convention]({{< relref "/fundamentals/configuration#what-a-package-with-settings-exports" >}}):
 plain Go values, a `DefaultSettings()`, and a check for each field with a
 valid range. The package reads no environment variable and defines no
 variable name: the end user's `Init` sources each field with
@@ -217,7 +217,7 @@ an operator's choice. `NewClient` runs every check again, rejects a nil
 takes both fields to tell, and reports every bad field in one error that
 names each one. That fails `Init` with exit 1, since the fault is in the
 code, or in a pair of values no check given to `Validate` sees together.
-[How a bad value fails]({{< relref "configuration#how-a-bad-value-fails" >}})
+[How a bad value fails]({{< relref "/fundamentals/configuration#how-a-bad-value-fails" >}})
 explains the exit codes.
 
 ## TLS and plain text
@@ -228,7 +228,7 @@ explains the exit codes.
 changed. grpc-go adds `h2` to its ALPN and enforces it, and `CheckTLS`
 rejects a config that allows nothing from TLS 1.2 on, which HTTP/2 requires.
 `Init` above reads the dependency's CA from a file, through `s.Host.FS`, as
-[Reading a file]({{< relref "configuration#reading-a-file" >}}) describes,
+[Reading a file]({{< relref "/fundamentals/configuration#reading-a-file" >}}) describes,
 and trusts only that CA:
 
 ```go
@@ -244,15 +244,15 @@ func clientTLS(pem []byte) (*tls.Config, error) {
 ```
 
 `readFile` and `serverTLS` are the same helpers as under
-[gRPC services]({{< relref "grpc#the-certificate" >}}).
+[Serving gRPC]({{< relref "/services/grpc/serving#the-certificate" >}}).
 
 **A config with no `RootCAs` trusts the system's roots,** which
 `crypto/x509` loads from the real host: the files `SSL_CERT_FILE` and
 `SSL_CERT_DIR` name in the real environment, and the OS's certificate files.
-That is one of the [ambient leaks]({{< relref "lifecycle#ambient-leaks" >}}).
+That is one of the [ambient leaks]({{< relref "/fundamentals/lifecycle#ambient-leaks" >}}).
 A service that calls only its own services sets `RootCAs` to its CA, as
 `clientTLS` does, and reads nothing ambient, and a test sets it to the pool
-of a CA from [`humustest.NewCA`]({{< relref "testing#tls" >}}).
+of a CA from [`humustest.NewCA`]({{< relref "/fundamentals/testing#tls" >}}).
 
 **A nil `TLS` means plain text.** `Addr` is `host:port` and names no scheme,
 so a nil `TLS` is the one way to ask for it. humus can't control what a
@@ -281,7 +281,7 @@ dials. In `main`, `humus.OSHost`'s `Dial` looks the name up as `net.Dial`
 does, each time it dials. grpc-go's `dns` resolver, the default for a target
 with no scheme, is never used: it would look the name up around the Host,
 and inside a `testing/synctest` bubble it crashes the test binary, as
-[The `dns` resolver and synctest]({{< relref "grpc#the-dns-resolver-and-synctest" >}})
+[The `dns` resolver and synctest]({{< relref "/services/grpc/serving#the-dns-resolver-and-synctest" >}})
 describes. The `Client` uses no HTTP CONNECT proxy, and never reads
 `HTTPS_PROXY` or the other proxy variables.
 
@@ -334,7 +334,7 @@ grpc.KeepaliveParams(keepalive.ServerParameters{MaxConnectionAge: time.Minute}),
 ```
 
 as an option of `grpcserver.NewService`, after the `Settings`, as
-[Server options]({{< relref "grpc#spreading-clients-across-pods" >}})
+[Server options]({{< relref "/services/grpc/serving#spreading-clients-across-pods" >}})
 describes. grpc-go adds a jitter of 10% either way, so a dependency's clients
 don't all dial again at once. A GOAWAY lets the RPCs in flight finish, and
 the next RPC goes over a new connection, so a `Client` sees no error. A
@@ -646,7 +646,7 @@ the state the breaker left as `humus.circuit.previous_state`, and the counts
 of that state: `humus.circuit.successes`, `humus.circuit.failures`,
 `humus.circuit.consecutive_successes`, `humus.circuit.consecutive_failures`
 and `humus.circuit.timed_out`. The bodies and the attributes are those of
-[`httpclient`]({{< relref "http-client#its-log-records" >}})'s, so one query
+[`httpclient`]({{< relref "/dependencies/http#its-log-records" >}})'s, so one query
 finds every breaker. The `Client` logs nothing else: an error is returned to
 the end user's code, not logged.
 
@@ -680,7 +680,7 @@ RPC, when `RecvMsg` returns its one response, given as nil. How it counts:
 
 **`Unavailable` is how a stream ends when its server or its connection goes
 away.** `grpcserver`'s `Shutdown` ends every stream with it, as
-[Streams at shutdown]({{< relref "grpc#streams-at-shutdown" >}}) describes,
+[Streams at shutdown]({{< relref "/services/grpc/serving#streams-at-shutdown" >}}) describes,
 so a rollout of the dependency ends each stream on a pod it replaces that
 way. grpc-go ends with it every stream on a connection that closes, too, such
 as one the server's `MaxConnectionAgeGrace` closes. A connection's streams
@@ -749,7 +749,7 @@ state changes are the `Client`'s only log records, as
 [Its log records](#its-log-records) lists.
 
 What is still read from the real environment is what
-[gRPC services]({{< relref "grpc#grpc-gos-logger" >}}) records: grpc-go's
+[Serving gRPC]({{< relref "/services/grpc/serving#grpc-gos-logger" >}}) records: grpc-go's
 logger, which reads `GRPC_GO_LOG_SEVERITY_LEVEL` and the other `GRPC_GO_LOG_`
 variables and writes to the real standard error, grpc-go's other `GRPC_`
 variables, and `OTEL_SEMCONV_STABILITY_OPT_IN`, which otelgrpc reads. The
@@ -814,7 +814,7 @@ increase(humus_circuit_transitions_total{humus_circuit_state="open"}[5m]) > 0
 A View in the end user's telemetry `Builder` drops or renames any of them.
 humus has no setting to turn them off. A test reads them as it reads any
 metric, with `humustest.Telemetry`'s `Metrics`, filtered to the scope.
-[humus's own instruments]({{< relref "telemetry#humuss-own-instruments" >}})
+[humus's own instruments]({{< relref "/fundamentals/telemetry#humuss-own-instruments" >}})
 on the Telemetry page lists what each of humus's clients records, with the
 View and the test written out.
 
@@ -825,7 +825,7 @@ once the `Client` has connected to `Addr`: unhealthy until its connection is
 first ready, its TLS handshake done, and healthy from then until the
 connection is closed. It never returns an error. It goes in the readiness of
 whatever exposes the probes, here a `grpchealth` probes port, as
-[Health]({{< relref "health#exposing-the-probes" >}}) describes:
+[Health]({{< relref "/fundamentals/health#exposing-the-probes" >}}) describes:
 
 ```go
 carts, err := grpcclient.NewClient(s, cartsSettings)
@@ -856,7 +856,7 @@ turns ready, and the rollout stops at its progress deadline with the old pods
 still serving.
 
 **It latches,** as a Kafka consumer's
-[`Joined`]({{< relref "kafka#readiness" >}}) does, for the same reason.
+[`Joined`]({{< relref "/services/kafka#readiness" >}}) does, for the same reason.
 After the first connection, an outage of the dependency hits every pod at
 once. Turning them all unready would take the service out of its load
 balancer, so its callers would get no answer instead of this service's own
@@ -911,18 +911,18 @@ and a delay is waited inside `Timeout`. Either is a real failure to the
 Client: `Classify` decides it, so it is retried, and the breaker counts it.
 The Client strips the scenario from what it sends, unless
 `Settings.ForwardScenario` is set. Without `humus.WithFaults`, nothing is
-evaluated or stripped. [Failure injection]({{< relref "failure-injection" >}})
+evaluated or stripped. [Failure injection]({{< relref "/hardening/failure-injection" >}})
 explains the model, the points, a `Classify` that spares the breaker, and
 how to test a scenario.
 
 ## Testing
 
 A service that calls a dependency is tested whole, inside
-`testing/synctest`, as [Testing a humus App]({{< relref "testing" >}})
+`testing/synctest`, as [Testing a humus App]({{< relref "/fundamentals/testing" >}})
 describes for any App. The `Client` dials through the Setup's Host, so the
 dependency is a second App on the same humustest Host: a `grpcserver`
 Service that answers as the dependency would, with a certificate from a CA
-that [`humustest.NewCA`]({{< relref "testing#tls" >}}) generates for the
+that [`humustest.NewCA`]({{< relref "/fundamentals/testing#tls" >}}) generates for the
 test. `grpcclient`'s own tests start one with a helper:
 
 ```go
@@ -962,7 +962,7 @@ The end user's whole App then runs against it, with the end user's own
 gives it. The test writes the App's certificate and the dependency's CA into
 the Host's filesystem with `humustest.WithFiles`, and names them with
 `humustest.WithEnv`, as
-[Giving the App its certificate]({{< relref "grpc#giving-the-app-its-certificate" >}})
+[Giving the App its certificate]({{< relref "/services/grpc/serving#giving-the-app-its-certificate" >}})
 describes. `pemFile` and `caPEM` are helpers of the test file that
 PEM-encode them: `pemFile` a certificate's chain and private key, and `caPEM`
 the CA certificate that issued a certificate. `orders` and the dependency's

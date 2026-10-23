@@ -26,7 +26,7 @@ Sign in at <http://localhost:3000> as `admin`.
 ## An add's trace
 
 Add an item to a cart, as
-[Deploying]({{< relref "walkthroughs/http/shoppingcart/deploying#calling-the-cart" >}})
+[Deploying]({{< relref "/walkthroughs/http/shoppingcart/deploying#calling-the-cart" >}})
 shows. Each server span is named after its method and the operation's route,
 so in **Explore**, with **Tempo**, find the adds by their name:
 

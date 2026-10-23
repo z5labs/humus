@@ -80,7 +80,7 @@ func decode(m kafka.Message, from place) (store.Event, string, error) {
 
 The event is keyed by `from`, the place it was consumed from on
 `orders.events`. A record from `orders.retry` carries that place in its
-headers, as [Retries and dead letters]({{< relref "walkthroughs/kafka/orderstatus/retries#where-a-record-came-from" >}})
+headers, as [Retries and dead letters]({{< relref "/walkthroughs/kafka/orderstatus/retries#where-a-record-came-from" >}})
 shows.
 
 ```go

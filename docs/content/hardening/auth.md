@@ -1,6 +1,6 @@
 ---
 title: Authentication and authorization
-linkTitle: Authentication
+linkTitle: Authentication and authorization
 description: >
   How a humus service authenticates and authorizes the requests it serves
   with the auth package: schemes and their typed principals, read with From,
@@ -11,7 +11,7 @@ description: >
   RemoteKeySet or a KeySet of one's own, answering a *jwt.KeySetError, what
   humus records, and how to test all of it.
 type: docs
-weight: 20
+weight: 10
 ---
 
 The [`auth`](https://pkg.go.dev/github.com/z5labs/humus/auth) package
@@ -21,11 +21,11 @@ request's credential into the end user's own principal, which a handler reads
 back with the scheme's `From`. A **requirement** is what a request must have:
 a scheme, a scheme with scopes, several schemes, or nothing at all. Three
 places enforce requirements, one for each way humus serves requests:
-`openapi.Security` for an [OpenAPI API]({{< relref "openapi" >}}),
+`openapi.Security` for an [OpenAPI API]({{< relref "/services/http/openapi" >}}),
 `auth.NewHandler` for a plain `http.Handler` served by
-[`httpserver`]({{< relref "http" >}}), and
+[`httpserver`]({{< relref "/services/http/serving" >}}), and
 [`grpcauth`](https://pkg.go.dev/github.com/z5labs/humus/grpc/grpcauth)'s
-`Interceptors` for a [`grpcserver`]({{< relref "grpc" >}}) Service.
+`Interceptors` for a [`grpcserver`]({{< relref "/services/grpc/serving" >}}) Service.
 
 `auth` names no token format. The opt-in
 [`auth/jwt`](https://pkg.go.dev/github.com/z5labs/humus/auth/jwt) package
@@ -231,7 +231,7 @@ without `NewHandler`.
 
 ### `openapi.Security`
 
-An API served with [`openapi/v3`]({{< relref "openapi" >}}) takes its
+An API served with [`openapi/v3`]({{< relref "/services/http/openapi" >}}) takes its
 requirements as `openapi.Security(reqs...)`. Given to `NewAPI`, it is every
 operation's, and the document's. Given to an operation or to `Document`, it
 replaces the API's, whatever the API's was. An API without `Security`
@@ -301,7 +301,7 @@ its top-level `security`, an operation's own `Security` is the operation's
 `security`, `[]` for `auth.Disabled()`, and `components.securitySchemes`
 holds every scheme, keyed by its name. Each operation with requirements lists
 `RequestErrors`' answer at 401, and at 403 when one of them names a scope.
-[Serving an API with OpenAPI]({{< relref "openapi#the-document" >}})
+[Serving an API with OpenAPI]({{< relref "/services/http/openapi#the-document" >}})
 describes the rest of the document.
 
 The document is secured like the API: a request for it must meet the API's
@@ -494,7 +494,7 @@ open. How it stays open depends on where the probes are served:
   kubelet's probes get `Unauthenticated`, and the pod never turns ready: that
   fails at the first deploy, never silently.
 
-[Health]({{< relref "health#exposing-the-probes" >}}) shows both wirings of
+[Health]({{< relref "/fundamentals/health#exposing-the-probes" >}}) shows both wirings of
 each protocol, and which fits the pod.
 
 ## Verifying JWTs
@@ -522,14 +522,14 @@ Every rejection wraps `auth.ErrUnauthenticated`, so it is a 401.
 are plain values the end user sources, such as with `config.Struct`, starting
 from `jwt.DefaultSettings()`. `Issuer` and `Audience` have no default, and
 each field has a `Check` function for its chain, as
-[Configuring a humus service]({{< relref "configuration" >}}) describes.
+[Configuring a humus service]({{< relref "/fundamentals/configuration" >}}) describes.
 
 ### On a `RemoteKeySet`
 
 [`jwt.RemoteKeySet`](https://pkg.go.dev/github.com/z5labs/humus/auth/jwt#RemoteKeySet)
 is the standard `KeySet`. It fetches the JSON Web Key Set an identity
 provider publishes at its `jwks_uri`, with the end user's
-[`httpclient`]({{< relref "http-client" >}}) client, built for the key set's
+[`httpclient`]({{< relref "/dependencies/http" >}}) client, built for the key set's
 origin. The carts API's `Init` builds all three, and nothing is fetched
 until the first token:
 
@@ -691,11 +691,11 @@ record carries the span's trace and span IDs:
 |---|---|---|---|
 | `auth.NewHandler` | `authentication failed` | `github.com/z5labs/humus/auth` | `humus.auth.scheme`, `error.type`, `exception.message`, `http.request.method` |
 | `grpcauth` | `authentication failed` | `github.com/z5labs/humus/grpc/grpcauth` | `humus.auth.scheme`, `error.type`, `exception.message`, `rpc.method` |
-| `openapi.Security` | the catch-all's `request failed`; an `Error`'s answer isn't logged | `github.com/z5labs/humus/openapi/v3` | as for any handler's error, on [the OpenAPI page]({{< relref "openapi#telemetry" >}}) |
+| `openapi.Security` | the catch-all's `request failed`; an `Error`'s answer isn't logged | `github.com/z5labs/humus/openapi/v3` | as for any handler's error, on [the OpenAPI page]({{< relref "/services/http/openapi#telemetry" >}}) |
 
 `humus.auth.scheme` is the name of the scheme whose verifier failed. It
 starts with `humus.`, as
-[every name humus defines]({{< relref "telemetry#the-humus-prefix" >}})
+[every name humus defines]({{< relref "/fundamentals/telemetry#the-humus-prefix" >}})
 does. When the client has gone away, the error goes on the span alone.
 
 `auth/jwt` logs one record, `keys refresh failed`, at `WARN`, under the
@@ -763,10 +763,10 @@ that counts its calls shows when the Verifier got keys.
 ### An App on a key set served on a humustest Host
 
 A test of the end user's whole App runs it with `humustest`, as
-[Testing a humus App]({{< relref "testing" >}}) describes, and is its
+[Testing a humus App]({{< relref "/fundamentals/testing" >}}) describes, and is its
 identity provider too. It serves a JSON Web Key Set from a handler of its
 own, with `httpserver`, on the same
-[humustest Host]({{< relref "testing#the-network" >}}), over TLS with a
+[humustest Host]({{< relref "/fundamentals/testing#the-network" >}}), over TLS with a
 certificate from a `humustest.CA`, and the App reaches the key set through its
 own settings, as it does in production, trusting the CA through `RootCAs`.
 The handler serves the public half of a key the test generates:
@@ -851,29 +851,8 @@ require.Equal(t, []string{`Bearer error="insufficient_scope", scope="carts:write
 The shoppingcart at `example/http/shoppingcart` does the same, on the humustest
 Host in its unit tests, and in its shared cases, which also run against
 PostgreSQL and WireMock in containers and on kind; its walkthrough's
-[Testing]({{< relref "walkthroughs/http/shoppingcart/testing" >}}) describes them.
+[Testing]({{< relref "/walkthroughs/http/shoppingcart/testing" >}}) describes them.
 A test of an `auth.NewHandler` or a `grpcauth` Service needs no identity
 provider when its schemes aren't JWTs: the admin API's test keeps
 its directory in memory, with passwords from `crypto/rand`, and presents a
 client certificate issued by its `humustest.CA`.
-
-## Migration from REST security
-
-`auth` replaces the security of `rest.Run` from before the reset, which the
-reset deleted.
-
-| Before the reset | With `auth` |
-|---|---|
-| `rest.Header("Authorization", rest.Required(), rest.JWTAuth("jwt", verifier))` | `bearer := auth.Bearer("jwt", verify).Format("JWT")`, and `openapi.Security(auth.Require(bearer))` |
-| `JWTVerifier.Verify(ctx, token) (context.Context, error)`, claims put in the context | `verify(ctx, token) (P, error)`, read with `bearer.From(ctx)` |
-| a JWT verifier written by hand, on golang-jwt and a hand-loaded public key | `jwt.NewVerifier[Claims](s, settings, keys)`, with keys from a `jwt.RemoteKeySet` or a `KeySet` of the end user's, held and rotated |
-| `rest.APIKey("api-key")` on a header, query parameter or cookie, checked in the handler | `auth.APIKeyHeader`, `APIKeyQuery` or `APIKeyCookie`, verified before the handler |
-| `rest.BasicAuth("basic")`, documented as an API key, decoded in the handler | `auth.Basic(name, realm, verify)`, documented as `http`/`basic` |
-| `rest.OAuth2("oauth2")`, with no flows | `auth.OAuth2(name, auth.Flows{…}, verify)` |
-| `rest.OpenIDConnect(name, url)`, always named `openid-connect` | `auth.OpenIDConnect(name, url, verify)` |
-| `rest.MutualTLS`, which panicked | `auth.MutualTLS(name, verify)` |
-| a `requireRole` transform | `auth.RequireScopes(bearer, "admin")`, with the principal's `HasScope` |
-| `JWTAuth` without `Required()`, for optional authentication | `openapi.Security(auth.Require(bearer), auth.Anonymous())` |
-| a missing or malformed header: 400 | 401, with a challenge |
-| the verifier's error: 401 | wrapping `auth.ErrUnauthenticated`: 401; any other: the server's |
-| a gRPC interceptor of the end user's own | `grpcauth.Interceptors` |

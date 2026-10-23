@@ -169,5 +169,5 @@ says whose carts exist.
 | another subject's cart | 404 |
 | a key set that can't be fetched | 503 |
 
-[Authentication and authorization]({{< relref "auth" >}}) describes each
+[Authentication and authorization]({{< relref "/hardening/auth" >}}) describes each
 piece.

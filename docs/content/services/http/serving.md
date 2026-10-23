@@ -8,7 +8,7 @@ description: >
   down on httpserver.Main's defaults, what it records, and how to test it
   with httpservertest.
 type: docs
-weight: 11
+weight: 10
 ---
 
 The [`httpserver`](https://pkg.go.dev/github.com/z5labs/humus/httpserver)
@@ -20,9 +20,8 @@ the defaults an HTTP server behind a load balancer needs: a 5s drain and a
 [`httpservertest`](https://pkg.go.dev/github.com/z5labs/humus/httpserver/httpservertest),
 runs the same App in a test, on the same defaults, with an HTTP/2 client.
 
-The package is the server half of what `rest.Run` did before the reset,
-without the REST DSL, which is [`openapi/v3`]({{< relref "openapi" >}})
-now. It exports no App, runs no health Service and serves no probes:
+The package serves an `http.Handler` and has no REST DSL, which is
+[`openapi/v3`]({{< relref "/services/http/openapi" >}})'s. It exports no App, runs no health Service and serves no probes:
 [`httphealth`](https://pkg.go.dev/github.com/z5labs/humus/httphealth)
 answers them, as [Health probes](#health-probes) describes. The design behind
 everything on this page is in
@@ -34,7 +33,7 @@ and [revision 2](https://github.com/z5labs/humus/discussions/680#discussioncomme
 
 The end user's `Init` sources `httpserver.Settings` with
 [`config.Struct`](https://pkg.go.dev/github.com/z5labs/bedrock/config#Struct),
-as [Configuring a humus service]({{< relref "configuration" >}}) describes,
+as [Configuring a humus service]({{< relref "/fundamentals/configuration" >}}) describes,
 builds the handler, and returns the Service that `NewService` builds from
 both:
 
@@ -79,7 +78,7 @@ The variable names are the service's own: humus defines none of them.
 [TLS](#tls).
 
 The service's `main` is one call to `httpserver.Main`, here with a telemetry
-`Builder` that names the service, as [Telemetry]({{< relref "telemetry#writing-the-builder" >}})
+`Builder` that names the service, as [Telemetry]({{< relref "/fundamentals/telemetry#writing-the-builder" >}})
 describes:
 
 ```go
@@ -96,13 +95,13 @@ rather than being refused. The listener's close is registered with
 
 `Init` returns the HTTP Service along with any other Service the process
 runs, such as a job or a queue consumer next to the API, or the
-[health Service]({{< relref "health#the-health-service" >}}). Any Service
+[health Service]({{< relref "/fundamentals/health#the-health-service" >}}). Any Service
 returning ends the App.
 
 ## Settings
 
 `httpserver.Settings` follows the
-[settings convention]({{< relref "configuration#what-a-package-with-settings-exports" >}}):
+[settings convention]({{< relref "/fundamentals/configuration#what-a-package-with-settings-exports" >}}):
 plain Go values, a `DefaultSettings()`, and a check for each field with a
 valid range. The package reads no environment variable and defines no
 variable name.
@@ -144,7 +143,7 @@ config TLS_PEM_FILE: not found
 with a bad field fails `Init` too, naming the field, such as
 `Settings.TLS must not be nil`. That error is no `*config.Error`, so the App
 exits 1: the fault is in the code, not in the configuration.
-[How a bad value fails]({{< relref "configuration#how-a-bad-value-fails" >}})
+[How a bad value fails]({{< relref "/fundamentals/configuration#how-a-bad-value-fails" >}})
 explains the exit codes.
 
 ## TLS
@@ -158,7 +157,7 @@ than starting and failing every request.
 
 The end user decodes the certificate from a file, read through `s.Host.FS`
 so that a test reads it from its own directory and production from the real
-disk, as [Reading a file]({{< relref "configuration#reading-a-file" >}})
+disk, as [Reading a file]({{< relref "/fundamentals/configuration#reading-a-file" >}})
 describes. How the certificate is stored and encoded is the end user's
 decision. `Init` above reads one PEM file that holds the certificate chain
 and the private key:
@@ -317,11 +316,11 @@ knowledge gets no response, and the Service logs a TLS handshake error.
 ## Shutdown
 
 The Service follows the
-[two shutdown signals]({{< relref "lifecycle#service" >}}) of a humus App:
+[two shutdown signals]({{< relref "/fundamentals/lifecycle#service" >}}) of a humus App:
 
 - **`Serve`'s context being done changes nothing.** It is done as soon as
   the App starts shutting down, and the Service keeps serving through the
-  App's [drain]({{< relref "lifecycle#the-drain" >}}), while load balancers
+  App's [drain]({{< relref "/fundamentals/lifecycle#the-drain" >}}), while load balancers
   stop sending it traffic. A request that arrives during the drain is
   served, and an in-flight request finishes.
 - **`Shutdown` stops accepting connections,** closes idle ones and waits
@@ -350,7 +349,7 @@ closes it itself.
 `httpserver.Main` is `humus.Main` with `httpserver.Defaults()` applied
 before the end user's options, and does nothing else. `Defaults` is one
 `humus.Option` that sets two of `humus.Main`'s
-[defaults]({{< relref "lifecycle#the-defaults" >}}), and leaves the Host and
+[defaults]({{< relref "/fundamentals/lifecycle#the-defaults" >}}), and leaves the Host and
 the telemetry `Builder` as `humus.Main`'s:
 
 - **A drain of `humus.DrainDelay(5 * time.Second)`.** Kubernetes removes a
@@ -378,7 +377,7 @@ The end user's options come after `Defaults`, so they win.
 the drain.
 
 An operator overrides both without a rebuild, with the lifecycle's
-[variables]({{< relref "lifecycle#settings" >}}):
+[variables]({{< relref "/fundamentals/lifecycle#settings" >}}):
 `HUMUS_SHUTDOWN_GRACE_PERIOD` sets the grace period, and
 `HUMUS_SHUTDOWN_DRAIN_DELAY` replaces the drain with a delay of its value,
 whatever `Defaults` or an option set. Each leaves the other as it was: with
@@ -444,7 +443,7 @@ sleep and the drain out of the same `terminationGracePeriodSeconds`.
 ### `httpserver.Main` or `humus.Main`
 
 Which `Main` a process calls depends on what a load balancer routes to, as
-[the lifecycle's runtime packages]({{< relref "lifecycle#runtime-packages" >}})
+[the lifecycle's runtime packages]({{< relref "/fundamentals/lifecycle#runtime-packages" >}})
 explains:
 
 - **A process uses `httpserver.Main` when a load balancer routes to its
@@ -453,7 +452,7 @@ explains:
   all, rather than `humus.Main`'s 20s.
 - **A process whose only HTTP server serves probes or metrics calls
   `humus.Main`,** with no drain. Nothing routes to that server, and a drain
-  would make a finished [job]({{< relref "jobs" >}}) wait for the whole
+  would make a finished [job]({{< relref "/services/jobs" >}}) wait for the whole
   delay.
 
 ## Health probes
@@ -461,7 +460,7 @@ explains:
 **An API answers its probes on its own port.** The end user's `Init` mounts
 [`httphealth.NewHandler`](https://pkg.go.dev/github.com/z5labs/humus/httphealth#NewHandler)
 at `"/health/"` of the mux the Service serves, without `http.StripPrefix`,
-and returns the [health Service]({{< relref "health#the-health-service" >}})
+and returns the [health Service]({{< relref "/fundamentals/health#the-health-service" >}})
 whose `Probes` it answers from next to the HTTP Service:
 
 ```go
@@ -492,7 +491,7 @@ port, since the kubelet presents none. It serves its probes with
 [`httphealth.NewService`](https://pkg.go.dev/github.com/z5labs/humus/httphealth#NewService)
 on a port of its own, over HTTPS, which owns the App's readiness, so `Init`
 returns it next to the HTTP Service and no health Service.
-[Health]({{< relref "health#exposing-the-probes" >}}) shows both wirings, the
+[Health]({{< relref "/fundamentals/health#exposing-the-probes" >}}) shows both wirings, the
 answers, the manifests and how to test them.
 
 ## Telemetry
@@ -608,13 +607,13 @@ trust, so a caller on the internet can't make the service fail on purpose.
 `TrustScenario` is given the `*http.Request`, such as to trust a caller whose
 client certificate the service mesh issued. When it is nil, the default, no
 caller is trusted. Without `humus.WithFaults`, nothing is stripped.
-[Failure injection]({{< relref "failure-injection" >}}) explains the model,
+[Failure injection]({{< relref "/hardening/failure-injection" >}}) explains the model,
 whom to trust and how, and how to test a scenario.
 
 ## Testing
 
 An HTTP service is tested whole, inside `testing/synctest`, as
-[Testing a humus App]({{< relref "testing" >}}) describes for any App, with
+[Testing a humus App]({{< relref "/fundamentals/testing" >}}) describes for any App, with
 two functions from `httpservertest`:
 
 - **`httpservertest.Start`** is `humustest.Start` with `httpserver.Defaults()`
@@ -633,7 +632,7 @@ two functions from `httpservertest`:
 ### A whole service
 
 This test runs a handler on the package's defaults, over HTTP/2, with a
-certificate from a CA that [`humustest.NewCA`]({{< relref "testing#tls" >}})
+certificate from a CA that [`humustest.NewCA`]({{< relref "/fundamentals/testing#tls" >}})
 generates for the test, so no key or certificate is ever written into the
 repository. `serves` is a helper of the test file that returns an `Init`
 whose only Service serves the handler on `DefaultSettings()` on `:8443`,
@@ -769,7 +768,7 @@ App started with `humustest.Start`, or with another runtime package's
 ### The Service contract
 
 `httpserver`'s own tests hold the Service to the Service contract with
-[`humustest.TestService`]({{< relref "testing#checking-a-service" >}}), and a
+[`humustest.TestService`]({{< relref "/fundamentals/testing#checking-a-service" >}}), and a
 Service of the end user's own that wraps it is checked the same way:
 
 ```go
@@ -789,25 +788,3 @@ func TestService_meets_the_Service_contract(t *testing.T) {
 The Service keeps serving after `Serve`'s context is done, so the subtest
 for `Shutdown` after `Serve` has returned on its own reports SKIP, as
 `TestService` documents.
-
-## Migration from `rest.Run`
-
-`httpserver` replaces the server half of `rest.Run` from before the reset.
-Its REST half is `openapi/v3`, whose `*openapi.API` is the handler an `Init`
-hands to `NewService`:
-[Serving an API with OpenAPI]({{< relref "openapi#migration-from-restrun" >}})
-has the table for it.
-
-| Before the reset | With `httpserver` |
-|---|---|
-| `rest.Run(ctx, opts...)`, its server half | `httpserver.Main(Init, opts...)`, with the end user's `Init` returning the Service from `httpserver.NewService` |
-| `internal/httpserver.App` | `httpserver.Service` |
-| `rest.Port(...)`, `HUMUS_REST_PORT=8443` | `Settings.Addr`, required, sourced from whatever variable the end user names |
-| `rest.ReadTimeout`, `ReadHeaderTimeout`, `WriteTimeout`, `IdleTimeout`, `MaxHeaderBytes` and their `HUMUS_REST_*` variables | the `Settings` fields of the same names, with the same defaults |
-| `rest.TLSConfig(...)`, `HUMUS_REST_TLS_PKCS12_FILE` and `_PASSWORD` | `Settings.TLS`, required, a `*tls.Config` the end user decodes from a file read through `s.Host.FS`. PKCS#12 decoding is the end user's, with go-pkcs12 if they like. |
-| a self-signed certificate when no TLS is configured | exit 78 when the end user's certificate variable isn't set; a config with no certificate, or one HTTP/2 can't use, fails `CheckTLS` |
-| whatever bedrock's HTTP runtime and `net/http`'s defaults negotiated | HTTP/2 always on and first in ALPN, with HTTP/1.1 as a fallback that `Settings.HTTP2Only` turns off |
-| `otelhttp.NewHandler(h, "rest")` on the globals | the Service's instrumentation, with `s.Telemetry`'s providers and propagator, and spans named after the route |
-| `Shutdown(context.Background())` | `Shutdown` bounded by the grace period, then `Close` |
-| `RecoverPanics` around the runtime | no recovery in the lifecycle; a handler's panic aborts its request, recorded in telemetry |
-| `net/http`'s error log on the real stderr | ERROR records through the App's telemetry |
