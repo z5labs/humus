@@ -7,7 +7,7 @@ description: >
   ends, which failures a Job retries, and how the run's span joins the trace
   of the process that started it.
 type: docs
-weight: 15
+weight: 30
 ---
 
 A job is a process that does one piece of work and exits. The
@@ -22,6 +22,10 @@ The package is `job.NewService` and nothing else: no App, no `Main`, no
 `Settings`. The design behind everything on this page is in
 [Proposal: jobs](https://github.com/z5labs/humus/discussions/682) and
 [its revision](https://github.com/z5labs/humus/discussions/682#discussioncomment-18988201).
+
+The [billing job walkthrough]({{< relref "/walkthroughs/job/billing" >}})
+builds a production-ready job on `job`, step by step, and its code is
+[`example/job/billing`](https://github.com/z5labs/humus/tree/main/example/job/billing).
 
 ## The run
 
@@ -82,7 +86,7 @@ the job finishing ends the process. A `Serve` called a second time, or after
 
 ## The defaults
 
-A job runs on `humus.Main`'s [defaults]({{< relref "lifecycle#the-defaults" >}}),
+A job runs on `humus.Main`'s [defaults]({{< relref "/fundamentals/lifecycle#the-defaults" >}}),
 which are a job's, so `job` has no `Main` and no defaults of its own:
 
 - **A grace period of 20s.** It fits inside Kubernetes' default
@@ -96,12 +100,12 @@ as `HUMUS_SHUTDOWN_GRACE_PERIOD=45s`, without a rebuild, and
 `HUMUS_SHUTDOWN_DRAIN_DELAY` adds a drain, as for any App. A `main` that wants
 a different default in code passes `humus.WithShutdownGracePeriod` to
 `humus.Main`; the variable still wins over it.
-[The lifecycle's settings]({{< relref "lifecycle#settings" >}}) describes
+[The lifecycle's settings]({{< relref "/fundamentals/lifecycle#settings" >}}) describes
 both variables.
 
 ## Exit statuses
 
-`job` adds no exit codes. The [lifecycle's]({{< relref "lifecycle#exit-codes" >}})
+`job` adds no exit codes. The [lifecycle's]({{< relref "/fundamentals/lifecycle#exit-codes" >}})
 apply, and the run decides which:
 
 | The run | Exit | Cause |
@@ -216,7 +220,7 @@ exported is lost.
 
 ## The two signals
 
-The App gives a Service [two signals]({{< relref "lifecycle#service" >}}) to
+The App gives a Service [two signals]({{< relref "/fundamentals/lifecycle#service" >}}) to
 stop on, and the run stops on either:
 
 - **`Serve`'s context.** The run's context is made from `Serve`'s, which is
@@ -317,7 +321,7 @@ sets every one of its settings, so a scenario there is set by the same
 hand. A job started by a service hands on that service's baggage, which
 that service's own server has already stripped of any scenario from a
 caller it doesn't trust. So `job` has no setting for failure injection.
-[Failure injection]({{< relref "failure-injection" >}}) explains the model,
+[Failure injection]({{< relref "/hardening/failure-injection" >}}) explains the model,
 and how a test sets a scenario in `BAGGAGE` with `humustest.WithEnv`.
 
 ## More than the job
@@ -343,11 +347,11 @@ return []humus.Service{
 ```
 
 Any Service returning ends the App, so the job finishing ends the process,
-and the other Services with it. [Health]({{< relref "health#jobs" >}})
+and the other Services with it. [Health]({{< relref "/fundamentals/health#jobs" >}})
 describes a job's probes.
 
 Which `Main` the process uses depends on what a load balancer routes to, as
-[the lifecycle's runtime packages]({{< relref "lifecycle#runtime-packages" >}})
+[the lifecycle's runtime packages]({{< relref "/fundamentals/lifecycle#runtime-packages" >}})
 explains for mixed processes:
 
 - **Next to a probes or metrics server,** a job stays on `humus.Main`.
@@ -373,7 +377,7 @@ explains for mixed processes:
   counts as a failure and retries under `backoffLimit`. A run that wants a
   panic reported differently recovers it itself.
 
-The [billing job walkthrough]({{< relref "walkthroughs/job/billing" >}})
+The [billing job walkthrough]({{< relref "/walkthroughs/job/billing" >}})
 builds a job that handles the first two: `httpclient` retries each charge
 inside the run, and each invoice's ID is its charge's idempotency key, so a
 run that Kubernetes retries charges nothing twice.
@@ -382,7 +386,7 @@ run that Kubernetes retries charges nothing twice.
 
 A job is tested whole, with
 [`humustest.Start`](https://pkg.go.dev/github.com/z5labs/humus/humustest#Start),
-inside `testing/synctest`, as [Testing a humus App]({{< relref "testing" >}})
+inside `testing/synctest`, as [Testing a humus App]({{< relref "/fundamentals/testing" >}})
 describes for any App. The tests below use a helper, `runs`, which returns
 an `Init` whose only Service is a job that runs the given run:
 
@@ -460,7 +464,7 @@ require.Equal(t, "nightly", schedule)
 ### The Service contract
 
 `job`'s own tests hold `job.Service` to the Service contract with
-[`humustest.TestService`]({{< relref "testing#checking-a-service" >}}), and a
+[`humustest.TestService`]({{< relref "/fundamentals/testing#checking-a-service" >}}), and a
 Service of your own that wraps a job is checked the same way. `TestService`
 needs a Service that runs until it is stopped, so the run blocks on its
 context:

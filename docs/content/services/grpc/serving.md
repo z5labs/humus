@@ -1,6 +1,6 @@
 ---
-title: gRPC services
-linkTitle: gRPC services
+title: Serving gRPC
+linkTitle: Serving gRPC
 description: >
   How to serve gRPC with the grpcserver package: an Init that sources
   grpcserver.Settings, registers generated services on the Service from
@@ -9,7 +9,7 @@ description: >
   defaults, how Kubernetes' probes reach it, how grpcauth authenticates its
   RPCs, what it records, and how to test it with grpcservertest.
 type: docs
-weight: 18
+weight: 10
 ---
 
 The [`grpcserver`](https://pkg.go.dev/github.com/z5labs/humus/grpc/grpcserver)
@@ -33,7 +33,7 @@ everything on this page is in
 [Proposal: gRPC services](https://github.com/z5labs/humus/discussions/681),
 with its [revision](https://github.com/z5labs/humus/discussions/681#discussioncomment-18988629).
 
-The [wallet walkthrough]({{< relref "walkthroughs/grpc/wallet" >}}) builds two
+The [wallet walkthrough]({{< relref "/walkthroughs/grpc/wallet" >}}) builds two
 production-ready services on `grpcserver`, step by step: a ledger that only
 the internal CA's certificates may call, and a wallet behind bearer tokens
 that calls it and relays its watch.
@@ -42,7 +42,7 @@ that calls it and relays its watch.
 
 The end user's `Init` sources `grpcserver.Settings` with
 [`config.Struct`](https://pkg.go.dev/github.com/z5labs/bedrock/config#Struct),
-as [Configuring a humus service]({{< relref "configuration" >}}) describes,
+as [Configuring a humus service]({{< relref "/fundamentals/configuration" >}}) describes,
 builds the Service with `NewService`, registers their services on it, and
 returns it:
 
@@ -84,7 +84,7 @@ none of them. `readFile` and `serverTLS` are the end user's helpers too, shown
 under [TLS](#tls).
 
 The service's `main` is one call to `grpcserver.Main`, here with a telemetry
-`Builder` that names the service, as [Telemetry]({{< relref "telemetry#writing-the-builder" >}})
+`Builder` that names the service, as [Telemetry]({{< relref "/fundamentals/telemetry#writing-the-builder" >}})
 describes:
 
 ```go
@@ -101,13 +101,13 @@ which `Service.Addr` reports.
 
 `Init` returns the gRPC Service along with any other Service the process runs,
 such as a Kafka consumer next to the gRPC server, or the
-[health Service]({{< relref "health#the-health-service" >}}). Any Service
+[health Service]({{< relref "/fundamentals/health#the-health-service" >}}). Any Service
 returning ends the App.
 
 ## Settings
 
 `grpcserver.Settings` follows the
-[settings convention]({{< relref "configuration#what-a-package-with-settings-exports" >}}):
+[settings convention]({{< relref "/fundamentals/configuration#what-a-package-with-settings-exports" >}}):
 plain Go values, and a check for each field. The package reads no environment
 variable and no file, and defines no variable name.
 
@@ -142,7 +142,7 @@ config GRPC_TLS_P12_FILE: not found
 bad field fails `Init` too, naming the field, such as
 `grpcserver: NewService: Settings.Addr "nope" is not host:port`. That error is
 no `*config.Error`, so the App exits 1: the fault is in the code, not in the
-configuration. [How a bad value fails]({{< relref "configuration#how-a-bad-value-fails" >}})
+configuration. [How a bad value fails]({{< relref "/fundamentals/configuration#how-a-bad-value-fails" >}})
 explains the exit codes.
 
 ## TLS
@@ -158,7 +158,7 @@ that already encrypts between pods.
 
 The end user decodes the certificate from a file, read through `s.Host.FS` so
 that a test reads it from its own directory and production from the real
-disk, as [Reading a file]({{< relref "configuration#reading-a-file" >}})
+disk, as [Reading a file]({{< relref "/fundamentals/configuration#reading-a-file" >}})
 describes. How the certificate is stored and encoded is the end user's
 decision. `Init` above reads a PKCS#12 bundle from the file `GRPC_TLS_P12_FILE`
 names, and decodes it with the password in `GRPC_TLS_P12_PASSWORD`, so a
@@ -203,7 +203,7 @@ humus doesn't depend on. A PEM file that holds the certificate chain and the
 private key needs no password: its chain is
 `env("GRPC_TLS_PEM_FILE").Parse(readFile(s.Host.FS)).Parse(serverTLS).Validate(grpcserver.CheckTLS)`,
 with a `serverTLS` that calls `tls.X509KeyPair`, as
-[Serving HTTP]({{< relref "http#the-certificate" >}}) shows. A certificate
+[Serving HTTP]({{< relref "/services/http/serving#the-certificate" >}}) shows. A certificate
 that rotates on disk is served from a config that sets `GetCertificate`
 instead of `Certificates`.
 
@@ -303,7 +303,7 @@ take before it is closed under them, which a server with long streams sets.
 grpc-go ends the streams still open then with `Unavailable`, as
 [Streams at shutdown](#streams-at-shutdown) does, and a `grpcclient` Client's
 circuit breaker ignores them, so its end user's code opens them again.
-[Calling gRPC services]({{< relref "grpc-client#spreading-the-load-with-maxconnectionage" >}})
+[Calling gRPC services]({{< relref "/dependencies/grpc#spreading-the-load-with-maxconnectionage" >}})
 describes what a client does with it.
 
 ## Registration
@@ -333,12 +333,12 @@ reflection.Register(svc)
 
 ## Shutdown
 
-The Service follows the [two shutdown signals]({{< relref "lifecycle#service" >}})
+The Service follows the [two shutdown signals]({{< relref "/fundamentals/lifecycle#service" >}})
 of a humus App:
 
 - **`Serve`'s context being done changes nothing.** It is done as soon as the
   App starts shutting down, and the Service keeps serving connections and
-  RPCs through the App's [drain]({{< relref "lifecycle#the-drain" >}}), while
+  RPCs through the App's [drain]({{< relref "/fundamentals/lifecycle#the-drain" >}}), while
   load balancers stop sending it traffic. An RPC that arrives during the drain
   is served, and an RPC in flight finishes.
 - **`Shutdown` calls `GracefulStop`.** That stops accepting connections, sends
@@ -416,7 +416,7 @@ func receive(stream grpc.ServerStreamingClient[testpb.StreamingOutputCallRespons
 `Unavailable`,** however many end at once, so a rollout doesn't open the
 breaker of a client whose streams it ends, and the client's reconnect goes
 through, as
-[Calling gRPC services]({{< relref "grpc-client#streams" >}}) describes.
+[Calling gRPC services]({{< relref "/dependencies/grpc#streams" >}}) describes.
 
 The streams are cancelled at `Shutdown`, after the drain, and not when
 `Serve`'s context is done. During the drain, a load balancer may still
@@ -440,7 +440,7 @@ and selects on its context, as it would for any call that takes no context.
 `grpcserver.Main` is `humus.Main` with `grpcserver.Defaults()` applied before
 the end user's options, and does nothing else. `Defaults` is one
 `humus.Option` that sets two of `humus.Main`'s
-[defaults]({{< relref "lifecycle#the-defaults" >}}), and leaves the Host and
+[defaults]({{< relref "/fundamentals/lifecycle#the-defaults" >}}), and leaves the Host and
 the telemetry `Builder` as `humus.Main`'s:
 
 - **A drain of `humus.DrainDelay(5 * time.Second)`.** Kubernetes removes a
@@ -471,7 +471,7 @@ The end user's options come after `Defaults`, so they win.
 the drain.
 
 An operator overrides both without a rebuild, with the lifecycle's
-[variables]({{< relref "lifecycle#settings" >}}):
+[variables]({{< relref "/fundamentals/lifecycle#settings" >}}):
 `HUMUS_SHUTDOWN_GRACE_PERIOD` sets the grace period, and
 `HUMUS_SHUTDOWN_DRAIN_DELAY` replaces the drain with a delay of its value,
 whatever `Defaults` or an option set. Each leaves the other as it was: with
@@ -540,7 +540,7 @@ the drain out of the same `terminationGracePeriodSeconds`.
 ### `grpcserver.Main` or `humus.Main`
 
 Which `Main` a process calls depends on what a load balancer routes to, as
-[the lifecycle's runtime packages]({{< relref "lifecycle#runtime-packages" >}})
+[the lifecycle's runtime packages]({{< relref "/fundamentals/lifecycle#runtime-packages" >}})
 explains:
 
 - **A process uses `grpcserver.Main` when a load balancer, or a Kubernetes
@@ -550,7 +550,7 @@ explains:
   `humus.Main`'s 20s grace period with no drain.
 - **A process that no load balancer routes to,** such as a job, calls
   `humus.Main`, with no drain. A drain would make a finished
-  [job]({{< relref "jobs" >}}) wait for the whole delay.
+  [job]({{< relref "/services/jobs" >}}) wait for the whole delay.
 
 A process that serves HTTP and gRPC, each routed to, uses either package's
 `Main`. Each package's defaults set both the drain and the grace period, so
@@ -582,7 +582,7 @@ package answers gRPC health v1 from an App's `health.Probes`, in two ways:
   checking. Under `grpcauth`, its methods are opened by name, as
   [Authentication](#authentication) shows.
 
-[Health]({{< relref "health#exposing-the-probes" >}}) shows both wirings,
+[Health]({{< relref "/fundamentals/health#exposing-the-probes" >}}) shows both wirings,
 the names they answer, the manifests and how to test them.
 
 ## Authentication
@@ -626,7 +626,7 @@ turns ready, which fails at the first deploy, never silently. A probes
 Service of its own, `grpchealth.NewService`, has no authentication and needs
 no rule.
 
-[Authentication and authorization]({{< relref "auth" >}}) covers schemes,
+[Authentication and authorization]({{< relref "/hardening/auth" >}}) covers schemes,
 requirements and scopes, the answers `grpcauth` gives and the gRPC status a
 verifier's error ends with, verifying JWTs with `auth/jwt`, and testing.
 
@@ -707,7 +707,7 @@ svc, err := grpcserver.NewService(s, settings, opentelemetry.ServerOption(opente
 `GRPC_GO_LOG_FORMATTER`, and its `internal/envconfig` package reads its other
 `GRPC_*` variables, from the real environment rather than the Process's, and
 it writes to the real standard error, outside the App's telemetry. It is on
-[the lifecycle's list of ambient leaks]({{< relref "lifecycle#ambient-leaks" >}}).
+[the lifecycle's list of ambient leaks]({{< relref "/fundamentals/lifecycle#ambient-leaks" >}}).
 
 Replacing it means `grpclog.SetLoggerV2`, which is process-wide state, and
 humus sets none. An end user who wants grpc-go's logs in their telemetry sets
@@ -748,13 +748,13 @@ make the service fail on purpose. `TrustScenario` is given the RPC's
 context, with its peer and its incoming metadata, and its full method, such
 as to trust a caller whose client certificate the service mesh issued. When
 it is nil, the default, no caller is trusted. Without `humus.WithFaults`,
-nothing is stripped. [Failure injection]({{< relref "failure-injection" >}})
+nothing is stripped. [Failure injection]({{< relref "/hardening/failure-injection" >}})
 explains the model, whom to trust and how, and how to test a scenario.
 
 ## Testing
 
 A gRPC service is tested whole, inside `testing/synctest`, as
-[Testing a humus App]({{< relref "testing" >}}) describes for any App, with
+[Testing a humus App]({{< relref "/fundamentals/testing" >}}) describes for any App, with
 two functions from `grpcservertest`:
 
 - **`grpcservertest.Start`** is `humustest.Start` with `grpcserver.Defaults()`
@@ -776,7 +776,7 @@ two functions from `grpcservertest`:
 
 This test runs a service whose stream would never end on the package's
 defaults, with a certificate from a CA that
-[`humustest.NewCA`]({{< relref "testing#tls" >}}) generates for the test, so no
+[`humustest.NewCA`]({{< relref "/fundamentals/testing#tls" >}}) generates for the test, so no
 key or certificate is ever written into the repository. `serves` and
 `settingsFor` are helpers of the test file: `settingsFor` returns `Settings` on
 `:9090` with a certificate for `carts` from the CA, and `serves` returns an
@@ -920,7 +920,7 @@ no network, so it calls `h.Dial(ctx, "tcp", addr)`.
 ### The Service contract
 
 `grpcserver`'s own tests hold the Service to the Service contract with
-[`humustest.TestService`]({{< relref "testing#checking-a-service" >}}), and a
+[`humustest.TestService`]({{< relref "/fundamentals/testing#checking-a-service" >}}), and a
 Service of the end user's own that wraps it is checked the same way:
 
 ```go
@@ -943,21 +943,3 @@ The Service keeps serving after `Serve`'s context is done, so the subtest for
 `TestService` documents. A Service built with `grpc.WaitForHandlers(false)` in
 `opts` fails the contract: a handler outlives `Shutdown`, and `TestService`
 reports its goroutine as a leak.
-
-## Migration from `grpc.NewApi`
-
-`grpcserver` replaces the `grpc` package from before the reset, whose
-`grpc.NewApi` built a `*grpc.Server` that nothing has been able to serve since
-[#485](https://github.com/z5labs/humus/pull/485).
-
-| Before the reset | With `grpcserver` |
-|---|---|
-| `grpc.NewApi()` | `grpcserver.NewService(s, settings, opts...)`, in the end user's `Init` |
-| `(*Api).RegisterService`, called by generated code | `(*Service).RegisterService`. Generated `RegisterXServer(svc, impl)` calls don't change. |
-| running an `Api`: not possible since #485 | `grpcserver.Main`, with the Service among the Services the end user's `Init` returns |
-| `internal/grpcserver`'s unbounded `GracefulStop` | `Shutdown`: every stream ends with `Unavailable`, then `GracefulStop`, bounded by the grace period, then `Stop` |
-| `stats/opentelemetry` fed from `otel.Get*` | otelgrpc fed from `s.Telemetry` |
-| an implementation that is a `health.Monitor` is health-checked implicitly | nothing implicit: the monitor goes in the readiness of `grpchealth.NewService`, or of the health Service whose `Probes` `grpchealth.NewServer` answers from |
-| `internal/grpchealth` | `grpchealth.NewServer`, registered on the Service, or `grpchealth.NewService` on a plaintext port of its own; see [Health]({{< relref "health#exposing-the-probes" >}}) |
-| `grpc/internal/echopb` in tests | grpc-go's `interop/grpc_testing` |
-| a handler's panic ends the process | the RPC fails with `Internal`, and the panic is logged |

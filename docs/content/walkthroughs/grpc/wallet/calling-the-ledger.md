@@ -77,7 +77,7 @@ The wallet keeps the default `Classify`, retry budget and breaker:
 
 The four codes about the request are the ledger working, so they count for
 it, not against it.
-[Calling gRPC services]({{< relref "grpc-client#the-default" >}}) describes
+[Calling gRPC services]({{< relref "/dependencies/grpc#the-default" >}}) describes
 the default.
 
 ## Why every transfer is safe to retry
@@ -105,7 +105,7 @@ no caller can reuse another's ID. The subject is escaped, so it holds no
 The wallet opens the ledger's watch through the same Client. Opening it is
 retried, and a watch that opened is never retried: the wallet opens it again
 itself, as
-[Serving the wallet]({{< relref "walkthroughs/grpc/wallet/serving-the-wallet#relaying-the-watch" >}})
+[Serving the wallet]({{< relref "/walkthroughs/grpc/wallet/serving-the-wallet#relaying-the-watch" >}})
 shows. A watch that ends with `Unavailable` is ignored by the breaker.
 
 ## `ForwardScenario`

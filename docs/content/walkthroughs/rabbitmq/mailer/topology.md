@@ -170,7 +170,7 @@ but a queue's arguments only by deleting the queue:
   dead-letters it back to `mail` by `mail.send`.
 - At-least-once dead-lettering needs `overflow` `reject-publish`.
 
-[Retries and dead letters]({{< relref "walkthroughs/rabbitmq/mailer/retries" >}})
+[Retries and dead letters]({{< relref "/walkthroughs/rabbitmq/mailer/retries" >}})
 shows how the mailer uses them.
 
 ## Importing it

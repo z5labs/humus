@@ -26,7 +26,7 @@ Sign in at <http://localhost:3000> as `admin`.
 ## A request's trace
 
 Publish a request with `mailrequest`, as
-[Deploying]({{< relref "walkthroughs/rabbitmq/mailer/deploying#publishing-a-request" >}})
+[Deploying]({{< relref "/walkthroughs/rabbitmq/mailer/deploying#publishing-a-request" >}})
 shows, and note the `MessageId` it prints. In **Explore**, choose **Tempo** and find the
 request's trace by it:
 

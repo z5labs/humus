@@ -6,7 +6,7 @@ description: >
   issues invoices in PostgreSQL and charges each one through a payments API,
   once, however often it runs. These pages build it step by step.
 type: docs
-weight: 10
+weight: 30
 ---
 
 The billing job runs once a day, as a Kubernetes CronJob. Each run:

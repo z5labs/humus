@@ -424,7 +424,7 @@ var kubeContext = flag.String("context", "kind-"+cmp.Or(os.Getenv("KIND_CLUSTER_
 ```
 
 Once the job is
-[deployed]({{< relref "walkthroughs/job/billing/deploying" >}}), they run with
+[deployed]({{< relref "/walkthroughs/job/billing/deploying" >}}), they run with
 no flags:
 
 ```sh

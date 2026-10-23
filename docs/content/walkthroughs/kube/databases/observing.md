@@ -27,7 +27,7 @@ Sign in at <http://localhost:3000> as `admin`.
 ## A reconcile's trace
 
 Apply the `Database` in `deploy/kind/database.yaml`, as
-[Deploying]({{< relref "walkthroughs/kube/databases/deploying#applying-a-database" >}})
+[Deploying]({{< relref "/walkthroughs/kube/databases/deploying#applying-a-database" >}})
 shows. In **Explore**, choose **Tempo** and find its reconciles by its
 namespace and name:
 

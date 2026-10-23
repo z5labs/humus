@@ -8,11 +8,11 @@ description: >
   delete as the Database's deletionPolicy says. These pages build it step by
   step.
 type: docs
-weight: 40
+weight: 60
 ---
 
 The databases controller reconciles `Database` resources, with
-[`kube`]({{< relref "kubernetes" >}}). For each one, it:
+[`kube`]({{< relref "/services/kubernetes" >}}). For each one, it:
 
 1. ensures a role, and a database the role owns, in a PostgreSQL server;
 2. applies a Secret, which the `Database` controls, holding the role's

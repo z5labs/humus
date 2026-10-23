@@ -449,7 +449,7 @@ go -C example/http/shoppingcart test -tags testcontainers ./...
 ## The cases, on kind
 
 Behind the `functional` tag, the same cases run against the kind overlay
-that `up.sh` brings up, which [Deploying]({{< relref "walkthroughs/http/shoppingcart/deploying" >}})
+that `up.sh` brings up, which [Deploying]({{< relref "/walkthroughs/http/shoppingcart/deploying" >}})
 covers:
 
 ```go

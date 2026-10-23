@@ -7,7 +7,7 @@ description: >
   catalog service of its own over mTLS, both on PostgreSQL. These pages
   build it step by step.
 type: docs
-weight: 50
+weight: 10
 ---
 
 The shoppingcart is two services, each an `openapi/v3` API served by

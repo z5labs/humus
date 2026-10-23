@@ -61,7 +61,7 @@
 // returns it next to the App's other Services.
 //
 // The lifecycle, its settings, its exit codes and the dependencies that leak
-// around it are documented at https://z5labs.github.io/humus/lifecycle/.
+// around it are documented at https://z5labs.github.io/humus/fundamentals/lifecycle/.
 //
 // # Being rebuilt
 //
@@ -79,64 +79,64 @@
 // landed: it serves an http.Handler over TLS as a Service, with HTTP/2
 // preferred, and httpserver.Main runs it with a drain and a grace period for
 // a server behind a load balancer, documented at
-// https://z5labs.github.io/humus/http/. The openapi/v3 package has landed:
+// https://z5labs.github.io/humus/services/http/serving/. The openapi/v3 package has landed:
 // it serves an API of typed operations on typed paths, whose every body
 // names its codec and every error its answer, and the API's OpenAPI 3.2
 // document, written from the same declarations, as the http.Handler that
 // httpserver serves, with jsoncodec for JSON bodies and problem for RFC 9457
 // problem details beside it, documented at
-// https://z5labs.github.io/humus/openapi/. The grpc module has landed: its
+// https://z5labs.github.io/humus/services/http/openapi/. The grpc module has landed: its
 // grpcserver package serves gRPC over TLS as a Service, ending every stream
 // at shutdown with Unavailable, and grpcserver.Main runs it with a drain and
 // a grace period for a server behind a Kubernetes Service, documented at
-// https://z5labs.github.io/humus/grpc/. The queue and queue/kafka packages
+// https://z5labs.github.io/humus/services/grpc/serving/. The queue and queue/kafka packages
 // have landed: queue is the contract between a Processor and any broker, and
 // queue/kafka, with franz-go, consumes Kafka topics as a Service on Main's
 // defaults, at least or at most once, and produces records with a Producer
 // whose calls return nil only once the cluster has stored their records,
 // documented at
-// https://z5labs.github.io/humus/kafka/. A Kafka consumer turns ready once it
+// https://z5labs.github.io/humus/services/kafka/. A Kafka consumer turns ready once it
 // has joined its group, with Joined. The queue/rabbitmq package has landed:
 // with amqp091-go, it consumes a RabbitMQ queue as a Service on Main's
 // defaults, at least or at most once, riding out a broker's rolling
 // upgrade, and publishes with a Publisher whose calls return nil only once
 // the broker has confirmed the message, and a consumer turns ready once it
 // consumes, with Consuming, documented at
-// https://z5labs.github.io/humus/rabbitmq/. The httphealth package and the grpc
+// https://z5labs.github.io/humus/services/rabbitmq/. The httphealth package and the grpc
 // module's grpchealth package have landed: they expose an App's health
 // probes, httphealth over HTTPS at /health/liveness and /health/readiness,
 // and grpchealth as gRPC health v1, each attached to a server the App
 // already runs or on a probes port of its own, documented at
-// https://z5labs.github.io/humus/health/. The httpclient package has landed:
+// https://z5labs.github.io/humus/fundamentals/health/. The httpclient package has landed:
 // it calls one HTTP dependency per client through the Setup's Host, retries
 // what is safe to send twice as the end user's Classify decides, and fails
 // calls at once with a circuit breaker while the dependency keeps failing,
-// documented at https://z5labs.github.io/humus/http-client/. The grpc
+// documented at https://z5labs.github.io/humus/dependencies/http/. The grpc
 // module's grpcclient package has landed: it calls one gRPC dependency per
 // Client through the Setup's Host, retries as the end user's Classify
 // decides, fails calls at once with a circuit breaker while the dependency
 // keeps failing, and turns readiness on once it has connected, with
-// Connected, documented at https://z5labs.github.io/humus/grpc-client/. The
+// Connected, documented at https://z5labs.github.io/humus/dependencies/grpc/. The
 // auth package, its auth/jwt package and the grpc module's grpcauth package
 // have landed: auth authenticates and authorizes the requests a service
 // serves, with typed schemes and requirements that openapi.Security,
 // auth.NewHandler and grpcauth.Interceptors enforce, and auth/jwt verifies
 // JWT bearer tokens against keys from an identity provider's JSON Web Key
 // Set or the end user's own KeySet, documented at
-// https://z5labs.github.io/humus/auth/. The fault package and its
+// https://z5labs.github.io/humus/hardening/auth/. The fault package and its
 // fault/jsonscenario package have landed: fault builds an App's failure
 // injection, from a function passed with WithFaults, before Init, and puts
 // it in Setup.Faults, so a request whose baggage carries a failure scenario
 // fails or slows down at the points it names, every humus client being
 // one, while every humus server strips scenarios from callers it doesn't
-// trust, documented at https://z5labs.github.io/humus/failure-injection/.
+// trust, documented at https://z5labs.github.io/humus/hardening/failure-injection/.
 // The kube module, a new feature rather than one that came back, has
 // landed: its kube package writes Kubernetes controllers as Services on
 // client-go, without controller-runtime, reaching the API server through
 // the Setup's Host, declaring custom resources as Go values whose CRDs it
 // reflects from Go types, and reconciling their objects, or those of
 // Kubernetes' own kinds, with leader election on a Lease, documented at
-// https://z5labs.github.io/humus/kubernetes/.
+// https://z5labs.github.io/humus/services/kubernetes/.
 // The other runtime packages come back through their own proposals.
 //
 // The plan is in the charter, Proposal: humus on the bedrock process model:

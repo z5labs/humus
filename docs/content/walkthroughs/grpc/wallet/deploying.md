@@ -298,7 +298,7 @@ terminationGracePeriodSeconds: 30
 
 When a ledger pod goes, the wallet opens each of its watches again on the
 other replica, as
-[Serving the wallet]({{< relref "walkthroughs/grpc/wallet/serving-the-wallet#relaying-the-watch" >}})
+[Serving the wallet]({{< relref "/walkthroughs/grpc/wallet/serving-the-wallet#relaying-the-watch" >}})
 shows. When a wallet pod goes, the app watches again.
 
 ## The kind overlay

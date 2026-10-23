@@ -109,7 +109,7 @@
 // service's own server has already stripped of any scenario from a caller
 // it doesn't trust. So the package has no setting for failure injection,
 // and strips nothing. Failure injection is documented at
-// https://z5labs.github.io/humus/failure-injection/.
+// https://z5labs.github.io/humus/hardening/failure-injection/.
 //
 // # Panics
 //

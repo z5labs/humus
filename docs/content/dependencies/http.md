@@ -1,6 +1,6 @@
 ---
 title: Calling HTTP services
-linkTitle: Calling HTTP services
+linkTitle: HTTP services
 description: >
   How to call HTTP dependencies with the httpclient package: one client per
   dependency, built in Init from httpclient.Settings sourced with
@@ -10,7 +10,7 @@ description: >
   HTTP/2 behind a Kubernetes Service, what it records, and how to test the
   calls against a fake dependency.
 type: docs
-weight: 13
+weight: 10
 ---
 
 The [`httpclient`](https://pkg.go.dev/github.com/z5labs/humus/httpclient)
@@ -36,7 +36,7 @@ with its [revision 1](https://github.com/z5labs/humus/discussions/762#discussion
 
 The end user's `Init` sources the dependency's `httpclient.Settings`, builds
 its client with `NewClient`, and hands the client to the code that calls the
-dependency, here the handler of an [`httpserver`]({{< relref "http" >}})
+dependency, here the handler of an [`httpserver`]({{< relref "/services/http/serving" >}})
 Service:
 
 ```go
@@ -112,7 +112,7 @@ mux.HandleFunc("GET /orders/{id}/payment", func(w http.ResponseWriter, r *http.R
 })
 ```
 
-The service's `main` is the server's, as [Serving HTTP]({{< relref "http#a-service" >}})
+The service's `main` is the server's, as [Serving HTTP]({{< relref "/services/http/serving#a-service" >}})
 describes:
 
 ```go
@@ -192,7 +192,7 @@ The two differ in two ways, and neither is a cost in practice:
 ## Settings
 
 `httpclient.Settings` follows the
-[settings convention]({{< relref "configuration#what-a-package-with-settings-exports" >}}):
+[settings convention]({{< relref "/fundamentals/configuration#what-a-package-with-settings-exports" >}}):
 plain Go values, a `DefaultSettings()`, and a check for each field with a
 valid range. The package reads no environment variable and defines no
 variable name: the end user's `Init` sources each field with
@@ -235,7 +235,7 @@ Both fail `Init` with exit 1, and an error that names the fields, such as
 exit 78 naming a variable, even when an operator's values caused them. An
 `Init` whose operators set both variables of either pair checks the pair
 itself after `Read`, and returns a `*config.Error` naming the variables.
-[How a bad value fails]({{< relref "configuration#how-a-bad-value-fails" >}})
+[How a bad value fails]({{< relref "/fundamentals/configuration#how-a-bad-value-fails" >}})
 explains the exit codes.
 
 ## TLS and plain text
@@ -244,7 +244,7 @@ explains the exit codes.
 it trusts in `RootCAs`, and for mTLS, a client certificate in
 `Certificates`. The client dials with a clone of it, so the end user's
 config is never changed. `Init` above reads the dependency's CA from a file,
-through `s.Host.FS`, as [Reading a file]({{< relref "configuration#reading-a-file" >}})
+through `s.Host.FS`, as [Reading a file]({{< relref "/fundamentals/configuration#reading-a-file" >}})
 describes, and trusts only that CA:
 
 ```go
@@ -259,7 +259,7 @@ func trusting(pem []byte) (*tls.Config, error) {
 }
 ```
 
-`readFile` is the same helper as under [Serving HTTP]({{< relref "http#the-certificate" >}}).
+`readFile` is the same helper as under [Serving HTTP]({{< relref "/services/http/serving#the-certificate" >}}).
 
 `CheckTLS` rejects a config that sets `InsecureSkipVerify`, or that allows
 nothing from TLS 1.2 on. A test trusts the CA it generates with
@@ -268,7 +268,7 @@ nothing from TLS 1.2 on. A test trusts the CA it generates with
 **A config with no `RootCAs` trusts the system's roots,** which
 `crypto/x509` loads from the real host: the files `SSL_CERT_FILE` and
 `SSL_CERT_DIR` name in the real environment, and the OS's certificate
-files. That is one of the [ambient leaks]({{< relref "lifecycle#ambient-leaks" >}}).
+files. That is one of the [ambient leaks]({{< relref "/fundamentals/lifecycle#ambient-leaks" >}}).
 A service that calls only its own services sets `RootCAs` to its CA, as
 `trusting` does, and reads nothing ambient.
 
@@ -616,7 +616,7 @@ proxy that balances requests, does it.
 
 **A humus server's shutdown moves the calls during a rollout.** When a pod
 of the dependency is stopped, an `httpserver` Service keeps serving through
-its [drain]({{< relref "http#the-defaults" >}}), so the calls already on its
+its [drain]({{< relref "/services/http/serving#the-defaults" >}}), so the calls already on its
 connection are still answered while Kubernetes removes the pod from the
 Service's endpoints. Its `Shutdown` then sends the client a GOAWAY, and
 waits for the calls in flight. The client opens its next connection through
@@ -731,7 +731,7 @@ increase(humus_circuit_transitions_total{humus_circuit_state="open"}[5m]) > 0
 A View in the end user's telemetry `Builder` drops or renames any of them.
 humus has no setting to turn them off. A test reads them as it reads any
 metric, with `humustest.Telemetry`'s `Metrics`, filtered to the scope.
-[humus's own instruments]({{< relref "telemetry#humuss-own-instruments" >}})
+[humus's own instruments]({{< relref "/fundamentals/telemetry#humuss-own-instruments" >}})
 on the Telemetry page lists what each of humus's clients records, with the
 View and the test written out.
 
@@ -745,18 +745,18 @@ inside `AttemptTimeout`. Either is a real failure to the client: `Classify`
 decides it, so it is retried, and the breaker counts it. The client strips
 the scenario from what it sends, unless `Settings.ForwardScenario` is set.
 Without `humus.WithFaults`, nothing is evaluated or stripped.
-[Failure injection]({{< relref "failure-injection" >}}) explains the model,
+[Failure injection]({{< relref "/hardening/failure-injection" >}}) explains the model,
 the points, a `Classify` that spares the breaker, and how to test a
 scenario.
 
 ## Testing
 
 A service that calls a dependency is tested whole, inside
-`testing/synctest`, as [Testing a humus App]({{< relref "testing" >}})
+`testing/synctest`, as [Testing a humus App]({{< relref "/fundamentals/testing" >}})
 describes for any App. The client dials through the Setup's Host, so the
 fake dependency is a second App on the same humustest Host: an
 `httpserver` Service whose handler answers as the dependency would, with a
-certificate from a CA that [`humustest.NewCA`]({{< relref "testing#tls" >}})
+certificate from a CA that [`humustest.NewCA`]({{< relref "/fundamentals/testing#tls" >}})
 generates for the test. `httpclient`'s own tests start one with a helper:
 
 ```go
@@ -793,7 +793,7 @@ The end user's whole App then runs against it, with the end user's own
 `Init` above, and the environment production gives it. The test writes the
 App's certificate and the dependency's CA into the Host's filesystem with
 `humustest.WithFiles`, and names them with `humustest.WithEnv`, as
-[Giving the App its certificate]({{< relref "http#giving-the-app-its-certificate" >}})
+[Giving the App its certificate]({{< relref "/services/http/serving#giving-the-app-its-certificate" >}})
 describes. `keyPairPEM` and `caPEM` are helpers of the test file that
 PEM-encode them: `keyPairPEM` a certificate's chain and private key, and
 `caPEM` the CA certificate that issued a certificate. `orders` and the

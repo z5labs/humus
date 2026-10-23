@@ -7,7 +7,7 @@ description: >
   what fails for now through a retry topic, and dead-letters what never will.
   These pages build it step by step.
 type: docs
-weight: 30
+weight: 40
 ---
 
 The order status processor consumes orders' lifecycle events from Kafka. For

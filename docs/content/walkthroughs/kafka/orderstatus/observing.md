@@ -27,7 +27,7 @@ Sign in at <http://localhost:3000> as `admin`.
 ## A record's trace
 
 Produce an order's events with `orderevents`, as
-[Deploying]({{< relref "walkthroughs/kafka/orderstatus/deploying#producing-an-orders-events" >}})
+[Deploying]({{< relref "/walkthroughs/kafka/orderstatus/deploying#producing-an-orders-events" >}})
 shows. In **Explore**, choose **Tempo** and find the latest records' traces:
 
 ```text
@@ -101,7 +101,7 @@ A record with a trace ID links to its trace in Tempo:
 
 The processor counts the records it retried and dead-lettered, by
 `orderstatus.reason`, as
-[What it counts]({{< relref "walkthroughs/kafka/orderstatus/retries#what-it-counts" >}})
+[What it counts]({{< relref "/walkthroughs/kafka/orderstatus/retries#what-it-counts" >}})
 shows:
 
 ```go

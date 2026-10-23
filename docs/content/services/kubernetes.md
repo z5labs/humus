@@ -10,10 +10,9 @@ description: >
   returns its status, owned resources, finalizers, Kubernetes' own kinds,
   panics, the settings, leader election and shutdown, readiness, the RBAC a
   controller needs, what it records, failure injection from an object's
-  annotation down through an operator's controllers, how to test it, and
-  how kubebuilder's pieces map to the module's.
+  annotation down through an operator's controllers, and how to test it.
 type: docs
-weight: 25
+weight: 60
 ---
 
 The [`kube`](https://pkg.go.dev/github.com/z5labs/humus/kube) package writes
@@ -43,10 +42,11 @@ The examples on this page are the kubebuilder book's Memcached operator: a
 `Memcached` custom resource, whose controller applies a Deployment of
 memcached pods and reports how many are ready.
 
-The [databases controller walkthrough]({{< relref "walkthroughs/kube/databases" >}})
+The [databases controller walkthrough]({{< relref "/walkthroughs/kube/databases" >}})
 builds a production-ready controller on `kube`, step by step: a `Database`
 resource whose controller provisions a database and its role in PostgreSQL,
-owns a Secret of their credentials, and drops them with a finalizer.
+owns a Secret of their credentials, and drops them with a finalizer. Its
+code is [`example/kube/databases`](https://github.com/z5labs/humus/tree/main/example/kube/databases).
 
 ## Why not kubebuilder
 
@@ -85,8 +85,8 @@ a scheme.
 `sigs.k8s.io/controller-runtime` and `sigs.k8s.io/controller-tools` in every
 humus module, so neither comes back as a convenience. Admission and
 conversion webhooks need nothing from `kube`: they are HTTPS POSTs of JSON,
-which an [OpenAPI]({{< relref "openapi" >}}) API on
-[`httpserver`]({{< relref "http" >}}) serves.
+which an [OpenAPI]({{< relref "/services/http/openapi" >}}) API on
+[`httpserver`]({{< relref "/services/http/serving" >}}) serves.
 
 ## A controller
 
@@ -133,7 +133,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 [Custom resources](#custom-resources), and the `Reconciler` under
 [Reconciling](#reconciling). The controller's `main` is one call to
 `humus.Main`, here with a telemetry `Builder` that names the service, as
-[Telemetry]({{< relref "telemetry#writing-the-builder" >}}) describes:
+[Telemetry]({{< relref "/fundamentals/telemetry#writing-the-builder" >}}) describes:
 
 ```go
 humus.Main(Init, humus.WithTelemetry(buildTelemetry))
@@ -401,7 +401,7 @@ A struct has a property for each field `encoding/json` writes, named by its
 struct with no name in its tag is inlined, as `encoding/json` does, and a
 field with the `string` option is a string. The schema is OpenAPI 3.0's,
 which a CRD takes, every subschema inlined, with no `$ref`: not the JSON
-Schema 2020-12 that [`openapi`]({{< relref "openapi" >}}) writes, in which a
+Schema 2020-12 that [`openapi`]({{< relref "/services/http/openapi" >}}) writes, in which a
 pointer's type is an array, which the API server rejects.
 
 **A field is required unless its `json` tag has `omitempty` or `omitzero`,
@@ -909,7 +909,7 @@ again after every restart, and it stops every other object being reconciled.
 ## Settings
 
 `kube.Settings` follows the
-[settings convention]({{< relref "configuration#what-a-package-with-settings-exports" >}}):
+[settings convention]({{< relref "/fundamentals/configuration#what-a-package-with-settings-exports" >}}):
 plain Go values, a check for each field, and `kube.DefaultSettings()` for the
 defaults. Every field's zero value means zero, never "use the default", so
 an `Init` starts from `DefaultSettings()` and changes the fields it sources.
@@ -938,7 +938,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (kube.Settings, error) {
 
 `env` names a variable through the Process's environment, and `config` is
 [bedrock's](https://pkg.go.dev/github.com/z5labs/bedrock/config), as
-[Configuring a humus service]({{< relref "configuration" >}}) describes. A
+[Configuring a humus service]({{< relref "/fundamentals/configuration" >}}) describes. A
 variable that isn't set fails as not found, and a value that fails its check
 fails `Init`, naming the variable, so the process exits 78. With none of the
 three set, `Init` fails with:
@@ -1075,7 +1075,7 @@ return []humus.Service{ctrl, probes}, nil
 A new pod is then held not ready until its caches have synced, so a rollout
 whose new pods can't list their resource, for want of RBAC or a CRD, stalls,
 and is reported failed at its progress deadline, rather than replacing every
-pod that worked. [Health]({{< relref "health" >}}) describes the probes
+pod that worked. [Health]({{< relref "/fundamentals/health" >}}) describes the probes
 server and its manifest.
 
 **`Synced` is for readiness only.** Restarting the pod doesn't make the
@@ -1191,7 +1191,7 @@ The controller's own six instruments measure its work queue and its
 reconciles, from the Setup's `MeterProvider`, in the scope
 `github.com/z5labs/humus/kube`. OpenTelemetry has no conventions for
 controllers, so they are humus's, under `humus.kube.controller.`, as
-[humus's own instruments]({{< relref "telemetry#humuss-own-instruments" >}})
+[humus's own instruments]({{< relref "/fundamentals/telemetry#humuss-own-instruments" >}})
 lists:
 
 | Instrument | Kind | Unit | Is |
@@ -1261,7 +1261,7 @@ Client's transport close four of them: `rest.InClusterConfig`, which lint
 denies in every humus module, a token file re-read from the disk, the proxy
 from the environment, and its transports' three variables. Two stay, and
 are on the lifecycle's list of
-[ambient leaks]({{< relref "lifecycle#ambient-leaks" >}}):
+[ambient leaks]({{< relref "/fundamentals/lifecycle#ambient-leaks" >}}):
 
 - **client-go's feature gates** read `KUBE_FEATURE_*` variables from the real
   environment, with `os.LookupEnv`, the first time a gate is used. The only
@@ -1281,13 +1281,13 @@ and no metrics provider. Lint denies klog's `SetLogger`,
 ## Failure injection
 
 A controller takes part in
-[failure injection]({{< relref "failure-injection" >}}) as every humus
+[failure injection]({{< relref "/hardening/failure-injection" >}}) as every humus
 server and client does. Its reconciles answer no request, so a scenario
 reaches them through their object: **an object's annotation carries a
 scenario into that object's reconciles,** and **every request through the
 Client is an injection point.** Both need an App with failure injection,
 turned on with `humus.WithFaults`, as
-[Turning it on]({{< relref "failure-injection#turning-it-on" >}})
+[Turning it on]({{< relref "/hardening/failure-injection#turning-it-on" >}})
 describes. The design is in
 [Proposal: failure injection for Kubernetes controllers](https://github.com/z5labs/humus/discussions/922),
 with its revisions
@@ -1419,7 +1419,7 @@ The annotation's value is W3C baggage that carries a scenario as the App's
 for an HTTP request's `baggage` header goes on an object unchanged, and one
 tool writes both: `fit.ContextWithScenario` and a codec that is also a
 `fit.Encoder`, as
-[Writing a scenario]({{< relref "failure-injection#writing-a-scenario" >}})
+[Writing a scenario]({{< relref "/hardening/failure-injection#writing-a-scenario" >}})
 describes. The tool that runs the experiment then takes the baggage it
 leaves:
 
@@ -1707,7 +1707,7 @@ What is left alone:
 ### What it records
 
 Nothing of its own: the events are `fault`'s, as
-[Telemetry]({{< relref "failure-injection#telemetry" >}}) on the failure
+[Telemetry]({{< relref "/hardening/failure-injection#telemetry" >}}) on the failure
 injection page lists them.
 
 - `humus.fit.evaluation` is on each request's span, on the span in a watch's
@@ -1745,7 +1745,7 @@ The third departs from the charter's principle 6, which runs every App whole
 inside `synctest` on a test Host, as RabbitMQ's tests do, and the charter's
 [revision 10](https://github.com/z5labs/humus/discussions/629#discussioncomment-19009924)
 records the exception.
-[Testing a humus App]({{< relref "testing#runtime-packages" >}}) says the
+[Testing a humus App]({{< relref "/fundamentals/testing#runtime-packages" >}}) says the
 same for every runtime package.
 
 ### The Reconciler as a function
@@ -1930,47 +1930,5 @@ alone: a container test is slower, and depends on Docker and on pulling an
 image, so it informs a review rather than blocking one. The build job vets
 the tagged tests without starting a container, so they keep compiling. An
 end user's own container tests fit the same shape, as
-[RabbitMQ's]({{< relref "rabbitmq#behind-a-build-tag-in-a-ci-job-of-its-own" >}})
+[RabbitMQ's]({{< relref "/services/rabbitmq#behind-a-build-tag-in-a-ci-job-of-its-own" >}})
 do.
-
-## Migrating from kubebuilder
-
-An end user moving from kubebuilder and controller-runtime maps its pieces
-like this:
-
-| kubebuilder and controller-runtime | `kube` |
-|---|---|
-| `kubebuilder init`, `create api`: 54 files in 20 directories | the module, and the end user's own files |
-| `// +kubebuilder:validation:Minimum=1` and other markers | `kube.Field(&spec.Size).Minimum(1)`, in `Resource.Rules` |
-| doc comments as descriptions | `.Description(…)` |
-| `// +kubebuilder:object:root=true`, `zz_generated.deepcopy.go`, `make generate` | nothing: `kube.Object[Spec, Status]` |
-| `make manifests` | `Resource.CRD()`, and a golden test |
-| `AddToScheme`, and a scheme in `main` | nothing |
-| `Reconcile(ctx, req)`, then `r.Get` and `IsNotFound` | `Reconcile(ctx, obj)` |
-| `r.Status().Update(ctx, obj)`, then `r.Get` again | `kube.Result{Status: &st}` |
-| `Result{Requeue: true}`, `RequeueAfter`, a returned error | a returned error, or `Result.After` |
-| `controllerutil.AddFinalizer`, `r.Update`, `RemoveFinalizer` | `kube.Finalize(name, f)` |
-| `Owns(&appsv1.Deployment{})` | `kube.Owns(appsv1.SchemeGroupVersion.WithResource("deployments"))` |
-| `For(&corev1.Namespace{})` | `kube.Kind[corev1.Namespace]` and `kube.NewKindController` |
-| `Watches(…, handler.EnqueueRequestsFromMapFunc(…))` | `Result.After`, polling |
-| `ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{…})` | `kube.NewClient` and `kube.NewController`, in `Init` |
-| `ctrl.SetupSignalHandler()`, `mgr.Start` | `humus.Main` |
-| `LeaderElection: true`, `LeaderElectionID` | always, named `Settings.Name` |
-| `HealthProbeBindAddress`, `AddReadyzCheck` | `ctrl.Synced()`, served with health probes |
-| `metrics.Registry.MustRegister` | the `MeterProvider` in `s.Telemetry` |
-| `log.SetLogger(zap.New(…))` | the `LoggerProvider` in `s.Telemetry` |
-| envtest | k3s in a container |
-| `// +kubebuilder:rbac:…` | the rules, written by the end user, as [RBAC](#rbac) lists |
-| `// +kubebuilder:webhook:…`, cert-manager | an `openapi` API on `httpserver` |
-
-Three behaviours change for such a controller:
-
-- **A panic is no longer retried.** controller-runtime recovers it and
-  retries with backoff; `kube` records it and waits for a change, as
-  [Panics](#panics) describes.
-- **Losing the Lease exits 1, and so does a missing CRD,** at startup, so
-  the pod's restarts show either.
-- **Out of scope:** several versions of one resource and conversion between
-  them, printer columns, short names, categories and the scale subresource,
-  typed clientsets, listers and informers for a custom resource, exec
-  credential plugins, and installing CRDs.

@@ -242,7 +242,7 @@ var (
 )
 ```
 
-[Who may do what]({{< relref "walkthroughs/http/shoppingcart/access" >}}) builds
+[Who may do what]({{< relref "/walkthroughs/http/shoppingcart/access" >}}) builds
 `write` and the bearer scheme.
 
 ## A handler

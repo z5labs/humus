@@ -1,6 +1,6 @@
 ---
 title: Serving an API with OpenAPI
-linkTitle: OpenAPI
+linkTitle: Serving an API with OpenAPI
 description: >
   How to serve an API with the openapi/v3 package: an Init that builds an
   *openapi.API with NewAPI and serves it with httpserver.NewService, typed
@@ -8,9 +8,9 @@ description: >
   and codecs of one's own, streaming ones included, the answers to errors,
   rejected requests, 404s and 405s, problem details, what happens on a panic
   or on a failure after the status, security, the OpenAPI 3.2 document, what
-  the API records, how to test it, and what each piece of rest.Run became.
+  the API records, and how to test it.
 type: docs
-weight: 12
+weight: 20
 ---
 
 The [`openapi/v3`](https://pkg.go.dev/github.com/z5labs/humus/openapi/v3)
@@ -18,7 +18,7 @@ package serves an API of typed operations, and its OpenAPI document. The end
 user's `Init` declares each operation once, on a typed path, with a typed
 handler and the codecs of its bodies, builds the API with `openapi.NewAPI`,
 and hands it to `httpserver.NewService`, which serves it over TLS as
-[Serving HTTP]({{< relref "http" >}}) describes. The same declarations serve
+[Serving HTTP]({{< relref "/services/http/serving" >}}) describes. The same declarations serve
 the requests and write the document, so the two can't disagree.
 
 The import path names the major version of OpenAPI the package follows, and
@@ -78,7 +78,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 ```
 
 `readSettings` sources `ADDR` and a PEM file named by `TLS_PEM_FILE`, as
-[Serving HTTP]({{< relref "http#a-service" >}}) shows; the variable names are
+[Serving HTTP]({{< relref "/services/http/serving#a-service" >}}) shows; the variable names are
 the service's own. The service's `main` is one call to `httpserver.Main`,
 which runs the App with the drain and the grace period a server behind a
 load balancer needs:
@@ -729,7 +729,7 @@ it or by the catch-all. The document lists every scheme under
 `components.securitySchemes`, and each operation's requirements under its
 `security`.
 
-[Authentication and authorization]({{< relref "auth" >}}) covers schemes and
+[Authentication and authorization]({{< relref "/hardening/auth" >}}) covers schemes and
 their principals, requirements and scopes, `auth.Disabled()` and
 `auth.Anonymous()`, the answers and challenges, verifying JWTs with
 `auth/jwt`, answering a `*jwt.KeySetError`, and testing an API that requires
@@ -766,7 +766,7 @@ These aren't recovered by the API:
   a `CatchAll` or `RequestErrors`, which would panic again if it answered its
   own panic, and **a panic in `Unmatched`'s handlers**, pass through to
   `httpserver`, which records it and aborts the response, as
-  [Serving HTTP]({{< relref "http#panics" >}}) describes.
+  [Serving HTTP]({{< relref "/services/http/serving#panics" >}}) describes.
 - **A panic on a goroutine the end user's code starts** can't be recovered
   by anything but that goroutine, and crashes the process, as it would
   anywhere in Go.
@@ -851,7 +851,7 @@ schema it returns. The document doesn't describe itself, the requests
 
 The API adds no spans and no metrics of its own: `httpserver` gives every
 request a server span and its metrics, as
-[Serving HTTP]({{< relref "http#telemetry" >}}) describes, and the API names
+[Serving HTTP]({{< relref "/services/http/serving#telemetry" >}}) describes, and the API names
 the span after the operation's route, such as `GET /orders/{orderId}`. A 404
 and a 405 have no route, so their spans are named after the method alone.
 The package never reads or sets OpenTelemetry's globals. It logs through the
@@ -879,11 +879,11 @@ panic the API recovered, or for a response the API aborted. Answers from an
 
 An API is tested whole, as the service that serves it, inside
 `testing/synctest`, with `httpservertest`, as
-[Serving HTTP]({{< relref "http#testing" >}}) describes for any HTTP
+[Serving HTTP]({{< relref "/services/http/serving#testing" >}}) describes for any HTTP
 service: `httpservertest.Start` runs the end user's `Init` on
 `httpserver.Main`'s defaults, on a humustest Host, and
 `httpservertest.NewClient` speaks HTTP/2 to it, trusting a CA that
-[`humustest.NewCA`]({{< relref "testing#tls" >}}) generates for the test.
+[`humustest.NewCA`]({{< relref "/fundamentals/testing#tls" >}}) generates for the test.
 The requests go through the API exactly as production's do: routing,
 parameters, codecs, answers and the document.
 
@@ -976,7 +976,7 @@ it.
 
 ## The shoppingcart
 
-The [shoppingcart walkthrough]({{< relref "walkthroughs/http/shoppingcart" >}})
+The [shoppingcart walkthrough]({{< relref "/walkthroughs/http/shoppingcart" >}})
 builds an API on `openapi/v3` step by step, at
 [`example/http/shoppingcart`](https://github.com/z5labs/humus/tree/main/example/http/shoppingcart):
 a cart service, and a catalog service it prices items from, each an
@@ -1006,7 +1006,7 @@ pgx dials through the Host: the shoppingcart's `Init` sets the pool's
 `DialFunc` to the Host's `Dial`, and its `LookupFunc` to one that returns
 the host unresolved, so the Host's `Dial` resolves the name too. Everything
 else pgx reads, it reads from the real process, whatever Host the App runs
-on, as [Ambient leaks]({{< relref "lifecycle#ambient-leaks" >}}) lists:
+on, as [Ambient leaks]({{< relref "/fundamentals/lifecycle#ambient-leaks" >}}) lists:
 
 - `pgxpool.ParseConfig`, which parses the URL in the file
   `DATABASE_URL_FILE` names, fills in whatever the URL leaves out from the
@@ -1031,40 +1031,3 @@ postgres://carts:secret@db.internal:5432/carts?sslmode=verify-full
 The tests do the same, with a password generated for each test, so what a
 test runs doesn't depend on the environment or the home directory of the
 machine it runs on.
-
-## Migration from `rest.Run`
-
-`openapi/v3` replaces the REST half of `rest.Run` from before the reset,
-and bedrock's REST DSL beneath it. Its server half is `httpserver`, as
-[Serving HTTP]({{< relref "http#migration-from-restrun" >}}) describes.
-
-| Before the reset | With `openapi/v3` |
-|---|---|
-| `rest.Run(ctx, rest.Title(…), rest.Version(…), rest.Handle(route))` | `httpserver.Main(Init)`, with `Init` calling `openapi.NewAPI(s, info, unmatched, requestErrors, catchAll, ops)` and `httpserver.NewService` |
-| `bedrockrest.Build(opts...)`, a `bedrock.Builder[http.Handler]` | `openapi.NewAPI`, an `*openapi.API` and an error |
-| `Title`, `Version`, `APIDescription`; defaults `"API"` and `"0.0.0"` | `openapi.Info`; `Title` and `Version` required |
-| `SpecPath`, default `/openapi.json` | `openapi.Document(path)`, an operation; no document unless the operations include one |
-| an OpenAPI 3.0.3 document | an OpenAPI 3.2.0 document, from `github.com/z5labs/humus/openapi/v3`; following the latest 3.x |
-| `rest.GET("/carts/{cartId}", h)` … `DELETE`, a path template | `openapi.Get(cart, h, enc, parts...)` … `Delete`, with `cart := openapi.Root().Lit("carts").Param(cartID)` |
-| `cartID.Read(ep)` for a path parameter | nothing: the path declares it |
-| `p.Read(ep)` for a query or header parameter | `openapi.Query(p)` or `openapi.Header(p)`, a part |
-| `Summary(s, ep)`, `EndpointDescription`, `Tags`, `OperationID`, `MarkDeprecated` | `openapi.Summary(s)`, `Description`, `Tags`, `OperationID`, `Deprecated()`, as parts |
-| `PathParam[T any](name, opts...)`, an unsupported `T` failing every request with 400 | `openapi.PathParam[T ParamValue](name)`, a compile error, with constraints as methods |
-| `Pattern(string)`, a bad expression failing every request | `.Pattern(*regexp.Regexp)` |
-| `ParamFrom` returns the zero value for a parameter the endpoint didn't read | it panics, naming the parameter |
-| chi, `chi.URLParam` | chi inside the API, read with `openapi.ParamFrom`; spans named after the route |
-| `ReadJSON[T]` | `jsoncodec.Decoder`, given to the operation; plus 415, 413 and trailing data |
-| `WriteJSON[Resp](status)`, written with the encoder's error ignored | `jsoncodec.Encoder`, and `openapi.Status`; encoded before the status is written |
-| `ReadBinary(ct)`, `WriteBinary(status, ct)` | a decoder or encoder of `io.Reader` in that media type, the end user's own |
-| `ReadFormFile`, `ReadFormField` | dropped |
-| a 204 with `WriteBinary(204, "", …)` and an empty reader | an `openapi.EmptyBody` response, with `openapi.EmptyEncoder`: 204 by default |
-| `ErrorJSON[E](status, ep)` on every route | `openapi.Error[E](status, jsoncodec.Problem)`, or `jsoncodec.Encoder` for `application/json`, given to an operation or to `NewAPI` |
-| `CatchAll[E](status, wrap, ep)` on every route | `openapi.CatchAll(status, wrap, jsoncodec.Problem)`, given to `NewAPI`, and to an operation that overrides it |
-| a bad parameter or body: `{"param", "error"}` and a 400 outside the document | a `*openapi.RequestError`, answered by `RequestErrors`, such as `RequestErrors(problem.FromRequestError, jsoncodec.Problem)`, and a documented 400, 413 or 415 |
-| chi's plain-text 404 and 405 | the end user's `openapi.Unmatched` handlers, such as `problem.Handler`, with `Allow` on the 405 |
-| the example's own problem type | `problem.Details`, embedded |
-| an error the catch-all answered: lost | an ERROR record and a span event |
-| a panic: bedrock's `RecoverPanics` around the runtime | the catch-all, recorded |
-| `otelhttp.NewHandler(h, "rest")` on the globals, spans named `rest` | `httpserver`'s instrumentation |
-| `example/rest/shoppingcart` in the root module; `os.Getenv("DATABASE_URL")` and `pgxpool.New` in `main` | the `example/http/shoppingcart` module; `Init` sources the URL, the pool dials through the `Host`, and `OnStop` closes it |
-| the example's `specs/` (a hand-written `api.yaml`, sequence diagrams) | dropped; the served document is the golden file |

@@ -6,7 +6,7 @@ description: >
   account, behind JWT bearer tokens, on a ledger service of its own that it
   calls over mTLS, on PostgreSQL. These pages build it step by step.
 type: docs
-weight: 60
+weight: 20
 ---
 
 The wallet is two services, each a gRPC service served by `grpcserver`:

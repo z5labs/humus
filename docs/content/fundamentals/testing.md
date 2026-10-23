@@ -6,7 +6,7 @@ description: >
   humus.Main would run, under synctest, with no real socket, no file outside
   the test's temp directory and no secret in the repository.
 type: docs
-weight: 23
+weight: 50
 ---
 
 A humus App runs whole inside a test.
@@ -24,7 +24,7 @@ possible:
   dials, and whose filesystem is confined to the test's own temp directory;
 - a certificate authority, **`NewCA`**, generated for each test;
 - **`Telemetry`**, a recorder of what an App emits, covered on the
-  [Telemetry]({{< relref "telemetry#testing" >}}) page;
+  [Telemetry]({{< relref "/fundamentals/telemetry#testing" >}}) page;
 - and **`TestService`**, the contract every Service must pass.
 
 The network opens no real socket and starts no goroutines, so the App runs in a
@@ -214,7 +214,7 @@ func withEnv(more map[string]string) humustest.Option {
 
 A runtime package whose Services need a drain has a `Main` of its own, with
 its defaults, such as a drain and a shorter grace period, as one
-`humus.Option` ([Runtime packages]({{< relref "lifecycle#runtime-packages" >}})).
+`humus.Option` ([Runtime packages]({{< relref "/fundamentals/lifecycle#runtime-packages" >}})).
 A test of a `main` that calls the package's `Main` passes the same defaults
 with `WithApp`, before any options of its own, as
 `humustest.Start(t, Init, humustest.WithApp(httpDefaults()))` does with the
@@ -227,18 +227,18 @@ helpers such as a client wired to the test Host. A test that uses it can't
 forget the defaults. `httpserver` ships `httpservertest`, with `Start`, which
 is `humustest.Start` with `httpserver.Defaults()` applied before the test's
 options, and `NewClient`, which returns an HTTP/2 client for the test Host
-that trusts the test's CA. [Serving HTTP]({{< relref "http#testing" >}})
+that trusts the test's CA. [Serving HTTP]({{< relref "/services/http/serving#testing" >}})
 shows both. `grpcserver` ships `grpcservertest`, with `Start`, which is
 `humustest.Start` with `grpcserver.Defaults()` applied before the test's
 options, and `NewClient`, which returns a gRPC client that dials the Service
 through the test Host, over TLS, trusting the test's CA.
-[gRPC services]({{< relref "grpc#testing" >}}) shows both.
+[Serving gRPC]({{< relref "/services/grpc/serving#testing" >}}) shows both.
 
 A runtime package with no defaults of its own needs no test package.
 `queue/kafka` ships none: a consumer runs on `humus.Main`'s defaults, so
 `humustest.Start` already runs it on the ones production uses, and the fake
 Kafka cluster a test runs it against listens on the test Host with one option.
-[Consuming and producing Kafka]({{< relref "kafka#testing" >}}) shows how.
+[Consuming and producing Kafka]({{< relref "/services/kafka#testing" >}}) shows how.
 
 `queue/rabbitmq` ships no test package and no fake broker. Its consumer runs
 on `humus.Main`'s defaults too, so it needs no test package for them, and
@@ -258,7 +258,7 @@ records the exception. It is tested in two parts:
   queues itself, generates the broker's login rather than use `guest`, and
   sits behind a build tag, in a CI job of its own.
 
-[Consuming and publishing with RabbitMQ]({{< relref "rabbitmq#testing" >}})
+[Consuming and publishing with RabbitMQ]({{< relref "/services/rabbitmq#testing" >}})
 shows both.
 
 The `kube` module ships no test package and no fake API server either, for
@@ -273,7 +273,7 @@ runs on `humus.Main`'s defaults, and is tested in three parts:
   `humus.WithHost(humus.OSHost())`, in real time, behind a build tag, in a
   CI job of its own.
 
-[Writing a Kubernetes controller]({{< relref "kubernetes#testing" >}})
+[Writing a Kubernetes controller]({{< relref "/services/kubernetes#testing" >}})
 shows all three.
 
 ### Helpers
@@ -425,7 +425,7 @@ found. Inside a `synctest` bubble the lookup crashes the test binary with
 `grpcservertest.NewClient` targets `passthrough:///` and the address, and
 dials through the Host, so no lookup is made. A test that builds a gRPC client
 of its own does the same, as
-[gRPC services]({{< relref "grpc#the-dns-resolver-and-synctest" >}})
+[Serving gRPC]({{< relref "/services/grpc/serving#the-dns-resolver-and-synctest" >}})
 describes.
 
 ### A client next to a server
@@ -468,7 +468,7 @@ func startCarts(t *testing.T, h *humustest.Host, ca *humustest.CA) (stop func())
 }
 ```
 
-The end user's App builds a [`grpcclient`]({{< relref "grpc-client" >}})
+The end user's App builds a [`grpcclient`]({{< relref "/dependencies/grpc" >}})
 Client of `carts:9090` in its `Init`, from `CARTS_ADDR` and `CARTS_CA_FILE`,
 and serves its own gRPC service, whose handler calls `carts`. The test gives
 it the dependency's CA and its own certificate through the Host's
@@ -508,7 +508,7 @@ reaches `carts:9090` on the Host's network, and the dependency's certificate
 verifies against the CA the test wrote. Each App waits for its own
 listener: the test waits for `carts:9090` before it starts the end user's
 App, and for `orders:8443` before it calls it. An
-[`httpclient`]({{< relref "http-client#testing" >}}) client is tested the
+[`httpclient`]({{< relref "/dependencies/http#testing" >}}) client is tested the
 same way, next to an `httpserver` App.
 
 ## Files
@@ -557,7 +557,7 @@ working in a test. They cost two things:
   file's modification time is not, so code that compares `ModTime()` with
   `time.Now()` needs `os.Chtimes` in its tests.
 
-[The App lifecycle]({{< relref "lifecycle#why-fs-hands-out-osfile" >}})
+[The App lifecycle]({{< relref "/fundamentals/lifecycle#why-fs-hands-out-osfile" >}})
 explains why `FS` hands out `*os.File`.
 
 ## TLS
@@ -670,7 +670,7 @@ HTTP/1.1 unless `ForceAttemptHTTP2` or `Protocols` says otherwise, so the
 client above, which has both, speaks HTTP/1.1. For an HTTP/2 client, such as one for a Service from
 `httpserver`, use `httpservertest.NewClient(h, ca.Pool())`: it trusts only the
 CA's pool and speaks only HTTP/2, as
-[Serving HTTP]({{< relref "http#testing" >}}) describes.
+[Serving HTTP]({{< relref "/services/http/serving#testing" >}}) describes.
 
 A server that takes a `tls.Certificate` rather than a file serves
 `cert.TLS()` instead, and a client that dials the Host itself trusts the CA's
@@ -764,7 +764,7 @@ tests that:
 3. **Negative tests assert why something failed** — the cause, with
    `errors.Is` or `errors.AsType` — not only the exit code. A test that checks
    a logged failure reads it from humustest's telemetry recorder,
-   [`humustest.Telemetry`]({{< relref "telemetry#testing" >}}).
+   [`humustest.Telemetry`]({{< relref "/fundamentals/telemetry#testing" >}}).
 4. **Every Service passes `humustest.TestService`.**
 
 And one rule for every test, fixture and `testdata` file:
@@ -786,6 +786,6 @@ if !errors.Is(st.Cause(), pkcs12.ErrIncorrectPassword) {
 }
 ```
 
-The [App lifecycle]({{< relref "lifecycle#ambient-leaks" >}}) page lists the
+The [App lifecycle]({{< relref "/fundamentals/lifecycle#ambient-leaks" >}}) page lists the
 dependencies that read the real process behind an App's back, which a whole-App
 test can neither control nor see.

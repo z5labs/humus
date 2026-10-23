@@ -41,9 +41,9 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 ```
 
 The ledger's Client comes first, as
-[Calling the ledger]({{< relref "walkthroughs/grpc/wallet/calling-the-ledger#the-clients-settings" >}})
+[Calling the ledger]({{< relref "/walkthroughs/grpc/wallet/calling-the-ledger#the-clients-settings" >}})
 shows, then the key set's, as
-[Serving the wallet]({{< relref "walkthroughs/grpc/wallet/serving-the-wallet#the-fetched-key-set" >}})
+[Serving the wallet]({{< relref "/walkthroughs/grpc/wallet/serving-the-wallet#the-fetched-key-set" >}})
 shows, then the tokens' settings and the server's:
 
 ```go
@@ -161,7 +161,7 @@ got, err := config.Struct(func(r *config.Resolver) sourced {
 ```
 
 Then it builds the server's TLS, as
-[Serving the ledger]({{< relref "walkthroughs/grpc/wallet/serving-the-ledger#mtls" >}})
+[Serving the ledger]({{< relref "/walkthroughs/grpc/wallet/serving-the-ledger#mtls" >}})
 shows, and the pool's config.
 
 ## Every variable the ledger reads
@@ -375,7 +375,7 @@ so watches move only at a rollout.
 
 Each service's probes are `grpchealth.NewService`, on `PROBES_ADDR`. The
 ledger is ready once it has reached PostgreSQL, as
-[Serving the ledger]({{< relref "walkthroughs/grpc/wallet/serving-the-ledger#the-probes" >}})
+[Serving the ledger]({{< relref "/walkthroughs/grpc/wallet/serving-the-ledger#the-probes" >}})
 shows:
 
 ```go
@@ -383,7 +383,7 @@ probes, err := grpchealth.NewService(s, set.Probes, health.Readiness(newReached(
 ```
 
 The wallet is ready once its Client has connected to the ledger, as
-[Calling the ledger]({{< relref "walkthroughs/grpc/wallet/calling-the-ledger#readiness-connected" >}})
+[Calling the ledger]({{< relref "/walkthroughs/grpc/wallet/calling-the-ledger#readiness-connected" >}})
 shows:
 
 ```go

@@ -11,7 +11,7 @@ description: >
   the retries and the breaker, containing a scenario in production, what it
   records, and how to test a scenario.
 type: docs
-weight: 24
+weight: 20
 ---
 
 Failure injection lets one request fail on purpose, in production or in a
@@ -28,7 +28,7 @@ builds an App's failure injection, and
 is a ready-made codec for its scenarios. Both are built on bedrock's
 [`fit`](https://pkg.go.dev/github.com/z5labs/bedrock/fit). Every humus client
 is an injection point, and every humus server strips scenarios from callers
-it doesn't trust. A [Kubernetes controller]({{< relref "kubernetes#failure-injection" >}})
+it doesn't trust. A [Kubernetes controller]({{< relref "/services/kubernetes#failure-injection" >}})
 answers no request, so an annotation of the object it reconciles carries a
 scenario into its reconciles, and every request of its Client is an
 injection point.
@@ -119,7 +119,7 @@ a registry of scenarios from a file, and register its release with
 `Init`. The App logs it as `failure injection: ` and the error, and exits 78
 when a `*config.Error` is in its chain, such as a `FAULT_MAX_DELAY` of `0s`,
 or 1 otherwise, such as a `Settings` with no `Decoder`.
-[The App lifecycle]({{< relref "lifecycle#what-run-does-in-order" >}}) shows
+[The App lifecycle]({{< relref "/fundamentals/lifecycle#what-run-does-in-order" >}}) shows
 where it comes in the startup order.
 
 **Without `humus.WithFaults`, failure injection is off.** `Setup.Faults` is
@@ -230,11 +230,11 @@ it has one, so an attempt the breaker rejects evaluates nothing:
 
 | Client | Point | An abort | A delay |
 |---|---|---|---|
-| [`httpclient`]({{< relref "http-client" >}}) | `http:<host>:<port>` of `BaseURL`, with the scheme's port when the URL has none, such as `http:payments:8443` | a transport error: the call returns an `*url.Error` wrapping the `*fault.InjectedError`, with no response, and nothing is sent | waited inside `AttemptTimeout`, so it is in the attempt's span and in `http.client.request.duration` |
-| [`grpcclient`]({{< relref "grpc-client" >}}) | `grpc:<service>/<method>`: the full method without its leading slash, as `rpc.method` writes it, such as `grpc:payments.v1.Payments/Charge` | status `Unavailable`, wrapping the `*fault.InjectedError`. grpc-go isn't called, so the Client records the attempt's span itself | waited before grpc-go is called, inside `Timeout`. Cut short, it ends as grpc-go would, `DeadlineExceeded` or `Canceled` |
-| The Kafka [`Producer`]({{< relref "kafka#producing" >}}) | `kafka:<topic>`, one evaluation per record, such as `kafka:orders` | every record of the call fails unsent. A call is one unit, as the breaker counts it, so one record's abort fails them all | the call waits the longest `Delay` of its records, inside `DeliveryTimeout` |
-| The RabbitMQ [`Publisher`]({{< relref "rabbitmq#publishing" >}}) | `rabbitmq:<exchange>:<routing key>`, leaving out what is empty, as `messaging.destination.name` writes it, such as `rabbitmq:orders:accepted` | the attempt fails with nothing sent, marked as a lost connection's error is: `rabbitmq: publishing to …: fit: injected failure at …` | waited inside `Timeout`, before the attempt takes a channel |
-| The `kube` [`Client`]({{< relref "kubernetes#injection-points" >}}) | `kube:<resource>[.<group>][/<subresource>]:<verb>`, one evaluation per request to the API server, which names what the request does to which resource as the API server's audit log does, such as `kube:deployments.apps:patch` | a transport error: client-go returns an error wrapping the `*fault.InjectedError`, with no response, nothing sent and no call to `Connection.Token` | waited before the request is sent, inside its span and in `http.client.request.duration` |
+| [`httpclient`]({{< relref "/dependencies/http" >}}) | `http:<host>:<port>` of `BaseURL`, with the scheme's port when the URL has none, such as `http:payments:8443` | a transport error: the call returns an `*url.Error` wrapping the `*fault.InjectedError`, with no response, and nothing is sent | waited inside `AttemptTimeout`, so it is in the attempt's span and in `http.client.request.duration` |
+| [`grpcclient`]({{< relref "/dependencies/grpc" >}}) | `grpc:<service>/<method>`: the full method without its leading slash, as `rpc.method` writes it, such as `grpc:payments.v1.Payments/Charge` | status `Unavailable`, wrapping the `*fault.InjectedError`. grpc-go isn't called, so the Client records the attempt's span itself | waited before grpc-go is called, inside `Timeout`. Cut short, it ends as grpc-go would, `DeadlineExceeded` or `Canceled` |
+| The Kafka [`Producer`]({{< relref "/services/kafka#producing" >}}) | `kafka:<topic>`, one evaluation per record, such as `kafka:orders` | every record of the call fails unsent. A call is one unit, as the breaker counts it, so one record's abort fails them all | the call waits the longest `Delay` of its records, inside `DeliveryTimeout` |
+| The RabbitMQ [`Publisher`]({{< relref "/services/rabbitmq#publishing" >}}) | `rabbitmq:<exchange>:<routing key>`, leaving out what is empty, as `messaging.destination.name` writes it, such as `rabbitmq:orders:accepted` | the attempt fails with nothing sent, marked as a lost connection's error is: `rabbitmq: publishing to …: fit: injected failure at …` | waited inside `Timeout`, before the attempt takes a channel |
+| The `kube` [`Client`]({{< relref "/services/kubernetes#injection-points" >}}) | `kube:<resource>[.<group>][/<subresource>]:<verb>`, one evaluation per request to the API server, which names what the request does to which resource as the API server's audit log does, such as `kube:deployments.apps:patch` | a transport error: client-go returns an error wrapping the `*fault.InjectedError`, with no response, nothing sent and no call to `Connection.Token` | waited before the request is sent, inside its span and in `http.client.request.duration` |
 
 An abort emulates a dependency that can't be reached, in every client: a
 transport error, `Unavailable`, a lost connection. A delay is waited, and
@@ -300,11 +300,11 @@ end user's code runs, unless its `TrustScenario` setting trusts the caller:
 
 | Server | `TrustScenario` is given |
 |---|---|
-| [`httpserver`]({{< relref "http" >}}) | the `*http.Request`, as it arrived |
-| [`grpcserver`]({{< relref "grpc" >}}) | the RPC's context, which holds its peer and its incoming metadata, and its full method |
-| The Kafka [consumer]({{< relref "kafka" >}}) | the record's `kafka.Message` |
-| The RabbitMQ [consumer]({{< relref "rabbitmq" >}}) | the delivery's `rabbitmq.Message` |
-| A Kubernetes [controller]({{< relref "kubernetes#trusting-an-objects-annotation-trustscenario" >}}), with the `kube.TrustScenario` part | the object, whose annotation carries the scenario into the object's reconciles |
+| [`httpserver`]({{< relref "/services/http/serving" >}}) | the `*http.Request`, as it arrived |
+| [`grpcserver`]({{< relref "/services/grpc/serving" >}}) | the RPC's context, which holds its peer and its incoming metadata, and its full method |
+| The Kafka [consumer]({{< relref "/services/kafka" >}}) | the record's `kafka.Message` |
+| The RabbitMQ [consumer]({{< relref "/services/rabbitmq" >}}) | the delivery's `rabbitmq.Message` |
+| A Kubernetes [controller]({{< relref "/services/kubernetes#trusting-an-objects-annotation-trustscenario" >}}), with the `kube.TrustScenario` part | the object, whose annotation carries the scenario into the object's reconciles |
 
 - **A nil `TrustScenario` trusts no caller,** and is the default. A server
   the end user hasn't decided about is a trust boundary, so an API on the
@@ -322,7 +322,7 @@ end user's code runs, unless its `TrustScenario` setting trusts the caller:
   consumers recover nothing, as for a `Processor`, and a controller recovers
   it as a Reconciler's panic, and doesn't retry the object.
 
-Trust needs nothing from [authentication]({{< relref "auth" >}}), which runs
+Trust needs nothing from [authentication]({{< relref "/hardening/auth" >}}), which runs
 later, in the end user's handlers and interceptors. A request already
 carries what is needed to trust it: a verified client certificate, a
 listener only internal callers reach, a header or metadata that a gateway
@@ -447,12 +447,12 @@ writes, and every request and point they reach then see the scenario. An
 untrusted object's scenario, and a value that isn't W3C baggage, are
 stripped on the reconcile's span. Adding the annotation starts an
 experiment, and removing it ends one, at once, as
-[Starting and ending an experiment]({{< relref "kubernetes#starting-and-ending-an-experiment" >}})
+[Starting and ending an experiment]({{< relref "/services/kubernetes#starting-and-ending-an-experiment" >}})
 shows.
 
 ### A job trusts its `BAGGAGE`
 
-A [job]({{< relref "jobs#joining-the-trace-that-started-the-job" >}}) reads
+A [job]({{< relref "/services/jobs#joining-the-trace-that-started-the-job" >}}) reads
 its baggage from the `BAGGAGE` variable in its environment, and trusts it.
 Whoever starts the job, with its pod spec or otherwise, already sets every
 one of its settings, so a scenario there is set by the same hand. A job
@@ -501,7 +501,7 @@ scenario, the Client sets the `TrustScenario`'s annotation in every
 server-side apply of an object whose controller owner reference is the
 reconciled object. So one experiment on the top object of an operator of
 several controllers reaches every controller below it, as
-[An operator of two controllers]({{< relref "kubernetes#an-operator-of-two-controllers" >}})
+[An operator of two controllers]({{< relref "/services/kubernetes#an-operator-of-two-controllers" >}})
 shows. A create, an update, and a patch that isn't an apply are sent as
 they are, since only an apply takes the annotation off again once the
 experiment ends.
@@ -571,8 +571,8 @@ spare := func(resp *http.Response, err error) httpclient.Classification {
 ```
 
 humus doesn't spare the breaker of its own accord.
-[Calling HTTP services]({{< relref "http-client#writing-a-classify" >}}) and
-[Calling gRPC services]({{< relref "grpc-client#writing-a-classify" >}})
+[Calling HTTP services]({{< relref "/dependencies/http#writing-a-classify" >}}) and
+[Calling gRPC services]({{< relref "/dependencies/grpc#writing-a-classify" >}})
 explain `Classify`.
 
 ## Containing a scenario in production
@@ -660,7 +660,7 @@ causes is already recorded by the client's own span, and by its instruments.
 
 A test turns failure injection on as `main` does, with
 `humustest.WithApp(humus.WithFaults(…))`, and runs the end user's whole App
-with [`humustest.Start`]({{< relref "testing" >}}). The test is the edge: it
+with [`humustest.Start`]({{< relref "/fundamentals/testing" >}}). The test is the edge: it
 writes the scenario into a request's baggage itself.
 
 ### Through a humustest `Host`
@@ -724,7 +724,7 @@ require.Equal(t, []bool{false, true}, payments.seen(), "only the trusted scenari
 
 Fake time means the aborted call's retries and backoffs cost the test
 nothing. A test that asserts on the events and the `error.type` records the
-App's telemetry with [`humustest.Telemetry`]({{< relref "testing" >}}) in
+App's telemetry with [`humustest.Telemetry`]({{< relref "/fundamentals/testing" >}}) in
 place of `telemetry.NoopBuilder`, and reads the spans' events from it.
 
 ### A job's `BAGGAGE`
@@ -761,7 +761,7 @@ _, status := humustest.Start(t, produces(settings, run),
 
 A Kafka record carries its baggage in a `baggage` header. A test of a
 consumer produces records whose header carries a scenario, with kfake, as
-[Consuming and producing Kafka]({{< relref "kafka#testing" >}}) describes,
+[Consuming and producing Kafka]({{< relref "/services/kafka#testing" >}}) describes,
 here one with a scenario and one without:
 
 ```go
@@ -795,7 +795,7 @@ require.Equal(t, forward, b.Member(scenarioKey).Key() != "", "the scenario membe
 
 A test of a controller is the harness: it writes the scenario into an
 object's annotation. Inside `synctest`, on client-go's fakes, as
-[Testing]({{< relref "kubernetes#the-reconciler-as-a-function" >}}) on the
+[Testing]({{< relref "/services/kubernetes#the-reconciler-as-a-function" >}}) on the
 Kubernetes page describes, `kube`'s own test of the staging controller
 starts an experiment on a Memcached in staging and on one elsewhere, with
 the harness's `setScenario`, and sees only the first carry the scenario:
@@ -816,7 +816,7 @@ require.Equal(t, []bool{false, false}, rec.of("default/cache"), "only the stagin
 fakes never see a request's context, so the points of the Client's own
 requests, and the annotation carried on to children, are tested against
 k3s, as
-[The whole App, against k3s]({{< relref "kubernetes#the-whole-app-against-k3s" >}})
+[The whole App, against k3s]({{< relref "/services/kubernetes#the-whole-app-against-k3s" >}})
 describes.
 
 ### A unit test

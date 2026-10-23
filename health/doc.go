@@ -82,5 +82,5 @@
 //     on a plaintext port of its own.
 //
 // Exposing the probes is documented at
-// https://z5labs.github.io/humus/health/#exposing-the-probes.
+// https://z5labs.github.io/humus/fundamentals/health/#exposing-the-probes.
 package health

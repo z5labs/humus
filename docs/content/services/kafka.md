@@ -10,7 +10,7 @@ description: >
   events, what a call to Produce promises, its delivery timeout, circuit
   breaker and shutdown, what both record, and how to test them on kfake.
 type: docs
-weight: 16
+weight: 40
 ---
 
 The [`queue/kafka`](https://pkg.go.dev/github.com/z5labs/humus/queue/kafka)
@@ -40,6 +40,11 @@ with its [revision](https://github.com/z5labs/humus/discussions/683#discussionco
 and the design behind the producer in
 [Proposal: producing to Kafka](https://github.com/z5labs/humus/discussions/764),
 with its [revision 1](https://github.com/z5labs/humus/discussions/764#discussioncomment-19008694).
+
+The [order status processor walkthrough]({{< relref "/walkthroughs/kafka/orderstatus" >}})
+builds a production-ready consumer and producer on `queue/kafka`, step by
+step, and its code is
+[`example/kafka/orderstatus`](https://github.com/z5labs/humus/tree/main/example/kafka/orderstatus).
 
 ## The contract
 
@@ -126,7 +131,7 @@ may be called from more than one goroutine at once.
 
 The end user's `Init` sources `kafka.Settings` with
 [`config.Struct`](https://pkg.go.dev/github.com/z5labs/bedrock/config#Struct),
-as [Configuring a humus service]({{< relref "configuration" >}}) describes,
+as [Configuring a humus service]({{< relref "/fundamentals/configuration" >}}) describes,
 builds the `Processor`, and returns the Service that `kafka.NewService`
 builds. This one also sources `kafka.ProducerSettings` and builds the
 `Producer` its `Processor` produces dead letters with, as
@@ -185,7 +190,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 own: humus defines none of them.
 
 The consumer's `main` is one call to `humus.Main`, here with a telemetry
-`Builder` that names the service, as [Telemetry]({{< relref "telemetry#writing-the-builder" >}})
+`Builder` that names the service, as [Telemetry]({{< relref "/fundamentals/telemetry#writing-the-builder" >}})
 describes:
 
 ```go
@@ -202,13 +207,13 @@ test-only seam.
 
 `Init` returns the consumer along with any other Service the process runs,
 such as a second consumer or the
-[health Service]({{< relref "health#the-health-service" >}}). Any Service
+[health Service]({{< relref "/fundamentals/health#the-health-service" >}}). Any Service
 returning ends the App.
 
 ## Settings
 
 `kafka.Settings` follows the
-[settings convention]({{< relref "configuration#what-a-package-with-settings-exports" >}}):
+[settings convention]({{< relref "/fundamentals/configuration#what-a-package-with-settings-exports" >}}):
 plain Go values, a check for each field, and `kafka.DefaultSettings()` for
 the defaults. Every field's zero value means zero, never "use the default",
 so an `Init` starts from `DefaultSettings()` and changes the fields it
@@ -266,7 +271,7 @@ init: config KAFKA_BROKERS: "kafka-1" is not host:port
 bad field fails `Init` too, naming the field, such as
 `kafka: NewService: Settings.GroupID must not be empty`. That error is no
 `*config.Error`, so the App exits 1: the fault is in the code, not in the
-configuration. [How a bad value fails]({{< relref "configuration#how-a-bad-value-fails" >}})
+configuration. [How a bad value fails]({{< relref "/fundamentals/configuration#how-a-bad-value-fails" >}})
 explains the exit codes.
 
 ### The `Delivery` setting
@@ -295,7 +300,7 @@ config leaves it empty, without changing the end user's config.
 
 The end user decodes the certificates from files, read through `s.Host.FS`
 so that a test reads them from its own directory and production from the
-real disk, as [Reading a file]({{< relref "configuration#reading-a-file" >}})
+real disk, as [Reading a file]({{< relref "/fundamentals/configuration#reading-a-file" >}})
 describes. How they are stored and encoded is the end user's decision. This
 chain reads the brokers' CA from the PEM file `KAFKA_TLS_CA_FILE` names, and
 the client's certificate chain and private key from the one
@@ -512,14 +517,14 @@ trace context with the dead letter's own, as [The send span](#the-send-span)
 describes. A `Processor` that wants a dead letter to say where it came from
 adds headers of its own, such as the record's topic, partition and offset.
 
-The [order status walkthrough]({{< relref "walkthroughs/kafka/orderstatus/retries" >}})
+The [order status walkthrough]({{< relref "/walkthroughs/kafka/orderstatus/retries" >}})
 dead-letters a record that never will succeed, with headers that say why
 and where it came from, and retries one that failed for now through a retry
 topic before it gives up on it.
 
 ## Shutdown and rebalances
 
-A Service gets the lifecycle's [two signals]({{< relref "lifecycle#service" >}}),
+A Service gets the lifecycle's [two signals]({{< relref "/fundamentals/lifecycle#service" >}}),
 and the consumer stops on the first:
 
 - **`Serve`'s context is done** as soon as the App starts shutting down. The
@@ -582,7 +587,7 @@ partition back after a fence commits it under its new member ID.
 
 ## The defaults
 
-The consumer runs on `humus.Main`'s [defaults]({{< relref "lifecycle#the-defaults" >}}),
+The consumer runs on `humus.Main`'s [defaults]({{< relref "/fundamentals/lifecycle#the-defaults" >}}),
 which are a consumer's, so `queue/kafka` has no `Main` and no defaults of its
 own:
 
@@ -616,7 +621,7 @@ as `HUMUS_SHUTDOWN_GRACE_PERIOD=45s`, and adds a drain with
 `HUMUS_SHUTDOWN_DRAIN_DELAY`, without a rebuild, as for any App. A team that
 wants another default in code passes `humus.WithShutdownGracePeriod` to
 `humus.Main`; the variable still wins over it.
-[The lifecycle's settings]({{< relref "lifecycle#settings" >}}) describes
+[The lifecycle's settings]({{< relref "/fundamentals/lifecycle#settings" >}}) describes
 both variables.
 
 ### Two `Delivery` values, two Services
@@ -656,7 +661,7 @@ Either Service returning ends the App, so an at-least-once failure in
 ### Which `Main`
 
 Which `Main` the process uses depends on what a load balancer routes to, as
-[the lifecycle's runtime packages]({{< relref "lifecycle#runtime-packages" >}})
+[the lifecycle's runtime packages]({{< relref "/fundamentals/lifecycle#runtime-packages" >}})
 explains for mixed processes:
 
 - **On its own, or next to a probes or metrics server,** a consumer stays on
@@ -664,9 +669,9 @@ explains for mixed processes:
   the exit.
 - **Next to a server a load balancer routes to,** such as an API, the
   process uses that server's package's `Main`: `httpserver.Main` for
-  [an HTTP server]({{< relref "http#the-defaults" >}}), with a 5s drain and a
+  [an HTTP server]({{< relref "/services/http/serving#the-defaults" >}}), with a 5s drain and a
   10s grace period, or `grpcserver.Main` for
-  [a gRPC server]({{< relref "grpc#the-defaults" >}}), with a 5s drain and a
+  [a gRPC server]({{< relref "/services/grpc/serving#the-defaults" >}}), with a 5s drain and a
   15s grace period. The consumer still stops taking records as soon as
   shutdown starts, and its records in flight then have the drain and that
   package's grace period to finish, rather than `humus.Main`'s 20s.
@@ -742,7 +747,7 @@ the one a Service consumes, so each set is sourced on its own:
 A process that produces to two clusters builds two `Producer`s.
 
 `ProducerSettings` follows the
-[settings convention]({{< relref "configuration#what-a-package-with-settings-exports" >}}),
+[settings convention]({{< relref "/fundamentals/configuration#what-a-package-with-settings-exports" >}}),
 like `Settings`: `kafka.DefaultProducerSettings()` gives the defaults, every
 field's zero value means zero, and the package reads no variable of its own.
 
@@ -1167,7 +1172,7 @@ increase(humus_circuit_transitions_total{humus_circuit_state="open"}[5m]) > 0
 A View in the end user's telemetry `Builder` drops or renames any of them.
 humus has no setting to turn them off. A test reads them as it reads any
 metric, with `humustest.Telemetry`'s `Metrics`, filtered to the scope.
-[humus's own instruments]({{< relref "telemetry#humuss-own-instruments" >}})
+[humus's own instruments]({{< relref "/fundamentals/telemetry#humuss-own-instruments" >}})
 on the Telemetry page lists what each of humus's clients records, with the
 View and the test written out.
 
@@ -1296,7 +1301,7 @@ shows up in three places:
 assignment, empty or not, and healthy from then until `Serve` returns. It
 goes in the readiness of whatever exposes the probes: a probes server, such
 as `httphealth.NewService` in a pod with no server of its own, or a
-[health Service]({{< relref "health#the-health-service" >}}):
+[health Service]({{< relref "/fundamentals/health#the-health-service" >}}):
 
 ```go
 probes := health.NewService(health.Readiness(consumer.Joined()))
@@ -1305,8 +1310,8 @@ probes := health.NewService(health.Readiness(consumer.Joined()))
 `httphealth.NewService` takes the same `health.Readiness(consumer.Joined())`
 option, and is how a consumer's pod, which has no server of its own, serves
 its probes: Health shows
-[the `Init`]({{< relref "health#a-consumers-readiness" >}}) and
-[the manifest]({{< relref "health#manifests" >}}). A rollout whose new pods
+[the `Init`]({{< relref "/fundamentals/health#a-consumers-readiness" >}}) and
+[the manifest]({{< relref "/fundamentals/health#manifests" >}}). A rollout whose new pods
 can't reach the brokers then stalls, and is
 reported failed at its progress deadline, rather than replacing every old pod
 with pods that never consume. A member assigned no partition, because
@@ -1365,7 +1370,7 @@ the scenario a record carries, before `Process` sees it, unless
 `Settings.TrustScenario` trusts the record, such as by its topic, which the
 cluster's ACLs decide who can write to. When it is nil, the default, no
 record is trusted. Without `humus.WithFaults`, nothing is evaluated or
-stripped. [Failure injection]({{< relref "failure-injection" >}}) explains
+stripped. [Failure injection]({{< relref "/hardening/failure-injection" >}}) explains
 the model, whom to trust and how, and how to test a scenario through a
 record's `baggage` header.
 
@@ -1373,7 +1378,7 @@ record's `baggage` header.
 
 A consumer is tested whole, with
 [`humustest.Start`](https://pkg.go.dev/github.com/z5labs/humus/humustest#Start),
-inside `testing/synctest`, as [Testing a humus App]({{< relref "testing" >}})
+inside `testing/synctest`, as [Testing a humus App]({{< relref "/fundamentals/testing" >}})
 describes for any App, against a fake cluster on the test's Host.
 
 **The package ships no test package.** It has no defaults of its own, so
@@ -1381,7 +1386,7 @@ describes for any App, against a fake cluster on the test's Host.
 `humus.Main`'s, and putting a fake cluster on its Host takes one option. The
 helpers below are a few lines each, which no API would save.
 
-The [order status walkthrough]({{< relref "walkthroughs/kafka/orderstatus/testing" >}})
+The [order status walkthrough]({{< relref "/walkthroughs/kafka/orderstatus/testing" >}})
 tests its `Processor` as a unit, and runs the same black-box cases against
 the App in process, on kfake, and against its deployment on kind.
 
@@ -1616,12 +1621,12 @@ func waitCommitted(t *testing.T, c *kfake.Cluster, offset int64) {
 
 A `Producer` that is the whole of an App, such as one called from a job, is
 tested the same way: `queue/kafka`'s own tests run each `Produce` inside a
-[job]({{< relref "jobs" >}}) whose `Init` builds the `Producer`.
+[job]({{< relref "/services/jobs" >}}) whose `Init` builds the `Producer`.
 
 ### The Service contract
 
 `queue/kafka`'s own tests hold `kafka.Service` to the Service contract with
-[`humustest.TestService`]({{< relref "testing#checking-a-service" >}}), and a
+[`humustest.TestService`]({{< relref "/fundamentals/testing#checking-a-service" >}}), and a
 Service of your own that wraps a consumer is checked the same way. The
 constructor builds a cluster on `s.Host.Listen` and closes it with
 `s.OnStop`:
@@ -1656,33 +1661,3 @@ show, such as a real broker's cooperative-sticky rebalances and its fencing.
 They are the only tests in the package that open a real socket, and they run
 in a CI job of their own. A consumer's own tests rarely need them: the
 behaviour they pin down is `queue/kafka`'s, not the `Processor`'s.
-
-## Migration from the `queue` and `queue/kafka` packages before the reset
-
-`queue` and `queue/kafka` replace the packages of the same names from before
-the reset:
-
-| Before the reset | After |
-|---|---|
-| `queue.Processor[T]`, `queue.ProcessorFunc[T]` | unchanged |
-| `queue.Consumer`, `queue.Acknowledger`, their `Func` adapters, `queue.Runtime`, `queue.RuntimeFunc` | removed |
-| `queue.ErrEndOfQueue` | removed; a finite queue is a [job]({{< relref "jobs" >}}) |
-| `queue.NewApp(runtime)` | `humus.Main(Init)`, with the end user's `Init` returning the Service from `kafka.NewService` |
-| `kafka.NewRuntime(brokers, groupID, opts...)` | `kafka.Settings{Brokers, GroupID, Topics}` and `kafka.NewService(s, settings, p)` |
-| `kafka.AtLeastOnce(topic, p)`, `kafka.AtMostOnce(topic, p)` | `Settings.Topics` and `Settings.Delivery`; one `Processor` per Service |
-| `kafka.SessionTimeout`, `RebalanceTimeout`, `FetchMaxBytes` | `Settings` fields with checks; `RebalanceTimeout` defaults to 60s |
-| `kafka.MaxConcurrentFetches` | removed: its zero meant unlimited, and franz-go's default is unlimited |
-| `kafka.WithTLS(cfg)` | `Settings.TLS`, dialled through `Host.Dial` |
-| `kafka.Message.Attrs` | removed |
-| `kafka.GroupIDAttr`, `TopicAttr`, `PartitionAttr`, `OffsetAttr` | removed; humus has no slog in its API, and the span and metric attributes follow the conventions |
-| `messaging.client.messages.processed`, `messaging.client.messages.committed` | `messaging.client.consumed.messages`, `messaging.process.duration`, `messaging.client.operation.duration` |
-| `otel.Get*`, `humus.Logger`, kotel, kslog | `s.Telemetry`; kotel's `Meter` alone, given `s.Telemetry.MeterProvider`, for franz-go's broker metrics |
-| `HUMUS_KAFKA_*` variables, planned before the reset | none; the end user names and sources every setting |
-| unit tests on testcontainers | unit tests on kfake over humustest's Host; containers only behind the build tag |
-
-Two behaviours change for an existing processor:
-
-- **Under at-least-once, a processing error now stops the App,** and the
-  record is processed again, where before it was committed and lost.
-- **Under at-most-once, a partition's records are processed in order, one
-  at a time,** where before a batch was processed concurrently.
