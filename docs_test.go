@@ -663,6 +663,7 @@ func TestReadme_links(t *testing.T) {
 func TestReadmeLinks(t *testing.T) {
 	page := strings.Join([]string{
 		`<source srcset="docs/a.svg">`,
+		`<source srcset="docs/a1.svg 1x, docs/a2.svg 2x">`,
 		`<img src="docs/b.svg" alt="">`,
 		"[A](https://example.com/a) and [`b`](example/b), [![badge](c.svg)](https://d)",
 		"```sh",
@@ -672,14 +673,15 @@ func TestReadmeLinks(t *testing.T) {
 
 	got := readmeLinks(page)
 
-	want := []string{"docs/a.svg", "docs/b.svg", "https://example.com/a", "example/b", "c.svg", "https://d"}
+	want := []string{"docs/a.svg", "docs/a1.svg", "docs/a2.svg", "docs/b.svg", "https://example.com/a", "example/b", "c.svg", "https://d"}
 	if !slices.Equal(got, want) {
 		t.Errorf("readmeLinks() = %q, want %q", got, want)
 	}
 }
 
 // readmeLinks returns the targets of the Markdown links and images and of the
-// src and srcset attributes in page, outside its fenced code blocks.
+// src attributes in page, and the URL of each candidate in its srcset
+// attributes, outside its fenced code blocks.
 func readmeLinks(page string) []string {
 	var targets []string
 	fenced := false
@@ -706,8 +708,16 @@ func readmeLinks(page string) []string {
 				if !ok {
 					break
 				}
-				targets = append(targets, target)
 				rest = after
+				if open != `srcset="` {
+					targets = append(targets, target)
+					continue
+				}
+				for candidate := range strings.SplitSeq(target, ",") {
+					if fields := strings.Fields(candidate); len(fields) > 0 {
+						targets = append(targets, fields[0])
+					}
+				}
 			}
 		}
 	}
