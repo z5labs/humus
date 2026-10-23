@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/icons/logo.svg">
+  <img src="docs/assets/icons/logo-on-light.svg" alt="" width="96" height="96">
+</picture>
+
 # Humus
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/z5labs/humus.svg)](https://pkg.go.dev/github.com/z5labs/humus)

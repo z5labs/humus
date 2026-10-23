@@ -1,0 +1,69 @@
+// The site's colours, all from the humus palette. Each colour has a value for
+// light backgrounds and one for dark; the leaf is the same on both.
+$humus-soil: #3B2A20;
+$humus-soil-dark: #A57F5C;
+$humus-bedrock: #5C6570;
+$humus-bedrock-dark: #A3ACB6;
+$humus-leaf: #4E9F57;
+$humus-ground: #F6F5F1;
+$humus-ground-dark: #1D1B19;
+$humus-text: #2A1F18;
+$humus-text-dark: #F2EEE8;
+
+// Docsy's theme colours. The navbar's background is $primary, and Bootstrap
+// derives buttons, checkboxes, pills and focus rings from it. The footer is
+// $dark.
+$primary: $humus-soil;
+$secondary: $humus-soil-dark;
+$success: $humus-leaf;
+$info: $humus-bedrock-dark;
+$light: $humus-ground;
+$dark: $humus-soil;
+
+// Docsy colours the links on its coloured boxes, the footer among them, by
+// mixing $blue into the box's text colour, so the blue is the leaf.
+$blue: $humus-leaf;
+
+// Bootstrap's greys, which colour borders, muted text and the panels behind
+// code, are mixed from the two grounds so they are warm rather than blue.
+$gray-100: mix($humus-ground, $humus-ground-dark, 96%);
+$gray-200: mix($humus-ground, $humus-ground-dark, 90%);
+$gray-300: mix($humus-ground, $humus-ground-dark, 84%);
+$gray-400: mix($humus-ground, $humus-ground-dark, 74%);
+$gray-500: mix($humus-ground, $humus-ground-dark, 58%);
+$gray-600: mix($humus-ground, $humus-ground-dark, 36%);
+$gray-700: mix($humus-ground, $humus-ground-dark, 26%);
+$gray-800: mix($humus-ground, $humus-ground-dark, 14%);
+$gray-900: mix($humus-ground, $humus-ground-dark, 6%);
+
+// Light mode.
+$body-bg: $humus-ground;
+$body-color: $humus-text;
+$body-emphasis-color: $humus-text;
+$body-secondary-bg: $gray-200;
+$body-tertiary-bg: $gray-100;
+
+// The leaf is too light for text on the light ground (3:1), so links there
+// are the leaf darkened, which keeps them green beside the brown body text.
+$link-color: shade-color($humus-leaf, 40%);
+$code-color: $humus-soil;
+$focus-ring-color: rgba($humus-leaf, 0.5);
+$input-focus-border-color: $humus-leaf;
+
+// Dark mode.
+$body-bg-dark: $humus-ground-dark;
+$body-color-dark: $humus-text-dark;
+$body-emphasis-color-dark: $humus-text-dark;
+$body-secondary-bg-dark: $gray-800;
+$body-tertiary-bg-dark: mix($gray-800, $humus-ground-dark, 50%);
+$border-color-dark: $gray-700;
+$link-color-dark: $humus-leaf;
+$code-color-dark: $humus-soil-dark;
+
+// The navbar is soil in both modes, with light text and the mark for dark
+// backgrounds.
+$navbar-dark-color: rgba($humus-text-dark, 0.75);
+$navbar-dark-hover-color: $humus-text-dark;
+$navbar-dark-active-color: $humus-text-dark;
+$navbar-dark-brand-color: $humus-text-dark;
+$navbar-dark-brand-hover-color: $humus-text-dark;
