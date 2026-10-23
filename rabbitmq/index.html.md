@@ -381,7 +381,7 @@ Declaring them from `Settings` would grow into RabbitMQ's whole topology
 API, queue types, arguments, exchanges and dead-lettering, and would put the
 App in charge of something a deployment already owns.
 
-The [mailer walkthrough](/humus/walkthroughs/mailer/topology/)
+The [mailer walkthrough](/humus/walkthroughs/rabbitmq/mailer/topology/)
 keeps its topology in a definitions file that the broker's team imports,
 with its delays and limits in policies.
 
@@ -528,7 +528,7 @@ to get one:
 Which messages are worth stopping for, and where the others go, is the end
 user's decision.
 
-The [mailer walkthrough](/humus/walkthroughs/mailer/retries/) uses
+The [mailer walkthrough](/humus/walkthroughs/rabbitmq/mailer/retries/) uses
 both: its `Processor` parks a request that failed for now in a delay queue
 and dead-letters one that never will succeed, and its queue's delivery limit
 dead-letters a request that stops the Service.
@@ -1256,7 +1256,7 @@ records the exception.
 [Testing a humus App](/humus/testing/#runtime-packages) says the
 same for every runtime package.
 
-The [mailer walkthrough](/humus/walkthroughs/mailer/testing/)
+The [mailer walkthrough](/humus/walkthroughs/rabbitmq/mailer/testing/)
 tests its `Processor` both ways, and runs the same black-box cases against
 the App in process and against its deployment on kind.
 

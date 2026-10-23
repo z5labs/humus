@@ -499,7 +499,7 @@ trace context with the dead letter's own, as [The send span](#the-send-span)
 describes. A `Processor` that wants a dead letter to say where it came from
 adds headers of its own, such as the record's topic, partition and offset.
 
-The [order status walkthrough](/humus/walkthroughs/orderstatus/retries/)
+The [order status walkthrough](/humus/walkthroughs/kafka/orderstatus/retries/)
 dead-letters a record that never will succeed, with headers that say why
 and where it came from, and retries one that failed for now through a retry
 topic before it gives up on it.
@@ -1368,7 +1368,7 @@ describes for any App, against a fake cluster on the test's Host.
 `humus.Main`'s, and putting a fake cluster on its Host takes one option. The
 helpers below are a few lines each, which no API would save.
 
-The [order status walkthrough](/humus/walkthroughs/orderstatus/testing/)
+The [order status walkthrough](/humus/walkthroughs/kafka/orderstatus/testing/)
 tests its `Processor` as a unit, and runs the same black-box cases against
 the App in process, on kfake, and against its deployment on kind.
 

@@ -2,29 +2,29 @@
 
 A walkthrough is an example application that is production-ready, with pages
 that build it step by step. Its code is a module of its own, at
-`example/<name>` in the repository, and every sample on its pages is quoted
-from that code.
+`example/<type>/<name>` in the repository, under the folder of its service
+type, and every sample on its pages is quoted from that code.
 
 ## The walkthroughs
 
-- [Billing job](/humus/walkthroughs/billing/): a job, run daily by
+- [Billing job](/humus/walkthroughs/job/billing/): a job, run daily by
   a CronJob, that bills a month of subscriptions in PostgreSQL through a
   payments API, once, however often it runs.
-- [Mailer](/humus/walkthroughs/mailer/): a RabbitMQ worker that
+- [Mailer](/humus/walkthroughs/rabbitmq/mailer/): a RabbitMQ worker that
   sends the emails other services ask for through a provider's API, retries
   what fails for now after a delay, and dead-letters what never will.
-- [Order status processor](/humus/walkthroughs/orderstatus/): a
+- [Order status processor](/humus/walkthroughs/kafka/orderstatus/): a
   Kafka processor that projects orders' events into their statuses in
   PostgreSQL, produces each change of status, retries what fails for now
   through a retry topic, and dead-letters what never will.
-- [Databases controller](/humus/walkthroughs/databases/): a
+- [Databases controller](/humus/walkthroughs/kube/databases/): a
   Kubernetes controller that provisions a database and the role that owns it
   in PostgreSQL for each `Database`, writes the role's credentials to a
   Secret, and drops both on delete, as the `Database` says.
-- [Shoppingcart](/humus/walkthroughs/shoppingcart/): an API for
+- [Shoppingcart](/humus/walkthroughs/http/shoppingcart/): an API for
   shopping carts, behind JWT bearer tokens, that prices each item from a
   catalog service of its own over mTLS, both on PostgreSQL.
-- [Wallet](/humus/walkthroughs/wallet/): a gRPC service for each
+- [Wallet](/humus/walkthroughs/grpc/wallet/): a gRPC service for each
   caller's own account, behind JWT bearer tokens, on a ledger service of its
   own that it calls over mTLS, which keeps the accounts and the transfers
   between them in PostgreSQL.
