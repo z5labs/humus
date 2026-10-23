@@ -799,3 +799,5 @@ never reaches the ledger:
 				require.Len(t, events(tel.Spans(), "humus.fit.strip"), 1)
 				require.Empty(t, events(tel.Spans(), "humus.fit.evaluation"))
 ```
+
+Next: [Deploying](/humus/walkthroughs/grpc/wallet/deploying/)

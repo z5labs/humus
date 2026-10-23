@@ -284,3 +284,5 @@ func (m *Monitor) Healthy(ctx context.Context) (bool, error) {
 
 One probe checks at a time, so a slow database isn't checked by every
 probe at once.
+
+Next: [Calling the catalog](/humus/walkthroughs/http/shoppingcart/calling-the-catalog/)

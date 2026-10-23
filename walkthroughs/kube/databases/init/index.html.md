@@ -450,3 +450,5 @@ the telemetry's shutdown, and a margin:
 ```yaml
 terminationGracePeriodSeconds: 30
 ```
+
+Next: [Testing](/humus/walkthroughs/kube/databases/testing/)

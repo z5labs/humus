@@ -31,3 +31,5 @@ example/job/billing/
 ```
 
 These pages build `postgres`, `payments`, `billing`, then `app` and `main`.
+
+Next: [The invoices](/humus/walkthroughs/job/billing/invoices/)

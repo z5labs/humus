@@ -1,7 +1,7 @@
 # Databases controller
 
 The databases controller reconciles `Database` resources, with
-[`kube`](/humus/kubernetes/). For each one, it:
+[`kube`](/humus/services/kubernetes/). For each one, it:
 
 1. ensures a role, and a database the role owns, in a PostgreSQL server;
 2. applies a Secret, which the `Database` controls, holding the role's
@@ -65,3 +65,5 @@ example/kube/databases/
 These pages build `api/v1alpha1`, `postgres` and `controller`, then `app`
 and `main`, then test it, deploy it and observe it, and end with the
 production-ready checklist.
+
+Next: [The Database resource](/humus/walkthroughs/kube/databases/resource/)

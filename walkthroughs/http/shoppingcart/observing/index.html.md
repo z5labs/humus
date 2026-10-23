@@ -288,3 +288,5 @@ Each panel is a query of Mimir:
         }
       ]
 ```
+
+Next: [Production-ready](/humus/walkthroughs/http/shoppingcart/production-ready/)

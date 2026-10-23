@@ -505,3 +505,5 @@ An untrusted scenario is one in a namespace outside the trusted prefix:
 	_, carried := f.secretScenario(t, ns, "orders-postgres")
 	require.False(t, carried, "the Secret of an untrusted Database carries a scenario")
 ```
+
+Next: [Deploying](/humus/walkthroughs/kube/databases/deploying/)

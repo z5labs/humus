@@ -268,3 +268,5 @@ const (
 	outcomeMalformed = "malformed"
 )
 ```
+
+Next: [Retries and dead letters](/humus/walkthroughs/rabbitmq/mailer/retries/)

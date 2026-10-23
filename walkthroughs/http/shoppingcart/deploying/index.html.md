@@ -441,3 +441,5 @@ The item has the catalog's price:
 ```sh
 curl --cacert ca.crt "https://localhost:8443/carts/$cart" -H "Authorization: Bearer $token"
 ```
+
+Next: [Observing](/humus/walkthroughs/http/shoppingcart/observing/)

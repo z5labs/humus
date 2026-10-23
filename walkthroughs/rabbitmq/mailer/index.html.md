@@ -91,3 +91,5 @@ example/rabbitmq/mailer/
 These pages set up the topology, then build `provider`, `mail` and `worker`,
 then `app` and `main`, then test it, deploy it and observe it, and end with
 the production-ready checklist.
+
+Next: [The topology](/humus/walkthroughs/rabbitmq/mailer/topology/)

@@ -408,3 +408,5 @@ Deleting it drops the database and the role, as its `deletionPolicy` says:
 ```sh
 kubectl --context kind-kind --namespace default delete database orders
 ```
+
+Next: [Observing](/humus/walkthroughs/kube/databases/observing/)

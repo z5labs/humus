@@ -17,3 +17,5 @@ The processor meets each item. Check your own processor against them:
 | Observable | traces from producer to `orders.status`, logs and metrics over OTLP, and rules for lag, a stalled group, a crash loop, dead letters, retries, an open breaker and slow processing | [Observing](/humus/walkthroughs/kafka/orderstatus/observing/) |
 | Failures are rehearsed | the failure injection cases | [The failure injection cases](/humus/walkthroughs/kafka/orderstatus/testing/#the-failure-injection-cases) |
 | Safe by default | no record's scenario trusted. Only the producer to `orders.retry` forwards one | [Trusting a topic's scenarios](/humus/walkthroughs/kafka/orderstatus/init/#trusting-a-topics-scenarios), [The `Producer`s](/humus/walkthroughs/kafka/orderstatus/init/#the-producers) |
+
+Next: [Mailer](/humus/walkthroughs/rabbitmq/mailer/)

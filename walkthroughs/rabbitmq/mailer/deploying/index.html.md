@@ -365,3 +365,5 @@ kubectl --context kind-kind --namespace mailer run mailrequest --rm --stdin --re
 ```
 
 It prints the request's `MessageId` once the broker has confirmed it.
+
+Next: [Observing](/humus/walkthroughs/rabbitmq/mailer/observing/)

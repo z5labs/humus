@@ -222,3 +222,5 @@ if errors.Is(err, pgx.ErrNoRows) {
 	err = ErrNotFound
 }
 ```
+
+Next: [Serving the ledger](/humus/walkthroughs/grpc/wallet/serving-the-ledger/)

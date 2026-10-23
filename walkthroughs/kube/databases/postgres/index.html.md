@@ -228,3 +228,5 @@ func (s *Server) inject(ctx context.Context, point string) error {
 ```
 
 `Drop` is on [Cleaning up](/humus/walkthroughs/kube/databases/cleaning-up/).
+
+Next: [Reconciling](/humus/walkthroughs/kube/databases/reconciling/)

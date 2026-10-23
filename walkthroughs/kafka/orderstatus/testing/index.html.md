@@ -559,3 +559,5 @@ func TestInit_stops_on_a_record_that_can_go_to_neither_the_retry_nor_the_dead_le
 	})
 }
 ```
+
+Next: [Deploying](/humus/walkthroughs/kafka/orderstatus/deploying/)

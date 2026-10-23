@@ -19,3 +19,5 @@ The mailer meets each item. Check your own worker against them:
 | Failures say why | each dead letter's reason headers, and the `mail.refused` event | [Dead letters](/humus/walkthroughs/rabbitmq/mailer/retries/#dead-letters), [The events](/humus/walkthroughs/rabbitmq/mailer/processing/#the-events) |
 | Failures are rehearsed | the failure injection cases | [The failure injection cases](/humus/walkthroughs/rabbitmq/mailer/testing/#the-failure-injection-cases) |
 | Safe by default | `TrustScenario` trusts no publisher; the sender's address is a setting | [`TrustScenario`](/humus/walkthroughs/rabbitmq/mailer/init/#trustscenario) |
+
+Next: [Databases controller](/humus/walkthroughs/kube/databases/)

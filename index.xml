@@ -1,4 +1,51 @@
-<?xml version="1.0" encoding="utf-8" standalone="yes"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>Humus</title><link>https://z5labs.github.io/humus/</link><description>Recent content on Humus</description><generator>Hugo</generator><language>en-us</language><atom:link href="https://z5labs.github.io/humus/index.xml" rel="self" type="application/rss+xml"/><item><title>The App lifecycle</title><link>https://z5labs.github.io/humus/lifecycle/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/lifecycle/</guid><description>&lt;p&gt;Every humus application is a &lt;a href="https://pkg.go.dev/github.com/z5labs/bedrock#App"&gt;&lt;code&gt;bedrock.App&lt;/code&gt;&lt;/a&gt;,
+<?xml version="1.0" encoding="utf-8" standalone="yes"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>Humus</title><link>https://z5labs.github.io/humus/</link><description>Recent content on Humus</description><generator>Hugo</generator><language>en-us</language><atom:link href="https://z5labs.github.io/humus/index.xml" rel="self" type="application/rss+xml"/><item><title>Authentication and authorization</title><link>https://z5labs.github.io/humus/hardening/auth/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/hardening/auth/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/auth"&gt;&lt;code&gt;auth&lt;/code&gt;&lt;/a&gt; package
+authenticates and authorizes the requests a humus service serves, over HTTP
+and gRPC alike. A &lt;strong&gt;scheme&lt;/strong&gt; is a typed value whose verify function turns a
+request&amp;rsquo;s credential into the end user&amp;rsquo;s own principal, which a handler reads
+back with the scheme&amp;rsquo;s &lt;code&gt;From&lt;/code&gt;. A &lt;strong&gt;requirement&lt;/strong&gt; is what a request must have:
+a scheme, a scheme with scopes, several schemes, or nothing at all. Three
+places enforce requirements, one for each way humus serves requests:
+&lt;code&gt;openapi.Security&lt;/code&gt; for an &lt;a href="https://z5labs.github.io/humus/services/http/openapi/"&gt;OpenAPI API&lt;/a&gt;,
+&lt;code&gt;auth.NewHandler&lt;/code&gt; for a plain &lt;code&gt;http.Handler&lt;/code&gt; served by
+&lt;a href="https://z5labs.github.io/humus/services/http/serving/"&gt;&lt;code&gt;httpserver&lt;/code&gt;&lt;/a&gt;, and
+&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/grpc/grpcauth"&gt;&lt;code&gt;grpcauth&lt;/code&gt;&lt;/a&gt;&amp;rsquo;s
+&lt;code&gt;Interceptors&lt;/code&gt; for a &lt;a href="https://z5labs.github.io/humus/services/grpc/serving/"&gt;&lt;code&gt;grpcserver&lt;/code&gt;&lt;/a&gt; Service.&lt;/p&gt;</description></item><item><title>Calling HTTP services</title><link>https://z5labs.github.io/humus/dependencies/http/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/dependencies/http/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/httpclient"&gt;&lt;code&gt;httpclient&lt;/code&gt;&lt;/a&gt;
+package calls another service over HTTP. &lt;code&gt;httpclient.NewClient&lt;/code&gt; builds a
+client for one dependency in the end user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt;, from &lt;code&gt;Settings&lt;/code&gt; the end
+user sources, and returns a plain &lt;code&gt;*http.Client&lt;/code&gt;. Its calls go through the
+Setup&amp;rsquo;s Host, are traced and measured with the Setup&amp;rsquo;s telemetry, are retried
+when that is safe, and fail at once while a circuit breaker says the
+dependency keeps failing.&lt;/p&gt;
+&lt;p&gt;Service code, generated clients and SDKs take the &lt;code&gt;*http.Client&lt;/code&gt; as they
+take any other, and depend on &lt;code&gt;net/http&lt;/code&gt;&amp;rsquo;s type rather than on this package,
+so a unit test of that code passes any client. The client dials only
+through the Setup&amp;rsquo;s Host, so a test runs the end user&amp;rsquo;s whole App, its
+outbound calls included, on humustest&amp;rsquo;s network, as &lt;a href="#testing"&gt;Testing&lt;/a&gt;
+shows.&lt;/p&gt;</description></item><item><title>Serving gRPC</title><link>https://z5labs.github.io/humus/services/grpc/serving/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/services/grpc/serving/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/grpc/grpcserver"&gt;&lt;code&gt;grpcserver&lt;/code&gt;&lt;/a&gt;
+package serves gRPC over TLS as a &lt;code&gt;humus.Service&lt;/code&gt;. The end user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt;
+sources its &lt;code&gt;Settings&lt;/code&gt;, builds the Service with &lt;code&gt;grpcserver.NewService&lt;/code&gt;,
+registers their generated services on it, as they would on a &lt;code&gt;*grpc.Server&lt;/code&gt;,
+and returns it. &lt;code&gt;grpcserver.Main&lt;/code&gt; runs it with the defaults a gRPC server
+behind a Kubernetes Service needs: a 5s drain and a 15s grace period. Its test
+package,
+&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/grpc/grpcserver/grpcservertest"&gt;&lt;code&gt;grpcservertest&lt;/code&gt;&lt;/a&gt;,
+runs the same App in a test, on the same defaults, with a client that dials
+the test Host over TLS.&lt;/p&gt;</description></item><item><title>Serving HTTP</title><link>https://z5labs.github.io/humus/services/http/serving/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/services/http/serving/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/httpserver"&gt;&lt;code&gt;httpserver&lt;/code&gt;&lt;/a&gt;
+package serves an &lt;code&gt;http.Handler&lt;/code&gt; over TLS as a &lt;code&gt;humus.Service&lt;/code&gt;. The end
+user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt; sources its &lt;code&gt;Settings&lt;/code&gt;, builds the Service with
+&lt;code&gt;httpserver.NewService&lt;/code&gt; and returns it, and &lt;code&gt;httpserver.Main&lt;/code&gt; runs it with
+the defaults an HTTP server behind a load balancer needs: a 5s drain and a
+10s grace period. Its test package,
+&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/httpserver/httpservertest"&gt;&lt;code&gt;httpservertest&lt;/code&gt;&lt;/a&gt;,
+runs the same App in a test, on the same defaults, with an HTTP/2 client.&lt;/p&gt;
+&lt;p&gt;The package serves an &lt;code&gt;http.Handler&lt;/code&gt; and has no REST DSL, which is
+&lt;a href="https://z5labs.github.io/humus/services/http/openapi/"&gt;&lt;code&gt;openapi/v3&lt;/code&gt;&lt;/a&gt;&amp;rsquo;s. It exports no App, runs no health Service and serves no probes:
+&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/httphealth"&gt;&lt;code&gt;httphealth&lt;/code&gt;&lt;/a&gt;
+answers them, as &lt;a href="#health-probes"&gt;Health probes&lt;/a&gt; describes. The design behind
+everything on this page is in
+&lt;a href="https://github.com/z5labs/humus/discussions/680"&gt;Proposal: HTTP server foundation&lt;/a&gt;,
+with its &lt;a href="https://github.com/z5labs/humus/discussions/680#discussioncomment-18988464"&gt;revision 1&lt;/a&gt;
+and &lt;a href="https://github.com/z5labs/humus/discussions/680#discussioncomment-18988543"&gt;revision 2&lt;/a&gt;.&lt;/p&gt;</description></item><item><title>The App lifecycle</title><link>https://z5labs.github.io/humus/fundamentals/lifecycle/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/fundamentals/lifecycle/</guid><description>&lt;p&gt;Every humus application is a &lt;a href="https://pkg.go.dev/github.com/z5labs/bedrock#App"&gt;&lt;code&gt;bedrock.App&lt;/code&gt;&lt;/a&gt;,
 and the root package&amp;rsquo;s &lt;a href="https://pkg.go.dev/github.com/z5labs/humus#App"&gt;&lt;code&gt;humus.App&lt;/code&gt;&lt;/a&gt;
 is the lifecycle every humus service runs. It reads its settings, listens for
 signals, builds its telemetry and the user&amp;rsquo;s dependencies, runs one or more
@@ -13,28 +60,34 @@ runs. The runtime packages — REST, gRPC, jobs, queues — export Services for
 &lt;code&gt;Init&lt;/code&gt; to return, not Apps, and one whose Services need a drain wraps &lt;code&gt;Main&lt;/code&gt;
 with defaults of its own: see &lt;a href="#runtime-packages"&gt;Runtime packages&lt;/a&gt;. An App
 that mixes runtimes, such as a REST API and a gRPC service in one process,
-needs nothing more.&lt;/p&gt;</description></item><item><title>Serving HTTP</title><link>https://z5labs.github.io/humus/http/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/http/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/httpserver"&gt;&lt;code&gt;httpserver&lt;/code&gt;&lt;/a&gt;
-package serves an &lt;code&gt;http.Handler&lt;/code&gt; over TLS as a &lt;code&gt;humus.Service&lt;/code&gt;. The end
-user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt; sources its &lt;code&gt;Settings&lt;/code&gt;, builds the Service with
-&lt;code&gt;httpserver.NewService&lt;/code&gt; and returns it, and &lt;code&gt;httpserver.Main&lt;/code&gt; runs it with
-the defaults an HTTP server behind a load balancer needs: a 5s drain and a
-10s grace period. Its test package,
-&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/httpserver/httpservertest"&gt;&lt;code&gt;httpservertest&lt;/code&gt;&lt;/a&gt;,
-runs the same App in a test, on the same defaults, with an HTTP/2 client.&lt;/p&gt;
-&lt;p&gt;The package is the server half of what &lt;code&gt;rest.Run&lt;/code&gt; did before the reset,
-without the REST DSL, which is &lt;a href="https://z5labs.github.io/humus/openapi/"&gt;&lt;code&gt;openapi/v3&lt;/code&gt;&lt;/a&gt;
-now. It exports no App, runs no health Service and serves no probes:
-&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/httphealth"&gt;&lt;code&gt;httphealth&lt;/code&gt;&lt;/a&gt;
-answers them, as &lt;a href="#health-probes"&gt;Health probes&lt;/a&gt; describes. The design behind
-everything on this page is in
-&lt;a href="https://github.com/z5labs/humus/discussions/680"&gt;Proposal: HTTP server foundation&lt;/a&gt;,
-with its &lt;a href="https://github.com/z5labs/humus/discussions/680#discussioncomment-18988464"&gt;revision 1&lt;/a&gt;
-and &lt;a href="https://github.com/z5labs/humus/discussions/680#discussioncomment-18988543"&gt;revision 2&lt;/a&gt;.&lt;/p&gt;</description></item><item><title>Serving an API with OpenAPI</title><link>https://z5labs.github.io/humus/openapi/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/openapi/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/openapi/v3"&gt;&lt;code&gt;openapi/v3&lt;/code&gt;&lt;/a&gt;
+needs nothing more.&lt;/p&gt;</description></item><item><title>Configuring a humus service</title><link>https://z5labs.github.io/humus/fundamentals/configuration/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/fundamentals/configuration/</guid><description>&lt;p&gt;humus packages are configured with plain Go values. They read no environment
+variables for their settings, define no variable names and read no files on
+your behalf; the few variables humus does read are
+&lt;a href="#the-variables-humus-reads"&gt;listed below&lt;/a&gt;. Every
+value is sourced in your own &lt;code&gt;Init&lt;/code&gt;, with whatever names and formats your
+service already uses: an environment variable called &lt;code&gt;READ_TIMEOUT&lt;/code&gt; or
+&lt;code&gt;MYSVC_HTTP_READ_TIMEOUT&lt;/code&gt;, a duration written &lt;code&gt;5s&lt;/code&gt;, a file of PEM, a flag. The
+usual tool is bedrock&amp;rsquo;s
+&lt;a href="https://pkg.go.dev/github.com/z5labs/bedrock/config"&gt;&lt;code&gt;config&lt;/code&gt;&lt;/a&gt; package, and
+this page uses it throughout.&lt;/p&gt;</description></item><item><title>Failure injection</title><link>https://z5labs.github.io/humus/hardening/failure-injection/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/hardening/failure-injection/</guid><description>&lt;p&gt;Failure injection lets one request fail on purpose, in production or in a
+test, without failing anyone else&amp;rsquo;s. A request carries a failure scenario in
+its OpenTelemetry baggage, and every injection point the request passes
+through, such as a call to a dependency, looks itself up in the scenario and
+learns whether to fail or slow down. The end user then sees how the whole
+service copes with a dependency that is down or slow: its retries, its
+breakers and its fallbacks.&lt;/p&gt;</description></item><item><title>Calling gRPC services</title><link>https://z5labs.github.io/humus/dependencies/grpc/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/dependencies/grpc/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/grpc/grpcclient"&gt;&lt;code&gt;grpcclient&lt;/code&gt;&lt;/a&gt;
+package calls another service over gRPC. &lt;code&gt;grpcclient.NewClient&lt;/code&gt; builds a
+&lt;code&gt;Client&lt;/code&gt; for one dependency in the end user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt;, from &lt;code&gt;Settings&lt;/code&gt; the end
+user sources. The &lt;code&gt;Client&lt;/code&gt; is a &lt;code&gt;grpc.ClientConnInterface&lt;/code&gt;, so generated code
+takes it as it takes a &lt;code&gt;*grpc.ClientConn&lt;/code&gt;. Its calls go through the Setup&amp;rsquo;s
+Host, are traced and measured with the Setup&amp;rsquo;s telemetry, are retried as the
+end user&amp;rsquo;s &lt;code&gt;Classify&lt;/code&gt; decides, and fail at once while a circuit breaker says
+the dependency keeps failing.&lt;/p&gt;</description></item><item><title>Serving an API with OpenAPI</title><link>https://z5labs.github.io/humus/services/http/openapi/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/services/http/openapi/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/openapi/v3"&gt;&lt;code&gt;openapi/v3&lt;/code&gt;&lt;/a&gt;
 package serves an API of typed operations, and its OpenAPI document. The end
 user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt; declares each operation once, on a typed path, with a typed
 handler and the codecs of its bodies, builds the API with &lt;code&gt;openapi.NewAPI&lt;/code&gt;,
 and hands it to &lt;code&gt;httpserver.NewService&lt;/code&gt;, which serves it over TLS as
-&lt;a href="https://z5labs.github.io/humus/http/"&gt;Serving HTTP&lt;/a&gt; describes. The same declarations serve
+&lt;a href="https://z5labs.github.io/humus/services/http/serving/"&gt;Serving HTTP&lt;/a&gt; describes. The same declarations serve
 the requests and write the document, so the two can&amp;rsquo;t disagree.&lt;/p&gt;
 &lt;p&gt;The import path names the major version of OpenAPI the package follows, and
 the package&amp;rsquo;s name is &lt;code&gt;openapi&lt;/code&gt;. Two packages beside it are opt-in, and
@@ -51,92 +104,7 @@ as its revisions
 &lt;a href="https://github.com/z5labs/humus/discussions/760#discussioncomment-19010983"&gt;3&lt;/a&gt;,
 &lt;a href="https://github.com/z5labs/humus/discussions/760#discussioncomment-19011032"&gt;4&lt;/a&gt;
 and &lt;a href="https://github.com/z5labs/humus/discussions/760#discussioncomment-19011110"&gt;5&lt;/a&gt;
-amend it.&lt;/p&gt;</description></item><item><title>Calling HTTP services</title><link>https://z5labs.github.io/humus/http-client/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/http-client/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/httpclient"&gt;&lt;code&gt;httpclient&lt;/code&gt;&lt;/a&gt;
-package calls another service over HTTP. &lt;code&gt;httpclient.NewClient&lt;/code&gt; builds a
-client for one dependency in the end user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt;, from &lt;code&gt;Settings&lt;/code&gt; the end
-user sources, and returns a plain &lt;code&gt;*http.Client&lt;/code&gt;. Its calls go through the
-Setup&amp;rsquo;s Host, are traced and measured with the Setup&amp;rsquo;s telemetry, are retried
-when that is safe, and fail at once while a circuit breaker says the
-dependency keeps failing.&lt;/p&gt;
-&lt;p&gt;Service code, generated clients and SDKs take the &lt;code&gt;*http.Client&lt;/code&gt; as they
-take any other, and depend on &lt;code&gt;net/http&lt;/code&gt;&amp;rsquo;s type rather than on this package,
-so a unit test of that code passes any client. The client dials only
-through the Setup&amp;rsquo;s Host, so a test runs the end user&amp;rsquo;s whole App, its
-outbound calls included, on humustest&amp;rsquo;s network, as &lt;a href="#testing"&gt;Testing&lt;/a&gt;
-shows.&lt;/p&gt;</description></item><item><title>Health</title><link>https://z5labs.github.io/humus/health/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/health/</guid><description>&lt;p&gt;A service reports its health as &lt;a href="#monitors"&gt;monitors&lt;/a&gt; it combines into two
-&lt;a href="#liveness-and-readiness"&gt;probes&lt;/a&gt;, liveness and readiness, and an App&amp;rsquo;s
-readiness is owned by a &lt;a href="#the-health-service"&gt;health Service&lt;/a&gt; it returns
-from &lt;code&gt;Init&lt;/code&gt; like any other Service. All of it is in the
-&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/health"&gt;&lt;code&gt;health&lt;/code&gt;&lt;/a&gt; package, which
-depends on nothing but the standard library and serves no protocol.
-&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/httphealth"&gt;&lt;code&gt;httphealth&lt;/code&gt;&lt;/a&gt; and
-&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/grpc/grpchealth"&gt;&lt;code&gt;grpc/grpchealth&lt;/code&gt;&lt;/a&gt;
-&lt;a href="#exposing-the-probes"&gt;expose the probes&lt;/a&gt; to Kubernetes.&lt;/p&gt;
-&lt;p&gt;The design behind this page is in
-&lt;a href="https://github.com/z5labs/humus/discussions/634#discussioncomment-18976159"&gt;Proposal: health monitors and probes, Revision 2&lt;/a&gt;,
-and, for exposing the probes, in
-&lt;a href="https://github.com/z5labs/humus/discussions/761"&gt;Proposal: exposing health probes&lt;/a&gt;.&lt;/p&gt;</description></item><item><title>Jobs</title><link>https://z5labs.github.io/humus/jobs/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/jobs/</guid><description>&lt;p&gt;A job is a process that does one piece of work and exits. The
-&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/job"&gt;&lt;code&gt;job&lt;/code&gt;&lt;/a&gt; package turns that
-work, the run, into a &lt;code&gt;humus.Service&lt;/code&gt; that runs it once, stops it on either
-shutdown signal and records one span around it. The job runs on
-&lt;code&gt;humus.Main&lt;/code&gt;&amp;rsquo;s defaults, and the run&amp;rsquo;s error is the exit status, so
-Kubernetes retries a job that failed or was interrupted and completes one
-that finished.&lt;/p&gt;
-&lt;p&gt;The package is &lt;code&gt;job.NewService&lt;/code&gt; and nothing else: no App, no &lt;code&gt;Main&lt;/code&gt;, no
-&lt;code&gt;Settings&lt;/code&gt;. The design behind everything on this page is in
-&lt;a href="https://github.com/z5labs/humus/discussions/682"&gt;Proposal: jobs&lt;/a&gt; and
-&lt;a href="https://github.com/z5labs/humus/discussions/682#discussioncomment-18988201"&gt;its revision&lt;/a&gt;.&lt;/p&gt;</description></item><item><title>Consuming and producing Kafka</title><link>https://z5labs.github.io/humus/kafka/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/kafka/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/queue/kafka"&gt;&lt;code&gt;queue/kafka&lt;/code&gt;&lt;/a&gt;
-package consumes Kafka topics as a &lt;code&gt;humus.Service&lt;/code&gt;, with
-&lt;a href="https://github.com/twmb/franz-go"&gt;franz-go&lt;/a&gt;. The Service joins a consumer
-group, dials the brokers through the Setup&amp;rsquo;s Host, and hands each record to
-the end user&amp;rsquo;s &lt;code&gt;queue.Processor&lt;/code&gt;, one record at a time per partition, in
-offset order. The end user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt; sources its &lt;code&gt;Settings&lt;/code&gt;, builds the Service
-with &lt;code&gt;kafka.NewService&lt;/code&gt;, and returns it to &lt;code&gt;humus.Main&lt;/code&gt;, whose defaults are a
-consumer&amp;rsquo;s.&lt;/p&gt;
-&lt;p&gt;The package produces records too. A &lt;code&gt;kafka.Producer&lt;/code&gt;, which the end user&amp;rsquo;s
-&lt;code&gt;Init&lt;/code&gt; builds with &lt;code&gt;kafka.NewProducer&lt;/code&gt;, produces to one cluster for any
-Service of the process: a &lt;code&gt;Processor&lt;/code&gt; that produces a dead letter or writes
-to another topic, an HTTP handler that publishes an event, a job.
-&lt;a href="#producing"&gt;Producing&lt;/a&gt; describes it.&lt;/p&gt;</description></item><item><title>Consuming and publishing with RabbitMQ</title><link>https://z5labs.github.io/humus/rabbitmq/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/rabbitmq/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/queue/rabbitmq"&gt;&lt;code&gt;queue/rabbitmq&lt;/code&gt;&lt;/a&gt;
-package consumes a RabbitMQ queue as a &lt;code&gt;humus.Service&lt;/code&gt;, with
-&lt;a href="https://github.com/rabbitmq/amqp091-go"&gt;amqp091-go&lt;/a&gt;, RabbitMQ&amp;rsquo;s own Go
-client. The Service dials the broker through the Setup&amp;rsquo;s Host, consumes one
-queue with manual acks, and hands each delivery to the end user&amp;rsquo;s
-&lt;code&gt;queue.Processor&lt;/code&gt;, in the order the queue delivered them. The end user&amp;rsquo;s
-&lt;code&gt;Init&lt;/code&gt; sources its &lt;code&gt;Settings&lt;/code&gt;, builds the Service with &lt;code&gt;rabbitmq.NewService&lt;/code&gt;,
-and returns it to &lt;code&gt;humus.Main&lt;/code&gt;, whose defaults are a consumer&amp;rsquo;s.&lt;/p&gt;
-&lt;p&gt;The package publishes too. A &lt;code&gt;rabbitmq.Publisher&lt;/code&gt;, which the end user&amp;rsquo;s
-&lt;code&gt;Init&lt;/code&gt; builds with &lt;code&gt;rabbitmq.NewPublisher&lt;/code&gt;, publishes to the broker with
-publisher confirms for any Service of the process: a &lt;code&gt;Processor&lt;/code&gt; that
-publishes an event, an HTTP handler, a job. &lt;a href="#publishing"&gt;Publishing&lt;/a&gt;
-describes it.&lt;/p&gt;</description></item><item><title>gRPC services</title><link>https://z5labs.github.io/humus/grpc/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/grpc/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/grpc/grpcserver"&gt;&lt;code&gt;grpcserver&lt;/code&gt;&lt;/a&gt;
-package serves gRPC over TLS as a &lt;code&gt;humus.Service&lt;/code&gt;. The end user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt;
-sources its &lt;code&gt;Settings&lt;/code&gt;, builds the Service with &lt;code&gt;grpcserver.NewService&lt;/code&gt;,
-registers their generated services on it, as they would on a &lt;code&gt;*grpc.Server&lt;/code&gt;,
-and returns it. &lt;code&gt;grpcserver.Main&lt;/code&gt; runs it with the defaults a gRPC server
-behind a Kubernetes Service needs: a 5s drain and a 15s grace period. Its test
-package,
-&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/grpc/grpcserver/grpcservertest"&gt;&lt;code&gt;grpcservertest&lt;/code&gt;&lt;/a&gt;,
-runs the same App in a test, on the same defaults, with a client that dials
-the test Host over TLS.&lt;/p&gt;</description></item><item><title>Calling gRPC services</title><link>https://z5labs.github.io/humus/grpc-client/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/grpc-client/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/grpc/grpcclient"&gt;&lt;code&gt;grpcclient&lt;/code&gt;&lt;/a&gt;
-package calls another service over gRPC. &lt;code&gt;grpcclient.NewClient&lt;/code&gt; builds a
-&lt;code&gt;Client&lt;/code&gt; for one dependency in the end user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt;, from &lt;code&gt;Settings&lt;/code&gt; the end
-user sources. The &lt;code&gt;Client&lt;/code&gt; is a &lt;code&gt;grpc.ClientConnInterface&lt;/code&gt;, so generated code
-takes it as it takes a &lt;code&gt;*grpc.ClientConn&lt;/code&gt;. Its calls go through the Setup&amp;rsquo;s
-Host, are traced and measured with the Setup&amp;rsquo;s telemetry, are retried as the
-end user&amp;rsquo;s &lt;code&gt;Classify&lt;/code&gt; decides, and fail at once while a circuit breaker says
-the dependency keeps failing.&lt;/p&gt;</description></item><item><title>Authentication and authorization</title><link>https://z5labs.github.io/humus/auth/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/auth/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/auth"&gt;&lt;code&gt;auth&lt;/code&gt;&lt;/a&gt; package
-authenticates and authorizes the requests a humus service serves, over HTTP
-and gRPC alike. A &lt;strong&gt;scheme&lt;/strong&gt; is a typed value whose verify function turns a
-request&amp;rsquo;s credential into the end user&amp;rsquo;s own principal, which a handler reads
-back with the scheme&amp;rsquo;s &lt;code&gt;From&lt;/code&gt;. A &lt;strong&gt;requirement&lt;/strong&gt; is what a request must have:
-a scheme, a scheme with scopes, several schemes, or nothing at all. Three
-places enforce requirements, one for each way humus serves requests:
-&lt;code&gt;openapi.Security&lt;/code&gt; for an &lt;a href="https://z5labs.github.io/humus/openapi/"&gt;OpenAPI API&lt;/a&gt;,
-&lt;code&gt;auth.NewHandler&lt;/code&gt; for a plain &lt;code&gt;http.Handler&lt;/code&gt; served by
-&lt;a href="https://z5labs.github.io/humus/http/"&gt;&lt;code&gt;httpserver&lt;/code&gt;&lt;/a&gt;, and
-&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/grpc/grpcauth"&gt;&lt;code&gt;grpcauth&lt;/code&gt;&lt;/a&gt;&amp;rsquo;s
-&lt;code&gt;Interceptors&lt;/code&gt; for a &lt;a href="https://z5labs.github.io/humus/grpc/"&gt;&lt;code&gt;grpcserver&lt;/code&gt;&lt;/a&gt; Service.&lt;/p&gt;</description></item><item><title>The cart's API</title><link>https://z5labs.github.io/humus/walkthroughs/http/shoppingcart/api/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/http/shoppingcart/api/</guid><description>&lt;h2 id="the-bodies"&gt;The bodies&lt;/h2&gt;
+amend it.&lt;/p&gt;</description></item><item><title>The cart's API</title><link>https://z5labs.github.io/humus/walkthroughs/http/shoppingcart/api/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/http/shoppingcart/api/</guid><description>&lt;h2 id="the-bodies"&gt;The bodies&lt;/h2&gt;
 &lt;p&gt;Start the &lt;code&gt;endpoint&lt;/code&gt; package with what the API reads and writes. Its tags
 become the document&amp;rsquo;s schemas:&lt;/p&gt;
 &lt;div class="highlight"&gt;&lt;pre tabindex="0" class="chroma"&gt;&lt;code class="language-go" data-lang="go"&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="kd"&gt;type&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;Cart&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kd"&gt;struct&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;
@@ -282,62 +250,7 @@ team imports. It holds no users and no passwords.&lt;/p&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt; &lt;span class="p"&gt;}&lt;/span&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="p"&gt;]&lt;/span&gt;&lt;span class="err"&gt;,&lt;/span&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;h2 id="the-queues"&gt;The queues&lt;/h2&gt;
-&lt;p&gt;Three quorum queues. The queue type is their only argument:&lt;/p&gt;</description></item><item><title>Configuring a humus service</title><link>https://z5labs.github.io/humus/configuration/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/configuration/</guid><description>&lt;p&gt;humus packages are configured with plain Go values. They read no environment
-variables for their settings, define no variable names and read no files on
-your behalf; the few variables humus does read are
-&lt;a href="#the-variables-humus-reads"&gt;listed below&lt;/a&gt;. Every
-value is sourced in your own &lt;code&gt;Init&lt;/code&gt;, with whatever names and formats your
-service already uses: an environment variable called &lt;code&gt;READ_TIMEOUT&lt;/code&gt; or
-&lt;code&gt;MYSVC_HTTP_READ_TIMEOUT&lt;/code&gt;, a duration written &lt;code&gt;5s&lt;/code&gt;, a file of PEM, a flag. The
-usual tool is bedrock&amp;rsquo;s
-&lt;a href="https://pkg.go.dev/github.com/z5labs/bedrock/config"&gt;&lt;code&gt;config&lt;/code&gt;&lt;/a&gt; package, and
-this page uses it throughout.&lt;/p&gt;</description></item><item><title>Telemetry</title><link>https://z5labs.github.io/humus/telemetry/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/telemetry/</guid><description>&lt;p&gt;A humus App builds its OpenTelemetry providers before &lt;code&gt;Init&lt;/code&gt;, hands them to
-&lt;code&gt;Init&lt;/code&gt; as one value, logs through them, and shuts them down last. The
-&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/telemetry"&gt;&lt;code&gt;telemetry&lt;/code&gt;&lt;/a&gt; package
-builds them from a plain &lt;code&gt;Settings&lt;/code&gt; value. &lt;code&gt;humus.Main&lt;/code&gt; builds them from
-&lt;code&gt;telemetry.DefaultSettings()&lt;/code&gt; unless the service passes a &lt;code&gt;Builder&lt;/code&gt; of its
-own, which sources that value the same way &lt;code&gt;Init&lt;/code&gt; sources any other
-package&amp;rsquo;s &lt;a href="https://z5labs.github.io/humus/configuration/"&gt;settings&lt;/a&gt;.&lt;/p&gt;
-&lt;p&gt;The design behind everything on this page is in
-&lt;a href="https://github.com/z5labs/humus/discussions/632#discussioncomment-18966249"&gt;Proposal: OpenTelemetry without globals, Revision 2&lt;/a&gt;.
-&lt;a href="https://z5labs.github.io/humus/lifecycle/#telemetry"&gt;The lifecycle&lt;/a&gt; describes when the App
-builds its telemetry and shuts it down.&lt;/p&gt;</description></item><item><title>Testing a humus App</title><link>https://z5labs.github.io/humus/testing/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/testing/</guid><description>&lt;p&gt;A humus App runs whole inside a test.
-&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/humustest"&gt;humustest&lt;/a&gt; makes that
-possible:&lt;/p&gt;
-&lt;ul&gt;
-&lt;li&gt;&lt;strong&gt;&lt;code&gt;humustest.Start&lt;/code&gt;&lt;/strong&gt; hands the end user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt; to the App that
-&lt;code&gt;humus.Main&lt;/code&gt; would run for it, with the same defaults, on a test Host in
-place of &lt;code&gt;humus.OSHost()&lt;/code&gt; and on a new process from
-&lt;a href="https://pkg.go.dev/github.com/z5labs/bedrock/bedrocktest"&gt;bedrocktest&lt;/a&gt;:
-its arguments, environment and stdin, which the test sets, its output, which
-the test reads, and its signals, which the test sends. It returns the
-process and a channel for the App&amp;rsquo;s exit status.&lt;/li&gt;
-&lt;li&gt;a &lt;strong&gt;&lt;code&gt;Host&lt;/code&gt;&lt;/strong&gt;, whose in-memory network the App listens on and the test
-dials, and whose filesystem is confined to the test&amp;rsquo;s own temp directory;&lt;/li&gt;
-&lt;li&gt;a certificate authority, &lt;strong&gt;&lt;code&gt;NewCA&lt;/code&gt;&lt;/strong&gt;, generated for each test;&lt;/li&gt;
-&lt;li&gt;&lt;strong&gt;&lt;code&gt;Telemetry&lt;/code&gt;&lt;/strong&gt;, a recorder of what an App emits, covered on the
-&lt;a href="https://z5labs.github.io/humus/telemetry/#testing"&gt;Telemetry&lt;/a&gt; page;&lt;/li&gt;
-&lt;li&gt;and &lt;strong&gt;&lt;code&gt;TestService&lt;/code&gt;&lt;/strong&gt;, the contract every Service must pass.&lt;/li&gt;
-&lt;/ul&gt;
-&lt;p&gt;The network opens no real socket and starts no goroutines, so the App runs in a
-&lt;a href="https://pkg.go.dev/testing/synctest"&gt;&lt;code&gt;testing/synctest&lt;/code&gt;&lt;/a&gt; bubble. It needs no
-real environment, no real time and no file outside the test&amp;rsquo;s temp directory.&lt;/p&gt;</description></item><item><title>Failure injection</title><link>https://z5labs.github.io/humus/failure-injection/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/failure-injection/</guid><description>&lt;p&gt;Failure injection lets one request fail on purpose, in production or in a
-test, without failing anyone else&amp;rsquo;s. A request carries a failure scenario in
-its OpenTelemetry baggage, and every injection point the request passes
-through, such as a call to a dependency, looks itself up in the scenario and
-learns whether to fail or slow down. The end user then sees how the whole
-service copes with a dependency that is down or slow: its retries, its
-breakers and its fallbacks.&lt;/p&gt;</description></item><item><title>Writing a Kubernetes controller</title><link>https://z5labs.github.io/humus/kubernetes/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/kubernetes/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/kube"&gt;&lt;code&gt;kube&lt;/code&gt;&lt;/a&gt; package writes
-Kubernetes controllers as &lt;code&gt;humus.Service&lt;/code&gt;s, with
-&lt;a href="https://github.com/kubernetes/client-go"&gt;client-go&lt;/a&gt;, Kubernetes&amp;rsquo; own client,
-and no controller-runtime. It reaches the API server through the Setup&amp;rsquo;s
-Host, declares custom resources as Go values, reflects their CRDs from Go
-types, and reconciles their objects, or those of Kubernetes&amp;rsquo; own kinds, on
-client-go&amp;rsquo;s informers, work queue and leader election. The end user&amp;rsquo;s
-&lt;code&gt;Init&lt;/code&gt; fills a &lt;code&gt;kube.Connection&lt;/code&gt; and sources &lt;code&gt;kube.Settings&lt;/code&gt;, builds a
-&lt;code&gt;Client&lt;/code&gt; and a &lt;code&gt;Reconciler&lt;/code&gt;, and returns the Service that
-&lt;code&gt;kube.NewController&lt;/code&gt; builds to &lt;code&gt;humus.Main&lt;/code&gt;, whose defaults fit a
-controller.&lt;/p&gt;</description></item><item><title>Calling the provider</title><link>https://z5labs.github.io/humus/walkthroughs/rabbitmq/mailer/provider/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/rabbitmq/mailer/provider/</guid><description>&lt;p&gt;The provider is invented for the walkthrough, and is one endpoint:
+&lt;p&gt;Three quorum queues. The queue type is their only argument:&lt;/p&gt;</description></item><item><title>Calling the provider</title><link>https://z5labs.github.io/humus/walkthroughs/rabbitmq/mailer/provider/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/rabbitmq/mailer/provider/</guid><description>&lt;p&gt;The provider is invented for the walkthrough, and is one endpoint:
 &lt;code&gt;POST /v1/messages&lt;/code&gt;, with a bearer key, an &lt;code&gt;Idempotency-Key&lt;/code&gt;, and the
 sender, recipient, subject and text as JSON. It answers 2xx with the
 email&amp;rsquo;s &lt;code&gt;id&lt;/code&gt;, or a 4xx with a &lt;code&gt;reason&lt;/code&gt;.&lt;/p&gt;
@@ -390,7 +303,17 @@ back:&lt;/p&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;h2 id="classify"&gt;Classify&lt;/h2&gt;
 &lt;p&gt;&lt;code&gt;httpclient&lt;/code&gt;&amp;rsquo;s default &lt;code&gt;Classify&lt;/code&gt;, plus two answers. A 409 means a charge with
 this key is still in flight, so it is retried, and every 5xx counts against
-the breaker:&lt;/p&gt;</description></item><item><title>Talking to PostgreSQL</title><link>https://z5labs.github.io/humus/walkthroughs/kube/databases/postgres/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/kube/databases/postgres/</guid><description>&lt;p&gt;The &lt;code&gt;postgres&lt;/code&gt; package provisions and drops a &lt;code&gt;Database&lt;/code&gt;&amp;rsquo;s role and
+the breaker:&lt;/p&gt;</description></item><item><title>Jobs</title><link>https://z5labs.github.io/humus/services/jobs/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/services/jobs/</guid><description>&lt;p&gt;A job is a process that does one piece of work and exits. The
+&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/job"&gt;&lt;code&gt;job&lt;/code&gt;&lt;/a&gt; package turns that
+work, the run, into a &lt;code&gt;humus.Service&lt;/code&gt; that runs it once, stops it on either
+shutdown signal and records one span around it. The job runs on
+&lt;code&gt;humus.Main&lt;/code&gt;&amp;rsquo;s defaults, and the run&amp;rsquo;s error is the exit status, so
+Kubernetes retries a job that failed or was interrupted and completes one
+that finished.&lt;/p&gt;
+&lt;p&gt;The package is &lt;code&gt;job.NewService&lt;/code&gt; and nothing else: no App, no &lt;code&gt;Main&lt;/code&gt;, no
+&lt;code&gt;Settings&lt;/code&gt;. The design behind everything on this page is in
+&lt;a href="https://github.com/z5labs/humus/discussions/682"&gt;Proposal: jobs&lt;/a&gt; and
+&lt;a href="https://github.com/z5labs/humus/discussions/682#discussioncomment-18988201"&gt;its revision&lt;/a&gt;.&lt;/p&gt;</description></item><item><title>Talking to PostgreSQL</title><link>https://z5labs.github.io/humus/walkthroughs/kube/databases/postgres/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/kube/databases/postgres/</guid><description>&lt;p&gt;The &lt;code&gt;postgres&lt;/code&gt; package provisions and drops a &lt;code&gt;Database&lt;/code&gt;&amp;rsquo;s role and
 database, through one admin connection to the server.&lt;/p&gt;
 &lt;h2 id="the-admin-interface"&gt;The admin interface&lt;/h2&gt;
 &lt;p&gt;The Reconciler and its finalizer call PostgreSQL through an interface, so
@@ -402,7 +325,17 @@ their tests can fake it:&lt;/p&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;p&gt;Both are safe to repeat: a reconcile that fails partway is run again.&lt;/p&gt;
 &lt;h2 id="the-server"&gt;The &lt;code&gt;Server&lt;/code&gt;&lt;/h2&gt;
 &lt;p&gt;&lt;code&gt;Server&lt;/code&gt; implements &lt;code&gt;Admin&lt;/code&gt; on a pool. It traces each statement, and
-injects faults before each operation:&lt;/p&gt;</description></item><item><title>The ledger's accounts</title><link>https://z5labs.github.io/humus/walkthroughs/grpc/wallet/accounts/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/grpc/wallet/accounts/</guid><description>&lt;p&gt;The ledger keeps its accounts and its transfers in two PostgreSQL tables,
+injects faults before each operation:&lt;/p&gt;</description></item><item><title>Telemetry</title><link>https://z5labs.github.io/humus/fundamentals/telemetry/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/fundamentals/telemetry/</guid><description>&lt;p&gt;A humus App builds its OpenTelemetry providers before &lt;code&gt;Init&lt;/code&gt;, hands them to
+&lt;code&gt;Init&lt;/code&gt; as one value, logs through them, and shuts them down last. The
+&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/telemetry"&gt;&lt;code&gt;telemetry&lt;/code&gt;&lt;/a&gt; package
+builds them from a plain &lt;code&gt;Settings&lt;/code&gt; value. &lt;code&gt;humus.Main&lt;/code&gt; builds them from
+&lt;code&gt;telemetry.DefaultSettings()&lt;/code&gt; unless the service passes a &lt;code&gt;Builder&lt;/code&gt; of its
+own, which sources that value the same way &lt;code&gt;Init&lt;/code&gt; sources any other
+package&amp;rsquo;s &lt;a href="https://z5labs.github.io/humus/fundamentals/configuration/"&gt;settings&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;The design behind everything on this page is in
+&lt;a href="https://github.com/z5labs/humus/discussions/632#discussioncomment-18966249"&gt;Proposal: OpenTelemetry without globals, Revision 2&lt;/a&gt;.
+&lt;a href="https://z5labs.github.io/humus/fundamentals/lifecycle/#telemetry"&gt;The lifecycle&lt;/a&gt; describes when the App
+builds its telemetry and shuts it down.&lt;/p&gt;</description></item><item><title>The ledger's accounts</title><link>https://z5labs.github.io/humus/walkthroughs/grpc/wallet/accounts/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/grpc/wallet/accounts/</guid><description>&lt;p&gt;The ledger keeps its accounts and its transfers in two PostgreSQL tables,
 and moves money between accounts in one transaction per transfer, so money
 is never made or lost.&lt;/p&gt;
 &lt;h2 id="schemasql"&gt;&lt;code&gt;schema.sql&lt;/code&gt;&lt;/h2&gt;
@@ -459,7 +392,31 @@ is what &lt;code&gt;auth.RequireScopes&lt;/code&gt; asks:&lt;/p&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;h2 id="verifying-tokens"&gt;Verifying tokens&lt;/h2&gt;
 &lt;p&gt;&lt;code&gt;Init&lt;/code&gt; builds an &lt;code&gt;httpclient&lt;/code&gt; client for the key set&amp;rsquo;s origin, a
 &lt;code&gt;jwt.RemoteKeySet&lt;/code&gt; that fetches the key set with it, and a &lt;code&gt;Verifier&lt;/code&gt; of
-&lt;code&gt;Claims&lt;/code&gt;:&lt;/p&gt;</description></item><item><title>Processing a request</title><link>https://z5labs.github.io/humus/walkthroughs/rabbitmq/mailer/processing/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/rabbitmq/mailer/processing/</guid><description>&lt;h2 id="the-request"&gt;The request&lt;/h2&gt;
+&lt;code&gt;Claims&lt;/code&gt;:&lt;/p&gt;</description></item><item><title>Health</title><link>https://z5labs.github.io/humus/fundamentals/health/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/fundamentals/health/</guid><description>&lt;p&gt;A service reports its health as &lt;a href="#monitors"&gt;monitors&lt;/a&gt; it combines into two
+&lt;a href="#liveness-and-readiness"&gt;probes&lt;/a&gt;, liveness and readiness, and an App&amp;rsquo;s
+readiness is owned by a &lt;a href="#the-health-service"&gt;health Service&lt;/a&gt; it returns
+from &lt;code&gt;Init&lt;/code&gt; like any other Service. All of it is in the
+&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/health"&gt;&lt;code&gt;health&lt;/code&gt;&lt;/a&gt; package, which
+depends on nothing but the standard library and serves no protocol.
+&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/httphealth"&gt;&lt;code&gt;httphealth&lt;/code&gt;&lt;/a&gt; and
+&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/grpc/grpchealth"&gt;&lt;code&gt;grpc/grpchealth&lt;/code&gt;&lt;/a&gt;
+&lt;a href="#exposing-the-probes"&gt;expose the probes&lt;/a&gt; to Kubernetes.&lt;/p&gt;
+&lt;p&gt;The design behind this page is in
+&lt;a href="https://github.com/z5labs/humus/discussions/634#discussioncomment-18976159"&gt;Proposal: health monitors and probes, Revision 2&lt;/a&gt;,
+and, for exposing the probes, in
+&lt;a href="https://github.com/z5labs/humus/discussions/761"&gt;Proposal: exposing health probes&lt;/a&gt;.&lt;/p&gt;</description></item><item><title>Consuming and producing Kafka</title><link>https://z5labs.github.io/humus/services/kafka/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/services/kafka/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/queue/kafka"&gt;&lt;code&gt;queue/kafka&lt;/code&gt;&lt;/a&gt;
+package consumes Kafka topics as a &lt;code&gt;humus.Service&lt;/code&gt;, with
+&lt;a href="https://github.com/twmb/franz-go"&gt;franz-go&lt;/a&gt;. The Service joins a consumer
+group, dials the brokers through the Setup&amp;rsquo;s Host, and hands each record to
+the end user&amp;rsquo;s &lt;code&gt;queue.Processor&lt;/code&gt;, one record at a time per partition, in
+offset order. The end user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt; sources its &lt;code&gt;Settings&lt;/code&gt;, builds the Service
+with &lt;code&gt;kafka.NewService&lt;/code&gt;, and returns it to &lt;code&gt;humus.Main&lt;/code&gt;, whose defaults are a
+consumer&amp;rsquo;s.&lt;/p&gt;
+&lt;p&gt;The package produces records too. A &lt;code&gt;kafka.Producer&lt;/code&gt;, which the end user&amp;rsquo;s
+&lt;code&gt;Init&lt;/code&gt; builds with &lt;code&gt;kafka.NewProducer&lt;/code&gt;, produces to one cluster for any
+Service of the process: a &lt;code&gt;Processor&lt;/code&gt; that produces a dead letter or writes
+to another topic, an HTTP handler that publishes an event, a job.
+&lt;a href="#producing"&gt;Producing&lt;/a&gt; describes it.&lt;/p&gt;</description></item><item><title>Processing a request</title><link>https://z5labs.github.io/humus/walkthroughs/rabbitmq/mailer/processing/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/rabbitmq/mailer/processing/</guid><description>&lt;h2 id="the-request"&gt;The request&lt;/h2&gt;
 &lt;p&gt;The &lt;code&gt;mail&lt;/code&gt; package decodes a delivery into a request:&lt;/p&gt;
 &lt;div class="highlight"&gt;&lt;pre tabindex="0" class="chroma"&gt;&lt;code class="language-go" data-lang="go"&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="kd"&gt;const&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;MaxBodySize&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;256&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;10&lt;/span&gt;&lt;span class="w"&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt;
@@ -720,7 +677,19 @@ the job exits 78, naming its variable:&lt;/p&gt;
 &lt;/table&gt;
 &lt;h2 id="the-secrets-as-files"&gt;The secrets, as files&lt;/h2&gt;
 &lt;p&gt;The database URL and the API key are files mounted from Secrets, read
-through the Host&amp;rsquo;s &lt;code&gt;FS&lt;/code&gt;, so the tests can give the job files of their own:&lt;/p&gt;</description></item><item><title>Retries and dead letters</title><link>https://z5labs.github.io/humus/walkthroughs/kafka/orderstatus/retries/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/kafka/orderstatus/retries/</guid><description>&lt;h2 id="processing-a-record"&gt;Processing a record&lt;/h2&gt;
+through the Host&amp;rsquo;s &lt;code&gt;FS&lt;/code&gt;, so the tests can give the job files of their own:&lt;/p&gt;</description></item><item><title>Consuming and publishing with RabbitMQ</title><link>https://z5labs.github.io/humus/services/rabbitmq/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/services/rabbitmq/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/queue/rabbitmq"&gt;&lt;code&gt;queue/rabbitmq&lt;/code&gt;&lt;/a&gt;
+package consumes a RabbitMQ queue as a &lt;code&gt;humus.Service&lt;/code&gt;, with
+&lt;a href="https://github.com/rabbitmq/amqp091-go"&gt;amqp091-go&lt;/a&gt;, RabbitMQ&amp;rsquo;s own Go
+client. The Service dials the broker through the Setup&amp;rsquo;s Host, consumes one
+queue with manual acks, and hands each delivery to the end user&amp;rsquo;s
+&lt;code&gt;queue.Processor&lt;/code&gt;, in the order the queue delivered them. The end user&amp;rsquo;s
+&lt;code&gt;Init&lt;/code&gt; sources its &lt;code&gt;Settings&lt;/code&gt;, builds the Service with &lt;code&gt;rabbitmq.NewService&lt;/code&gt;,
+and returns it to &lt;code&gt;humus.Main&lt;/code&gt;, whose defaults are a consumer&amp;rsquo;s.&lt;/p&gt;
+&lt;p&gt;The package publishes too. A &lt;code&gt;rabbitmq.Publisher&lt;/code&gt;, which the end user&amp;rsquo;s
+&lt;code&gt;Init&lt;/code&gt; builds with &lt;code&gt;rabbitmq.NewPublisher&lt;/code&gt;, publishes to the broker with
+publisher confirms for any Service of the process: a &lt;code&gt;Processor&lt;/code&gt; that
+publishes an event, an HTTP handler, a job. &lt;a href="#publishing"&gt;Publishing&lt;/a&gt;
+describes it.&lt;/p&gt;</description></item><item><title>Retries and dead letters</title><link>https://z5labs.github.io/humus/walkthroughs/kafka/orderstatus/retries/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/kafka/orderstatus/retries/</guid><description>&lt;h2 id="processing-a-record"&gt;Processing a record&lt;/h2&gt;
 &lt;p&gt;One &lt;code&gt;Process&lt;/code&gt; handles both &lt;code&gt;orders.events&lt;/code&gt; and &lt;code&gt;orders.retry&lt;/code&gt;, and keeps no
 state of its own:&lt;/p&gt;
 &lt;div class="highlight"&gt;&lt;pre tabindex="0" class="chroma"&gt;&lt;code class="language-go" data-lang="go"&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="kd"&gt;func&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nx"&gt;p&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="nx"&gt;Projector&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nf"&gt;Process&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nx"&gt;ctx&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;context&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nx"&gt;Context&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;m&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;kafka&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="nx"&gt;Message&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;error&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;
@@ -806,7 +775,27 @@ every replica would crash-loop through a provider&amp;rsquo;s outage:&lt;/p&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt;	&lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt;	&lt;/span&gt;&lt;span class="k"&gt;return&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kc"&gt;nil&lt;/span&gt;&lt;span class="w"&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt;&lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;
-&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;p&gt;The parked request is the request as it was published, plus its headers:&lt;/p&gt;</description></item><item><title>The catalog</title><link>https://z5labs.github.io/humus/walkthroughs/http/shoppingcart/catalog/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/http/shoppingcart/catalog/</guid><description>&lt;p&gt;The catalog is a second humus service, written as the cart is: an
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;p&gt;The parked request is the request as it was published, plus its headers:&lt;/p&gt;</description></item><item><title>Testing a humus App</title><link>https://z5labs.github.io/humus/fundamentals/testing/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/fundamentals/testing/</guid><description>&lt;p&gt;A humus App runs whole inside a test.
+&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/humustest"&gt;humustest&lt;/a&gt; makes that
+possible:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;&lt;code&gt;humustest.Start&lt;/code&gt;&lt;/strong&gt; hands the end user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt; to the App that
+&lt;code&gt;humus.Main&lt;/code&gt; would run for it, with the same defaults, on a test Host in
+place of &lt;code&gt;humus.OSHost()&lt;/code&gt; and on a new process from
+&lt;a href="https://pkg.go.dev/github.com/z5labs/bedrock/bedrocktest"&gt;bedrocktest&lt;/a&gt;:
+its arguments, environment and stdin, which the test sets, its output, which
+the test reads, and its signals, which the test sends. It returns the
+process and a channel for the App&amp;rsquo;s exit status.&lt;/li&gt;
+&lt;li&gt;a &lt;strong&gt;&lt;code&gt;Host&lt;/code&gt;&lt;/strong&gt;, whose in-memory network the App listens on and the test
+dials, and whose filesystem is confined to the test&amp;rsquo;s own temp directory;&lt;/li&gt;
+&lt;li&gt;a certificate authority, &lt;strong&gt;&lt;code&gt;NewCA&lt;/code&gt;&lt;/strong&gt;, generated for each test;&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;&lt;code&gt;Telemetry&lt;/code&gt;&lt;/strong&gt;, a recorder of what an App emits, covered on the
+&lt;a href="https://z5labs.github.io/humus/fundamentals/telemetry/#testing"&gt;Telemetry&lt;/a&gt; page;&lt;/li&gt;
+&lt;li&gt;and &lt;strong&gt;&lt;code&gt;TestService&lt;/code&gt;&lt;/strong&gt;, the contract every Service must pass.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;The network opens no real socket and starts no goroutines, so the App runs in a
+&lt;a href="https://pkg.go.dev/testing/synctest"&gt;&lt;code&gt;testing/synctest&lt;/code&gt;&lt;/a&gt; bubble. It needs no
+real environment, no real time and no file outside the test&amp;rsquo;s temp directory.&lt;/p&gt;</description></item><item><title>The catalog</title><link>https://z5labs.github.io/humus/walkthroughs/http/shoppingcart/catalog/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/http/shoppingcart/catalog/</guid><description>&lt;p&gt;The catalog is a second humus service, written as the cart is: an
 &lt;code&gt;openapi/v3&lt;/code&gt; API served by &lt;code&gt;httpserver&lt;/code&gt;, on a PostgreSQL database of its
 own. It has two operations:&lt;/p&gt;
 &lt;ul&gt;
@@ -1197,7 +1186,17 @@ and the mailer exits 78, naming its variable:&lt;/p&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt;		&lt;/span&gt;&lt;span class="k"&gt;return&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;settings&lt;/span&gt;&lt;span class="p"&gt;{},&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nx"&gt;err&lt;/span&gt;&lt;span class="w"&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt;	&lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;p&gt;The consumer and every Publisher share one &lt;code&gt;Connection&lt;/code&gt;, so they log in as
-one user.&lt;/p&gt;</description></item><item><title>Serving the wallet</title><link>https://z5labs.github.io/humus/walkthroughs/grpc/wallet/serving-the-wallet/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/grpc/wallet/serving-the-wallet/</guid><description>&lt;p&gt;The wallet&amp;rsquo;s &lt;code&gt;server&lt;/code&gt; package is &lt;code&gt;wallet.v1.Wallet&lt;/code&gt;, on the ledger&amp;rsquo;s
+one user.&lt;/p&gt;</description></item><item><title>Writing a Kubernetes controller</title><link>https://z5labs.github.io/humus/services/kubernetes/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/services/kubernetes/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/kube"&gt;&lt;code&gt;kube&lt;/code&gt;&lt;/a&gt; package writes
+Kubernetes controllers as &lt;code&gt;humus.Service&lt;/code&gt;s, with
+&lt;a href="https://github.com/kubernetes/client-go"&gt;client-go&lt;/a&gt;, Kubernetes&amp;rsquo; own client,
+and no controller-runtime. It reaches the API server through the Setup&amp;rsquo;s
+Host, declares custom resources as Go values, reflects their CRDs from Go
+types, and reconciles their objects, or those of Kubernetes&amp;rsquo; own kinds, on
+client-go&amp;rsquo;s informers, work queue and leader election. The end user&amp;rsquo;s
+&lt;code&gt;Init&lt;/code&gt; fills a &lt;code&gt;kube.Connection&lt;/code&gt; and sources &lt;code&gt;kube.Settings&lt;/code&gt;, builds a
+&lt;code&gt;Client&lt;/code&gt; and a &lt;code&gt;Reconciler&lt;/code&gt;, and returns the Service that
+&lt;code&gt;kube.NewController&lt;/code&gt; builds to &lt;code&gt;humus.Main&lt;/code&gt;, whose defaults fit a
+controller.&lt;/p&gt;</description></item><item><title>Serving the wallet</title><link>https://z5labs.github.io/humus/walkthroughs/grpc/wallet/serving-the-wallet/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/grpc/wallet/serving-the-wallet/</guid><description>&lt;p&gt;The wallet&amp;rsquo;s &lt;code&gt;server&lt;/code&gt; package is &lt;code&gt;wallet.v1.Wallet&lt;/code&gt;, on the ledger&amp;rsquo;s
 generated client.&lt;/p&gt;
 &lt;h2 id="the-methods"&gt;The methods&lt;/h2&gt;
 &lt;table&gt;

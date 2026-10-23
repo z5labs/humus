@@ -323,7 +323,7 @@ func openPostgres(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (end
 ```
 
 What pgx still reads from the real process is in
-[pgx's ambient leaks](/humus/openapi/#pgxs-ambient-leaks). The URL
+[pgx's ambient leaks](/humus/services/http/openapi/#pgxs-ambient-leaks). The URL
 sets every field the service uses, so nothing is left for pgx to find.
 
 ## `Init`
@@ -494,3 +494,5 @@ func main() {
 
 The catalog's is the same line, with its own `app`,
 `example/http/shoppingcart/catalog/app`.
+
+Next: [Testing](/humus/walkthroughs/http/shoppingcart/testing/)

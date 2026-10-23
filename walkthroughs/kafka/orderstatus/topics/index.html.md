@@ -100,3 +100,5 @@ acl orderstatus --operation Write --topic orders.status --topic orders.retry --t
 
 A service that writes orders' events needs Write on `orders.events` and
 nothing else.
+
+Next: [The projection](/humus/walkthroughs/kafka/orderstatus/projection/)

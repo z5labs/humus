@@ -550,3 +550,5 @@ t.Run("a request that can go nowhere is dead-lettered by its delivery limit", fu
 	require.Empty(t, journal(t, client, provider, to))
 })
 ```
+
+Next: [Deploying](/humus/walkthroughs/rabbitmq/mailer/deploying/)

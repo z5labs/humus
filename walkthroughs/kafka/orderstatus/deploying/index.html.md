@@ -376,3 +376,5 @@ Then read the order's status from PostgreSQL:
 kubectl --context kind-kind --namespace orderstatus exec deployment/postgres -- \
   psql -U postgres -d orders -c "SELECT * FROM order_status WHERE order_id = '<the printed ID>'"
 ```
+
+Next: [Observing](/humus/walkthroughs/kafka/orderstatus/observing/)

@@ -283,3 +283,5 @@ func (r *reached) Healthy(ctx context.Context) (bool, error) {
 
 One probe pings at a time, so a slow database isn't pinged by every probe
 at once.
+
+Next: [Calling the ledger](/humus/walkthroughs/grpc/wallet/calling-the-ledger/)

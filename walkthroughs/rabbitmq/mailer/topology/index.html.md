@@ -229,3 +229,5 @@ the kind overlay's `mailrequest` login does:
 rabbitmqctl add_user mailrequest <mailrequest-password
 rabbitmqctl set_permissions --vhost / mailrequest '^$' '^mail$' '^$'
 ```
+
+Next: [Calling the provider](/humus/walkthroughs/rabbitmq/mailer/provider/)

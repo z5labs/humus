@@ -298,3 +298,5 @@ rows, err := s.pool.Query(ctx, `
 	cartID, owner, item.ProductID, item.Quantity, item.UnitPrice,
 )
 ```
+
+Next: [The catalog](/humus/walkthroughs/http/shoppingcart/catalog/)

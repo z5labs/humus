@@ -67,7 +67,7 @@ The wallet keeps the default `Classify`, retry budget and breaker:
 
 The four codes about the request are the ledger working, so they count for
 it, not against it.
-[Calling gRPC services](/humus/grpc-client/#the-default) describes
+[Calling gRPC services](/humus/dependencies/grpc/#the-default) describes
 the default.
 
 ## Why every transfer is safe to retry
@@ -170,3 +170,5 @@ func errorInfo(reason string) *errdetails.ErrorInfo {
 | is still answering when the caller cancels or its deadline passes | `Canceled` or `DeadlineExceeded` |
 
 A `RetryInfo` tells the app when to try again.
+
+Next: [Serving the wallet](/humus/walkthroughs/grpc/wallet/serving-the-wallet/)

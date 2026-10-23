@@ -345,3 +345,5 @@ or 405.
 The document is served at `GET /openapi.json`, to anyone. The cart's tests
 keep it as a golden file, `app/testdata/openapi.json`, so a change to any
 declaration shows up in review as a change to the document.
+
+Next: [Who may do what](/humus/walkthroughs/http/shoppingcart/access/)

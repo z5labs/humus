@@ -67,3 +67,5 @@ A failed drop returns its error, so the `Database` keeps its finalizer, and
 
 The Secret needs no cleaning up: the `Database` is its controller, so
 Kubernetes' garbage collector deletes it with the `Database`.
+
+Next: [Init](/humus/walkthroughs/kube/databases/init/)

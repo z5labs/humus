@@ -125,3 +125,5 @@ spec:
 ```
 
 The kustomization applies the CRD with the rest of the controller.
+
+Next: [Talking to PostgreSQL](/humus/walkthroughs/kube/databases/postgres/)

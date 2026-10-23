@@ -356,3 +356,5 @@ Each panel is a query of Mimir:
         }
       ]
 ```
+
+Next: [Production-ready](/humus/walkthroughs/grpc/wallet/production-ready/)

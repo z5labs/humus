@@ -244,3 +244,5 @@ it, rather than the wallet opening it again forever.
 
 When the wallet shuts down, `grpcserver` ends the caller's watch with
 `Unavailable`, and the app watches again.
+
+Next: [Init](/humus/walkthroughs/grpc/wallet/init/)

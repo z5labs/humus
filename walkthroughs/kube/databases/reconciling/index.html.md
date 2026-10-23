@@ -176,3 +176,5 @@ the new password:
 ```sh
 kubectl delete secret orders-postgres
 ```
+
+Next: [Cleaning up](/humus/walkthroughs/kube/databases/cleaning-up/)

@@ -603,3 +603,5 @@ A scenario the cart doesn't trust is stripped, and recorded on its span:
 			s.stop(t)
 			require.Equal(t, 1, stripped(tel.Spans()))
 ```
+
+Next: [Deploying](/humus/walkthroughs/http/shoppingcart/deploying/)

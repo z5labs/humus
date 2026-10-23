@@ -149,3 +149,5 @@ code differs from what is checked in:
 ```sh
 buf breaking --against "$GITHUB_WORKSPACE/main/example/grpc/wallet/proto"
 ```
+
+Next: [The ledger's accounts](/humus/walkthroughs/grpc/wallet/accounts/)

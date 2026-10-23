@@ -61,7 +61,7 @@ a `GET`, so it is safe to retry:
 | a 500 | no | a failure |
 
 A 404 is the catalog working, so it counts for the catalog, not against it.
-[Calling HTTP services](/humus/http-client/#how-an-attempts-result-counts)
+[Calling HTTP services](/humus/dependencies/http/#how-an-attempts-result-counts)
 describes the default.
 
 ## `ForwardScenario`
@@ -213,3 +213,5 @@ So it proves what adding an item needs: the URL, a catalog certificate the
 CA signed, a client certificate the catalog trusts, and a catalog that has
 reached its own database. [`Init`](/humus/walkthroughs/http/shoppingcart/init/#readiness)
 latches it.
+
+Next: [Init](/humus/walkthroughs/http/shoppingcart/init/)

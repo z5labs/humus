@@ -75,3 +75,5 @@ example/kafka/orderstatus/
 These pages create the topics, then build `store`, `projector`, then `app`
 and `main`, then test it, deploy it and observe it, and end with the
 production-ready checklist.
+
+Next: [The topics](/humus/walkthroughs/kafka/orderstatus/topics/)

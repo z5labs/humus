@@ -160,3 +160,5 @@ after 5 deliveries, with `x-first-death-reason` `delivery_limit`:
 The mailer only puts dead letters in `mail.send.dead`. Plan what to do with
 them, whether to send them again, tell someone or drop them, from your own
 business requirements.
+
+Next: [Init](/humus/walkthroughs/rabbitmq/mailer/init/)

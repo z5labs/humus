@@ -313,3 +313,5 @@ records reach Loki, and every instrument reaches Mimir:
 ```sh
 go -C example/kube/databases test -tags functional ./functional/
 ```
+
+Next: [Production-ready](/humus/walkthroughs/kube/databases/production-ready/)

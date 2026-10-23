@@ -348,3 +348,5 @@ func (o *observer) emit(ctx context.Context, sev log.Severity, text, body string
 	o.logger.Emit(ctx, r)
 }
 ```
+
+Next: [Init](/humus/walkthroughs/job/billing/init/)

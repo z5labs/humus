@@ -280,3 +280,5 @@ Every other request is accepted, with an ID made from its
   }
 }
 ```
+
+Next: [Processing a request](/humus/walkthroughs/rabbitmq/mailer/processing/)

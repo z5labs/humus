@@ -20,3 +20,5 @@ against them:
 | Failures say why | statuses with `PreconditionFailure`, `BadRequest`, `ErrorInfo` and `RetryInfo` details | [The statuses, with details](/humus/walkthroughs/grpc/wallet/serving-the-ledger/#the-statuses-with-details), [The ledger's answers, as the wallet's](/humus/walkthroughs/grpc/wallet/calling-the-ledger/#the-ledgers-answers-as-the-wallets), [A key set that can't be fetched](/humus/walkthroughs/grpc/wallet/serving-the-wallet/#a-key-set-that-cant-be-fetched) |
 | Failures are rehearsed | the failure injection cases, in CI and against staging through its own `Target` | [The shared cases](/humus/walkthroughs/grpc/wallet/testing/#the-shared-cases), [The failure injection cases](/humus/walkthroughs/grpc/wallet/testing/#the-failure-injection-cases) |
 | Safe by default | `FAULT_TRUST_SCOPE` empty, so no scenario is trusted. Server reflection off. The probes ports serve gRPC health and nothing else | [`TrustScenario`](/humus/walkthroughs/grpc/wallet/init/#trustscenario), [The gRPC probes](/humus/walkthroughs/grpc/wallet/deploying/#the-grpc-probes) |
+
+Next: [Billing job](/humus/walkthroughs/job/billing/)

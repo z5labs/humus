@@ -492,3 +492,5 @@ An abort sends nothing, and a delay only waits, so the worst a rehearsal
 does, even in production, is leave invoices pending for the next run. Anyone
 who may create Jobs in the namespace may rehearse, so the RBAC on `jobs` is
 the boundary.
+
+Next: [Observing](/humus/walkthroughs/job/billing/observing/)

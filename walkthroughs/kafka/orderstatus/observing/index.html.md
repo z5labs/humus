@@ -253,3 +253,5 @@ Each panel is a query of Mimir:
         }
       ]
 ```
+
+Next: [Production-ready](/humus/walkthroughs/kafka/orderstatus/production-ready/)

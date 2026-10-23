@@ -422,3 +422,5 @@ the telemetry's 5s shutdown, and a margin:
 ```yaml
 terminationGracePeriodSeconds: 35
 ```
+
+Next: [Testing](/humus/walkthroughs/rabbitmq/mailer/testing/)

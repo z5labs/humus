@@ -257,3 +257,5 @@ func (s *Store) Apply(ctx context.Context, e Event, status Status) error {
 
 `order_events` grows by a row per event, and none is deleted, since an
 order's status is folded from all of them.
+
+Next: [Projecting an event](/humus/walkthroughs/kafka/orderstatus/projecting/)

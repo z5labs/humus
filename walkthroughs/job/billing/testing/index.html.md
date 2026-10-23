@@ -505,3 +505,5 @@ func ChargedButNotRecorded(t testing.TB, target Target) {
 | `ThePaymentsAPIIsSlow` | delay `http:*` by 2s | exits 0, charges everything | |
 | `ChargedButNotRecorded` | abort `postgresql:settle` | exits 1, sends one, leaves all pending | exits 0, sends that one again with the same key |
 | `TheMonthCantBeIssued` | abort `postgresql:issue` | exits 1, issues and sends nothing | exits 0, bills the month |
+
+Next: [Deploying](/humus/walkthroughs/job/billing/deploying/)

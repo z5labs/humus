@@ -537,3 +537,5 @@ func main() {
 
 The ledger's is the same line, with its own `app`,
 `example/grpc/wallet/ledger/app`.
+
+Next: [Testing](/humus/walkthroughs/grpc/wallet/testing/)

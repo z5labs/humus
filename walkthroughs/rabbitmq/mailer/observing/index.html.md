@@ -255,3 +255,5 @@ Each panel is a query of Mimir:
         }
       ]
 ```
+
+Next: [Production-ready](/humus/walkthroughs/rabbitmq/mailer/production-ready/)

@@ -252,3 +252,5 @@ node's drain, so `Init` returns the run alone:
 ```go
 return []humus.Service{job.NewService(s, run.Run)}, nil
 ```
+
+Next: [Order status processor](/humus/walkthroughs/kafka/orderstatus/)

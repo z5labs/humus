@@ -550,3 +550,5 @@ other replica:
 ```sh
 kubectl --context kind-kind --namespace wallet rollout restart deployment/ledger
 ```
+
+Next: [Observing](/humus/walkthroughs/grpc/wallet/observing/)

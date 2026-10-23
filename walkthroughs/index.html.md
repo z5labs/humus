@@ -7,20 +7,6 @@ type, and every sample on its pages is quoted from that code.
 
 ## The walkthroughs
 
-- [Billing job](/humus/walkthroughs/job/billing/): a job, run daily by
-  a CronJob, that bills a month of subscriptions in PostgreSQL through a
-  payments API, once, however often it runs.
-- [Mailer](/humus/walkthroughs/rabbitmq/mailer/): a RabbitMQ worker that
-  sends the emails other services ask for through a provider's API, retries
-  what fails for now after a delay, and dead-letters what never will.
-- [Order status processor](/humus/walkthroughs/kafka/orderstatus/): a
-  Kafka processor that projects orders' events into their statuses in
-  PostgreSQL, produces each change of status, retries what fails for now
-  through a retry topic, and dead-letters what never will.
-- [Databases controller](/humus/walkthroughs/kube/databases/): a
-  Kubernetes controller that provisions a database and the role that owns it
-  in PostgreSQL for each `Database`, writes the role's credentials to a
-  Secret, and drops both on delete, as the `Database` says.
 - [Shoppingcart](/humus/walkthroughs/http/shoppingcart/): an API for
   shopping carts, behind JWT bearer tokens, that prices each item from a
   catalog service of its own over mTLS, both on PostgreSQL.
@@ -28,6 +14,20 @@ type, and every sample on its pages is quoted from that code.
   caller's own account, behind JWT bearer tokens, on a ledger service of its
   own that it calls over mTLS, which keeps the accounts and the transfers
   between them in PostgreSQL.
+- [Billing job](/humus/walkthroughs/job/billing/): a job, run daily by
+  a CronJob, that bills a month of subscriptions in PostgreSQL through a
+  payments API, once, however often it runs.
+- [Order status processor](/humus/walkthroughs/kafka/orderstatus/): a
+  Kafka processor that projects orders' events into their statuses in
+  PostgreSQL, produces each change of status, retries what fails for now
+  through a retry topic, and dead-letters what never will.
+- [Mailer](/humus/walkthroughs/rabbitmq/mailer/): a RabbitMQ worker that
+  sends the emails other services ask for through a provider's API, retries
+  what fails for now after a delay, and dead-letters what never will.
+- [Databases controller](/humus/walkthroughs/kube/databases/): a
+  Kubernetes controller that provisions a database and the role that owns it
+  in PostgreSQL for each `Database`, writes the role's credentials to a
+  Secret, and drops both on delete, as the `Database` says.
 
 ## The bar
 
@@ -62,3 +62,5 @@ every item.
 3. **The deployed image,** in a kind cluster, behind the `functional` tag.
 
 The second and third levels run the same black-box cases, written once.
+
+Next: [Shoppingcart](/humus/walkthroughs/http/shoppingcart/)

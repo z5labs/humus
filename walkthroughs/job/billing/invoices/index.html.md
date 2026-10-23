@@ -183,3 +183,5 @@ func (s *Store) settle(ctx context.Context, id uuid.UUID, state, column, value s
 
 `settled` is false when the invoice was already final, such as when two runs
 that overlap both charge it.
+
+Next: [Charging](/humus/walkthroughs/job/billing/charging/)

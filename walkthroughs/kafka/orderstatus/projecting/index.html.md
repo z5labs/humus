@@ -246,3 +246,5 @@ func encodeChange(orderID string, c Change) []byte {
 	return b
 }
 ```
+
+Next: [Retries and dead letters](/humus/walkthroughs/kafka/orderstatus/retries/)

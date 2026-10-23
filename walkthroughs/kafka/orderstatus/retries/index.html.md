@@ -286,3 +286,5 @@ const reasonKey = attribute.Key("orderstatus.reason")
 The processor only puts dead letters in `orders.dlq`. Plan what to do with
 them, whether to produce them again, tell someone or drop them, from your
 own business requirements.
+
+Next: [Init](/humus/walkthroughs/kafka/orderstatus/init/)
