@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>Hardening on Humus</title><link>https://z5labs.github.io/humus/pr-preview/pr-1309/hardening/</link><description>Recent content in Hardening on Humus</description><generator>Hugo</generator><language>en-us</language><atom:link href="https://z5labs.github.io/humus/pr-preview/pr-1309/hardening/index.xml" rel="self" type="application/rss+xml"/><item><title>Authentication and authorization</title><link>https://z5labs.github.io/humus/pr-preview/pr-1309/hardening/auth/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/pr-preview/pr-1309/hardening/auth/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/auth"&gt;&lt;code&gt;auth&lt;/code&gt;&lt;/a&gt; package
+authenticates and authorizes the requests a humus service serves, over HTTP
+and gRPC alike. A &lt;strong&gt;scheme&lt;/strong&gt; is a typed value whose verify function turns a
+request&amp;rsquo;s credential into the end user&amp;rsquo;s own principal, which a handler reads
+back with the scheme&amp;rsquo;s &lt;code&gt;From&lt;/code&gt;. A &lt;strong&gt;requirement&lt;/strong&gt; is what a request must have:
+a scheme, a scheme with scopes, several schemes, or nothing at all. Three
+places enforce requirements, one for each way humus serves requests:
+&lt;code&gt;openapi.Security&lt;/code&gt; for an &lt;a href="https://z5labs.github.io/humus/pr-preview/pr-1309/services/http/openapi/"&gt;OpenAPI API&lt;/a&gt;,
+&lt;code&gt;auth.NewHandler&lt;/code&gt; for a plain &lt;code&gt;http.Handler&lt;/code&gt; served by
+&lt;a href="https://z5labs.github.io/humus/pr-preview/pr-1309/services/http/serving/"&gt;&lt;code&gt;httpserver&lt;/code&gt;&lt;/a&gt;, and
+&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/grpc/grpcauth"&gt;&lt;code&gt;grpcauth&lt;/code&gt;&lt;/a&gt;&amp;rsquo;s
+&lt;code&gt;Interceptors&lt;/code&gt; for a &lt;a href="https://z5labs.github.io/humus/pr-preview/pr-1309/services/grpc/serving/"&gt;&lt;code&gt;grpcserver&lt;/code&gt;&lt;/a&gt; Service.&lt;/p&gt;</description></item><item><title>Failure injection</title><link>https://z5labs.github.io/humus/pr-preview/pr-1309/hardening/failure-injection/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/pr-preview/pr-1309/hardening/failure-injection/</guid><description>&lt;p&gt;Failure injection lets one request fail on purpose, in production or in a
+test, without failing anyone else&amp;rsquo;s. A request carries a failure scenario in
+its OpenTelemetry baggage, and every injection point the request passes
+through, such as a call to a dependency, looks itself up in the scenario and
+learns whether to fail or slow down. The end user then sees how the whole
+service copes with a dependency that is down or slow: its retries, its
+breakers and its fallbacks.&lt;/p&gt;</description></item></channel></rss>
