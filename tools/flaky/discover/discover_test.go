@@ -241,27 +241,27 @@ func TestCheckGoVersion_warns_when_the_local_Go_is_not_CI_s(t *testing.T) {
 
 func TestWalkthroughs_finds_each_module_with_a_Dockerfile_and_a_deploy_kind_up_sh(t *testing.T) {
 	repo := t.TempDir()
-	repotest.Write(t, repo, "example/wallet/Dockerfile", "FROM scratch\n")
-	repotest.Write(t, repo, "example/wallet/deploy/kind/up.sh", "#!/bin/sh\n")
-	repotest.Write(t, repo, "example/mailer/Dockerfile", "FROM scratch\n")
-	repotest.Write(t, repo, "example/billing/deploy/kind/up.sh", "#!/bin/sh\n")
-	repotest.Write(t, repo, "example/orders/Dockerfile/x", "a directory isn't a Dockerfile\n")
-	repotest.Write(t, repo, "example/orders/deploy/kind/up.sh", "#!/bin/sh\n")
-	modules := []string{".", "example/billing", "example/mailer", "example/orders", "example/wallet"}
+	repotest.Write(t, repo, "example/grpc/wallet/Dockerfile", "FROM scratch\n")
+	repotest.Write(t, repo, "example/grpc/wallet/deploy/kind/up.sh", "#!/bin/sh\n")
+	repotest.Write(t, repo, "example/rabbitmq/mailer/Dockerfile", "FROM scratch\n")
+	repotest.Write(t, repo, "example/job/billing/deploy/kind/up.sh", "#!/bin/sh\n")
+	repotest.Write(t, repo, "example/kafka/orders/Dockerfile/x", "a directory isn't a Dockerfile\n")
+	repotest.Write(t, repo, "example/kafka/orders/deploy/kind/up.sh", "#!/bin/sh\n")
+	modules := []string{".", "example/job/billing", "example/rabbitmq/mailer", "example/kafka/orders", "example/grpc/wallet"}
 
 	found, err := discover.Walkthroughs(repo, modules)
 	require.NoError(t, err)
-	require.Equal(t, []discover.Walkthrough{{Module: "example/wallet", Name: "wallet"}}, found, "billing has no Dockerfile, mailer no up.sh, and orders' Dockerfile is a directory")
-	require.Equal(t, filepath.Join(repo, "example", "wallet", "Dockerfile"), found[0].Dockerfile(repo))
-	require.Equal(t, filepath.Join(repo, "example", "wallet", "deploy", "kind", "up.sh"), found[0].Up(repo))
+	require.Equal(t, []discover.Walkthrough{{Module: "example/grpc/wallet", Name: "wallet"}}, found, "billing has no Dockerfile, mailer no up.sh, and orders' Dockerfile is a directory")
+	require.Equal(t, filepath.Join(repo, "example", "grpc", "wallet", "Dockerfile"), found[0].Dockerfile(repo))
+	require.Equal(t, filepath.Join(repo, "example", "grpc", "wallet", "deploy", "kind", "up.sh"), found[0].Up(repo))
 
-	repotest.Write(t, repo, "example/mailer/deploy/kind/up.sh", "#!/bin/sh\n")
+	repotest.Write(t, repo, "example/rabbitmq/mailer/deploy/kind/up.sh", "#!/bin/sh\n")
 	found, err = discover.Walkthroughs(repo, modules)
 	require.NoError(t, err)
-	require.Equal(t, []discover.Walkthrough{{Module: "example/mailer", Name: "mailer"}, {Module: "example/wallet", Name: "wallet"}}, found, "a walkthrough added is found, with no change to flaky")
+	require.Equal(t, []discover.Walkthrough{{Module: "example/rabbitmq/mailer", Name: "mailer"}, {Module: "example/grpc/wallet", Name: "wallet"}}, found, "a walkthrough added is found, with no change to flaky")
 
 	repotest.Write(t, repo, "other/wallet/Dockerfile", "FROM scratch\n")
 	repotest.Write(t, repo, "other/wallet/deploy/kind/up.sh", "#!/bin/sh\n")
 	_, err = discover.Walkthroughs(repo, append(modules, "other/wallet"))
-	require.ErrorContains(t, err, "the walkthroughs example/wallet and other/wallet share the name wallet")
+	require.ErrorContains(t, err, "the walkthroughs example/grpc/wallet and other/wallet share the name wallet")
 }

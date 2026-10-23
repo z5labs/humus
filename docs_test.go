@@ -26,15 +26,16 @@ import (
 const docsContent = "docs/content"
 
 // walkthroughs is the docs site's Walkthroughs section. The pages of the
-// walkthrough of example/<name> are under walkthroughs/<name>/.
+// walkthrough of example/<type>/<name> are under walkthroughs/<type>/<name>/,
+// so each walkthrough's pages mirror its example's path.
 const walkthroughs = docsContent + "/walkthroughs"
 
 // TestDocs_code_samples checks that every code sample the docs site quotes is
 // taken from the code it documents. A Go sample on any other page must appear,
 // line for line, in a _test.go file of this module, so it is taken from a test
 // or a tested example. A Go, YAML, JSON, Dockerfile or protobuf sample on a
-// page under walkthroughs/<name>/ must appear, line for line, in a file under
-// example/<name>/, its _test.go files included, so it is taken from the
+// page under walkthroughs/<type>/<name>/ must appear, line for line, in a file
+// under example/<type>/<name>/, its _test.go files included, so it is taken from the
 // walkthrough's own code or tests. Files under hidden directories and
 // node_modules are not read for either rule. Indentation is compared relative
 // to the sample, so a sample may quote the body of a function or a nested
@@ -176,23 +177,23 @@ func TestSamples(t *testing.T) {
 
 func TestSampleProblems(t *testing.T) {
 	repo := fstest.MapFS{
-		"app_test.go":                         {Data: []byte("func TestApp(t *testing.T) {\n\tt.Log(\"ok\")\n}\n")},
-		"example/billing/main.go":             {Data: []byte("func main() {\n\thumus.Main(app.Init)\n}\n")},
-		"example/billing/main_test.go":        {Data: []byte("func TestMain(t *testing.T) {\n\tt.Log(\"only in a test\")\n}\n")},
-		"example/billing/deploy/job.yaml":     {Data: []byte("kind: CronJob\nspec:\n  schedule: \"0 2 * * *\"\n")},
-		"example/billing/wiremock/pay.json":   {Data: []byte("{\n  \"request\": {\n    \"method\": \"POST\"\n  }\n}\n")},
-		"example/billing/Dockerfile":          {Data: []byte("FROM gcr.io/distroless/static-debian12:nonroot\nUSER nonroot\n")},
-		"example/billing/proto/billing.proto": {Data: []byte("message Invoice {\n  string id = 1;\n}\n")},
-		"example/mailer/main.go":              {Data: []byte("func send() {\n\tdeliver()\n}\n")},
-		"example/mailer/main_test.go":         {Data: []byte("func TestSend(t *testing.T) {\n\tt.Log(\"only in the mailer's test\")\n}\n")},
-		"example/mailer/deploy/queue.yaml":    {Data: []byte("kind: Deployment\n")},
-		"example/mailer/wiremock/send.json":   {Data: []byte("{\n  \"status\": 202\n}\n")},
-		"example/mailer/Dockerfile":           {Data: []byte("ENTRYPOINT [\"/mailer\"]\n")},
-		"example/mailer/proto/mail.proto":     {Data: []byte("message Mail {}\n")},
+		"app_test.go":                                {Data: []byte("func TestApp(t *testing.T) {\n\tt.Log(\"ok\")\n}\n")},
+		"example/job/billing/main.go":                {Data: []byte("func main() {\n\thumus.Main(app.Init)\n}\n")},
+		"example/job/billing/main_test.go":           {Data: []byte("func TestMain(t *testing.T) {\n\tt.Log(\"only in a test\")\n}\n")},
+		"example/job/billing/deploy/job.yaml":        {Data: []byte("kind: CronJob\nspec:\n  schedule: \"0 2 * * *\"\n")},
+		"example/job/billing/wiremock/pay.json":      {Data: []byte("{\n  \"request\": {\n    \"method\": \"POST\"\n  }\n}\n")},
+		"example/job/billing/Dockerfile":             {Data: []byte("FROM gcr.io/distroless/static-debian12:nonroot\nUSER nonroot\n")},
+		"example/job/billing/proto/billing.proto":    {Data: []byte("message Invoice {\n  string id = 1;\n}\n")},
+		"example/rabbitmq/mailer/main.go":            {Data: []byte("func send() {\n\tdeliver()\n}\n")},
+		"example/rabbitmq/mailer/main_test.go":       {Data: []byte("func TestSend(t *testing.T) {\n\tt.Log(\"only in the mailer's test\")\n}\n")},
+		"example/rabbitmq/mailer/deploy/queue.yaml":  {Data: []byte("kind: Deployment\n")},
+		"example/rabbitmq/mailer/wiremock/send.json": {Data: []byte("{\n  \"status\": 202\n}\n")},
+		"example/rabbitmq/mailer/Dockerfile":         {Data: []byte("ENTRYPOINT [\"/mailer\"]\n")},
+		"example/rabbitmq/mailer/proto/mail.proto":   {Data: []byte("message Mail {}\n")},
 	}
 
 	const (
-		step    = walkthroughs + "/billing/step.md"
+		step    = walkthroughs + "/job/billing/step.md"
 		feature = docsContent + "/jobs.md"
 	)
 	cases := []struct {
@@ -224,6 +225,7 @@ func TestSampleProblems(t *testing.T) {
 		{"go from a walkthrough on a feature page", feature, "go", []string{"humus.Main(app.Init)"}, true},
 		{"yaml is unchecked on a feature page", feature, "yaml", []string{"kind: Pod"}, false},
 		{"the section's index keeps the feature pages' rule", walkthroughs + "/_index.md", "yaml", []string{"kind: Pod"}, false},
+		{"a service type's folder keeps the feature pages' rule", walkthroughs + "/job/_index.md", "yaml", []string{"kind: Pod"}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -257,7 +259,7 @@ func TestSampleProblems(t *testing.T) {
 
 func TestSampleProblems_missing_walkthrough(t *testing.T) {
 	fsys := fstest.MapFS{
-		walkthroughs + "/billing/step.md": {Data: []byte("```go\nfunc main() {}\n```\n")},
+		walkthroughs + "/job/billing/step.md": {Data: []byte("```go\nfunc main() {}\n```\n")},
 	}
 
 	_, err := sampleProblems(fsys)
@@ -389,10 +391,15 @@ func sampleProblems(repo fs.FS) ([]string, error) {
 	return problems, nil
 }
 
-// walkthroughName returns the name of the walkthrough whose pages include
-// page, or "" if page is not one of a walkthrough's pages.
+// walkthroughName returns the path, <type>/<name>, of the walkthrough whose
+// pages include page, which is its example's path under example/, or "" if
+// page is not one of a walkthrough's pages.
 func walkthroughName(page string) string {
 	rest, ok := strings.CutPrefix(page, walkthroughs+"/")
+	if !ok {
+		return ""
+	}
+	typ, rest, ok := strings.Cut(rest, "/")
 	if !ok {
 		return ""
 	}
@@ -400,7 +407,7 @@ func walkthroughName(page string) string {
 	if !ok {
 		return ""
 	}
-	return name
+	return typ + "/" + name
 }
 
 // sample is a fenced code block on a page: the line its fence opens on, the

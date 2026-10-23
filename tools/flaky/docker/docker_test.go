@@ -109,12 +109,12 @@ func TestBuild_builds_an_image_from_the_repository_s_root_tagged_as_asked(t *tes
 	dir := dockertest.Fake(t)
 	root := t.TempDir()
 	childEnv := env.Child(bedrock.OSEnvironment{})
-	require.NoError(t, docker.Build(t.Context(), root, root+"/example/wallet/Dockerfile", "wallet", childEnv))
-	require.Equal(t, "build --file "+root+"/example/wallet/Dockerfile --tag wallet . in "+root+"\n", dockertest.Read(t, dir, "builds"))
+	require.NoError(t, docker.Build(t.Context(), root, root+"/example/grpc/wallet/Dockerfile", "wallet", childEnv))
+	require.Equal(t, "build --file "+root+"/example/grpc/wallet/Dockerfile --tag wallet . in "+root+"\n", dockertest.Read(t, dir, "builds"))
 
 	dockertest.Touch(t, dir, "build-fails", "")
-	err := docker.Build(t.Context(), root, root+"/example/wallet/Dockerfile", "wallet", childEnv)
-	require.ErrorContains(t, err, "docker build --file "+root+"/example/wallet/Dockerfile --tag wallet .: exit status 1\nfailed to solve: no Dockerfile")
+	err := docker.Build(t.Context(), root, root+"/example/grpc/wallet/Dockerfile", "wallet", childEnv)
+	require.ErrorContains(t, err, "docker build --file "+root+"/example/grpc/wallet/Dockerfile --tag wallet .: exit status 1\nfailed to solve: no Dockerfile")
 }
 
 // upScript writes an up.sh to a new directory that records the

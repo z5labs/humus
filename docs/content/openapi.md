@@ -976,9 +976,9 @@ it.
 
 ## The shoppingcart
 
-The [shoppingcart walkthrough]({{< relref "walkthroughs/shoppingcart" >}})
+The [shoppingcart walkthrough]({{< relref "walkthroughs/http/shoppingcart" >}})
 builds an API on `openapi/v3` step by step, at
-[`example/shoppingcart`](https://github.com/z5labs/humus/tree/main/example/shoppingcart):
+[`example/http/shoppingcart`](https://github.com/z5labs/humus/tree/main/example/http/shoppingcart):
 a cart service, and a catalog service it prices items from, each an
 `openapi/v3` API served by `httpserver`. Of `openapi/v3`, it shows:
 
@@ -1066,5 +1066,5 @@ and bedrock's REST DSL beneath it. Its server half is `httpserver`, as
 | an error the catch-all answered: lost | an ERROR record and a span event |
 | a panic: bedrock's `RecoverPanics` around the runtime | the catch-all, recorded |
 | `otelhttp.NewHandler(h, "rest")` on the globals, spans named `rest` | `httpserver`'s instrumentation |
-| `example/rest/shoppingcart` in the root module; `os.Getenv("DATABASE_URL")` and `pgxpool.New` in `main` | the `example/shoppingcart` module; `Init` sources the URL, the pool dials through the `Host`, and `OnStop` closes it |
+| `example/rest/shoppingcart` in the root module; `os.Getenv("DATABASE_URL")` and `pgxpool.New` in `main` | the `example/http/shoppingcart` module; `Init` sources the URL, the pool dials through the `Host`, and `OnStop` closes it |
 | the example's `specs/` (a hand-written `api.yaml`, sequence diagrams) | dropped; the served document is the golden file |

@@ -678,7 +678,7 @@ func TestWriteJSON_gives_a_shuffled_failure_s_seed(t *testing.T) {
 }
 
 func TestReport_gives_a_test_at_a_level_of_one_pair_that_pair_alone(t *testing.T) {
-	functional := []discover.Package{{Module: "example/wallet", Dir: "example/wallet/functional", ImportPath: "github.com/z5labs/humus/example/wallet/functional", Level: "functional"}}
+	functional := []discover.Package{{Module: "example/grpc/wallet", Dir: "example/grpc/wallet/functional", ImportPath: "github.com/z5labs/humus/example/grpc/wallet/functional", Level: "functional"}}
 	r := results.New(results.Config{
 		Packages: functional, CPUs: []int{1, 2}, Loads: []int{1, 2}, Out: t.TempDir(),
 		Levels: []results.Level{{Name: "functional", Count: 10, Timeout: 15 * time.Minute, DefaultTimeout: 15 * time.Minute, CPU: 4, Load: 1}},
@@ -690,8 +690,8 @@ func TestReport_gives_a_test_at_a_level_of_one_pair_that_pair_alone(t *testing.T
 	w := rep.Flaky[0]
 	require.Equal(t, []results.Pair{{CPU: 4, Load: 1, Runs: 2, Failures: 1}}, w.Pairs, "its table has the one pair it ran at, though the sweep's pairs don't include it")
 	require.Equal(t, 4, w.FirstFailureCPU)
-	require.Equal(t, "flaky stress -tags functional -run '^TestW$' -count 10 ./example/wallet/functional", w.Reproduce, "its runs ignore -cpu and -load, so the command gives neither")
-	require.Equal(t, "taskset -c 0-3 go -C example/wallet test -race -cover -tags functional -count=10 -cpu 4 -timeout 15m0s -run '^TestW$' ./functional", w.ReproduceGoTest)
+	require.Equal(t, "flaky stress -tags functional -run '^TestW$' -count 10 ./example/grpc/wallet/functional", w.Reproduce, "its runs ignore -cpu and -load, so the command gives neither")
+	require.Equal(t, "taskset -c 0-3 go -C example/grpc/wallet test -race -cover -tags functional -count=10 -cpu 4 -timeout 15m0s -run '^TestW$' ./functional", w.ReproduceGoTest)
 
 	var buf bytes.Buffer
 	require.NoError(t, results.WriteJSON(&buf, rep))
@@ -702,7 +702,7 @@ func TestUpFailed_reports_the_walkthrough_by_name_with_its_error_s_last_lines(t 
 	r := results.New(results.Config{
 		Packages: pkgs, CPUs: []int{1}, Loads: []int{1}, Out: t.TempDir(),
 		Levels:       []results.Level{{Name: "unit", Count: 1}},
-		Walkthroughs: []discover.Walkthrough{{Module: "example/wallet", Name: "wallet"}, {Module: "example/mailer", Name: "mailer"}},
+		Walkthroughs: []discover.Walkthrough{{Module: "example/grpc/wallet", Name: "wallet"}, {Module: "example/rabbitmq/mailer", Name: "mailer"}},
 	})
 	r.Listed(1, []string{"TestH"})
 	require.NoError(t, r.Add(1, 1, 1, passed("TestH")))
@@ -712,14 +712,14 @@ func TestUpFailed_reports_the_walkthrough_by_name_with_its_error_s_last_lines(t 
 	for i := range 60 {
 		lines = append(lines, "line "+strconv.Itoa(i))
 	}
-	text := "example/mailer/deploy/kind/up.sh: exit status 1\n" + strings.Join(lines, "\n")
+	text := "example/rabbitmq/mailer/deploy/kind/up.sh: exit status 1\n" + strings.Join(lines, "\n")
 	require.NoError(t, r.UpFailed(1, errors.New(text)))
 	rep := r.Report()
 	require.True(t, rep.Failed(), "a cluster that didn't come up fails the sweep")
 	require.Len(t, rep.UpFailures, 1)
 	u := rep.UpFailures[0]
 	require.Equal(t, "mailer", u.Walkthrough)
-	require.Equal(t, "example/mailer", u.Module)
+	require.Equal(t, "example/rabbitmq/mailer", u.Module)
 	require.Len(t, u.Error, 51)
 	require.Equal(t, "…", u.Error[0])
 	require.Equal(t, "line 59", u.Error[50], "an error's last lines say why it failed")
@@ -729,13 +729,13 @@ func TestUpFailed_reports_the_walkthrough_by_name_with_its_error_s_last_lines(t 
 
 	var buf bytes.Buffer
 	require.NoError(t, results.WriteText(&buf, rep))
-	require.True(t, strings.HasPrefix(buf.String(), "UP FAILED: a walkthrough's cluster didn't come up, so its tests didn't run on it\n\nexample/mailer  mailer\n        …\n        line 10\n"), buf.String())
+	require.True(t, strings.HasPrefix(buf.String(), "UP FAILED: a walkthrough's cluster didn't come up, so its tests didn't run on it\n\nexample/rabbitmq/mailer  mailer\n        …\n        line 10\n"), buf.String())
 	require.Contains(t, buf.String(), "        line 59\n    output:    "+u.Output+"\n\n1 test passed every run\n")
 }
 
 func TestUpFailed_fails_when_the_error_cannot_be_saved(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "file")
 	require.NoError(t, os.WriteFile(file, nil, 0o644))
-	r := results.New(results.Config{Packages: pkgs, Out: file, Walkthroughs: []discover.Walkthrough{{Module: "example/wallet", Name: "wallet"}}})
+	r := results.New(results.Config{Packages: pkgs, Out: file, Walkthroughs: []discover.Walkthrough{{Module: "example/grpc/wallet", Name: "wallet"}}})
 	require.Error(t, r.UpFailed(0, errors.New("boom")))
 }

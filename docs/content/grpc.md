@@ -33,7 +33,7 @@ everything on this page is in
 [Proposal: gRPC services](https://github.com/z5labs/humus/discussions/681),
 with its [revision](https://github.com/z5labs/humus/discussions/681#discussioncomment-18988629).
 
-The [wallet walkthrough]({{< relref "walkthroughs/wallet" >}}) builds two
+The [wallet walkthrough]({{< relref "walkthroughs/grpc/wallet" >}}) builds two
 production-ready services on `grpcserver`, step by step: a ledger that only
 the internal CA's certificates may call, and a wallet behind bearer tokens
 that calls it and relays its watch.

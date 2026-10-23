@@ -9,9 +9,9 @@ on:
       - '**/go.mod'
       - '**/go.sum'
       - '.golangci.yaml'
-      - 'example/*/Dockerfile*'
-      - 'example/*/deploy/**'
-      - 'example/*/proto/**'
+      - 'example/*/*/Dockerfile*'
+      - 'example/*/*/deploy/**'
+      - 'example/*/*/proto/**'
       - '.github/scripts/**'
       - '.github/workflows/build.yaml'
   pull_request:
@@ -516,7 +516,7 @@ jobs:
             name: shoppingcart-testcontainers
 
         - name: Test
-          run: go -C example/shoppingcart test -count=1 -race -tags testcontainers ./...
+          run: go -C example/http/shoppingcart test -count=1 -race -tags testcontainers ./...
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache
@@ -561,7 +561,7 @@ jobs:
             path: ${{ steps.go-cache.outputs.path }}
 
   # The shoppingcart walkthrough's image, built from its Dockerfile with the
-  # repository as the context, since its module replaces humus with ../..,
+  # repository as the context, since its module replaces humus with ../../..,
   # and its base kustomization, rendered. up.sh then creates a kind cluster,
   # issues every certificate from a CA it generates, makes the roles'
   # passwords, Grafana's admin password and the signing key, and applies the
@@ -597,16 +597,16 @@ jobs:
             name: shoppingcart-kind
 
         - name: Build the image
-          run: docker build --file example/shoppingcart/Dockerfile --tag shoppingcart .
+          run: docker build --file example/http/shoppingcart/Dockerfile --tag shoppingcart .
 
         - name: Render the kustomization
-          run: kubectl kustomize example/shoppingcart/deploy/base
+          run: kubectl kustomize example/http/shoppingcart/deploy/base
 
         - name: Bring the shoppingcart up on kind
-          run: example/shoppingcart/deploy/kind/up.sh
+          run: example/http/shoppingcart/deploy/kind/up.sh
 
         - name: Run the functional tests against kind
-          run: go -C example/shoppingcart test -count=1 -race -tags functional ./functional/
+          run: go -C example/http/shoppingcart test -count=1 -race -tags functional ./functional/
 
         - name: Show the shoppingcart namespace
           if: ${{ failure() }}
@@ -650,7 +650,7 @@ jobs:
             name: billing-testcontainers
 
         - name: Test
-          run: go -C example/billing test -count=1 -race -tags testcontainers ./...
+          run: go -C example/job/billing test -count=1 -race -tags testcontainers ./...
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache
@@ -659,7 +659,7 @@ jobs:
             path: ${{ steps.go-cache.outputs.path }}
 
   # The billing walkthrough's image, built from its Dockerfile with the
-  # repository as the context, since its module replaces humus with ../..,
+  # repository as the context, since its module replaces humus with ../../..,
   # and its kustomization, rendered. up.sh then creates a kind cluster,
   # loads the image and applies the kind overlay, with the LGTM stack the
   # job's telemetry goes to, and one Job made from the CronJob's template has
@@ -692,13 +692,13 @@ jobs:
             name: billing-kind
 
         - name: Build the image
-          run: docker build --file example/billing/Dockerfile --tag billing .
+          run: docker build --file example/job/billing/Dockerfile --tag billing .
 
         - name: Render the kustomization
-          run: kubectl kustomize example/billing/deploy
+          run: kubectl kustomize example/job/billing/deploy
 
         - name: Bring the billing job up on kind
-          run: example/billing/deploy/kind/up.sh
+          run: example/job/billing/deploy/kind/up.sh
 
         - name: Run one Job from the CronJob's template
           run: |
@@ -713,7 +713,7 @@ jobs:
             fi
 
         - name: Run the functional tests against kind
-          run: go -C example/billing test -count=1 -race -tags functional ./functional/
+          run: go -C example/job/billing test -count=1 -race -tags functional ./functional/
 
         - name: Show the billing namespace
           if: ${{ failure() }}
@@ -754,7 +754,7 @@ jobs:
             name: orderstatus-testcontainers
 
         - name: Test
-          run: go -C example/orderstatus test -count=1 -race -tags testcontainers ./...
+          run: go -C example/kafka/orderstatus test -count=1 -race -tags testcontainers ./...
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache
@@ -764,7 +764,7 @@ jobs:
 
   # The order status walkthrough's image, built from its Dockerfile with the
   # repository as the context, since its module replaces humus and
-  # queue/kafka with paths under ../.., and its base kustomization, rendered.
+  # queue/kafka with paths under ../../.., and its base kustomization, rendered.
   # up.sh then creates a kind cluster, loads the image and applies the kind
   # overlay, with Kafka over mTLS with ACLs, its topics, and PostgreSQL over
   # TLS, and the LGTM stack behind an OpenTelemetry Collector, and the
@@ -798,19 +798,19 @@ jobs:
             name: orderstatus-kind
 
         - name: Build the image
-          run: docker build --file example/orderstatus/Dockerfile --tag orderstatus .
+          run: docker build --file example/kafka/orderstatus/Dockerfile --tag orderstatus .
 
         - name: Render the kustomization
-          run: kubectl kustomize example/orderstatus/deploy/base
+          run: kubectl kustomize example/kafka/orderstatus/deploy/base
 
         - name: Bring the order status processor up on kind
-          run: example/orderstatus/deploy/kind/up.sh
+          run: example/kafka/orderstatus/deploy/kind/up.sh
 
         - name: Wait for the order status processor's Deployment
           run: kubectl --namespace orderstatus rollout status deployment/orderstatus --timeout 5m
 
         - name: Run the shared cases against kind
-          run: go -C example/orderstatus test -count=1 -race -tags functional ./functional/
+          run: go -C example/kafka/orderstatus test -count=1 -race -tags functional ./functional/
 
         - name: Show the orderstatus namespace
           if: ${{ failure() }}
@@ -855,7 +855,7 @@ jobs:
             name: mailer-testcontainers
 
         - name: Test
-          run: go -C example/mailer test -count=1 -race -tags testcontainers ./...
+          run: go -C example/rabbitmq/mailer test -count=1 -race -tags testcontainers ./...
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache
@@ -865,7 +865,7 @@ jobs:
 
   # The mailer walkthrough's image, built from its Dockerfile with the
   # repository as the context, since its module replaces humus and
-  # queue/rabbitmq with paths under ../.., and its base kustomization,
+  # queue/rabbitmq with paths under ../../.., and its base kustomization,
   # rendered. up.sh then creates a kind cluster, loads the image and applies
   # the kind overlay, and the mailer's Deployment has to become ready. The
   # tests behind the functional tag then run the shared cases against it, and
@@ -894,19 +894,19 @@ jobs:
             name: mailer-kind
 
         - name: Build the image
-          run: docker build --file example/mailer/Dockerfile --tag mailer .
+          run: docker build --file example/rabbitmq/mailer/Dockerfile --tag mailer .
 
         - name: Render the kustomization
-          run: kubectl kustomize example/mailer/deploy/base
+          run: kubectl kustomize example/rabbitmq/mailer/deploy/base
 
         - name: Bring the mailer up on kind
-          run: example/mailer/deploy/kind/up.sh
+          run: example/rabbitmq/mailer/deploy/kind/up.sh
 
         - name: Wait for the mailer's Deployment
           run: kubectl --namespace mailer rollout status deployment/mailer --timeout 5m
 
         - name: Run the shared cases against kind
-          run: go -C example/mailer test -count=1 -race -tags functional ./functional/
+          run: go -C example/rabbitmq/mailer test -count=1 -race -tags functional ./functional/
 
         - name: Show the mailer namespace
           if: ${{ failure() }}
@@ -948,7 +948,7 @@ jobs:
             name: databases-testcontainers
 
         - name: Test
-          run: go -C example/databases test -count=1 -race -tags testcontainers ./...
+          run: go -C example/kube/databases test -count=1 -race -tags testcontainers ./...
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache
@@ -958,7 +958,7 @@ jobs:
 
   # The databases walkthrough's image, built from its Dockerfile with the
   # repository as the context, since its module replaces humus and kube with
-  # paths under ../.., and its kustomization, rendered. up.sh then creates a
+  # paths under ../../.., and its kustomization, rendered. up.sh then creates a
   # kind cluster, generates PostgreSQL's admin password, Grafana's admin
   # password and the probes' certificate, loads the image and applies the
   # kind overlay, with PostgreSQL beside the controller, the cases' namespace
@@ -996,22 +996,22 @@ jobs:
             name: databases-kind
 
         - name: Build the image
-          run: docker build --file example/databases/Dockerfile --tag databases .
+          run: docker build --file example/kube/databases/Dockerfile --tag databases .
 
         - name: Render the kustomization
-          run: kubectl kustomize example/databases/deploy
+          run: kubectl kustomize example/kube/databases/deploy
 
         - name: Bring the databases controller up on kind
-          run: example/databases/deploy/kind/up.sh
+          run: example/kube/databases/deploy/kind/up.sh
 
         - name: Wait for the databases controller's Deployment
           run: kubectl --namespace databases rollout status deployment/databases --timeout 5m
 
         - name: Check the Database beside up.sh against the CRD
-          run: kubectl apply --dry-run=server --namespace default --filename example/databases/deploy/kind/database.yaml
+          run: kubectl apply --dry-run=server --namespace default --filename example/kube/databases/deploy/kind/database.yaml
 
         - name: Run the shared cases against kind
-          run: go -C example/databases test -count=1 -race -tags functional ./functional/
+          run: go -C example/kube/databases test -count=1 -race -tags functional ./functional/
 
         - name: Show the databases namespace
           if: ${{ failure() }}
@@ -1066,7 +1066,7 @@ jobs:
             name: wallet-testcontainers
 
         - name: Test
-          run: go -C example/wallet test -count=1 -race -tags testcontainers ./...
+          run: go -C example/grpc/wallet test -count=1 -race -tags testcontainers ./...
 
         - name: Install buf
           uses: bufbuild/buf-action@85aebf73123b5c15fd5528aaecbf9129cddf7fa7 # v1.6.0
@@ -1075,13 +1075,13 @@ jobs:
             setup_only: true
 
         - name: Lint the contract
-          working-directory: example/wallet/proto
+          working-directory: example/grpc/wallet/proto
           run: buf lint
 
         - name: Check the contract for breaking changes against main
-          working-directory: example/wallet/proto
+          working-directory: example/grpc/wallet/proto
           run: |
-            against="$GITHUB_WORKSPACE/main/example/wallet/proto"
+            against="$GITHUB_WORKSPACE/main/example/grpc/wallet/proto"
             if [[ ! -f $against/buf.yaml ]]; then
               echo "::notice::main has no wallet contract yet, so nothing in it can break"
               exit 0
@@ -1089,12 +1089,12 @@ jobs:
             buf breaking --against "$against"
 
         - name: Generate the contract
-          working-directory: example/wallet/proto
+          working-directory: example/grpc/wallet/proto
           run: |
             buf generate
             git add --intent-to-add -- ..
             if ! git diff --exit-code -- ..; then
-              echo "::error::buf generate changed the checked-in code; run it in example/wallet/proto and commit the result"
+              echo "::error::buf generate changed the checked-in code; run it in example/grpc/wallet/proto and commit the result"
               exit 1
             fi
 
@@ -1105,7 +1105,7 @@ jobs:
             path: ${{ steps.go-cache.outputs.path }}
 
   # The wallet walkthrough's image, built from its Dockerfile with the
-  # repository as the context, since its module replaces humus with ../..,
+  # repository as the context, since its module replaces humus with ../../..,
   # and its base kustomization, rendered. up.sh then creates a kind cluster,
   # issues every certificate from a CA it generates, makes PostgreSQL's
   # passwords, Grafana's admin password and the signing key, whose key set
@@ -1145,16 +1145,16 @@ jobs:
             name: wallet-kind
 
         - name: Build the image
-          run: docker build --file example/wallet/Dockerfile --tag wallet .
+          run: docker build --file example/grpc/wallet/Dockerfile --tag wallet .
 
         - name: Render the kustomization
-          run: kubectl kustomize example/wallet/deploy/base
+          run: kubectl kustomize example/grpc/wallet/deploy/base
 
         - name: Bring the wallet and the ledger up on kind
-          run: example/wallet/deploy/kind/up.sh
+          run: example/grpc/wallet/deploy/kind/up.sh
 
         - name: Run the functional tests against kind
-          run: go -C example/wallet test -count=1 -race -tags functional ./functional/
+          run: go -C example/grpc/wallet test -count=1 -race -tags functional ./functional/
 
         - name: Show the wallet namespace
           if: ${{ failure() }}
