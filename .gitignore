@@ -8,6 +8,10 @@
 *.so
 *.dylib
 
+# go build ./... writes a module's executable into the module's directory
+# when main is the module's only package, so verifying a change builds this one.
+/example/job/hello/hello
+
 # Test binary, built with `go test -c`
 *.test
 

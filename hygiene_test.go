@@ -6,10 +6,15 @@
 package humus_test
 
 import (
+	"bytes"
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"io/fs"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -69,4 +74,66 @@ func TestModule_sets_the_OpenTelemetry_error_handler_once(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, calls, 1, "otel.SetErrorHandler is called at %v", calls)
 	require.True(t, strings.HasPrefix(calls[0], "app.go:"), "otel.SetErrorHandler is called at %s, want App.Run", calls[0])
+}
+
+// TestRepository_holds_no_compiled_executables checks every file git tracks,
+// and every untracked file it does not ignore, so every file git add -A would
+// commit: none is a compiled executable. go build ./... writes a module's
+// executable into the module's directory when main is the module's only
+// package, so the executable of a module like that has to be ignored, or
+// verifying a change leaves it behind to be committed.
+func TestRepository_holds_no_compiled_executables(t *testing.T) {
+	out, err := exec.CommandContext(t.Context(), "git", "ls-files", "-z", "--cached", "--others", "--exclude-standard").Output()
+	require.NoError(t, err)
+
+	magics := []struct {
+		format string
+		prefix []byte
+	}{
+		{"ELF", []byte("\x7fELF")},
+		{"Mach-O", []byte{0xfe, 0xed, 0xfa, 0xce}},
+		{"Mach-O", []byte{0xfe, 0xed, 0xfa, 0xcf}},
+		{"Mach-O", []byte{0xce, 0xfa, 0xed, 0xfe}},
+		{"Mach-O", []byte{0xcf, 0xfa, 0xed, 0xfe}},
+		{"Mach-O universal", []byte{0xca, 0xfe, 0xba, 0xbe}},
+		{"PE", []byte("MZ")},
+		{"WebAssembly", []byte("\x00asm")},
+	}
+	for _, path := range strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00") {
+		head, err := readHead(path, 4)
+		if errors.Is(err, fs.ErrNotExist) {
+			// Deleted from the working tree but not yet from the index.
+			continue
+		}
+		require.NoError(t, err)
+		for _, m := range magics {
+			if bytes.HasPrefix(head, m.prefix) {
+				t.Errorf("%s is a compiled %s executable", path, m.format)
+				break
+			}
+		}
+	}
+}
+
+// readHead returns up to the first n bytes of the regular file at path, and
+// nothing for anything else, such as a directory holding a nested repository.
+func readHead(path string, n int) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, nil
+	}
+	head := make([]byte, n)
+	k, err := io.ReadFull(f, head)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	return head[:k], nil
 }
