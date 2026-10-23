@@ -18,6 +18,13 @@ name: Release
 # releases it names the last one. Only this workflow changes them; Renovate is
 # told to leave them alone.
 #
+# The examples under example/ and the tools under tools/ are modules of their
+# own too, and are never tagged. Their requirements on humus modules are set
+# with the rest all the same: each replaces every humus module it requires by
+# the local directory, so its build selects the version the nested modules
+# require of the root module, and an example still naming the last release
+# would have a go.mod that is out of date and fail its checks.
+#
 # Releasing. Run this workflow from main with the version to release, vX.Y.Z,
 # optionally with a pre-release suffix such as v0.16.0-rc.1:
 #
@@ -27,10 +34,11 @@ name: Release
 #
 #   1. Bump. It checks the version and main with a dry run (below), then runs
 #      .github/scripts/release-modules.sh --bump, which sets every requirement
-#      between humus modules to the version. If that changes anything, it
-#      opens a pull request from release/<version>, waits for every check on
-#      it to pass, and merges it through the merge queue. The merge commit is
-#      the release commit. If nothing changes, main itself is.
+#      between humus modules to the version, and every requirement an example
+#      or a tool has on one, although those are never tagged. If that changes
+#      anything, it opens a pull request from release/<version>, waits for
+#      every check on it to pass, and merges it through the merge queue. The
+#      merge commit is the release commit. If nothing changes, main itself is.
 #   2. Tag. At the release commit, release-modules.sh creates <version> for the
 #      root module and <dir>/<version> for every nested module, in one atomic
 #      push, so a failure leaves no partial set.
@@ -50,19 +58,22 @@ name: Release
 # v0.16.0+build), a major version of 2 or more (those need /vN module paths
 # first), a nested module whose path is not its directory under
 # github.com/z5labs/humus, a release commit at which any requirement between
-# humus modules names another version (listing each), and a tag that already
-# exists at a different commit. A tag already at the release commit is
-# skipped. The modules are discovered at the release commit: every tracked
-# go.mod, except any under testdata or a directory starting with . or _, and
-# any module with no Go files of its own, such as the Hugo module under docs/.
+# humus modules, or any requirement an example or a tool has on one, names
+# another version (listing each), and a tag that already exists at a
+# different commit. A tag already at the release commit is skipped. The
+# modules are discovered at the release commit: every tracked go.mod, except
+# any under testdata or a directory starting with . or _, any module with no
+# Go files of its own, such as the Hugo module under docs/, and every module
+# under example/ or tools/, which is never tagged.
 #
 # Dry run. To see what a release of any commit would do, without changing
 # anything, run from a clone:
 #
 #   .github/scripts/release-modules.sh --dry-run --commit origin/main v0.16.0
 #
-# It makes every check and prints the requirements the bump would set and the
-# tags that would be created. To set the requirements in a working tree, as
+# It makes every check and prints the requirements the bump would set, in the
+# examples' and tools' go.mod files too, and the tags that would be created.
+# To set the requirements in a working tree, as
 # the bump does: .github/scripts/release-modules.sh --bump v0.16.0. The tests
 # for the script are .github/scripts/release-modules_test.sh, run by Build.
 #

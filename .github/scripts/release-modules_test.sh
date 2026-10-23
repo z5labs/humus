@@ -134,7 +134,9 @@ out=$(cd "$repo" && "$script" --list v0.16.0 2>&1) || fail "short name: exit $?"
 [[ $out == "skip go.mod: it holds no Go packages"$'\n'"$root/d" ]] || fail "short name: got"$'\n'"$out"
 
 # No module under example/ is released, whatever it requires, and saying so
-# for each one; an example's Go files are still its own, not its parent's.
+# for each one; an example's Go files are still its own, not its parent's. Its
+# requirements on released modules are still set to the version, as theirs
+# are, and tagging refuses a commit at which one names another version.
 repo=$(newrepo -.=$root grpc=$root/grpc example=$root/example \
   example/http/shoppingcart=$root/example/http/shoppingcart example/job/billing=$root/example/job/billing)
 printf '\nrequire github.com/z5labs/humus/grpc v0.15.0\n' >>"$repo/example/http/shoppingcart/go.mod"
@@ -145,16 +147,27 @@ expect_output "skip example/go.mod: under example/, whose modules are never rele
 expect_output "skip example/http/shoppingcart/go.mod: under example/, whose modules are never released" "examples"
 expect_output "skip example/job/billing/go.mod: under example/, whose modules are never released" "examples"
 expect_output "skip go.mod: it holds no Go packages" "examples"
+expect_output "would set example/http/shoppingcart/go.mod: require $root/grpc v0.16.0 (now v0.15.0)" "examples"
 expect_output "would create grpc/v0.16.0" "examples"
-grep -v '^skip example/' <<<"$out" | grep -q example && fail "examples: names an example outside its skip:"$'\n'"$out"
+reject_output 'would create example' "examples"
 out=$(cd "$repo" && "$script" --list v0.16.0 2>/dev/null) || fail "examples list: exit $?"
 [[ $out == "$root/grpc" ]] || fail "examples list: got"$'\n'"$out"
+run "$repo" v0.16.0
+expect_status 1 "examples stale"
+expect_output "example/http/shoppingcart/go.mod requires $root/grpc v0.15.0, want v0.16.0" "examples stale"
+[[ $(remote_tags "$repo") == "" ]] || fail "examples stale: pushed $(remote_tags "$repo")"
+run "$repo" --bump v0.16.0
+expect_status 0 "examples bump"
+expect_output "set example/http/shoppingcart/go.mod: require $root/grpc v0.16.0 (was v0.15.0)" "examples bump"
+commit "$repo" bump
 run "$repo" v0.16.0
 expect_status 0 "examples tag"
 [[ $(remote_tags "$repo") == "refs/tags/grpc/v0.16.0 " ]] || fail "examples tag: remote tags are $(remote_tags "$repo")"
 
 # No module under tools/ is released, whatever it requires, and saying so for
-# each one; a tool's Go files are still its own, not its parent's.
+# each one; a tool's Go files are still its own, not its parent's. Its
+# requirements on released modules are still set to the version, as theirs
+# are, and tagging refuses a commit at which one names another version.
 repo=$(newrepo -.=$root grpc=$root/grpc tools/flaky=$root/tools/flaky tools/other=$root/tools/other)
 printf '\nrequire github.com/z5labs/humus/grpc v0.15.0\n' >>"$repo/tools/flaky/go.mod"
 commit "$repo" tools
@@ -163,13 +176,89 @@ expect_status 0 "tools"
 expect_output "skip tools/flaky/go.mod: under tools/, whose modules are never released" "tools"
 expect_output "skip tools/other/go.mod: under tools/, whose modules are never released" "tools"
 expect_output "skip go.mod: it holds no Go packages" "tools"
+expect_output "would set tools/flaky/go.mod: require $root/grpc v0.16.0 (now v0.15.0)" "tools"
 expect_output "would create grpc/v0.16.0" "tools"
-grep -v '^skip tools/' <<<"$out" | grep -q tools && fail "tools: names a tool outside its skip:"$'\n'"$out"
+reject_output 'would create tools' "tools"
 out=$(cd "$repo" && "$script" --list v0.16.0 2>/dev/null) || fail "tools list: exit $?"
 [[ $out == "$root/grpc" ]] || fail "tools list: got"$'\n'"$out"
 run "$repo" v0.16.0
+expect_status 1 "tools stale"
+expect_output "tools/flaky/go.mod requires $root/grpc v0.15.0, want v0.16.0" "tools stale"
+[[ $(remote_tags "$repo") == "" ]] || fail "tools stale: pushed $(remote_tags "$repo")"
+run "$repo" --bump v0.16.0
+expect_status 0 "tools bump"
+expect_output "set tools/flaky/go.mod: require $root/grpc v0.16.0 (was v0.15.0)" "tools bump"
+commit "$repo" bump
+run "$repo" v0.16.0
 expect_status 0 "tools tag"
 [[ $(remote_tags "$repo") == "refs/tags/grpc/v0.16.0 " ]] || fail "tools tag: remote tags are $(remote_tags "$repo")"
+
+# An example that requires a nested module, which requires the root module,
+# builds only while its own requirement on the root names the version the
+# nested module requires. Every replace points at the local directories, so
+# its build selects the highest version any of them requires, and a go.mod
+# that names another is out of date. The bump sets the example's requirements
+# with the nested module's, so the example still builds after it.
+repo=$(newrepo .=$root grpc=$root/grpc example/grpc/wallet=$root/example/grpc/wallet)
+cat >>"$repo/grpc/go.mod" <<EOF
+
+require github.com/z5labs/humus $pseudo
+
+replace github.com/z5labs/humus => ../
+EOF
+cat >>"$repo/example/grpc/wallet/go.mod" <<EOF
+
+require (
+	github.com/z5labs/humus v0.15.0
+	github.com/z5labs/humus/grpc $pseudo
+)
+
+replace (
+	github.com/z5labs/humus => ../../..
+	github.com/z5labs/humus/grpc => ../../../grpc
+)
+EOF
+printf 'package p\n\nimport _ "github.com/z5labs/humus"\n' >"$repo/grpc/p.go"
+printf 'package p\n\nimport _ "github.com/z5labs/humus/grpc"\n' >"$repo/example/grpc/wallet/p.go"
+commit "$repo" "nested requirement"
+before=$(git -C "$repo" rev-parse HEAD)
+
+# golist lists the packages of the module at <dir> offline, with the Go
+# tool's defaults, leaving what it printed on stderr in $out.
+golist() {
+  status=0
+  out=$(GOFLAGS= GOWORK=off GOPROXY=off go -C "$1" list ./... 2>&1 >/dev/null) || status=$?
+}
+golist "$repo/example/grpc/wallet"
+expect_status 0 "nested requirement: example before the bump"
+
+run "$repo" --dry-run v0.16.0-rc.1
+expect_status 0 "nested requirement dry run"
+expect_output "skip example/grpc/wallet/go.mod: under example/, whose modules are never released" "nested requirement dry run"
+expect_output "would set grpc/go.mod: require $root v0.16.0-rc.1 (now $pseudo)" "nested requirement dry run"
+expect_output "would set example/grpc/wallet/go.mod: require $root v0.16.0-rc.1 (now v0.15.0)" "nested requirement dry run"
+expect_output "would set example/grpc/wallet/go.mod: require $root/grpc v0.16.0-rc.1 (now $pseudo)" "nested requirement dry run"
+expect_output "release v0.16.0-rc.1 at the commit that sets these requirements on top of $before" "nested requirement dry run"
+reject_output 'would create example' "nested requirement dry run"
+[[ $(git -C "$repo" status --porcelain) == "" ]] || fail "nested requirement dry run: changed the working tree"
+
+run "$repo" --bump v0.16.0-rc.1
+expect_status 0 "nested requirement bump"
+expect_output "set grpc/go.mod: require $root v0.16.0-rc.1 (was $pseudo)" "nested requirement bump"
+expect_output "set example/grpc/wallet/go.mod: require $root v0.16.0-rc.1 (was v0.15.0)" "nested requirement bump"
+expect_output "set example/grpc/wallet/go.mod: require $root/grpc v0.16.0-rc.1 (was $pseudo)" "nested requirement bump"
+grep -qF "replace (" "$repo/example/grpc/wallet/go.mod" ||
+  fail "nested requirement bump: dropped the replaces:"$'\n'"$(cat "$repo/example/grpc/wallet/go.mod")"
+for dir in . grpc example/grpc/wallet; do
+  golist "$repo/$dir"
+  expect_status 0 "nested requirement: $dir after the bump"
+done
+
+commit "$repo" bump
+run "$repo" v0.16.0-rc.1
+expect_status 0 "nested requirement tag"
+want="refs/tags/grpc/v0.16.0-rc.1 refs/tags/v0.16.0-rc.1 "
+[[ $(remote_tags "$repo") == "$want" ]] || fail "nested requirement tag: remote tags are $(remote_tags "$repo"), want $want"
 
 # Tagging pushes the root tag and every nested tag at the release commit.
 repo=$(newrepo .=$root grpc=$root/grpc queue/kafka=$root/queue/kafka -docs=$root)
