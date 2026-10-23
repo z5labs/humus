@@ -5,6 +5,23 @@ module:
   imports:
     - path: github.com/google/docsy
       disable: false
+      # Docsy's own mounts, less its favicons: the site's favicon is the humus
+      # mark, from static/favicons/ and layouts/_partials/favicons.html, and
+      # none of Docsy's icons is served beside it. Naming an import's mounts
+      # replaces the ones its hugo.yaml declares, so the rest are repeated as
+      # Docsy declares them for a Go module installation.
+      mounts:
+        - source: assets
+          target: assets
+        - source: i18n
+          target: i18n
+        - source: layouts
+          target: layouts
+        - source: static
+          target: static
+          excludeFiles: favicons/**
+        - source: assets/_vendor/bootstrap/scss
+          target: assets/vendor/bootstrap/scss/vendor
     - path: github.com/google/docsy/dependencies
       disable: false
 
