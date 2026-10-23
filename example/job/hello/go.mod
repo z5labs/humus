@@ -6,7 +6,7 @@ replace github.com/z5labs/humus => ../../..
 
 require (
 	github.com/z5labs/bedrock v0.25.0
-	github.com/z5labs/humus v0.0.0-00010101000000-000000000000
+	github.com/z5labs/humus v0.16.0-rc.1
 )
 
 require (

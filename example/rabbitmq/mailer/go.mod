@@ -15,8 +15,8 @@ require (
 	github.com/z5labs/bedrock/circuit v0.25.0
 	github.com/z5labs/bedrock/fit v0.25.0
 	github.com/z5labs/bedrock/retry v0.25.0
-	github.com/z5labs/humus v0.0.0-00010101000000-000000000000
-	github.com/z5labs/humus/queue/rabbitmq v0.0.0-00010101000000-000000000000
+	github.com/z5labs/humus v0.16.0-rc.1
+	github.com/z5labs/humus/queue/rabbitmq v0.16.0-rc.1
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/log v1.47.0
 	go.opentelemetry.io/otel/metric v1.47.0
