@@ -19,6 +19,14 @@
 # modules therefore names the release's version. --bump sets them; tagging
 # refuses a commit at which any of them names another version.
 #
+# The modules under example/ and tools/ are never tagged, but --bump sets
+# their requirements on the released modules too, and tagging checks them
+# with the rest. Every replace in such a module points at the local
+# directories, so its build selects the highest version that it or any humus
+# module it requires names. Once a nested module requires the root module at
+# the release's version, an example still naming the last one has a go.mod
+# that is out of date, and does not build.
+#
 # Usage:
 #
 #   release-modules.sh [--bump | --dry-run | --list] [--commit <rev>] [--remote <name>] <version>
@@ -29,9 +37,11 @@
 #                    module at it: <version> for the root module and
 #                    <dir>/<version> for each nested module
 #   --bump           set every requirement one humus module has on another to
-#                    <version>, in the go.mod files of the working tree
-#   --dry-run        make every check, print the requirements --bump would set
-#                    and the tags that would be created, and change nothing
+#                    <version>, in the go.mod files of the working tree,
+#                    those of the modules under example/ and tools/ included
+#   --dry-run        make every check, print the requirements --bump would set,
+#                    in the examples' and tools' go.mod files too, and the
+#                    tags that would be created, and change nothing
 #   --list           print the path of every module the release tags, one
 #                    per line, and touch no remote
 #   --commit <rev>   the release commit; defaults to HEAD. --bump works on the
@@ -42,7 +52,8 @@
 # Before any tag is created, the script checks that <version> is a Go module
 # version of major version 0 or 1, that every nested module's path is its
 # directory under the root module's path, that every requirement between
-# humus modules names <version>, and that no tag already exists at a different
+# humus modules, and every requirement an example or a tool has on a released
+# module, names <version>, and that no tag already exists at a different
 # commit. A tag that already exists at the release commit is skipped, so a
 # re-run is safe. The tags it does create are pushed in one atomic push, so a
 # failure leaves no partial set.
@@ -54,7 +65,8 @@
 # docs/, has nothing to release and is skipped. So is every module under
 # example/: an example is an application to copy, not a library to require.
 # And so is every module under tools/: a tool is for the repository's
-# maintainers, not a library to require.
+# maintainers, not a library to require. Neither is tagged or listed, but
+# both have their requirements on the released modules set, as above.
 
 set -euo pipefail
 
@@ -255,16 +267,20 @@ root=$(module_path go.mod)
 [[ -n $root ]] || die "go.mod declares no module path"
 
 # An example's or a tool's module stays among dirs above, so its Go files are
-# its own and not its parent's, but it is never released.
+# its own and not its parent's, but it is never released. Its requirements on
+# the released modules are still pinned to the version, with theirs.
 modules=()
+pinned=()
 for dir in "${dirs[@]}"; do
   case "$dir" in
   example | example/*)
     echo "skip $(gomod "$dir"): under example/, whose modules are never released" >&2
+    pinned+=("$dir")
     continue
     ;;
   tools | tools/*)
     echo "skip $(gomod "$dir"): under tools/, whose modules are never released" >&2
+    pinned+=("$dir")
     continue
     ;;
   esac
@@ -273,6 +289,7 @@ for dir in "${dirs[@]}"; do
     continue
   fi
   modules+=("$dir")
+  pinned+=("$dir")
 done
 
 # Every nested module's tag resolves only if its path is its directory under
@@ -304,10 +321,10 @@ if [[ $mode == list ]]; then
   exit 0
 fi
 
-# Every requirement one released module has on another that does not name
-# the release's version.
+# Every requirement a released module, an example or a tool has on a released
+# module that does not name the release's version.
 stale=()
-for dir in "${modules[@]}"; do
+for dir in "${pinned[@]}"; do
   file=$(gomod "$dir")
   while read -r path have; do
     if [[ -n ${released[$path]:-} && $have != "$version" ]]; then
@@ -318,7 +335,7 @@ done
 
 if [[ $mode == bump ]]; then
   if [[ ${#stale[@]} -eq 0 ]]; then
-    echo "every requirement between humus modules already names $version"
+    echo "every requirement on a released humus module already names $version"
     exit 0
   fi
   for entry in "${stale[@]}"; do
@@ -335,7 +352,7 @@ if [[ ${#stale[@]} -gt 0 ]]; then
       read -r file path have <<<"$entry"
       echo "release-modules: $file requires $path $have, want $version" >&2
     done
-    die "every requirement between humus modules must name $version at the release commit $sha: set them with release-modules.sh --bump $version and merge the change first"
+    die "every requirement on a released humus module must name $version at the release commit $sha: set them with release-modules.sh --bump $version and merge the change first"
   fi
   for entry in "${stale[@]}"; do
     read -r file path have <<<"$entry"
