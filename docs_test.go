@@ -37,6 +37,10 @@ const (
 	gettingStartedExample = "job/hello"
 )
 
+// readme is the repository's README. Its service is the Getting started
+// page's, so its samples are taken from the same example.
+const readme = "README.md"
+
 // TestDocs_code_samples checks that every code sample the docs site quotes is
 // taken from the code it documents. A Go sample on any other page must appear,
 // line for line, in a _test.go file of this module, so it is taken from a test
@@ -44,7 +48,8 @@ const (
 // page under walkthroughs/<type>/<name>/ must appear, line for line, in a file
 // under example/<type>/<name>/, its _test.go files included, so it is taken from the
 // walkthrough's own code or tests. The Getting started page follows the same
-// rule for the service it builds, under example/job/hello/. Files under hidden directories and
+// rule for the service it builds, under example/job/hello/, and so does the
+// README, whose service is the same one. Files under hidden directories and
 // node_modules are not read for either rule. Indentation is compared relative
 // to the sample, so a sample may quote the body of a function or a nested
 // block.
@@ -185,6 +190,8 @@ func TestSamples(t *testing.T) {
 
 func TestSampleProblems(t *testing.T) {
 	repo := fstest.MapFS{
+		readme:                                       {Data: []byte("# Humus\n")},
+		docsContent + "/_index.md":                   {Data: []byte("# Humus\n")},
 		"app_test.go":                                {Data: []byte("func TestApp(t *testing.T) {\n\tt.Log(\"ok\")\n}\n")},
 		"example/job/billing/main.go":                {Data: []byte("func main() {\n\thumus.Main(app.Init)\n}\n")},
 		"example/job/billing/main_test.go":           {Data: []byte("func TestMain(t *testing.T) {\n\tt.Log(\"only in a test\")\n}\n")},
@@ -240,6 +247,11 @@ func TestSampleProblems(t *testing.T) {
 		{"go from a walkthrough on the getting started page", gettingStarted, "go", []string{"humus.Main(app.Init)"}, true},
 		{"sh is unchecked on the getting started page", gettingStarted, "sh", []string{"go run ."}, false},
 		{"go from the getting started service on a feature page", feature, "go", []string{"say()"}, true},
+		{"go from the getting started service in the README", readme, "go", []string{"say()"}, false},
+		{"go from the getting started service's test in the README", readme, "go", []string{"t.Log(\"greeted\")"}, false},
+		{"go from a test outside example in the README", readme, "go", []string{"t.Log(\"ok\")"}, true},
+		{"go from a walkthrough in the README", readme, "go", []string{"humus.Main(app.Init)"}, true},
+		{"sh is unchecked in the README", readme, "sh", []string{"go get github.com/z5labs/humus@main"}, false},
 		{"the section's index keeps the feature pages' rule", walkthroughs + "/_index.md", "yaml", []string{"kind: Pod"}, false},
 		{"a service type's folder keeps the feature pages' rule", walkthroughs + "/job/_index.md", "yaml", []string{"kind: Pod"}, false},
 	}
@@ -275,6 +287,7 @@ func TestSampleProblems(t *testing.T) {
 
 func TestSampleProblems_missing_walkthrough(t *testing.T) {
 	fsys := fstest.MapFS{
+		readme:                                {Data: []byte("# Humus\n")},
 		walkthroughs + "/job/billing/step.md": {Data: []byte("```go\nfunc main() {}\n```\n")},
 	}
 
@@ -351,8 +364,8 @@ var walkthroughLangs = map[string]string{
 }
 
 // sampleProblems checks the samples on every page of the docs site in repo,
-// the repository's root, and describes each one that is not taken from the
-// files its page's rule allows.
+// the repository's root, and in its README, and describes each one that is
+// not taken from the files its page's rule allows.
 func sampleProblems(repo fs.FS) ([]string, error) {
 	tests, err := sources(repo, ".", func(p string) bool { return strings.HasSuffix(p, "_test.go") })
 	if err != nil {
@@ -361,11 +374,7 @@ func sampleProblems(repo fs.FS) ([]string, error) {
 	examples := map[string]*corpus{}
 	var problems []string
 	pages := 0
-	err = fs.WalkDir(repo, docsContent, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || path.Ext(p) != ".md" {
-			return err
-		}
-		pages++
+	check := func(p string) error {
 		b, err := fs.ReadFile(repo, p)
 		if err != nil {
 			return err
@@ -397,6 +406,13 @@ func sampleProblems(repo fs.FS) ([]string, error) {
 			}
 		}
 		return nil
+	}
+	err = fs.WalkDir(repo, docsContent, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || path.Ext(p) != ".md" {
+			return err
+		}
+		pages++
+		return check(p)
 	})
 	if err != nil {
 		return nil, err
@@ -404,15 +420,19 @@ func sampleProblems(repo fs.FS) ([]string, error) {
 	if pages == 0 {
 		return nil, fmt.Errorf("no pages found under %s", docsContent)
 	}
+	if err := check(readme); err != nil {
+		return nil, err
+	}
 	return problems, nil
 }
 
 // exampleName returns the path, <type>/<name>, under example/ of the example
 // whose files the samples on page are taken from: the Getting started page's
-// service, or the walkthrough page's example. It returns "" for any other
-// page, whose Go samples are taken from the _test.go files of this module.
+// service, which is the README's too, or the walkthrough page's example. It
+// returns "" for any other page, whose Go samples are taken from the _test.go
+// files of this module.
 func exampleName(page string) string {
-	if page == gettingStarted {
+	if page == gettingStarted || page == readme {
 		return gettingStartedExample
 	}
 	return walkthroughName(page)
@@ -600,4 +620,96 @@ func dedent(lines []string) []string {
 		}
 	}
 	return out
+}
+
+// docsSite is the URL the docs site is published at.
+const docsSite = "https://z5labs.github.io/humus/"
+
+// TestReadme_links checks that every link in the README to the docs site
+// names a page of it, and that every relative link names a file or folder of
+// the repository. Other links are not followed.
+func TestReadme_links(t *testing.T) {
+	b, err := os.ReadFile(readme)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targets := readmeLinks(string(b))
+	if len(targets) == 0 {
+		t.Fatalf("found no links in %s", readme)
+	}
+	for _, target := range targets {
+		if page, ok := strings.CutPrefix(target, docsSite); ok {
+			page = strings.TrimSuffix(page, "/")
+			found := false
+			for _, f := range []string{page + ".md", path.Join(page, "_index.md")} {
+				if _, err := os.Stat(path.Join(docsContent, f)); err == nil {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("%s: %s names no page under %s", readme, target, docsContent)
+			}
+			continue
+		}
+		if strings.Contains(target, "://") {
+			continue
+		}
+		if _, err := os.Stat(target); err != nil {
+			t.Errorf("%s: %s: %v", readme, target, err)
+		}
+	}
+}
+
+func TestReadmeLinks(t *testing.T) {
+	page := strings.Join([]string{
+		`<source srcset="docs/a.svg">`,
+		`<img src="docs/b.svg" alt="">`,
+		"[A](https://example.com/a) and [`b`](example/b), [![badge](c.svg)](https://d)",
+		"```sh",
+		"[not](a/link)",
+		"```",
+	}, "\n")
+
+	got := readmeLinks(page)
+
+	want := []string{"docs/a.svg", "docs/b.svg", "https://example.com/a", "example/b", "c.svg", "https://d"}
+	if !slices.Equal(got, want) {
+		t.Errorf("readmeLinks() = %q, want %q", got, want)
+	}
+}
+
+// readmeLinks returns the targets of the Markdown links and images and of the
+// src and srcset attributes in page, outside its fenced code blocks.
+func readmeLinks(page string) []string {
+	var targets []string
+	fenced := false
+	for _, l := range strings.Split(page, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(l), "```") {
+			fenced = !fenced
+			continue
+		}
+		if fenced {
+			continue
+		}
+		for _, open := range []string{"](", `src="`, `srcset="`} {
+			closing := ")"
+			if open != "](" {
+				closing = `"`
+			}
+			rest := l
+			for {
+				_, after, ok := strings.Cut(rest, open)
+				if !ok {
+					break
+				}
+				target, after, ok := strings.Cut(after, closing)
+				if !ok {
+					break
+				}
+				targets = append(targets, target)
+				rest = after
+			}
+		}
+	}
+	return targets
 }
