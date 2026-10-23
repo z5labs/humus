@@ -3,7 +3,7 @@ title: Getting started
 linkTitle: Getting started
 description: >
   From an empty folder to a humus service that runs with go run and passes a
-  test that runs it whole with humustest.Start, with nothing but a Go
+  test that runs the whole App with humustest.Start, with nothing but a Go
   toolchain.
 type: docs
 weight: 10
