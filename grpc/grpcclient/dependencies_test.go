@@ -396,15 +396,20 @@ func startPod(t *testing.T, h *humustest.Host, ca *humustest.CA, name string, op
 // startPodServing runs the dependency's pod at addr on host, as startPod
 // does, serving srv, with app applied to its App after grpcserver's
 // defaults, and returns once listening is closed or the pod's App has
-// exited, whichever is first. It returns a function that sends the pod
-// SIGTERM once the App is registered for it, and returns the App's exit
-// status once it has exited. A pod whose App exits on its own, as when its
-// Listen fails, is not sent SIGTERM: the function returns its exit status,
-// and neither wait outlives the App.
+// exited, whichever is first. It returns a function that stops the pod and
+// returns its App's exit status. The function sends the pod SIGTERM only
+// while its App is serving: its Init has returned the pod's Service, no
+// Serve has returned, the pod has not been sent SIGTERM, and t has not
+// ended, which ends the App's context. A pod whose App has exited, or is
+// exiting, on its own, as when its Listen fails, is never sent SIGTERM:
+// the function waits for that App's exit status and returns it. Calling
+// the function again returns the same status.
 func startPodServing(t *testing.T, host humus.Host, ca *humustest.CA, addr string, srv testpb.TestServiceServer, listening <-chan struct{}, opts []grpc.ServerOption, app ...humus.Option) (stop func() bedrock.ExitStatus) {
 	t.Helper()
 	cert := ca.Issue(t, "ledger")
+	life := &podLife{inited: make(chan struct{})}
 	p, exit := grpcservertest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		defer close(life.inited)
 		settings := grpcserver.Settings{
 			Addr: addr,
 			TLS:  &tls.Config{Certificates: []tls.Certificate{cert.TLS()}},
@@ -414,22 +419,58 @@ func startPodServing(t *testing.T, host humus.Host, ca *humustest.CA, addr strin
 			return nil, err
 		}
 		testpb.RegisterTestServiceServer(svc, srv)
-		return []humus.Service{svc}, nil
+		life.mu.Lock()
+		life.serving = true
+		life.mu.Unlock()
+		return []humus.Service{podService{Service: svc, life: life}}, nil
 	}, humustest.WithApp(append([]humus.Option{humus.WithHost(host), humus.WithTelemetry(telemetry.NoopBuilder)}, app...)...))
 	select {
 	case <-listening:
 	case st := <-exit:
 		return func() bedrock.ExitStatus { return st }
 	}
-	return func() bedrock.ExitStatus {
+	return sync.OnceValue(func() bedrock.ExitStatus {
 		select {
-		case <-p.Notified(syscall.SIGTERM):
-			p.Signal(syscall.SIGTERM)
-			return <-exit
+		case <-life.inited:
 		case st := <-exit:
 			return st
 		}
-	}
+		life.mu.Lock()
+		if life.serving && t.Context().Err() == nil {
+			life.serving = false
+			p.Signal(syscall.SIGTERM)
+		}
+		life.mu.Unlock()
+		return <-exit
+	})
+}
+
+// podLife is what a pod's stop knows of the pod's App. The App listens for
+// SIGTERM before it calls Init, and stops listening only when Init fails,
+// once a Serve has returned, or once it is sent a signal or its context
+// ends. Init sets serving, and each Serve clears it, under mu, before the
+// App sees what they returned. So while mu is held, an App that is serving,
+// and whose context has not ended, is still listening for SIGTERM.
+type podLife struct {
+	inited  chan struct{} // closed once Init has returned
+	mu      sync.Mutex
+	serving bool
+}
+
+// podService is a pod's Service, whose Serve clears life's serving before
+// it returns.
+type podService struct {
+	humus.Service
+
+	life *podLife
+}
+
+func (s podService) Serve(ctx context.Context) error {
+	err := s.Service.Serve(ctx)
+	s.life.mu.Lock()
+	s.life.serving = false
+	s.life.mu.Unlock()
+	return err
 }
 
 // service is the dependency's Kubernetes ClusterIP Service. A Dial of
@@ -1320,6 +1361,48 @@ func TestClient_over_TCP_a_pod_stops_when_another_pod_already_listens_on_its_add
 	require.NotZero(t, st.Code(), "ledger-a exits on its own")
 	require.ErrorIs(t, st.Cause(), syscall.EADDRINUSE)
 	require.ErrorContains(t, st.Cause(), addrA)
+}
+
+// Another pod listens on ledger-a's address, so ledger-a's Listen fails, and
+// its App exits on its own. ledger-a's Init is held once it has failed,
+// before its App stops listening for SIGTERM, and ledger-a's stop is called
+// then. stop must not send ledger-a SIGTERM, and must return its App's exit
+// status.
+func TestClient_a_pods_stop_called_once_its_App_has_failed_on_its_own_returns_its_exit_status_without_signalling_it(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ca := humustest.NewCA(t)
+		h := humustest.NewHost(t)
+		stopOther := startPod(t, h, ca, "ledger-a")
+
+		failed, release := make(chan struct{}), make(chan struct{})
+		var signalled error
+		holdFailedInit := func(a *humus.App) {
+			init := a.Init
+			a.Init = func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+				svcs, err := init(ctx, s)
+				if err != nil {
+					close(failed)
+					<-release
+					signalled = context.Cause(ctx)
+				}
+				return svcs, err
+			}
+		}
+		stopA := startPodServing(t, h.Host(), ca, "ledger-a:9090", &pod{name: "ledger-a"}, h.Listening("ledger-a:9090"), nil, holdFailedInit)
+		<-failed
+
+		exit := make(chan bedrock.ExitStatus, 1)
+		go func() { exit <- stopA() }()
+		synctest.Wait()
+		close(release)
+		st := <-exit
+
+		require.NoError(t, signalled, "ledger-a is not sent SIGTERM once its Init has failed")
+		require.Equal(t, humus.ExitFailure, st.Code())
+		require.ErrorIs(t, st.Cause(), syscall.EADDRINUSE)
+		require.Equal(t, st, stopA(), "a second stop returns the same status")
+		require.Zero(t, stopOther().Code())
+	})
 }
 
 // The rollout of the 8 server streams case with a connection held in its
