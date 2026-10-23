@@ -136,14 +136,14 @@ out=$(cd "$repo" && "$script" --list v0.16.0 2>&1) || fail "short name: exit $?"
 # No module under example/ is released, whatever it requires, and saying so
 # for each one; an example's Go files are still its own, not its parent's.
 repo=$(newrepo -.=$root grpc=$root/grpc example=$root/example \
-  example/shoppingcart=$root/example/shoppingcart example/billing=$root/example/billing)
-printf '\nrequire github.com/z5labs/humus/grpc v0.15.0\n' >>"$repo/example/shoppingcart/go.mod"
+  example/http/shoppingcart=$root/example/http/shoppingcart example/job/billing=$root/example/job/billing)
+printf '\nrequire github.com/z5labs/humus/grpc v0.15.0\n' >>"$repo/example/http/shoppingcart/go.mod"
 commit "$repo" examples
 run "$repo" --dry-run v0.16.0
 expect_status 0 "examples"
 expect_output "skip example/go.mod: under example/, whose modules are never released" "examples"
-expect_output "skip example/shoppingcart/go.mod: under example/, whose modules are never released" "examples"
-expect_output "skip example/billing/go.mod: under example/, whose modules are never released" "examples"
+expect_output "skip example/http/shoppingcart/go.mod: under example/, whose modules are never released" "examples"
+expect_output "skip example/job/billing/go.mod: under example/, whose modules are never released" "examples"
 expect_output "skip go.mod: it holds no Go packages" "examples"
 expect_output "would create grpc/v0.16.0" "examples"
 grep -v '^skip example/' <<<"$out" | grep -q example && fail "examples: names an example outside its skip:"$'\n'"$out"

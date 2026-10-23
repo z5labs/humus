@@ -848,10 +848,10 @@ require.Equal(t, http.StatusForbidden, r.status)
 require.Equal(t, []string{`Bearer error="insufficient_scope", scope="carts:write"`}, r.challenges())
 ```
 
-The shoppingcart at `example/shoppingcart` does the same, on the humustest
+The shoppingcart at `example/http/shoppingcart` does the same, on the humustest
 Host in its unit tests, and in its shared cases, which also run against
 PostgreSQL and WireMock in containers and on kind; its walkthrough's
-[Testing]({{< relref "walkthroughs/shoppingcart/testing" >}}) describes them.
+[Testing]({{< relref "walkthroughs/http/shoppingcart/testing" >}}) describes them.
 A test of an `auth.NewHandler` or a `grpcauth` Service needs no identity
 provider when its schemes aren't JWTs: the admin API's test keeps
 its directory in memory, with passwords from `crypto/rand`, and presents a

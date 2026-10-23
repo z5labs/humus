@@ -67,7 +67,7 @@
 // did.
 //
 // Packages are patterns from the repository's root, such as ./grpc/... or
-// ./example/wallet/app. With none, it runs every module that
+// ./example/grpc/wallet/app. With none, it runs every module that
 // .github/scripts/go-modules.sh lists.
 //
 //	flaky report -results file -package path -test name -description file

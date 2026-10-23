@@ -358,7 +358,7 @@ func (m matcher) overlaps(module string) bool {
 // the functional level.
 type Walkthrough struct {
 	// Module is its module's directory, relative to the repository's
-	// root, such as example/wallet.
+	// root, such as example/grpc/wallet.
 	Module string `json:"module"`
 	// Name is its directory's name, such as wallet, which its image is
 	// tagged with.

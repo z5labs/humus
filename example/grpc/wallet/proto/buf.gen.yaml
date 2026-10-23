@@ -1,0 +1,8 @@
+version: v2
+plugins:
+  - local: ["go", "tool", "protoc-gen-go"]
+    out: ..
+    opt: module=github.com/z5labs/humus/example/grpc/wallet
+  - local: ["go", "tool", "protoc-gen-go-grpc"]
+    out: ..
+    opt: module=github.com/z5labs/humus/example/grpc/wallet
