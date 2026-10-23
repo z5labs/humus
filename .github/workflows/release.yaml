@@ -36,9 +36,11 @@ name: Release
 #      .github/scripts/release-modules.sh --bump, which sets every requirement
 #      between humus modules to the version, and every requirement an example
 #      or a tool has on one, although those are never tagged. If that changes
-#      anything, it opens a pull request from release/<version>, waits for
-#      every check on it to pass, and merges it through the merge queue. The
-#      merge commit is the release commit. If nothing changes, main itself is.
+#      anything, it commits the change to release/<version> through GitHub's
+#      API, so that GitHub signs the commit (see One-time setup), opens a pull
+#      request from that branch, waits for every check on it to pass, and
+#      merges it through the merge queue. The merge commit is the release
+#      commit. If nothing changes, main itself is.
 #   2. Tag. At the release commit, release-modules.sh creates <version> for the
 #      root module and <dir>/<version> for every nested module, in one atomic
 #      push, so a failure leaves no partial set.
@@ -86,6 +88,13 @@ name: Release
 #     the pull request stays open. Fix the cause on main and run the workflow
 #     again; it pushes a fresh bump to release/<version> and reuses the pull
 #     request. Close the pull request instead to abandon the release.
+#   - GitHub kept the bump pull request out of the merge queue after every
+#     check on it passed: the run stops ten minutes later with an error that
+#     names the pull request and its merge state, BLOCKED when a rule on main
+#     other than its checks is not met, such as a required approval, or DIRTY
+#     when it conflicts with main. The pull request stays open and armed to
+#     merge. Clear the cause and run the workflow again; if the pull request
+#     merged meanwhile, the new run has nothing to bump and releases main.
 #   - Tag failed: no tag was pushed. Use "Re-run failed jobs", which keeps the
 #     release commit. A new run would tag the head of main instead.
 #   - Resolve failed: the tags exist and must never move, because the proxy
@@ -101,10 +110,18 @@ name: Release
 #
 # One-time setup. A pull request opened, or a merge requested, with this
 # workflow's own GITHUB_TOKEN starts no workflow runs, so the bump pull request
-# would never get its checks. The bump is therefore pushed and merged by the
-# GitHub App the backlog's auto-merge workflow uses, from the repository
+# would never get its checks. The bump is therefore committed and merged by
+# the GitHub App the backlog's auto-merge workflow uses, from the repository
 # secrets BACKLOG_APP_ID and BACKLOG_APP_KEY; it needs Contents and Pull
 # requests set to write.
+#
+# The ruleset on main accepts only commits with a verified signature, and a
+# commit made with git in the runner has none. So the bump commit is not made
+# with git: the workflow creates its tree and commit through GitHub's REST API
+# (git/trees and git/commits) with the App's token, giving no author,
+# committer or signature of its own, and moves release/<version> to it.
+# GitHub signs a commit made that way as the App, which is also its author.
+# That needs no permission beyond the two above, and no signing key.
 on:
   workflow_dispatch:
     inputs:
@@ -204,23 +221,58 @@ jobs:
             echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           fi
 
+      # The bump commit is made through GitHub's API, not with git, so that
+      # GitHub signs it as the App (see One-time setup). The tree GitHub builds
+      # must be the one git writes from the working tree, which shows the
+      # commit changes exactly the files release-modules.sh --bump changed.
+      # The branch moves straight to the new commit, never through main:
+      # GitHub marks a pull request whose head is already on main as merged.
       - name: Open the bump pull request
         id: pr
         if: steps.tagged.outputs.commit == '' && steps.bump.outputs.commit == ''
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          bot="$APP_SLUG[bot]"
-          id=$(gh api "users/$bot" --jq .id)
-          git config user.name "$bot"
-          git config user.email "$id+$bot@users.noreply.github.com"
-
           branch="release/$VERSION"
           title="chore(release): require $VERSION between humus modules"
-          git commit --quiet --all --message "$title"
-          git push --force origin "HEAD:refs/heads/$branch"
+
+          main=$(git rev-parse HEAD)
+          git add --update
+          want=$(git write-tree)
+          git diff --cached --name-only > "$RUNNER_TEMP/bump-files.txt"
+          entries='[]'
+          while read -r file; do
+            if [ -e "$file" ]; then
+              mode=$(git ls-files --stage -- "$file" | cut -d' ' -f1)
+              entries=$(jq --arg path "$file" --arg mode "$mode" --rawfile content "$file" \
+                '. + [{path: $path, mode: $mode, type: "blob", content: $content}]' <<< "$entries")
+            else
+              entries=$(jq --arg path "$file" '. + [{path: $path, mode: "100644", type: "blob", sha: null}]' <<< "$entries")
+            fi
+          done < "$RUNNER_TEMP/bump-files.txt"
+          tree=$(jq -n --arg base "$(git rev-parse 'HEAD^{tree}')" --argjson tree "$entries" '{base_tree: $base, tree: $tree}' |
+            gh api "repos/$REPO/git/trees" --input - --jq .sha)
+          if [ "$tree" != "$want" ]; then
+            echo "::error title=Bump tree differs::GitHub built the tree $tree for the bump, but release-modules.sh --bump left the tree $want"
+            exit 1
+          fi
+
+          read -r commit verified reason < <(
+            gh api "repos/$REPO/git/commits" -f message="$title" -f tree="$tree" -f "parents[]=$main" \
+              --jq '[.sha, .verification.verified, .verification.reason] | @tsv'
+          )
+          if [ "$verified" != true ]; then
+            echo "::error title=Bump not signed::GitHub did not sign the bump commit $commit (${reason:-no verification reported}), and main accepts only signed commits"
+            exit 1
+          fi
+          if [ -n "$(git ls-remote --heads origin "refs/heads/$branch")" ]; then
+            gh api --method PATCH "repos/$REPO/git/refs/heads/$branch" -f sha="$commit" -F force=true --silent
+          else
+            gh api "repos/$REPO/git/refs" -f ref="refs/heads/$branch" -f sha="$commit" --silent
+          fi
+          echo "$branch is at $commit, signed by GitHub"
 
           pr=$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number // empty')
           if [ -z "$pr" ]; then
@@ -233,8 +285,8 @@ jobs:
           echo "pull request #$pr"
           echo "number=$pr" >> "$GITHUB_OUTPUT"
 
-      # The push starts the pull request's checks, but they take a moment to
-      # register, and watching before they have would see none.
+      # Moving the branch starts the pull request's checks, but they take a
+      # moment to register, and watching before they have would see none.
       - name: Wait for every check to pass
         if: steps.pr.outputs.number != ''
         env:
@@ -252,7 +304,12 @@ jobs:
       # against main as it will be and merges the pull request once they pass.
       # A pull request that is neither merged, queued nor armed to queue has
       # been dropped, which is checked on consecutive polls, since leaving the
-      # queue and becoming merged are not one atomic change.
+      # queue and becoming merged are not one atomic change. Every check has
+      # passed by now, so a pull request that stays armed but out of the
+      # queue while GitHub reports its merge state as BLOCKED or DIRTY is held
+      # by something no wait will change: a rule on main other than its
+      # checks, or a conflict with main. After ten minutes of that the run
+      # stops, well inside the job's timeout.
       - name: Merge the bump pull request
         id: merge
         if: steps.pr.outputs.number != ''
@@ -263,21 +320,25 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           GH_TOKEN=$APP_TOKEN gh pr merge "$PR" --repo "$REPO" --squash --auto
+          # shellcheck disable=SC2016 # GraphQL variables, not shell ones
           query='query($owner: String!, $name: String!, $number: Int!) {
             repository(owner: $owner, name: $name) {
               pullRequest(number: $number) {
                 state
                 isInMergeQueue
                 autoMergeRequest { enabledAt }
+                mergeStateStatus
+                reviewDecision
                 mergeCommit { oid }
               }
             }
           }'
           dropped=0
+          blocked=0
           while :; do
-            read -r state queued armed commit < <(
+            read -r state queued armed merge_state review commit < <(
               gh api graphql -f query="$query" -f owner="${REPO%/*}" -f name="${REPO#*/}" -F number="$PR" \
-                --jq '.data.repository.pullRequest | [.state, .isInMergeQueue, (.autoMergeRequest != null), (.mergeCommit.oid // "-")] | @tsv'
+                --jq '.data.repository.pullRequest | [.state, .isInMergeQueue, (.autoMergeRequest != null), .mergeStateStatus, (.reviewDecision // "none"), (.mergeCommit.oid // "-")] | @tsv'
             )
             case "$state" in
             MERGED)
@@ -298,6 +359,15 @@ jobs:
               fi
             else
               dropped=0
+            fi
+            if [ "$queued" = false ] && [ "$armed" = true ] && { [ "$merge_state" = BLOCKED ] || [ "$merge_state" = DIRTY ]; }; then
+              blocked=$((blocked + 1))
+              if [ "$blocked" -ge 20 ]; then
+                echo "::error title=Bump merge blocked::GitHub is blocking the merge of #$PR: every check on it passed and it is armed to merge, but it has stayed out of the merge queue for ten minutes with merge state $merge_state (review decision: $review), so the release stopped"
+                exit 1
+              fi
+            else
+              blocked=0
             fi
             sleep 30
           done
