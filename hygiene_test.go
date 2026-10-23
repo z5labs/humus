@@ -96,6 +96,7 @@ func TestRepository_holds_no_compiled_executables(t *testing.T) {
 		{"Mach-O", []byte{0xce, 0xfa, 0xed, 0xfe}},
 		{"Mach-O", []byte{0xcf, 0xfa, 0xed, 0xfe}},
 		{"Mach-O universal", []byte{0xca, 0xfe, 0xba, 0xbe}},
+		{"Mach-O universal", []byte{0xca, 0xfe, 0xba, 0xbf}},
 		{"PE", []byte("MZ")},
 		{"WebAssembly", []byte("\x00asm")},
 	}
