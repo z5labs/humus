@@ -42,15 +42,17 @@ explains what the App does with them.
 The sections of this site are meant to be read in order, and every page
 links to the next one:
 
-1. [Fundamentals](/humus/fundamentals/): the App lifecycle,
+1. [Getting started](/humus/getting-started/): from an empty
+   folder to a humus service that runs and passes a test. Start here.
+2. [Fundamentals](/humus/fundamentals/): the App lifecycle,
    configuration, telemetry, health and testing, which every service shares.
-2. [Service types](/humus/services/): one section for each kind of
+3. [Service types](/humus/services/): one section for each kind of
    service humus runs.
-3. [Calling dependencies](/humus/dependencies/): the HTTP and gRPC
+4. [Calling dependencies](/humus/dependencies/): the HTTP and gRPC
    clients a service calls its dependencies with.
-4. [Hardening](/humus/hardening/): authentication and
+5. [Hardening](/humus/hardening/): authentication and
    authorization, and failure injection.
-5. [Walkthroughs](/humus/walkthroughs/): a production-ready
+6. [Walkthroughs](/humus/walkthroughs/): a production-ready
    application of each service type, built step by step.
 
 To start from a service type instead, find it here:
@@ -69,4 +71,4 @@ To start from a service type instead, find it here:
 - [GitHub Repository](https://github.com/z5labs/humus)
 - [GitHub Discussions](https://github.com/z5labs/humus/discussions)
 
-Next: [Fundamentals](/humus/fundamentals/)
+Next: [Getting started](/humus/getting-started/)
