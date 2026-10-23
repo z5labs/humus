@@ -14,8 +14,8 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
 	github.com/z5labs/bedrock v0.25.0
 	github.com/z5labs/bedrock/fit v0.25.0
-	github.com/z5labs/humus v0.0.0-00010101000000-000000000000
-	github.com/z5labs/humus/kube v0.0.0-00010101000000-000000000000
+	github.com/z5labs/humus v0.16.0-rc.1
+	github.com/z5labs/humus/kube v0.16.0-rc.1
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/sdk v1.47.0
 	go.opentelemetry.io/otel/sdk/metric v1.47.0
