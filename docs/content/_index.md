@@ -51,15 +51,17 @@ explains what the App does with them.
 The sections of this site are meant to be read in order, and every page
 links to the next one:
 
-1. [Fundamentals]({{< relref "/fundamentals" >}}): the App lifecycle,
+1. [Getting started]({{< relref "/getting-started" >}}): from an empty
+   folder to a humus service that runs and passes a test. Start here.
+2. [Fundamentals]({{< relref "/fundamentals" >}}): the App lifecycle,
    configuration, telemetry, health and testing, which every service shares.
-2. [Service types]({{< relref "/services" >}}): one section for each kind of
+3. [Service types]({{< relref "/services" >}}): one section for each kind of
    service humus runs.
-3. [Calling dependencies]({{< relref "/dependencies" >}}): the HTTP and gRPC
+4. [Calling dependencies]({{< relref "/dependencies" >}}): the HTTP and gRPC
    clients a service calls its dependencies with.
-4. [Hardening]({{< relref "/hardening" >}}): authentication and
+5. [Hardening]({{< relref "/hardening" >}}): authentication and
    authorization, and failure injection.
-5. [Walkthroughs]({{< relref "/walkthroughs" >}}): a production-ready
+6. [Walkthroughs]({{< relref "/walkthroughs" >}}): a production-ready
    application of each service type, built step by step.
 
 To start from a service type instead, find it here:

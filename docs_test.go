@@ -30,13 +30,21 @@ const docsContent = "docs/content"
 // so each walkthrough's pages mirror its example's path.
 const walkthroughs = docsContent + "/walkthroughs"
 
+// gettingStarted is the docs site's Getting started page, and
+// gettingStartedExample the path under example/ of the service it builds.
+const (
+	gettingStarted        = docsContent + "/getting-started.md"
+	gettingStartedExample = "job/hello"
+)
+
 // TestDocs_code_samples checks that every code sample the docs site quotes is
 // taken from the code it documents. A Go sample on any other page must appear,
 // line for line, in a _test.go file of this module, so it is taken from a test
 // or a tested example. A Go, YAML, JSON, Dockerfile or protobuf sample on a
 // page under walkthroughs/<type>/<name>/ must appear, line for line, in a file
 // under example/<type>/<name>/, its _test.go files included, so it is taken from the
-// walkthrough's own code or tests. Files under hidden directories and
+// walkthrough's own code or tests. The Getting started page follows the same
+// rule for the service it builds, under example/job/hello/. Files under hidden directories and
 // node_modules are not read for either rule. Indentation is compared relative
 // to the sample, so a sample may quote the body of a function or a nested
 // block.
@@ -184,6 +192,8 @@ func TestSampleProblems(t *testing.T) {
 		"example/job/billing/wiremock/pay.json":      {Data: []byte("{\n  \"request\": {\n    \"method\": \"POST\"\n  }\n}\n")},
 		"example/job/billing/Dockerfile":             {Data: []byte("FROM gcr.io/distroless/static-debian12:nonroot\nUSER nonroot\n")},
 		"example/job/billing/proto/billing.proto":    {Data: []byte("message Invoice {\n  string id = 1;\n}\n")},
+		"example/job/hello/hello.go":                 {Data: []byte("func greet() {\n\tsay()\n}\n")},
+		"example/job/hello/hello_test.go":            {Data: []byte("func TestGreet(t *testing.T) {\n\tt.Log(\"greeted\")\n}\n")},
 		"example/rabbitmq/mailer/main.go":            {Data: []byte("func send() {\n\tdeliver()\n}\n")},
 		"example/rabbitmq/mailer/main_test.go":       {Data: []byte("func TestSend(t *testing.T) {\n\tt.Log(\"only in the mailer's test\")\n}\n")},
 		"example/rabbitmq/mailer/deploy/queue.yaml":  {Data: []byte("kind: Deployment\n")},
@@ -224,6 +234,12 @@ func TestSampleProblems(t *testing.T) {
 		{"go from a walkthrough's test on a feature page", feature, "go", []string{"t.Log(\"only in a test\")"}, false},
 		{"go from a walkthrough on a feature page", feature, "go", []string{"humus.Main(app.Init)"}, true},
 		{"yaml is unchecked on a feature page", feature, "yaml", []string{"kind: Pod"}, false},
+		{"go from the getting started service", gettingStarted, "go", []string{"say()"}, false},
+		{"go from the getting started service's test", gettingStarted, "go", []string{"t.Log(\"greeted\")"}, false},
+		{"go from a test outside example on the getting started page", gettingStarted, "go", []string{"t.Log(\"ok\")"}, true},
+		{"go from a walkthrough on the getting started page", gettingStarted, "go", []string{"humus.Main(app.Init)"}, true},
+		{"sh is unchecked on the getting started page", gettingStarted, "sh", []string{"go run ."}, false},
+		{"go from the getting started service on a feature page", feature, "go", []string{"say()"}, true},
 		{"the section's index keeps the feature pages' rule", walkthroughs + "/_index.md", "yaml", []string{"kind: Pod"}, false},
 		{"a service type's folder keeps the feature pages' rule", walkthroughs + "/job/_index.md", "yaml", []string{"kind: Pod"}, false},
 	}
@@ -354,7 +370,7 @@ func sampleProblems(repo fs.FS) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		name := walkthroughName(p)
+		name := exampleName(p)
 		for _, s := range samples(string(b)) {
 			if name == "" {
 				if s.lang == "go" && !quotedIn(tests, s.lines) {
@@ -371,7 +387,7 @@ func sampleProblems(repo fs.FS) ([]string, error) {
 			if !ok {
 				src, err = sources(repo, "example/"+name, func(string) bool { return true })
 				if err != nil {
-					return fmt.Errorf("%s: reading its walkthrough's files: %w", p, err)
+					return fmt.Errorf("%s: reading its example's files: %w", p, err)
 				}
 				examples[name] = src
 			}
@@ -389,6 +405,17 @@ func sampleProblems(repo fs.FS) ([]string, error) {
 		return nil, fmt.Errorf("no pages found under %s", docsContent)
 	}
 	return problems, nil
+}
+
+// exampleName returns the path, <type>/<name>, under example/ of the example
+// whose files the samples on page are taken from: the Getting started page's
+// service, or the walkthrough page's example. It returns "" for any other
+// page, whose Go samples are taken from the _test.go files of this module.
+func exampleName(page string) string {
+	if page == gettingStarted {
+		return gettingStartedExample
+	}
+	return walkthroughName(page)
 }
 
 // walkthroughName returns the path, <type>/<name>, of the walkthrough whose
