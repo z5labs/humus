@@ -15,7 +15,7 @@ exits. It needs Go 1.27 or later, and nothing else. Its code is
 &lt;h2 id="1-create-the-module"&gt;1. Create the module&lt;/h2&gt;
 &lt;div class="highlight"&gt;&lt;pre tabindex="0" class="chroma"&gt;&lt;code class="language-sh" data-lang="sh"&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;mkdir hello &lt;span class="o"&gt;&amp;amp;&amp;amp;&lt;/span&gt; &lt;span class="nb"&gt;cd&lt;/span&gt; hello
 &lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;go mod init example.com/hello
-&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;go get github.com/z5labs/humus@main
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;go get github.com/z5labs/humus@v0.16.0
 &lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;h2 id="2-write-init"&gt;2. Write Init&lt;/h2&gt;
 &lt;p&gt;&lt;code&gt;Init&lt;/code&gt; builds the service. It reads &lt;code&gt;HELLO_NAME&lt;/code&gt; from the environment and
 returns a job, whose run greets it. Put it in &lt;code&gt;hello.go&lt;/code&gt;:&lt;/p&gt;
