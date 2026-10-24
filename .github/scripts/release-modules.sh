@@ -352,17 +352,16 @@ done
 # Every module path, and whether the release tags it. A path the docs name
 # belongs to the module whose path is its longest prefix, so a tool's or an
 # example's path under the root module's is never the root module's.
-modlist=$(
-  for dir in "${dirs[@]}"; do
-    path=$(module_path "$(gomod "$dir")")
-    [[ -n $path ]] || continue
-    if [[ -n ${released[$path]:-} ]]; then
-      printf '%s\t1\n' "$path"
-    else
-      printf '%s\t0\n' "$path"
-    fi
-  done
-)
+modlist=
+for dir in "${dirs[@]}"; do
+  path=$(module_path "$(gomod "$dir")")
+  [[ -n $path ]] || continue
+  if [[ -n ${released[$path]:-} ]]; then
+    modlist+=$path$'\t1\n'
+  else
+    modlist+=$path$'\t0\n'
+  fi
+done
 
 # The docs are every tracked Markdown file, except any under a testdata
 # directory, which holds fixtures, or under a directory whose name begins with
@@ -386,9 +385,11 @@ done
 # take it, where <ref> may be a version, a branch such as main, or a query
 # such as latest; and a line of a go.mod, <path> <version>, alone or after
 # require. Only a path in a released module counts, a package path as well as
-# a module path. A placeholder that names no version, such as vX.Y.Z, whose
-# version core holds no digit and no lowercase letter, is left as it is, and
-# so is @none, which removes a requirement rather than naming one.
+# a module path, and every line in either form counts, prose that names a
+# past release that way included. A placeholder that names no version, such
+# as vX.Y.Z, a v and a version core that holds no digit and no lowercase
+# letter, is left as it is, and so is @none, which removes a requirement
+# rather than naming one. A ref without the v, such as HEAD, is a branch.
 doc_lines() {
   awk -v mode="$1" -v version="$version" -v root="$root" '
     BEGIN {
@@ -398,7 +399,7 @@ doc_lines() {
         rootre = rootre (c == "." ? "[.]" : c)
       }
       pathre = rootre "(/[A-Za-z0-9._~-]+)*"
-      reqre = "^[ \t]*(require[ \t]+)?" pathre "[ \t]+v[0-9][-A-Za-z0-9.+]*([ \t]*//.*)?$"
+      reqre = "^[ \t]*(require[ \t]+)?" pathre "[ \t]+v[0-9][-A-Za-z0-9.+]*([ \t]*//.*)?[ \t\r]*$"
       sep = sprintf("%c", 31)
     }
     NR == FNR {
@@ -418,10 +419,12 @@ doc_lines() {
       return best != "" && mods[best] == 1
     }
     function placeholder(r,    b) {
-      b = r
-      sub(/^v/, "", b)
+      if (r !~ /^v/) {
+        return 0
+      }
+      b = substr(r, 2)
       sub(/-.*/, "", b)
-      return b !~ /[a-z0-9]/
+      return b != "" && b !~ /[a-z0-9]/
     }
     function rewrite(s,    res, pre, tok, at, p, r, trail, rest, ws) {
       if (s ~ reqre) {
@@ -432,7 +435,7 @@ doc_lines() {
         match(rest, /^[ \t]+/)
         ws = substr(rest, 1, RLENGTH)
         rest = substr(rest, RLENGTH + 1)
-        match(rest, /^[^ \t]+/)
+        match(rest, /^[^ \t\r]+/)
         r = substr(rest, 1, RLENGTH)
         rest = substr(rest, RLENGTH + 1)
         if (is_released(p) && r != version) {
@@ -469,7 +472,7 @@ doc_lines() {
         print FNR sep line sep $0
       }
     }
-  ' <(printf '%s\n' "$modlist") -
+  ' <(printf '%s' "$modlist") -
 }
 
 # trim prints its argument without its leading whitespace.
@@ -484,9 +487,13 @@ sep=$'\x1f'
 outdated=()
 if [[ -z $prerelease ]]; then
   for file in "${docs[@]}"; do
+    # The report is read in full first, so a failing show or awk stops the
+    # script rather than leaving the doc looking up to date.
+    report=$(show "$file" | doc_lines report)
+    [[ -n $report ]] || continue
     while IFS=$sep read -r n new old; do
       outdated+=("$file$sep$n$sep$new$sep$old")
-    done < <(show "$file" | doc_lines report)
+    done <<<"$report"
   done
 fi
 

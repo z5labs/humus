@@ -425,6 +425,8 @@ require (
 )
 \`\`\`
 EOF
+printf '\nTrack it with go get %s@HEAD.\n```go-mod\nrequire %s v0.15.0  \nrequire %s/grpc v0.15.0\r\n```\n' \
+  "$root" "$root" "$root" >>"$repo/docs/content/_index.md"
 printf 'go get %s@main\n' "$root" >"$repo/docs/testdata/fixture.md"
 printf 'go get %s@main\n' "$root" >"$repo/.github/notes.md"
 commit "$repo" docs
@@ -456,6 +458,9 @@ expect_output "would set README.md:4: go get $root@v0.16.0 (now go get $root@mai
 expect_output "would set docs/content/_index.md:1: Install it with go get $root/grpc/health@v0.16.0, or with go get $root@v0.16.0. (now Install it with go get $root/grpc/health@v0.15.0, or with go get $root@latest.)" "docs dry run"
 expect_output "would set docs/content/_index.md:7: require $root v0.16.0 (now require $root v0.15.0)" "docs dry run"
 expect_output "would set docs/content/_index.md:10: $root/grpc v0.16.0 // indirect (now $root/grpc v0.15.0 // indirect)" "docs dry run"
+expect_output "would set docs/content/_index.md:15: Track it with go get $root@v0.16.0. (now Track it with go get $root@HEAD.)" "docs dry run"
+expect_output "would set docs/content/_index.md:17: require $root v0.16.0   (now require $root v0.15.0  )" "docs dry run"
+expect_output "would set docs/content/_index.md:18: require $root/grpc v0.16.0"$'\r'" (now require $root/grpc v0.15.0"$'\r'")" "docs dry run"
 expect_output "release v0.16.0 at the commit that makes these changes on top of $before" "docs dry run"
 reject_output 'would set (README\.md:7|docs/content/_index\.md:(3|4|9|11|12)|docs/testdata|\.github)' "docs dry run"
 [[ $(git -C "$repo" status --porcelain) == "" ]] || fail "docs dry run: changed the working tree"
@@ -470,7 +475,8 @@ grep -qxF "go get $root@v0.16.0" "$repo/README.md" ||
 grep -qF "\`go get $root@vX.Y.Z $root/grpc@vX.Y.Z\`" "$repo/README.md" ||
   fail "docs bump: changed the placeholder:"$'\n'"$(cat "$repo/README.md")"
 want_index=$(sed -e "s|grpc/health@v0.15.0|grpc/health@v0.16.0|" -e "s|$root@latest|$root@v0.16.0|" \
-  -e "s|^require $root v0.15.0|require $root v0.16.0|" -e "s|	$root/grpc v0.15.0|	$root/grpc v0.16.0|" "$tmp/index-before.md")
+  -e "s|^require $root v0.15.0|require $root v0.16.0|" -e "s|^require $root/grpc v0.15.0|require $root/grpc v0.16.0|" \
+  -e "s|$root@HEAD|$root@v0.16.0|" -e "s|	$root/grpc v0.15.0|	$root/grpc v0.16.0|" "$tmp/index-before.md")
 [[ $(cat "$repo/docs/content/_index.md") == "$want_index" ]] ||
   fail "docs bump: docs/content/_index.md is"$'\n'"$(cat "$repo/docs/content/_index.md")"$'\n'"want"$'\n'"$want_index"
 grep -qxF "go get $root@main" "$repo/docs/testdata/fixture.md" || fail "docs bump: changed a testdata doc"
