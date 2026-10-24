@@ -2,25 +2,11 @@
 
 ## The image
 
-One image holds the wallet and the ledger, each built static, onto a
-distroless, non-root base:
-
-```dockerfile
-FROM docker.io/library/golang:1.27.3-trixie@sha256:fbb7ae40b62ff8afe31662df570d39b4f5052ac32b90dae8e60d7657a20a74f4 AS build
-WORKDIR /src
-COPY go.mod go.sum ./
-COPY grpc/go.mod grpc/go.sum grpc/
-COPY example/grpc/wallet/go.mod example/grpc/wallet/go.sum example/grpc/wallet/
-RUN go -C example/grpc/wallet mod download
-COPY . .
-RUN CGO_ENABLED=0 go -C example/grpc/wallet build -trimpath -ldflags=-s -o /out/wallet . && \
-    CGO_ENABLED=0 go -C example/grpc/wallet build -trimpath -ldflags=-s -o /out/ledger ./ledger
-
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:d62067879de890a1def9da0e7766b7d20810a5e5555cef8506b752437d7a3e88
-COPY --from=build /out/wallet /wallet
-COPY --from=build /out/ledger /ledger
-USER 65532:65532
-```
+One image holds the wallet and the ledger. A Go stage builds each of them
+static, and the image copies them to `/wallet` and `/ledger` on a distroless
+base, to run as the non-root user 65532.
+[`example/grpc/wallet/Dockerfile`](https://github.com/z5labs/humus/blob/main/example/grpc/wallet/Dockerfile)
+names the exact images and their versions.
 
 Build it from the repository's root, since the module replaces humus and
 `humus/grpc` with their directories:
