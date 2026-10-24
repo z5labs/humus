@@ -12,26 +12,12 @@ weight: 80
 
 ## The image
 
-One image holds `mailer` and `mailrequest`, built static onto a distroless,
-non-root base:
-
-```dockerfile
-FROM docker.io/library/golang:1.27.3-trixie@sha256:fbb7ae40b62ff8afe31662df570d39b4f5052ac32b90dae8e60d7657a20a74f4 AS build
-WORKDIR /src
-COPY go.mod go.sum ./
-COPY queue/rabbitmq/go.mod queue/rabbitmq/go.sum queue/rabbitmq/
-COPY example/rabbitmq/mailer/go.mod example/rabbitmq/mailer/go.sum example/rabbitmq/mailer/
-RUN go -C example/rabbitmq/mailer mod download
-COPY . .
-RUN CGO_ENABLED=0 go -C example/rabbitmq/mailer build -trimpath -ldflags=-s -o /out/mailer . && \
-    CGO_ENABLED=0 go -C example/rabbitmq/mailer build -trimpath -ldflags=-s -o /out/mailrequest ./cmd/mailrequest
-
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:d62067879de890a1def9da0e7766b7d20810a5e5555cef8506b752437d7a3e88
-COPY --from=build /out/mailer /mailer
-COPY --from=build /out/mailrequest /mailrequest
-USER 65532:65532
-ENTRYPOINT ["/mailer"]
-```
+One image holds `mailer` and `mailrequest`. A Go stage builds each of them
+static, and the image copies them to `/mailer` and `/mailrequest` on a
+distroless base, to run as the non-root user 65532 with `/mailer` as its
+entrypoint.
+[`example/rabbitmq/mailer/Dockerfile`](https://github.com/z5labs/humus/blob/main/example/rabbitmq/mailer/Dockerfile)
+names the exact images and their versions.
 
 Build it from the repository's root, since the module replaces humus with
 its directory:

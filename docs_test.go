@@ -6,6 +6,7 @@
 package humus_test
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -620,6 +621,454 @@ func dedent(lines []string) []string {
 		}
 	}
 	return out
+}
+
+// TestDocs_base_images checks that no page of the docs site names a tag or a
+// digest that a FROM line of an example's Dockerfile pins. Renovate moves
+// those pins and leaves docs/** alone, so a page links to its example's
+// Dockerfile for the exact images instead.
+func TestDocs_base_images(t *testing.T) {
+	problems, err := pinProblems(os.DirFS("."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range problems {
+		t.Error(p)
+	}
+}
+
+// TestDocs_code_samples_after_a_base_image_bump checks that every sample
+// TestDocs_code_samples checks is still taken from its code once the tag, or
+// the digest, on every FROM line of every example's Dockerfile has moved, and
+// nothing else has, as a Renovate pull request moves them.
+func TestDocs_code_samples_after_a_base_image_bump(t *testing.T) {
+	for _, name := range slices.Sorted(maps.Keys(baseImageBumps)) {
+		t.Run(name, func(t *testing.T) {
+			repo, n, err := bumpBaseImages(os.DirFS("."), baseImageBumps[name])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n == 0 {
+				t.Fatalf("no FROM line of a Dockerfile under example/ pins a %s, so there is nothing to bump; teach fromImage how the Dockerfiles name their images now", name)
+			}
+
+			problems, err := sampleProblems(repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, p := range problems {
+				t.Error(p)
+			}
+		})
+	}
+}
+
+func TestFromImage(t *testing.T) {
+	cases := []struct {
+		line string
+		want baseImage
+		ok   bool
+	}{
+		{"FROM docker.io/library/golang:1.27.3-trixie@sha256:ab12 AS build", baseImage{"docker.io/library/golang", "1.27.3-trixie", "sha256:ab12"}, true},
+		{"FROM gcr.io/distroless/static-debian13:nonroot", baseImage{"gcr.io/distroless/static-debian13", "nonroot", ""}, true},
+		{"from --platform=$BUILDPLATFORM golang:1.27", baseImage{"golang", "1.27", ""}, true},
+		{"FROM localhost:5000/app", baseImage{"localhost:5000/app", "", ""}, true},
+		{"FROM localhost:5000/app:v1@sha256:cd34", baseImage{"localhost:5000/app", "v1", "sha256:cd34"}, true},
+		{"FROM alpine@sha256:ef56", baseImage{"alpine", "", "sha256:ef56"}, true},
+		{"  FROM build", baseImage{"build", "", ""}, true},
+		{"RUN echo FROM alpine:3", baseImage{}, false},
+		{"FROM", baseImage{}, false},
+		{"", baseImage{}, false},
+	}
+	for _, c := range cases {
+		got, ok := fromImage(c.line)
+		if ok != c.ok || got != c.want {
+			t.Errorf("fromImage(%q) = %+v, %v, want %+v, %v", c.line, got, ok, c.want, c.ok)
+		}
+		if ok && !strings.Contains(c.line, got.String()) {
+			t.Errorf("fromImage(%q).String() = %q, want the reference as the line writes it", c.line, got.String())
+		}
+	}
+}
+
+func TestPinProblems(t *testing.T) {
+	const page = docsContent + "/walkthroughs/job/billing/deploying.md"
+	repo := fstest.MapFS{
+		"example/job/billing/Dockerfile": {Data: []byte(strings.Join([]string{
+			"FROM docker.io/library/golang:1.27.3-trixie@sha256:ab12 AS build",
+			"FROM gcr.io/distroless/static-debian13:nonroot@sha256:cd34",
+			"FROM build",
+			"USER 65532:65532",
+		}, "\n"))},
+		"example/job/billing/.hidden/Dockerfile": {Data: []byte("FROM alpine:3.22\n")},
+	}
+
+	cases := []struct {
+		name string
+		text string
+		line int
+		want []string
+	}{
+		{"a link to the Dockerfile", "[`Dockerfile`](https://github.com/z5labs/humus/blob/main/example/job/billing/Dockerfile) names the images. It needs Go 1.27.", 3, nil},
+		{"the golang tag", "It builds on golang:1.27.3-trixie.", 3, []string{"golang:1.27.3-trixie"}},
+		{"the golang tag in full", "It builds on docker.io/library/golang:1.27.3-trixie.", 3, []string{"golang:1.27.3-trixie"}},
+		{"the distroless tag", "It runs on `static-debian13:nonroot`.", 3, []string{"static-debian13:nonroot"}},
+		{"a digest", "pinned to sha256:ab12", 3, []string{"sha256:ab12"}},
+		{"a tag the Dockerfile does not pin", "It would build on golang:1.28.", 3, nil},
+		{"a stage's name", "The build stage builds it.", 3, nil},
+		{"a tag only a hidden directory's Dockerfile pins", "alpine:3.22", 3, nil},
+		{"a quoted FROM line", "```dockerfile\nFROM gcr.io/distroless/static-debian13:nonroot@sha256:cd34\n```", 4, []string{"sha256:cd34", "static-debian13:nonroot"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fsys := maps.Clone(repo)
+			fsys[page] = &fstest.MapFile{Data: []byte("# Deploying\n\n" + c.text + "\n")}
+
+			problems, err := pinProblems(fsys)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if len(problems) != len(c.want) {
+				t.Fatalf("problems = %q, want %d", problems, len(c.want))
+			}
+			for i, pin := range c.want {
+				at := fmt.Sprintf("%s:%d: ", page, c.line)
+				if !strings.HasPrefix(problems[i], at) || !strings.Contains(problems[i], " "+pin+",") {
+					t.Errorf("problem = %q, want it to name %s at %s", problems[i], pin, at)
+				}
+			}
+		})
+	}
+}
+
+func TestPinProblems_nothing_pinned(t *testing.T) {
+	cases := []struct {
+		name  string
+		files fstest.MapFS
+		want  string
+	}{
+		{"no example", fstest.MapFS{}, "file does not exist"},
+		{"no Dockerfile", fstest.MapFS{"example/job/billing/main.go": {Data: []byte("package main\n")}}, "no Dockerfile found"},
+		{"no pin", fstest.MapFS{"example/job/billing/Dockerfile": {Data: []byte("ARG IMAGE\nFROM ${IMAGE}\nFROM build\n")}}, "pins a tag or digest"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fsys := maps.Clone(c.files)
+			fsys[docsContent+"/_index.md"] = &fstest.MapFile{Data: []byte("# Humus\n")}
+
+			_, err := pinProblems(fsys)
+
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("err = %v, want one saying %q", err, c.want)
+			}
+		})
+	}
+}
+
+func TestBumpBaseImages(t *testing.T) {
+	const dockerfile = "example/job/billing/Dockerfile"
+	lines := []string{
+		"FROM docker.io/library/golang:1.27.3-trixie@sha256:ab12 AS build",
+		"RUN go build -o /out/billing .",
+		"",
+		"FROM build",
+		"USER 65532:65532",
+	}
+	quote := func(lines ...string) []byte {
+		return []byte("# Deploying\n\n```dockerfile\n" + strings.Join(lines, "\n") + "\n```\n")
+	}
+	repo := fstest.MapFS{
+		readme:                     {Data: []byte("# Humus\n")},
+		docsContent + "/_index.md": {Data: []byte("# Humus\n")},
+		dockerfile:                 {Data: []byte(strings.Join(lines, "\n"))},
+	}
+
+	cases := []struct {
+		name     string
+		quote    []string
+		problems int
+	}{
+		{"a quoted FROM line moves", lines[:2], 1},
+		{"lines after a FROM line stay", lines[1:], 0},
+	}
+	want := map[string]string{
+		"tag":    "FROM docker.io/library/golang:1.27.3-trixie-next@sha256:ab12 AS build",
+		"digest": fmt.Sprintf("FROM docker.io/library/golang:1.27.3-trixie@sha256:%x AS build", sha256.Sum256([]byte("sha256:ab12"))),
+	}
+	for _, name := range slices.Sorted(maps.Keys(baseImageBumps)) {
+		for _, c := range cases {
+			t.Run(name+"/"+c.name, func(t *testing.T) {
+				fsys := maps.Clone(repo)
+				fsys[walkthroughs+"/job/billing/deploying.md"] = &fstest.MapFile{Data: quote(c.quote...)}
+				if problems, err := sampleProblems(fsys); err != nil || len(problems) != 0 {
+					t.Fatalf("before the bump: problems = %q, err = %v, want neither", problems, err)
+				}
+
+				bumped, n, err := bumpBaseImages(fsys, baseImageBumps[name])
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if n != 1 {
+					t.Errorf("bumped %d FROM lines, want 1", n)
+				}
+				b, err := fs.ReadFile(bumped, dockerfile)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got, wantLines := strings.Split(string(b), "\n"), append([]string{want[name]}, lines[1:]...); !slices.Equal(got, wantLines) {
+					t.Errorf("bumped Dockerfile = %q, want %q", got, wantLines)
+				}
+				problems, err := sampleProblems(bumped)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(problems) != c.problems {
+					t.Errorf("after the bump: problems = %q, want %d", problems, c.problems)
+				}
+			})
+		}
+	}
+}
+
+// baseImageBumps holds, keyed by what each one moves, a bump of the tag and a
+// bump of the digest a FROM line pins, as a Renovate pull request moves them.
+// Each leaves an image that pins no tag, or no digest, as it is.
+var baseImageBumps = map[string]func(baseImage) baseImage{
+	"tag": func(img baseImage) baseImage {
+		if img.tag != "" {
+			img.tag += "-next"
+		}
+		return img
+	},
+	"digest": func(img baseImage) baseImage {
+		if img.digest != "" {
+			img.digest = fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(img.digest)))
+		}
+		return img
+	},
+}
+
+// baseImage is the image a FROM line of a Dockerfile names: its name, and the
+// tag and the digest it pins, either of which may be empty.
+type baseImage struct {
+	name, tag, digest string
+}
+
+// String returns img as a FROM line writes it.
+func (img baseImage) String() string {
+	s := img.name
+	if img.tag != "" {
+		s += ":" + img.tag
+	}
+	if img.digest != "" {
+		s += "@" + img.digest
+	}
+	return s
+}
+
+// pins returns the tag and the digest img pins as a page would name them:
+// the tag after the last element of the image's name, as in
+// golang:1.27.3-trixie, and the digest whole.
+func (img baseImage) pins() []string {
+	var pins []string
+	if img.tag != "" {
+		pins = append(pins, path.Base(img.name)+":"+img.tag)
+	}
+	if img.digest != "" {
+		pins = append(pins, img.digest)
+	}
+	return pins
+}
+
+// fromImage returns the image line names, if line is a FROM instruction.
+func fromImage(line string) (baseImage, bool) {
+	fields := strings.Fields(line)
+	if len(fields) == 0 || !strings.EqualFold(fields[0], "FROM") {
+		return baseImage{}, false
+	}
+	for _, f := range fields[1:] {
+		if strings.HasPrefix(f, "--") {
+			continue
+		}
+		var img baseImage
+		ref, digest, _ := strings.Cut(f, "@")
+		img.digest = digest
+		if i := strings.LastIndex(ref, ":"); i > strings.LastIndex(ref, "/") {
+			ref, img.tag = ref[:i], ref[i+1:]
+		}
+		img.name = ref
+		return img, true
+	}
+	return baseImage{}, false
+}
+
+// exampleDockerfiles returns the lines of every Dockerfile under example/ in
+// repo, by path, leaving out hidden directories and node_modules.
+func exampleDockerfiles(repo fs.FS) (map[string][]string, error) {
+	files := map[string][]string{}
+	err := fs.WalkDir(repo, "example", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() && p != "example" && (strings.HasPrefix(d.Name(), ".") || d.Name() == "node_modules") {
+			return fs.SkipDir
+		}
+		if d.IsDir() || d.Name() != "Dockerfile" {
+			return nil
+		}
+		b, err := fs.ReadFile(repo, p)
+		if err != nil {
+			return err
+		}
+		files[p] = strings.Split(string(b), "\n")
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(files) == 0 {
+		return nil, errors.New("no Dockerfile found under example/")
+	}
+	return files, nil
+}
+
+// pinProblems describes each line of a page of the docs site in repo that
+// names a tag or a digest a FROM line of an example's Dockerfile pins.
+func pinProblems(repo fs.FS) ([]string, error) {
+	dockerfiles, err := exampleDockerfiles(repo)
+	if err != nil {
+		return nil, err
+	}
+	pinnedBy := map[string][]string{}
+	for _, p := range slices.Sorted(maps.Keys(dockerfiles)) {
+		for _, l := range dockerfiles[p] {
+			if img, ok := fromImage(l); ok {
+				for _, pin := range img.pins() {
+					if !slices.Contains(pinnedBy[pin], p) {
+						pinnedBy[pin] = append(pinnedBy[pin], p)
+					}
+				}
+			}
+		}
+	}
+	if len(pinnedBy) == 0 {
+		return nil, errors.New("no FROM line of a Dockerfile under example/ pins a tag or digest, so there is nothing to look for; teach fromImage how the Dockerfiles name their images now")
+	}
+	pins := slices.Sorted(maps.Keys(pinnedBy))
+	var problems []string
+	err = fs.WalkDir(repo, docsContent, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || path.Ext(p) != ".md" {
+			return err
+		}
+		b, err := fs.ReadFile(repo, p)
+		if err != nil {
+			return err
+		}
+		for i, l := range strings.Split(string(b), "\n") {
+			for _, pin := range pins {
+				if strings.Contains(l, pin) {
+					problems = append(problems, fmt.Sprintf("%s:%d: names %s, pinned by %s; link to the Dockerfile instead",
+						p, i+1, pin, strings.Join(pinnedBy[pin], ", ")))
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return problems, nil
+}
+
+// bumpBaseImages returns repo with every FROM line of every example's
+// Dockerfile moved by bump, and nothing else, and how many lines moved.
+func bumpBaseImages(repo fs.FS, bump func(baseImage) baseImage) (fs.FS, int, error) {
+	dockerfiles, err := exampleDockerfiles(repo)
+	if err != nil {
+		return nil, 0, err
+	}
+	bumped := fstest.MapFS{}
+	n := 0
+	for p, lines := range dockerfiles {
+		lines = slices.Clone(lines)
+		for i, l := range lines {
+			img, ok := fromImage(l)
+			if !ok {
+				continue
+			}
+			next := bump(img)
+			if next == img {
+				continue
+			}
+			moved := strings.Replace(l, img.String(), next.String(), 1)
+			if moved == l {
+				return nil, 0, fmt.Errorf("%s:%d: %q is not written as %q, so the bump could not move it", p, i+1, l, img.String())
+			}
+			lines[i] = moved
+			n++
+		}
+		bumped[p] = &fstest.MapFile{Data: []byte(strings.Join(lines, "\n"))}
+	}
+	return overlayFS{repo, bumped}, n, nil
+}
+
+// overlayFS reads its files from FS, except those in files.
+type overlayFS struct {
+	fs.FS
+	files fstest.MapFS
+}
+
+func (o overlayFS) Open(name string) (fs.File, error) {
+	if _, ok := o.files[name]; ok {
+		return o.files.Open(name)
+	}
+	return o.FS.Open(name)
+}
+
+// repoBlob and repoTree begin the URLs of a file and of a folder of this
+// repository on its default branch.
+const (
+	repoBlob = "https://github.com/z5labs/humus/blob/main/"
+	repoTree = "https://github.com/z5labs/humus/tree/main/"
+)
+
+// TestDocs_repository_links checks that every link on the docs site to a file
+// or folder of this repository on its default branch names one that exists,
+// such as the Dockerfile each walkthrough's Deploying page links to.
+func TestDocs_repository_links(t *testing.T) {
+	links := 0
+	err := filepath.WalkDir(docsContent, func(page string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || filepath.Ext(page) != ".md" {
+			return err
+		}
+		b, err := os.ReadFile(page)
+		if err != nil {
+			return err
+		}
+		for _, target := range readmeLinks(string(b)) {
+			p, ok := strings.CutPrefix(target, repoBlob)
+			if !ok {
+				p, ok = strings.CutPrefix(target, repoTree)
+			}
+			if !ok {
+				continue
+			}
+			links++
+			p, _, _ = strings.Cut(p, "#")
+			if _, err := os.Stat(filepath.FromSlash(p)); err != nil {
+				t.Errorf("%s: %s names nothing in the repository: %v", page, target, err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if links == 0 {
+		t.Fatalf("found no links to the repository under %s", docsContent)
+	}
 }
 
 // docsSite is the URL the docs site is published at.
