@@ -577,9 +577,16 @@ func reportIn(t *testing.T, repo string, gh report.GitHub, args ...string) (bedr
 // flakedA writes results in which TestA, of the package a of repo, flaked, and
 // a description, and returns their files.
 func flakedA(t *testing.T, repo string) (string, string) {
+	return flakedAIn(t, repo, false)
+}
+
+// flakedAIn writes results like flakedA's, of a sweep interrupted before its
+// confirm runs when interrupted is true.
+func flakedAIn(t *testing.T, repo string, interrupted bool) (string, string) {
 	head, err := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", "HEAD").Output()
 	require.NoError(t, err)
 	b, err := json.Marshal(results.Report{
+		Interrupted: interrupted, PlannedRuns: 4, EndedRuns: 2,
 		Commit: strings.TrimSpace(string(head)), Go: "go1.27.0", Cores: 4,
 		Packages: []discover.Package{{Module: ".", Dir: "a", ImportPath: "example.com/repo/a", Level: "unit"}},
 		Flaky: []results.Test{{
@@ -596,14 +603,18 @@ func flakedA(t *testing.T, repo string) (string, string) {
 }
 
 func TestReport_prints_the_open_report_s_link_and_exits_2(t *testing.T) {
-	repo := repotest.New(t, "0.0.1")
-	res, desc := flakedA(t, repo)
-	gh := &openReport{}
-	st, stdout, stderr := reportIn(t, repo, gh, "-results", res, "-package", "a", "-test", "TestA", "-description", desc)
-	require.Equal(t, 2, st.Code(), stderr)
-	require.Equal(t, "https://github.com/z5labs/humus/discussions/1999\n", stdout)
-	require.Contains(t, stderr, "flaky report: an open report already names TestA: https://github.com/z5labs/humus/discussions/1999\n")
-	require.False(t, gh.created)
+	for _, interrupted := range []bool{false, true} {
+		t.Run("interrupted="+strconv.FormatBool(interrupted), func(t *testing.T) {
+			repo := repotest.New(t, "0.0.1")
+			res, desc := flakedAIn(t, repo, interrupted)
+			gh := &openReport{}
+			st, stdout, stderr := reportIn(t, repo, gh, "-results", res, "-package", "a", "-test", "TestA", "-description", desc)
+			require.Equal(t, 2, st.Code(), stderr)
+			require.Equal(t, "https://github.com/z5labs/humus/discussions/1999\n", stdout)
+			require.Contains(t, stderr, "flaky report: an open report already names TestA: https://github.com/z5labs/humus/discussions/1999\n")
+			require.False(t, gh.created)
+		})
+	}
 }
 
 func TestReport_exits_1_and_says_why_when_it_posts_nothing(t *testing.T) {

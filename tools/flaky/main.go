@@ -101,6 +101,14 @@
 // names the test, it prints that report's link and exits 2. A closed report
 // that names the test is linked under References.
 //
+// The results may be of a sweep that was interrupted, which flaky stress exits
+// 3 for. Its tests are checked the same way, and a flaky one is posted. Its
+// discussion says that the sweep was interrupted, and how many of its planned
+// runs ended, and that the test has no confirm runs, when the sweep was
+// interrupted before them, or that its confirm runs didn't all end. Its table
+// gives the runs that ended: its confirm runs that ended, or its sweep runs
+// when none of those ran it.
+//
 // It finds the Bugs category by name, creates the discussion with gh api
 // graphql, and prints its URL. With -dry-run, it prints the title and body
 // instead. It exits 1 when it posts nothing for any other reason.
@@ -672,7 +680,8 @@ URL. It posts nothing, and says why, when the description or the notes is
 empty or has a heading, when the results don't have the test failing or
 hanging, or when it failed every run at some pair. When an open Bugs
 discussion or an open story already names the test, it prints that report's
-link and exits 2. It exits 1 when it posts nothing for any other reason.
+link and exits 2. It exits 1 when it posts nothing for any other reason. The
+results may be of an interrupted sweep, and then the discussion says so.
 `
 
 // reportCommand runs flaky report, reaching GitHub through what github

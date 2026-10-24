@@ -10,6 +10,11 @@
 // The agent that calls it writes only a description, and any notes, to files.
 // Every other part of the report is rendered from the results, so every report
 // has the same title, sections and tables.
+//
+// The results may be of a sweep that was interrupted. Then a test's report
+// says so, and how many of the sweep's planned runs ended, and that the test
+// has no confirm runs, or that its confirm runs didn't all end. Its table gives
+// the runs that ended.
 package report
 
 import (
@@ -103,7 +108,8 @@ func (e *OpenError) Error() string {
 // failing or hanging, when the test failed every run at some pair of CPU count
 // and load, or when an open report already names the test. That last error is
 // an *OpenError. A closed report that names the test is linked under
-// References.
+// References. The same checks apply to the results of an interrupted sweep,
+// whose report says it was interrupted.
 func File(ctx context.Context, gh GitHub, req Request, w io.Writer) error {
 	description, err := readText("-description", req.Description)
 	if err != nil {
@@ -141,6 +147,9 @@ func File(ctx context.Context, gh GitHub, req Request, w io.Writer) error {
 		Commit:      rep.Commit,
 		Go:          rep.Go,
 		Cores:       rep.Cores,
+		Interrupted: rep.Interrupted,
+		PlannedRuns: rep.PlannedRuns,
+		EndedRuns:   rep.EndedRuns,
 		Repository:  repo,
 		Function:    fmt.Sprintf("%s/blob/%s/%s#L%d", repo, rep.Commit, file, line),
 		Description: description,
@@ -257,8 +266,9 @@ func CheckText(text string) error {
 //
 // It returns an error when the results don't have the package, when the test
 // didn't fail or hang in any of their runs, when it passed every one of its
-// confirm runs, or when it failed every run at some pair of CPU count and
-// load, since that test is failing rather than flaky.
+// confirm runs, or of those that ended when they didn't all end, or when it
+// failed every run at some pair of CPU count and load, since that test is
+// failing rather than flaky.
 func Find(rep results.Report, pkg, test string) (results.Test, error) {
 	if test == "" {
 		return results.Test{}, errors.New("-test is required")
@@ -290,6 +300,9 @@ func Find(rep results.Report, pkg, test string) (results.Test, error) {
 	for _, t := range rep.Flaky {
 		if !is(t.Package, t.ImportPath) || t.Test != test {
 			continue
+		}
+		if t.Failures+t.Hangs == 0 && t.ConfirmIncomplete {
+			return t, fmt.Errorf("%s passed every one of the %d of its %s that ended, alone, so the results have no failure of it to report", test, t.ConfirmEnded, plural(t.ConfirmPlanned, "confirm run", "confirm runs"))
 		}
 		if t.Failures+t.Hangs == 0 {
 			return t, fmt.Errorf("%s passed every one of its %s alone, so the results have no failure of it to report", test, plural(t.Runs, "confirm run", "confirm runs"))
@@ -377,6 +390,12 @@ type Bug struct {
 	Commit string
 	Go     string
 	Cores  int
+	// Interrupted reports that the sweep was interrupted, when EndedRuns
+	// of its PlannedRuns had ended, so Test's counts are of the runs that
+	// ended.
+	Interrupted bool
+	PlannedRuns int
+	EndedRuns   int
 	// Repository is the repository's URL, which the commit is linked
 	// under.
 	Repository string
@@ -408,6 +427,9 @@ func Render(b Bug) (string, string) {
 
 	p("## What happens\n\n")
 	p("%s\n\n", b.Description)
+	if b.Interrupted {
+		p("%s\n\n", interrupted(b))
+	}
 	short := b.Commit[:min(len(b.Commit), 8)]
 	p("At [%s](%s/commit/%s), with %s on %d cores, `flaky stress` ran it %s times:\n\n", short, b.Repository, b.Commit, b.Go, b.Cores, count(t.Runs))
 	table(&s, t.Pairs)
@@ -430,6 +452,25 @@ func Render(b Bug) (string, string) {
 		p("- %s, the closed report that last named it\n", b.Closed.URL)
 	}
 	return Title(t), s.String()
+}
+
+// interrupted returns the paragraph of the report of b, from an interrupted
+// sweep, that says so, and which of the test's runs its counts are.
+func interrupted(b Bug) string {
+	t := b.Test
+	s := fmt.Sprintf("The sweep was interrupted, when %s of its %s planned runs had ended, so the counts below are of the runs that ended.", count(b.EndedRuns), count(b.PlannedRuns))
+	switch {
+	case t.ConfirmPlanned == 0 && !t.Confirmed:
+		s += " It has no confirm runs, so they are its sweep runs."
+	case !t.ConfirmIncomplete:
+	case t.Confirmed:
+		s += fmt.Sprintf(" Its confirm runs didn't all end: %s of its %s did, and they are of those.", count(t.ConfirmEnded), count(t.ConfirmPlanned))
+	case t.ConfirmEnded > 0:
+		s += fmt.Sprintf(" Its confirm runs didn't all end: %s of its %s did, and none of those ran it, so they are its sweep runs.", count(t.ConfirmEnded), count(t.ConfirmPlanned))
+	default:
+		s += fmt.Sprintf(" Its confirm runs didn't all end: 0 of its %s did, so they are its sweep runs.", count(t.ConfirmPlanned))
+	}
+	return s
 }
 
 // table writes the failures and hangs out of the runs at each pair, with a
