@@ -132,10 +132,15 @@ type Phases struct {
 
 // Stress runs the sweep cfg on r, and counts every run in res. It returns an
 // error, and runs nothing, when a package doesn't build. When ctx is done, it
-// stops starting runs, waits for those running, and returns ctx's error.
+// stops starting runs, waits for those running, deletes the clusters that are
+// up, and returns ctx's error. res then holds every run that ended, and how
+// many were planned, and a run cut short is counted as neither a pass nor a
+// failure.
 //
 // A test that fails or hangs in a sweep run is added to the confirm runs at
-// once, but no confirm run starts until every sweep run has ended.
+// once, but no confirm run starts until every sweep run has ended, and none
+// starts once ctx is done. The confirm runs are planned in res, and each test
+// to confirm is marked in res, only when they are about to start.
 func Stress(ctx context.Context, cfg Config, r Runner, res *results.Results) (Phases, error) {
 	var phases Phases
 	start := time.Now()
@@ -178,6 +183,9 @@ func Stress(ctx context.Context, cfg Config, r Runner, res *results.Results) (Ph
 
 	// Every sweep run has ended: this is the barrier the confirm runs wait
 	// on.
+	if err := ctx.Err(); err != nil {
+		return phases, err
+	}
 	targets := a.confirmTargets()
 	if len(targets) == 0 {
 		return phases, nil
@@ -186,6 +194,7 @@ func Stress(ctx context.Context, cfg Config, r Runner, res *results.Results) (Ph
 	sessions = map[int][][]clusterRun{}
 	confirming := make([]int, len(cfg.Levels))
 	for _, t := range targets {
+		res.Confirming(t.pkg, t.test)
 		level := cfg.Packages[t.pkg]
 		confirming[level]++
 		if w := cfg.walkthrough(t.pkg); w >= 0 {
@@ -324,6 +333,7 @@ func (a *adapter) schedule(ctx context.Context, cfg Config, what string, tasks [
 	for i, l := range cfg.Levels {
 		limits[i] = l.Limit
 	}
+	a.res.Planned(total)
 	stop := a.progress(cfg, what, total)
 	err := lanes.Schedule(ctx, cfg.Lanes, tasks, limits, a)
 	stop()

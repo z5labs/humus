@@ -93,6 +93,9 @@ type Results struct {
 	listed [][]string
 	tests  map[key]*entry
 	ups    []UpFailure
+	// planned and ended are how many runs the sweep planned, and how many
+	// of them ended.
+	planned, ended int
 }
 
 type key struct {
@@ -110,6 +113,10 @@ type entry struct {
 	// confirmed.
 	confirm      map[pair]*counts
 	confirmSaved int
+	// confirming reports that the test's confirm runs were planned, and
+	// confirmEnded is how many of them ended, counted or not.
+	confirming   bool
+	confirmEnded int
 }
 
 // failed reports whether the test failed or hung in any run.
@@ -168,12 +175,37 @@ func (r *Results) Listed(pkg int, tests []string) {
 	r.listed[pkg] = tests
 }
 
+// Planned records that n more runs are planned: a pass of the sweep's runs, or
+// of its confirm runs.
+func (r *Results) Planned(n int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.planned += n
+}
+
+// Confirming records that the confirm runs of the test named test, of the
+// package at index pkg, are planned: its level's confirm count at each of its
+// pairs of CPU count and load. A test whose confirm runs don't all end is
+// reported as such.
+func (r *Results) Confirming(pkg int, test string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.entry(key{pkg, test}).confirming = true
+}
+
 // Add counts one run of the package at index pkg at CPU count cpu and load
 // load. It saves the run's whole output under the directory of each test that
 // failed or hung in it, and of the package when it failed outside any test.
+//
+// A cancelled run says nothing about the tests, so it is neither counted nor
+// one of the runs that ended.
 func (r *Results) Add(pkg, cpu, load int, res run.Result) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if res.Cancelled {
+		return nil
+	}
+	r.ended++
 	at := pair{cpu, load}
 	for _, t := range res.Tests {
 		if err := r.count(key{pkg, t.Name}, at, t.Outcome, t.Output, res); err != nil {
@@ -207,11 +239,19 @@ func (r *Results) count(k key, at pair, outcome run.Outcome, output []string, re
 // The run fails when the test or one of its subtests failed, or when it
 // failed outside any test, and hangs when the test or one of its subtests
 // hung. A run in which the test never started, and that didn't fail, says
-// nothing about the test, so it isn't counted. The whole output of a run that
-// failed or hung is saved under the test's directory.
+// nothing about the test, so it isn't counted, though it ended. The whole
+// output of a run that failed or hung is saved under the test's directory. A
+// cancelled run is neither counted nor one of the runs that ended.
 func (r *Results) Confirmed(pkg int, test string, cpu, load int, res run.Result) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if res.Cancelled {
+		return nil
+	}
+	r.ended++
+	k := key{pkg, test}
+	e := r.entry(k)
+	e.confirmEnded++
 	started := false
 	outcome := run.Pass
 	for _, t := range res.Tests {
@@ -232,8 +272,6 @@ func (r *Results) Confirmed(pkg int, test string, cpu, load int, res run.Result)
 	if !started && outcome == run.Pass {
 		return nil
 	}
-	k := key{pkg, test}
-	e := r.entry(k)
 	if e.confirm == nil {
 		e.confirm = map[pair]*counts{}
 	}
@@ -363,9 +401,22 @@ type Report struct {
 	// alone, or 0 times when it had no confirm runs, as with -run.
 	Levels []Level `json:"levels"`
 	// Confirmed is the number of tests it confirmed, and ConfirmRuns the
-	// number of their confirm runs.
-	Confirmed   int `json:"confirmed"`
-	ConfirmRuns int `json:"confirmRuns"`
+	// number of their confirm runs, which counts a test whose confirm runs
+	// didn't all end when any did. IncompleteConfirms is the number of
+	// tests whose confirm runs didn't all end, confirmed or not.
+	Confirmed          int `json:"confirmed"`
+	ConfirmRuns        int `json:"confirmRuns"`
+	IncompleteConfirms int `json:"incompleteConfirms"`
+	// Interrupted reports that the sweep was stopped, by SIGINT or SIGTERM,
+	// before every run it planned had ended, so the report is of the runs
+	// that ended. No confirm run started after the interrupt.
+	Interrupted bool `json:"interrupted"`
+	// PlannedRuns is how many runs it planned: every sweep run, and once
+	// the sweep had ended, every confirm run. EndedRuns is how many of them
+	// ended. A run cut short by the interrupt didn't end, nor did a run on a
+	// cluster that didn't come up.
+	PlannedRuns int `json:"plannedRuns"`
+	EndedRuns   int `json:"endedRuns"`
 	// Packages are the packages it ran.
 	Packages []discover.Package `json:"packages"`
 	// Output is the directory failures' output was saved under.
@@ -415,11 +466,21 @@ type Test struct {
 	// Test is the test's full name, or "" for a failure outside any test.
 	Test string `json:"test"`
 	// Confirmed reports that the test was confirmed, so Runs, Failures,
-	// Hangs and Pairs are its confirm runs, not its sweep runs.
+	// Hangs and Pairs are its confirm runs, not its sweep runs. It is
+	// confirmed fully only when ConfirmIncomplete is false too.
 	Confirmed bool `json:"confirmed"`
-	Runs      int  `json:"runs"`
-	Failures  int  `json:"failures"`
-	Hangs     int  `json:"hangs"`
+	// ConfirmIncomplete reports that its confirm runs were planned, but
+	// didn't all end, as when the sweep was interrupted during them. Then
+	// its counts are of the confirm runs that ended, when any did, and of
+	// its sweep runs otherwise, so it isn't a fully confirmed test.
+	// ConfirmPlanned and ConfirmEnded are how many of its confirm runs were
+	// planned and ended, or 0 when none were planned.
+	ConfirmIncomplete bool `json:"confirmIncomplete"`
+	ConfirmPlanned    int  `json:"confirmPlanned"`
+	ConfirmEnded      int  `json:"confirmEnded"`
+	Runs              int  `json:"runs"`
+	Failures          int  `json:"failures"`
+	Hangs             int  `json:"hangs"`
 	// Pairs are its runs, failures and hangs at each pair of CPU count
 	// and load.
 	Pairs []Pair `json:"pairs"`
@@ -475,13 +536,15 @@ func (r *Results) Report() Report {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rep := Report{
-		CPUs:     r.cfg.CPUs,
-		Loads:    r.cfg.Loads,
-		Levels:   r.cfg.Levels,
-		Packages: r.cfg.Packages,
-		Output:   r.cfg.Out,
-		Flaky:    []Test{},
-		Failing:  []Test{},
+		CPUs:        r.cfg.CPUs,
+		Loads:       r.cfg.Loads,
+		Levels:      r.cfg.Levels,
+		PlannedRuns: r.planned,
+		EndedRuns:   r.ended,
+		Packages:    r.cfg.Packages,
+		Output:      r.cfg.Out,
+		Flaky:       []Test{},
+		Failing:     []Test{},
 		// The slice is copied, since a cluster may yet fail to come up
 		// once the report is returned.
 		UpFailures: append([]UpFailure{}, r.ups...),
@@ -506,6 +569,9 @@ func (r *Results) Report() Report {
 		if t.Confirmed {
 			rep.Confirmed++
 			rep.ConfirmRuns += t.Runs
+		}
+		if t.ConfirmIncomplete {
+			rep.IncompleteConfirms++
 		}
 		bad[k] = true
 		if failing {
@@ -547,6 +613,11 @@ func (r *Results) test(k key, e *entry) (Test, bool) {
 	if e.confirm != nil {
 		table, count = e.confirm, level.Confirm
 		t.Confirmed = true
+	}
+	if e.confirming {
+		t.ConfirmPlanned = level.Confirm * len(r.pairs(level))
+		t.ConfirmEnded = e.confirmEnded
+		t.ConfirmIncomplete = t.ConfirmEnded < t.ConfirmPlanned
 	}
 	failing := false
 	for _, at := range r.pairs(level) {
@@ -732,9 +803,16 @@ func WriteText(w io.Writer, rep Report) error {
 	if rep.Failed() {
 		p.printf("\n")
 	}
+	if rep.Interrupted {
+		p.printf("INTERRUPTED: %d of %d planned runs ended, and these results are of those\n", rep.EndedRuns, rep.PlannedRuns)
+	}
 	p.printf("%s passed every run\n", plural(rep.Passed, "test", "tests"))
 	if slices.ContainsFunc(rep.Levels, func(l Level) bool { return l.Confirm > 0 }) {
-		p.printf("confirmed %s in %s\n", plural(rep.Confirmed, "test", "tests"), plural(rep.ConfirmRuns, "run", "runs"))
+		incomplete := ""
+		if rep.IncompleteConfirms > 0 {
+			incomplete = fmt.Sprintf(", and the confirm runs of %s didn't all end", plural(rep.IncompleteConfirms, "test", "tests"))
+		}
+		p.printf("confirmed %s in %s%s\n", plural(rep.Confirmed, "test", "tests"), plural(rep.ConfirmRuns, "run", "runs"), incomplete)
 	}
 	phases := make([]string, len(rep.Phases))
 	for i, ph := range rep.Phases {
@@ -774,6 +852,9 @@ func (p *printer) test(t Test) {
 		runs = plural(t.Runs, "confirm run", "confirm runs")
 	}
 	p.printf("    %s, %s in %s\n", plural(t.Failures, "failure", "failures"), plural(t.Hangs, "hang", "hangs"), runs)
+	if t.ConfirmIncomplete {
+		p.printf("    not fully confirmed: %d of its %d confirm runs ended\n", t.ConfirmEnded, t.ConfirmPlanned)
+	}
 	seed := ""
 	if t.FirstFailureSeed != nil {
 		seed = ", seed " + strconv.FormatInt(*t.FirstFailureSeed, 10)

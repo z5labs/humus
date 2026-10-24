@@ -64,7 +64,19 @@
 // with its result, and the commands that reproduce it name it.
 //
 // It reports each test that failed or hung, at each pair, and exits 1 if any
-// did.
+// did, and 0 if none did. It exits 2 when it can't run the sweep.
+//
+// On SIGINT or SIGTERM, it starts no more runs, waits for the runs going, and
+// deletes the clusters that are up. Then it reports what the runs that ended
+// found, as it would have at the end, and exits 3, whatever they found. A run
+// cut short counts as neither a pass nor a failure. The report says the sweep
+// was interrupted, how many runs it planned and how many ended: with -json,
+// in interrupted, plannedRuns and endedRuns. No confirm run starts after the
+// interrupt. Interrupted during the sweep, a test that failed or hung has no
+// confirm runs, and its counts are its sweep runs'. Interrupted during the
+// confirm runs, a test's counts are of its confirm runs that ended, and a test
+// whose confirm runs didn't all end is marked not fully confirmed, with -json
+// in confirmIncomplete, confirmPlanned and confirmEnded.
 //
 // Packages are patterns from the repository's root, such as ./grpc/... or
 // ./example/grpc/wallet/app. With none, it runs every module that
@@ -126,6 +138,10 @@ import (
 // grace is how long after its timeout a run still going is killed.
 const grace = 30 * time.Second
 
+// interruptedCode is the exit code of a sweep stopped by SIGINT or SIGTERM,
+// which still reports what the runs that ended found.
+const interruptedCode = 3
+
 // testcontainers is the level of the tests behind the testcontainers tag,
 // whose containers are pinned to the kept-back cores.
 const testcontainers = "testcontainers"
@@ -172,7 +188,8 @@ each walkthrough's functional tests on a kind cluster of its own, pinned to a
 lane's 4 cores. Then it runs each test that failed or hung alone, -confirm times at each pair,
 and reports each test that failed or hung. With -run, it runs the matching
 tests -count times at each pair, and confirms none. With -shuffle, each run
-shuffles its tests with a seed of its own.
+shuffles its tests with a seed of its own. On SIGINT or SIGTERM, it reports
+what the runs that ended found, and exits 3.
 
 flaky report posts a flaky test's Bugs discussion, rendered from the results
 of flaky stress -json and a description, unless an open report already names
@@ -426,12 +443,22 @@ func stressCommand(ctx context.Context, p bedrock.Process, args []string) bedroc
 		}
 		return bedrock.ExitWithCause(2, err)
 	}
+	return writeStress(p, f, rep)
+}
+
+// writeStress writes the report rep of a sweep, and returns its exit status:
+// interruptedCode when the sweep was interrupted, 1 when a test failed or
+// hung, or a cluster didn't come up, and 0 otherwise.
+func writeStress(p bedrock.Process, f stressFlags, rep results.Report) bedrock.ExitStatus {
 	write := results.WriteText
 	if f.json {
 		write = results.WriteJSON
 	}
 	if err := write(p.Stdout, rep); err != nil {
 		return bedrock.ExitWithCause(2, err)
+	}
+	if rep.Interrupted {
+		return bedrock.ExitWithCause(interruptedCode, fmt.Errorf("interrupted with %d of %d planned runs ended", rep.EndedRuns, rep.PlannedRuns))
 	}
 	if rep.Failed() {
 		return bedrock.ExitWithCause(1, errors.New("a test failed or hung"))
@@ -605,11 +632,24 @@ func stressRun(ctx context.Context, p bedrock.Process, f stressFlags) (results.R
 		Log:          log,
 		Progress:     time.Minute,
 	}, r, res)
-	if err != nil {
+	// A sweep stopped by a signal still reports the runs that ended. The
+	// signal gives ctx's error, or a build it killed; any other error,
+	// such as a run's output that couldn't be saved, is the sweep failing.
+	var buildErr *stress.BuildError
+	interrupted := err != nil && ctx.Err() != nil &&
+		(errors.Is(err, ctx.Err()) || errors.Is(err, context.Cause(ctx)) || errors.As(err, &buildErr))
+	if err != nil && !interrupted {
 		return results.Report{}, err
+	}
+	if buildErr != nil {
+		say(log, "warning: %v\n", err)
 	}
 
 	rep := res.Report()
+	rep.Interrupted = interrupted
+	if interrupted {
+		say(log, "interrupted: %d of %d planned runs ended\n", rep.EndedRuns, rep.PlannedRuns)
+	}
 	rep.Commit = commit
 	rep.Go = goVersion
 	rep.Cores = len(cores)
