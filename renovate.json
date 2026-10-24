@@ -29,7 +29,7 @@
       "enabled": true
     },
     {
-      "description": "A new major version of a Go module has a new module path, so a major update of an indirect requirement swaps a path the dependencies import for one nothing imports. go mod tidy puts the old path back and the pull request can never pass. An indirect requirement moves to a new major only when a direct dependency starts importing it, and that dependency's update brings it in. This rule comes after the one enabling indirect updates so it wins",
+      "description": "From v2 on, a new major version of a Go module has a new module path, so a major update of an indirect requirement swaps a path the dependencies import for one nothing imports. go mod tidy puts the old path back and the pull request can never pass. An indirect requirement moves to a new major path only when a direct dependency starts importing it, and that dependency's update brings it in. Majors that keep the path, v0 to v1 and +incompatible, are turned off too and arrive the same way, with the direct dependency that needs them. This rule comes after the one enabling indirect updates so it wins",
       "matchManagers": [
         "gomod"
       ],
