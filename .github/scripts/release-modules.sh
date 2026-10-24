@@ -27,6 +27,18 @@
 # the release's version, an example still naming the last one has a go.mod
 # that is out of date, and does not build.
 #
+# A release also sets every humus version the docs tell a reader to install
+# or require, so the README and the docs site name the latest release in the
+# tree its tags point at. The docs are every tracked Markdown file except any
+# under testdata or a directory whose name begins with ., and a doc names a
+# version as <path>@<ref>, the form go get takes, at a version, a branch such
+# as main or a query such as latest, or as a go.mod line, <path> <version>,
+# where <path> is in a released module. A placeholder that names no version,
+# such as vX.Y.Z, and @none are left as they are. A pre-release changes none
+# of them, so the docs keep naming the latest release. --bump sets them, a
+# dry run prints each line it would change, and tagging a release refuses a
+# commit at which one names another version.
+#
 # Usage:
 #
 #   release-modules.sh [--bump | --dry-run | --list] [--commit <rev>] [--remote <name>] <version>
@@ -38,10 +50,13 @@
 #                    <dir>/<version> for each nested module
 #   --bump           set every requirement one humus module has on another to
 #                    <version>, in the go.mod files of the working tree,
-#                    those of the modules under example/ and tools/ included
+#                    those of the modules under example/ and tools/ included,
+#                    and, unless <version> is a pre-release, every humus
+#                    version the docs name
 #   --dry-run        make every check, print the requirements --bump would set,
-#                    in the examples' and tools' go.mod files too, and the
-#                    tags that would be created, and change nothing
+#                    in the examples' and tools' go.mod files too, each doc
+#                    line it would change, and the tags that would be
+#                    created, and change nothing
 #   --list           print the path of every module the release tags, one
 #                    per line, and touch no remote
 #   --commit <rev>   the release commit; defaults to HEAD. --bump works on the
@@ -51,12 +66,13 @@
 #
 # Before any tag is created, the script checks that <version> is a Go module
 # version of major version 0 or 1, that every nested module's path is its
-# directory under the root module's path, that every requirement between
-# humus modules, and every requirement an example or a tool has on a released
-# module, names <version>, and that no tag already exists at a different
-# commit. A tag that already exists at the release commit is skipped, so a
-# re-run is safe. The tags it does create are pushed in one atomic push, so a
-# failure leaves no partial set.
+# directory under the root module's path, that every requirement between humus
+# modules, and every requirement an example or a tool has on a released
+# module, names <version>, that unless <version> is a pre-release every humus
+# version the docs name is <version>, and that no tag already exists at a
+# different commit. A tag that already exists at the release commit is
+# skipped, so a re-run is safe. The tags it does create are pushed in one
+# atomic push, so a failure leaves no partial set.
 #
 # The modules are discovered at the release commit, not from a list kept by
 # hand: every tracked go.mod except any the Go tool ignores, one under a
@@ -333,34 +349,206 @@ for dir in "${pinned[@]}"; do
   done < <(requirements "$file")
 done
 
+# Every module path, and whether the release tags it. A path the docs name
+# belongs to the module whose path is its longest prefix, so a tool's or an
+# example's path under the root module's is never the root module's.
+modlist=$(
+  for dir in "${dirs[@]}"; do
+    path=$(module_path "$(gomod "$dir")")
+    [[ -n $path ]] || continue
+    if [[ -n ${released[$path]:-} ]]; then
+      printf '%s\t1\n' "$path"
+    else
+      printf '%s\t0\n' "$path"
+    fi
+  done
+)
+
+# The docs are every tracked Markdown file, except any under a testdata
+# directory, which holds fixtures, or under a directory whose name begins with
+# ., such as .github and .claude, which hold the repository's tooling rather
+# than anything its readers read.
+docs=()
+for file in "${tracked[@]}"; do
+  [[ $file == *.md ]] || continue
+  case "/$file" in
+  */testdata/* | */.*/*) continue ;;
+  esac
+  docs+=("$file")
+done
+
+# doc_lines reads a doc on stdin and, with mode=report, prints each line that
+# names a version of a released module other than <version>, as its number,
+# the line as it would be and the line as it is, separated by \x1f; with
+# mode=rewrite it prints the whole doc with those lines changed.
+#
+# A doc names a version in two forms: <path>@<ref>, as go get and go install
+# take it, where <ref> may be a version, a branch such as main, or a query
+# such as latest; and a line of a go.mod, <path> <version>, alone or after
+# require. Only a path in a released module counts, a package path as well as
+# a module path. A placeholder that names no version, such as vX.Y.Z, whose
+# version core holds no digit and no lowercase letter, is left as it is, and
+# so is @none, which removes a requirement rather than naming one.
+doc_lines() {
+  awk -v mode="$1" -v version="$version" -v root="$root" '
+    BEGIN {
+      rootre = ""
+      for (i = 1; i <= length(root); i++) {
+        c = substr(root, i, 1)
+        rootre = rootre (c == "." ? "[.]" : c)
+      }
+      pathre = rootre "(/[A-Za-z0-9._~-]+)*"
+      reqre = "^[ \t]*(require[ \t]+)?" pathre "[ \t]+v[0-9][-A-Za-z0-9.+]*([ \t]*//.*)?$"
+      sep = sprintf("%c", 31)
+    }
+    NR == FNR {
+      split($0, f, "\t")
+      mods[f[1]] = f[2]
+      next
+    }
+    function is_released(p,    m, best, bl) {
+      best = ""
+      bl = -1
+      for (m in mods) {
+        if ((p == m || index(p, m "/") == 1) && length(m) > bl) {
+          best = m
+          bl = length(m)
+        }
+      }
+      return best != "" && mods[best] == 1
+    }
+    function placeholder(r,    b) {
+      b = r
+      sub(/^v/, "", b)
+      sub(/-.*/, "", b)
+      return b !~ /[a-z0-9]/
+    }
+    function rewrite(s,    res, pre, tok, at, p, r, trail, rest, ws) {
+      if (s ~ reqre) {
+        match(s, pathre)
+        pre = substr(s, 1, RSTART - 1)
+        p = substr(s, RSTART, RLENGTH)
+        rest = substr(s, RSTART + RLENGTH)
+        match(rest, /^[ \t]+/)
+        ws = substr(rest, 1, RLENGTH)
+        rest = substr(rest, RLENGTH + 1)
+        match(rest, /^[^ \t]+/)
+        r = substr(rest, 1, RLENGTH)
+        rest = substr(rest, RLENGTH + 1)
+        if (is_released(p) && r != version) {
+          return pre p ws version rest
+        }
+        return s
+      }
+      res = ""
+      while (match(s, pathre "@[A-Za-z0-9._+/-]+")) {
+        pre = substr(s, 1, RSTART - 1)
+        tok = substr(s, RSTART, RLENGTH)
+        s = substr(s, RSTART + RLENGTH)
+        at = index(tok, "@")
+        p = substr(tok, 1, at - 1)
+        r = substr(tok, at + 1)
+        trail = ""
+        while (r ~ /[.\/]$/) {
+          trail = substr(r, length(r)) trail
+          r = substr(r, 1, length(r) - 1)
+        }
+        if (pre ~ /[A-Za-z0-9._\/-]$/ || r == "" || r == version || r == "none" || placeholder(r) || !is_released(p)) {
+          res = res pre tok
+          continue
+        }
+        res = res pre p "@" version trail
+      }
+      return res s
+    }
+    {
+      line = rewrite($0)
+      if (mode == "rewrite") {
+        print line
+      } else if (line != $0) {
+        print FNR sep line sep $0
+      }
+    }
+  ' <(printf '%s\n' "$modlist") -
+}
+
+# trim prints its argument without its leading whitespace.
+trim() {
+  printf '%s' "${1#"${1%%[![:space:]]*}"}"
+}
+
+# Every line of the docs a release of <version> changes, as <file>, its
+# number, the line as it would be and the line as it is, separated by \x1f.
+# A pre-release changes none: the docs keep naming the latest release.
+sep=$'\x1f'
+outdated=()
+if [[ -z $prerelease ]]; then
+  for file in "${docs[@]}"; do
+    while IFS=$sep read -r n new old; do
+      outdated+=("$file$sep$n$sep$new$sep$old")
+    done < <(show "$file" | doc_lines report)
+  done
+fi
+
 if [[ $mode == bump ]]; then
   if [[ ${#stale[@]} -eq 0 ]]; then
     echo "every requirement on a released humus module already names $version"
-    exit 0
   fi
   for entry in "${stale[@]}"; do
     read -r file path have <<<"$entry"
     go mod edit -require="$path@$version" "$file"
     echo "set $file: require $path $version (was $have)"
   done
+  if [[ -n $prerelease ]]; then
+    echo "leave the docs alone: $version is a pre-release, so they keep naming the latest release"
+    exit 0
+  fi
+  if [[ ${#outdated[@]} -eq 0 ]]; then
+    echo "every humus version the docs name is already $version"
+    exit 0
+  fi
+  declare -A edited=()
+  for entry in "${outdated[@]}"; do
+    IFS=$sep read -r file n new old <<<"$entry"
+    echo "set $file:$n: $(trim "$new") (was $(trim "$old"))"
+    edited[$file]=1
+  done
+  for file in "${!edited[@]}"; do
+    rewritten=$(mktemp)
+    doc_lines rewrite <"$file" >"$rewritten"
+    cat "$rewritten" >"$file"
+    rm -f "$rewritten"
+  done
   exit 0
 fi
 
-if [[ ${#stale[@]} -gt 0 ]]; then
+if [[ $mode == dry-run && -n $prerelease ]]; then
+  echo "leave the docs alone: $version is a pre-release, so they keep naming the latest release"
+fi
+
+if [[ ${#stale[@]} -gt 0 || ${#outdated[@]} -gt 0 ]]; then
   if [[ $mode == tag ]]; then
     for entry in "${stale[@]}"; do
       read -r file path have <<<"$entry"
       echo "release-modules: $file requires $path $have, want $version" >&2
     done
-    die "every requirement on a released humus module must name $version at the release commit $sha: set them with release-modules.sh --bump $version and merge the change first"
+    for entry in "${outdated[@]}"; do
+      IFS=$sep read -r file n new old <<<"$entry"
+      echo "release-modules: $file:$n names a humus version other than $version: $(trim "$old")" >&2
+    done
+    die "every requirement on a released humus module, and every humus version the docs name, must be $version at the release commit $sha: set them with release-modules.sh --bump $version and merge the change first"
   fi
   for entry in "${stale[@]}"; do
     read -r file path have <<<"$entry"
     echo "would set $file: require $path $version (now $have)"
   done
+  for entry in "${outdated[@]}"; do
+    IFS=$sep read -r file n new old <<<"$entry"
+    echo "would set $file:$n: $(trim "$new") (now $(trim "$old"))"
+  done
   # The tags would go on the commit that merges these changes, which does not
   # exist yet, so any tag that already exists is at a different commit.
-  echo "release $version at the commit that sets these requirements on top of $sha"
+  echo "release $version at the commit that makes these changes on top of $sha"
   target=
 else
   echo "release $version at $sha"

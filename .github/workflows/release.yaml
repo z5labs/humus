@@ -25,6 +25,15 @@ name: Release
 # require of the root module, and an example still naming the last release
 # would have a go.mod that is out of date and fail its checks.
 #
+# A release also updates every humus version the docs tell a reader to
+# install or require, such as the go get lines in the README and on the docs
+# site's Getting started page, so the docs in the tree the release's tags
+# point at name that release. That covers a doc added later with no change
+# here: release-modules.sh finds them in every tracked Markdown file, at a
+# version or at a branch such as main, and leaves a placeholder that names no
+# version, such as vX.Y.Z, as it is. A pre-release changes none of them, so
+# the docs keep naming the latest release.
+#
 # Releasing. Run this workflow from main with the version to release, vX.Y.Z,
 # optionally with a pre-release suffix such as v0.16.0-rc.1:
 #
@@ -34,13 +43,14 @@ name: Release
 #
 #   1. Bump. It checks the version and main with a dry run (below), then runs
 #      .github/scripts/release-modules.sh --bump, which sets every requirement
-#      between humus modules to the version, and every requirement an example
-#      or a tool has on one, although those are never tagged. If that changes
+#      between humus modules to the version, every requirement an example or a
+#      tool has on one, although those are never tagged, and, unless the version
+#      is a pre-release, every humus version the docs name. If that changes
 #      anything, it commits the change to release/<version> through GitHub's
 #      API, so that GitHub signs the commit (see One-time setup), opens a pull
-#      request from that branch, waits for every check on it to pass, and
-#      merges it through the merge queue. The merge commit is the release
-#      commit. If nothing changes, main itself is.
+#      request from that branch, waits for every check on it to pass, and merges
+#      it through the merge queue. The merge commit is the release commit. If
+#      nothing changes, main itself is.
 #   2. Tag. At the release commit, release-modules.sh creates <version> for the
 #      root module and <dir>/<version> for every nested module, in one atomic
 #      push, so a failure leaves no partial set.
@@ -61,12 +71,13 @@ name: Release
 # first), a nested module whose path is not its directory under
 # github.com/z5labs/humus, a release commit at which any requirement between
 # humus modules, or any requirement an example or a tool has on one, names
-# another version (listing each), and a tag that already exists at a
-# different commit. A tag already at the release commit is skipped. The
-# modules are discovered at the release commit: every tracked go.mod, except
-# any under testdata or a directory starting with . or _, any module with no
-# Go files of its own, such as the Hugo module under docs/, and every module
-# under example/ or tools/, which is never tagged.
+# another version (listing each), a commit to release without a pre-release
+# suffix at which a doc names another humus version (listing each line), and a
+# tag that already exists at a different commit. A tag already at the release
+# commit is skipped. The modules are discovered at the release commit: every
+# tracked go.mod, except any under testdata or a directory starting with . or
+# _, any module with no Go files of its own, such as the Hugo module under
+# docs/, and every module under example/ or tools/, which is never tagged.
 #
 # Dry run. To see what a release of any commit would do, without changing
 # anything, run from a clone:
@@ -74,8 +85,8 @@ name: Release
 #   .github/scripts/release-modules.sh --dry-run --commit origin/main v0.16.0
 #
 # It makes every check and prints the requirements the bump would set, in the
-# examples' and tools' go.mod files too, and the tags that would be created.
-# To set the requirements in a working tree, as
+# examples' and tools' go.mod files too, each doc line it would change, and
+# the tags that would be created. To set them in a working tree, as
 # the bump does: .github/scripts/release-modules.sh --bump v0.16.0. The tests
 # for the script are .github/scripts/release-modules_test.sh, run by Build.
 #
@@ -212,7 +223,7 @@ jobs:
         if: steps.tagged.outputs.commit == ''
         run: .github/scripts/release-modules.sh --dry-run "$VERSION"
 
-      - name: Set the requirements between modules
+      - name: Set the version between modules and in the docs
         id: bump
         if: steps.tagged.outputs.commit == ''
         run: |
@@ -276,7 +287,7 @@ jobs:
 
           pr=$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number // empty')
           if [ -z "$pr" ]; then
-            body="Sets every requirement on a released humus module to $VERSION, the examples' and tools' included, so each module resolves at $VERSION once it is tagged and every example and tool still builds.
+            body="Sets every requirement on a released humus module to $VERSION, the examples' and tools' included, so each module resolves at $VERSION once it is tagged and every example and tool still builds. Unless $VERSION is a pre-release, it also sets every humus version the docs tell a reader to install to $VERSION.
 
           Opened by the [Release workflow]($RUN_URL), which merges this pull request once every check passes, then tags every module at $VERSION and publishes the release. Close it to abandon the release."
             url=$(gh pr create --base main --head "$branch" --title "$title" --body "$body")
