@@ -585,8 +585,12 @@ func flakedA(t *testing.T, repo string) (string, string) {
 func flakedAIn(t *testing.T, repo string, interrupted bool) (string, string) {
 	head, err := exec.CommandContext(t.Context(), "git", "-C", repo, "rev-parse", "HEAD").Output()
 	require.NoError(t, err)
+	ended := 4
+	if interrupted {
+		ended = 2
+	}
 	b, err := json.Marshal(results.Report{
-		Interrupted: interrupted, PlannedRuns: 4, EndedRuns: 2,
+		Interrupted: interrupted, PlannedRuns: 4, EndedRuns: ended,
 		Commit: strings.TrimSpace(string(head)), Go: "go1.27.0", Cores: 4,
 		Packages: []discover.Package{{Module: ".", Dir: "a", ImportPath: "example.com/repo/a", Level: "unit"}},
 		Flaky: []results.Test{{

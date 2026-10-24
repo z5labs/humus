@@ -302,7 +302,7 @@ func Find(rep results.Report, pkg, test string) (results.Test, error) {
 			continue
 		}
 		if t.Failures+t.Hangs == 0 && t.ConfirmIncomplete {
-			return t, fmt.Errorf("%s passed every one of the %d of its %s that ended, alone, so the results have no failure of it to report", test, t.ConfirmEnded, plural(t.ConfirmPlanned, "confirm run", "confirm runs"))
+			return t, fmt.Errorf("%s passed every one of the %s of its %s that ended, alone, so the results have no failure of it to report", test, count(t.ConfirmEnded), plural(t.ConfirmPlanned, "confirm run", "confirm runs"))
 		}
 		if t.Failures+t.Hangs == 0 {
 			return t, fmt.Errorf("%s passed every one of its %s alone, so the results have no failure of it to report", test, plural(t.Runs, "confirm run", "confirm runs"))
@@ -463,6 +463,8 @@ func interrupted(b Bug) string {
 	case t.ConfirmPlanned == 0 && !t.Confirmed:
 		s += " It has no confirm runs, so they are its sweep runs."
 	case !t.ConfirmIncomplete:
+		// Its confirm runs all ended, so the counts are of them, as in a
+		// sweep that ran to the end, and there is nothing more to say.
 	case t.Confirmed:
 		s += fmt.Sprintf(" Its confirm runs didn't all end: %s of its %s did, and they are of those.", count(t.ConfirmEnded), count(t.ConfirmPlanned))
 	case t.ConfirmEnded > 0:

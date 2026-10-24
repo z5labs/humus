@@ -150,6 +150,9 @@ const (
 	// afterTheConfirmsPassed is interrupted after two of TestAToo's
 	// confirm runs end, both passing.
 	afterTheConfirmsPassed
+	// afterTheConfirmsEnded is interrupted after every one of TestAToo's
+	// confirm runs ends, one failing, during another test's confirm runs.
+	afterTheConfirmsEnded
 )
 
 func runOf(outcomes ...run.Outcome) run.Result {
@@ -212,8 +215,23 @@ func interruptedResults(t *testing.T, head string, how int) results.Report {
 		case afterTheConfirmsPassed:
 			confirm(1, 1, runOf(run.Pass, run.Pass))
 			confirm(1, 2, runOf(run.Pass, run.Pass))
+		case afterTheConfirmsEnded:
+			for _, cpu := range []int{1, 2} {
+				for _, load := range []int{1, 2} {
+					for i := range 4 {
+						outcome := run.Pass
+						if cpu == 2 && load == 2 && i == 0 {
+							outcome = run.Fail
+						}
+						confirm(cpu, load, runOf(run.Pass, outcome))
+					}
+				}
+			}
+			r.Planned(16)
 		}
-		confirm(2, 1, cancelled)
+		if how != afterTheConfirmsEnded {
+			confirm(2, 1, cancelled)
+		}
 	}
 	rep := r.Report()
 	rep.Interrupted = true
@@ -261,11 +279,13 @@ func TestRender_of_an_interrupted_sweep_says_which_runs_the_counts_are(t *testin
 		name string
 		how  int
 		want string
+		also string
 	}{
-		{"no confirm runs", duringTheSweep, "The sweep was interrupted, when 3 of its 12 planned runs had ended, so the counts below are of the runs that ended. It has no confirm runs, so they are its sweep runs.\n\nAt ["},
-		{"confirm runs that ended", duringTheConfirms, "The sweep was interrupted, when 15 of its 28 planned runs had ended, so the counts below are of the runs that ended. Its confirm runs didn't all end: 3 of its 16 did, and they are of those.\n\nAt ["},
-		{"no confirm run ended", beforeAnyConfirmEnded, "The sweep was interrupted, when 12 of its 28 planned runs had ended, so the counts below are of the runs that ended. Its confirm runs didn't all end: 0 of its 16 did, so they are its sweep runs.\n\nAt ["},
-		{"no confirm run that ended ran it", beforeAConfirmRanIt, "The sweep was interrupted, when 13 of its 28 planned runs had ended, so the counts below are of the runs that ended. Its confirm runs didn't all end: 1 of its 16 did, and none of those ran it, so they are its sweep runs.\n\nAt ["},
+		{"no confirm runs", duringTheSweep, "The sweep was interrupted, when 3 of its 12 planned runs had ended, so the counts below are of the runs that ended. It has no confirm runs, so they are its sweep runs.\n\nAt [", ""},
+		{"confirm runs that ended", duringTheConfirms, "The sweep was interrupted, when 15 of its 28 planned runs had ended, so the counts below are of the runs that ended. Its confirm runs didn't all end: 3 of its 16 did, and they are of those.\n\nAt [", ""},
+		{"no confirm run ended", beforeAnyConfirmEnded, "The sweep was interrupted, when 12 of its 28 planned runs had ended, so the counts below are of the runs that ended. Its confirm runs didn't all end: 0 of its 16 did, so they are its sweep runs.\n\nAt [", ""},
+		{"no confirm run that ended ran it", beforeAConfirmRanIt, "The sweep was interrupted, when 13 of its 28 planned runs had ended, so the counts below are of the runs that ended. Its confirm runs didn't all end: 1 of its 16 did, and none of those ran it, so they are its sweep runs.\n\nAt [", ""},
+		{"confirm runs that all ended", afterTheConfirmsEnded, "The sweep was interrupted, when 28 of its 44 planned runs had ended, so the counts below are of the runs that ended.\n\nAt [", "`flaky stress` ran it 16 times:"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -277,6 +297,7 @@ func TestRender_of_an_interrupted_sweep_says_which_runs_the_counts_are(t *testin
 				Interrupted: rep.Interrupted, PlannedRuns: rep.PlannedRuns, EndedRuns: rep.EndedRuns,
 			})
 			require.Contains(t, body, "## What happens\n\nd\n\n"+c.want)
+			require.Contains(t, body, c.also)
 		})
 	}
 }
@@ -371,6 +392,14 @@ func TestFind_refuses_a_test_whose_confirm_runs_that_ended_all_passed(t *testing
 	rep := interruptedResults(t, commit, afterTheConfirmsPassed)
 	_, err := report.Find(rep, "a", "TestAToo")
 	require.EqualError(t, err, "TestAToo passed every one of the 2 of its 16 confirm runs that ended, alone, so the results have no failure of it to report")
+}
+
+func TestFind_refuses_a_test_whose_thousands_of_confirm_runs_that_ended_all_passed(t *testing.T) {
+	test := flakyTest()
+	test.Failures, test.Hangs = 0, 0
+	test.ConfirmIncomplete, test.ConfirmPlanned, test.ConfirmEnded = true, 6000, 1234
+	_, err := report.Find(reportWith([]results.Test{test}, nil), "grpc/grpchealth", test.Test)
+	require.EqualError(t, err, "TestServe_reports_serving/after_a_restart passed every one of the 1,234 of its 6,000 confirm runs that ended, alone, so the results have no failure of it to report")
 }
 
 func TestFind_refuses_a_test_of_an_interrupted_sweep_that_failed_every_run_that_ended_at_some_pair(t *testing.T) {
