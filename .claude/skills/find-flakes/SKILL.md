@@ -107,9 +107,12 @@ If the skill has to stop while the sweep runs, stop `flaky` first, so it deletes
 clusters it brought up, and wait for it to end before the worktree goes:
 
 ```
-pkill -TERM -f '<WORK>/flaky stress'
+pkill -TERM -f '^<WORK>/flaky stress'
 timeout 570 bash -c 'until test -f <WORK>/stress.exit; do sleep 10; done'
 ```
+
+Keep the `^`: only `flaky`'s command line starts with `<WORK>/flaky stress`. Without it the
+pattern matches the wrapper `bash -c` too, which then dies before it writes `stress.exit`.
 
 When it ends, read `<WORK>/stress.exit`:
 
