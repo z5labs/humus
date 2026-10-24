@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -352,6 +353,87 @@ func TestStress_exits_2_when_it_cannot_run(t *testing.T) {
 			st, _, stderr := stressIn(t, repo, tc.args...)
 			require.Equal(t, 2, st.Code())
 			require.Contains(t, stderr, tc.want)
+		})
+	}
+}
+
+func TestStress_reports_the_runs_that_ended_and_exits_3_when_it_is_interrupted(t *testing.T) {
+	testCases := []struct {
+		name string
+		sig  os.Signal
+		json bool
+	}{
+		{"SIGINT, as text", os.Interrupt, false},
+		{"SIGTERM, as JSON", syscall.SIGTERM, true},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := repotest.New(t, "0.0.1")
+			repotest.Write(t, repo, "slow/slow_test.go", "package slow\n\nimport (\n\t\"testing\"\n\t\"time\"\n)\n\nfunc TestSlow(t *testing.T) { time.Sleep(10 * time.Minute) }\n")
+			repotest.Commit(t, repo)
+			t.Chdir(filepath.Join(repo, "a"))
+			args := []string{"stress", "-cpu", "1", "-load", "1", "-count", "2", "-confirm", "2", "-keep", "0", "-timeout", "15m"}
+			if tc.json {
+				args = append(args, "-json")
+			}
+			args = append(args, "./slow")
+			p, status := bedrocktest.Start(t, bedrock.AppFunc(flaky), bedrocktest.WithArgs(args...), bedrocktest.WithEnv(flakyEnv(t)))
+			<-p.Notified(tc.sig)
+			require.Eventually(t, func() bool { return strings.Contains(p.Stderr(), "built 1 test binaries") }, 5*time.Minute, 50*time.Millisecond, p.Stderr())
+			p.Signal(tc.sig)
+			st := <-status
+			stdout, stderr := p.Stdout(), p.Stderr()
+			require.Equal(t, 3, st.Code(), "stdout:\n%s\nstderr:\n%s", stdout, stderr)
+			require.Contains(t, stderr, "interrupted: 0 of 2 planned runs ended\n")
+			if !tc.json {
+				require.Contains(t, stdout, "INTERRUPTED: 0 of 2 planned runs ended, and these results are of those\n0 tests passed every run\n")
+				return
+			}
+			var rep results.Report
+			require.NoError(t, json.Unmarshal([]byte(stdout), &rep))
+			require.True(t, rep.Interrupted)
+			require.Equal(t, 2, rep.PlannedRuns)
+			require.Zero(t, rep.EndedRuns, "the runs cut short didn't end")
+			require.Empty(t, rep.Failing, "a run cut short is no failure")
+			require.Len(t, rep.Commit, 40)
+		})
+	}
+}
+
+func TestWriteStress_tells_an_interrupted_sweep_from_one_that_ran_to_the_end(t *testing.T) {
+	failing := []results.Test{{Package: "a", Test: "TestA", Runs: 1, Failures: 1, Pairs: []results.Pair{{CPU: 1, Load: 1, Runs: 1, Failures: 1}}}}
+	testCases := []struct {
+		name        string
+		interrupted bool
+		failing     []results.Test
+		json        bool
+		want        int
+	}{
+		{"ran to the end, and every test passed", false, nil, false, 0},
+		{"ran to the end, and a test failed", false, failing, true, 1},
+		{"interrupted, and every test passed", true, nil, false, interruptedCode},
+		{"interrupted, and a test failed, as text", true, failing, false, interruptedCode},
+		{"interrupted, and a test failed, as JSON", true, failing, true, interruptedCode},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			fp := bedrocktest.NewProcess(t)
+			rep := results.Report{Interrupted: tc.interrupted, PlannedRuns: 10, EndedRuns: 4, Failing: tc.failing, Flaky: []results.Test{}}
+			if rep.Failing == nil {
+				rep.Failing = []results.Test{}
+			}
+			st := writeStress(fp.Process(), stressFlags{json: tc.json}, rep)
+			require.Equal(t, tc.want, st.Code())
+			switch {
+			case tc.json:
+				var got results.Report
+				require.NoError(t, json.Unmarshal([]byte(fp.Stdout()), &got))
+				require.Equal(t, tc.interrupted, got.Interrupted)
+			case tc.interrupted:
+				require.Contains(t, fp.Stdout(), "INTERRUPTED: 4 of 10 planned runs ended")
+			default:
+				require.NotContains(t, fp.Stdout(), "INTERRUPTED")
+			}
 		})
 	}
 }

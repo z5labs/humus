@@ -59,6 +59,7 @@ type fakeRunner struct {
 	lastBuilt    time.Time
 	builds       int
 	firstRun     time.Time
+	lastStart    time.Time
 	runs         map[pkgCPU]int
 	lastSweepEnd time.Time
 	firstConfirm time.Time
@@ -225,6 +226,7 @@ func (f *fakeRunner) Run(ctx context.Context, pkg int, test string, cpu int, cor
 	if f.firstRun.IsZero() {
 		f.firstRun = time.Now()
 	}
+	f.lastStart = time.Now()
 	if test == "" {
 		f.runs[pkgCPU{pkg, cpu}]++
 	} else {
@@ -505,6 +507,88 @@ func TestStress_stops_before_confirming_when_its_context_is_done_during_the_swee
 	require.Empty(t, f.confirms)
 }
 
+func TestStress_reports_the_sweep_runs_that_ended_when_its_context_is_done_during_the_sweep(t *testing.T) {
+	f := newFakeRunner()
+	f.runTook = func(int, int) time.Duration { return time.Minute }
+	f.fail = func(pkg, _ int) bool { return pkg == 0 }
+	res := newConfirmResults(t, 2, []int{1}, []int{1}, 10, 5)
+	var err error
+	var deadline time.Time
+	synctest.Test(t, func(t *testing.T) {
+		// The builds end at 1s, and the runs, two at a time, every minute
+		// from then, so two of each package's ten end.
+		ctx, cancel := context.WithTimeout(t.Context(), 150*time.Second)
+		defer cancel()
+		deadline, _ = ctx.Deadline()
+		_, err = stress.Stress(ctx, stress.Config{
+			Levels: []stress.Level{{Name: "unit", Count: 10, Confirm: 5}}, Packages: make([]int, 2), CPUs: []int{1}, Loads: []int{1}, Lanes: [][]int{{0}, {1}},
+		}, f, res)
+	})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Empty(t, f.confirms, "no confirm run starts after the interrupt")
+	require.True(t, f.lastStart.Before(deadline), "the last run started at %s, after the context was done at %s", f.lastStart, deadline)
+	rep := res.Report()
+	require.Equal(t, 20, rep.PlannedRuns, "the sweep's runs; its confirm runs were never planned")
+	require.Equal(t, 4, rep.EndedRuns, "the two runs cut short didn't end")
+	require.Zero(t, rep.Confirmed)
+	require.Len(t, rep.Failing, 1)
+	p0 := rep.Failing[0]
+	require.Equal(t, "p0", p0.Package)
+	require.False(t, p0.Confirmed, "it has no confirm runs")
+	require.False(t, p0.ConfirmIncomplete, "its confirm runs were never planned")
+	require.Equal(t, []results.Pair{{CPU: 1, Load: 1, Runs: 2, Failures: 2}}, p0.Pairs, "its sweep runs that ended")
+	require.Equal(t, 1, rep.Passed, "p1's TestA passed the runs that ended")
+}
+
+func TestStress_keeps_the_confirm_runs_that_ended_when_its_context_is_done_during_the_confirm_runs(t *testing.T) {
+	f := newFakeRunner()
+	f.runTook = func(int, int) time.Duration { return time.Minute }
+	f.fail = func(pkg, _ int) bool { return pkg < 2 }
+	f.confirmFail = func(pkg, _ int) bool { return pkg == 0 }
+	res := newConfirmResults(t, 3, []int{1}, []int{1}, 1, 4)
+	var err error
+	var deadline time.Time
+	synctest.Test(t, func(t *testing.T) {
+		// The builds end at 1s, and the sweep's three runs, one to a
+		// lane, at 61s. Then p0's and p1's eight confirm runs go three at
+		// a time: three end at 121s, and the context is done at 150s,
+		// while three more run and two have yet to start.
+		ctx, cancel := context.WithTimeout(t.Context(), 150*time.Second)
+		defer cancel()
+		deadline, _ = ctx.Deadline()
+		_, err = stress.Stress(ctx, stress.Config{
+			Levels: []stress.Level{{Name: "unit", Count: 1, Confirm: 4}}, Packages: make([]int, 3), CPUs: []int{1}, Loads: []int{1}, Lanes: [][]int{{0}, {1}, {2}},
+		}, f, res)
+	})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.True(t, f.lastStart.Before(deadline), "the last run started at %s, after the context was done at %s", f.lastStart, deadline)
+	started := 0
+	for _, n := range f.confirms {
+		started += n
+	}
+	require.Equal(t, 6, started, "no confirm run starts after the interrupt")
+	rep := res.Report()
+	require.Equal(t, 3+2*4, rep.PlannedRuns, "every sweep run, and every confirm run once the sweep had ended")
+	require.Equal(t, 3+3, rep.EndedRuns, "the three confirm runs cut short didn't end")
+	tests := append(rep.Failing, rep.Flaky...)
+	require.Len(t, tests, 2)
+	ended := 0
+	for _, test := range tests {
+		ended += test.ConfirmEnded
+		require.True(t, test.ConfirmIncomplete, "%s's confirm runs didn't all end", test.Package)
+		require.Equal(t, 4, test.ConfirmPlanned)
+		if test.ConfirmEnded == 0 {
+			require.False(t, test.Confirmed, "%s has no confirm run that ended, so its counts are its sweep runs'", test.Package)
+			require.Equal(t, 1, test.Runs)
+			continue
+		}
+		require.True(t, test.Confirmed)
+		require.Equal(t, test.ConfirmEnded, test.Runs, "%s's counts are of its confirm runs that ended", test.Package)
+	}
+	require.Equal(t, 3, ended, "the confirm runs that ended are kept")
+	require.Equal(t, 1, rep.Passed, "p2's TestA")
+}
+
 func TestStress_pins_one_run_to_each_core_at_load_1(t *testing.T) {
 	lanesOf, err := lanes.Split(cores(12), 4, 4)
 	require.NoError(t, err)
@@ -616,6 +700,8 @@ func TestStress_stops_when_its_context_is_done_and_counts_no_cancelled_run(t *te
 	rep := res.Report()
 	require.Len(t, rep.Failing, 1)
 	require.Equal(t, []results.Pair{{CPU: 1, Load: 1, Runs: 2, Failures: 2}}, rep.Failing[0].Pairs, "the run cut short isn't counted")
+	require.Equal(t, 10, rep.PlannedRuns)
+	require.Equal(t, 2, rep.EndedRuns, "the run cut short didn't end")
 }
 
 func TestStress_stops_when_a_run_s_output_cannot_be_saved(t *testing.T) {

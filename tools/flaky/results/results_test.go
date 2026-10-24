@@ -739,3 +739,200 @@ func TestUpFailed_fails_when_the_error_cannot_be_saved(t *testing.T) {
 	r := results.New(results.Config{Packages: pkgs, Out: file, Walkthroughs: []discover.Walkthrough{{Module: "example/grpc/wallet", Name: "wallet"}}})
 	require.Error(t, r.UpFailed(0, errors.New("boom")))
 }
+
+func TestReport_counts_the_runs_planned_and_the_runs_that_ended_and_no_cancelled_run(t *testing.T) {
+	r, _ := newConfirmResults(t)
+	r.Listed(1, []string{"TestH"})
+	r.Planned(12)
+	require.NoError(t, r.Add(1, 1, 1, passed("TestH")))
+	require.NoError(t, r.Add(1, 1, 2, passed("TestH")))
+	require.NoError(t, r.Add(1, 2, 1, run.Result{Cancelled: true, Tests: []run.Test{{Name: "TestH", Outcome: run.Fail}}, PackageFailed: true}))
+	require.NoError(t, r.Confirmed(1, "TestH", 1, 1, run.Result{Cancelled: true, Tests: []run.Test{{Name: "TestH", Outcome: run.Hang}}}))
+	rep := r.Report()
+	require.Equal(t, 12, rep.PlannedRuns)
+	require.Equal(t, 2, rep.EndedRuns, "a cancelled run didn't end")
+	require.False(t, rep.Failed(), "a cancelled run is no failure")
+	require.Equal(t, 1, rep.Passed, "nor does it keep TestH from passing every run that ended")
+}
+
+// interruptedSweep adds the runs of a sweep interrupted during its confirm
+// runs. TestX fails once in two sweep runs at cpu 1 load 1, and TestH hangs
+// once in two at cpu 2 load 2. Three of TestX's sixteen confirm runs end, one
+// of them failed, and a fourth is cancelled; none of TestH's ends.
+func interruptedSweep(t *testing.T, r *results.Results) {
+	r.Listed(0, []string{"TestX"})
+	r.Listed(1, []string{"TestH"})
+	r.Planned(4)
+	require.NoError(t, r.Add(0, 1, 1, run.Result{Tests: []run.Test{{Name: "TestX", Outcome: run.Fail, Output: []string{"    x_test.go:3: boom"}}}}))
+	require.NoError(t, r.Add(0, 1, 1, passed("TestX")))
+	require.NoError(t, r.Add(1, 2, 2, run.Result{Tests: []run.Test{{Name: "TestH", Outcome: run.Hang}}, TimedOut: true}))
+	require.NoError(t, r.Add(1, 2, 2, passed("TestH")))
+	r.Planned(32)
+	r.Confirming(0, "TestX")
+	r.Confirming(1, "TestH")
+	require.NoError(t, r.Confirmed(0, "TestX", 1, 1, run.Result{Tests: []run.Test{{Name: "TestX", Outcome: run.Fail}}}))
+	require.NoError(t, r.Confirmed(0, "TestX", 1, 1, passed("TestX")))
+	require.NoError(t, r.Confirmed(0, "TestX", 1, 2, passed("TestX")))
+	require.NoError(t, r.Confirmed(0, "TestX", 2, 1, run.Result{Cancelled: true, Tests: []run.Test{{Name: "TestX", Outcome: run.Fail}}}))
+}
+
+func TestReport_marks_a_test_whose_confirm_runs_did_not_all_end(t *testing.T) {
+	r, _ := newConfirmResults(t)
+	interruptedSweep(t, r)
+	rep := r.Report()
+	require.Equal(t, 36, rep.PlannedRuns)
+	require.Equal(t, 7, rep.EndedRuns)
+	require.Empty(t, rep.Failing)
+	require.Len(t, rep.Flaky, 2)
+
+	x := rep.Flaky[0]
+	require.Equal(t, "TestX", x.Test)
+	require.True(t, x.Confirmed, "its counts are of its confirm runs that ended")
+	require.True(t, x.ConfirmIncomplete, "so it isn't a fully confirmed test")
+	require.Equal(t, 16, x.ConfirmPlanned)
+	require.Equal(t, 3, x.ConfirmEnded)
+	require.Equal(t, []results.Pair{
+		{CPU: 1, Load: 1, Runs: 2, Failures: 1},
+		{CPU: 1, Load: 2, Runs: 1},
+		{CPU: 2, Load: 1},
+		{CPU: 2, Load: 2},
+	}, x.Pairs, "the cancelled confirm run counts as neither a pass nor a failure")
+
+	h := rep.Flaky[1]
+	require.Equal(t, "TestH", h.Test)
+	require.False(t, h.Confirmed, "none of its confirm runs ended")
+	require.True(t, h.ConfirmIncomplete)
+	require.Equal(t, 16, h.ConfirmPlanned)
+	require.Zero(t, h.ConfirmEnded)
+	require.Equal(t, []results.Pair{
+		{CPU: 1, Load: 1}, {CPU: 1, Load: 2}, {CPU: 2, Load: 1},
+		{CPU: 2, Load: 2, Runs: 2, Hangs: 1},
+	}, h.Pairs, "so its counts are its sweep runs'")
+}
+
+func TestReport_does_not_mark_a_test_whose_confirm_runs_all_ended(t *testing.T) {
+	r, _ := newConfirmResults(t)
+	r.Confirming(0, "TestX/a_case")
+	confirmSweep(t, r)
+	rep := r.Report()
+	require.Len(t, rep.Flaky, 1)
+	x := rep.Flaky[0]
+	require.True(t, x.Confirmed)
+	require.False(t, x.ConfirmIncomplete)
+	require.Equal(t, 16, x.ConfirmPlanned)
+	require.Equal(t, 16, x.ConfirmEnded)
+}
+
+func TestReport_counts_a_confirm_run_in_which_the_test_never_started_as_ended(t *testing.T) {
+	r := results.New(results.Config{Packages: pkgs, CPUs: []int{1}, Loads: []int{1}, Out: t.TempDir(), Levels: []results.Level{{Name: "unit", Count: 1, Confirm: 1}}})
+	require.NoError(t, r.Add(0, 1, 1, run.Result{Tests: []run.Test{{Name: "TestX", Outcome: run.Fail}}}))
+	r.Confirming(0, "TestX")
+	require.NoError(t, r.Confirmed(0, "TestX", 1, 1, passed("TestXY")))
+	rep := r.Report()
+	require.Equal(t, 2, rep.EndedRuns)
+	require.Len(t, rep.Failing, 1)
+	require.False(t, rep.Failing[0].ConfirmIncomplete, "its one confirm run ended, though it said nothing about the test")
+}
+
+func TestWriteText_of_an_interrupted_sweep(t *testing.T) {
+	r, out := newConfirmResults(t)
+	interruptedSweep(t, r)
+	rep := r.Report()
+	rep.Interrupted = true
+	rep.Phases = []results.Phase{results.NewPhase("sweep", time.Minute), results.NewPhase("confirm", 2*time.Minute)}
+	var buf bytes.Buffer
+	require.NoError(t, results.WriteText(&buf, rep))
+	want := `FLAKY: failed or hung in some runs
+
+grpc/grpchealth  TestX
+                    failures     hangs      runs
+    cpu 1 load 1           1         0         2
+    cpu 1 load 2           0         0         1
+    cpu 2 load 1           0         0         0
+    cpu 2 load 2           0         0         0
+    1 failure, 0 hangs in 3 confirm runs
+    not fully confirmed: 3 of its 16 confirm runs ended
+    first failure, at cpu 1 load 1:
+            x_test.go:3: boom
+    output:    ` + filepath.Join(out, "grpc/grpchealth/TestX") + `
+    reproduce: flaky stress -tags unit -run '^TestX$' -cpu 1 -load 1 -count 4 ./grpc/grpchealth
+               taskset -c 0 go -C grpc test -race -cover -count=4 -cpu 1 -timeout 2m0s -run '^TestX$' ./grpchealth
+
+health  TestH
+                    failures     hangs      runs
+    cpu 1 load 1           0         0         0
+    cpu 1 load 2           0         0         0
+    cpu 2 load 1           0         0         0
+    cpu 2 load 2           0         1         2
+    0 failures, 1 hang in 2 runs
+    not fully confirmed: 0 of its 16 confirm runs ended
+    first failure, at cpu 2 load 2:
+        panic: test timed out
+    output:    ` + filepath.Join(out, "health/TestH") + `
+    reproduce: flaky stress -tags unit -run '^TestH$' -cpu 2 -load 2 -count 3 ./health
+               taskset -c 0-1 go -C . test -race -cover -count=3 -cpu 2 -timeout 2m0s -run '^TestH$' ./health
+
+INTERRUPTED: 7 of 36 planned runs ended, and these results are of those
+0 tests passed every run
+confirmed 1 test in 3 runs
+phases: sweep 1m0s, confirm 2m0s
+`
+	require.Equal(t, want, buf.String())
+}
+
+func TestWriteText_of_a_sweep_interrupted_with_every_test_passing(t *testing.T) {
+	r, _ := newResults(t)
+	r.Listed(1, []string{"TestH"})
+	r.Planned(36)
+	require.NoError(t, r.Add(1, 1, 1, passed("TestH")))
+	rep := r.Report()
+	rep.Interrupted = true
+	var buf bytes.Buffer
+	require.NoError(t, results.WriteText(&buf, rep))
+	require.Equal(t, "INTERRUPTED: 1 of 36 planned runs ended, and these results are of those\n1 test passed every run\nphases: \n", buf.String())
+}
+
+func TestWriteJSON_of_an_interrupted_sweep(t *testing.T) {
+	r, _ := newConfirmResults(t)
+	interruptedSweep(t, r)
+	rep := r.Report()
+	rep.Interrupted = true
+	var buf bytes.Buffer
+	require.NoError(t, results.WriteJSON(&buf, rep))
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &got))
+	require.Equal(t, true, got["interrupted"])
+	require.InDelta(t, 36, got["plannedRuns"], 0)
+	require.InDelta(t, 7, got["endedRuns"], 0)
+	flaky := got["flaky"].([]any)
+	require.Len(t, flaky, 2)
+	x := flaky[0].(map[string]any)
+	require.Equal(t, true, x["confirmed"])
+	require.Equal(t, true, x["confirmIncomplete"])
+	require.InDelta(t, 16, x["confirmPlanned"], 0)
+	require.InDelta(t, 3, x["confirmEnded"], 0)
+	require.InDelta(t, 3, x["runs"], 0)
+	h := flaky[1].(map[string]any)
+	require.Equal(t, false, h["confirmed"])
+	require.Equal(t, true, h["confirmIncomplete"])
+	require.InDelta(t, 0, h["confirmEnded"], 0)
+
+	var back results.Report
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &back))
+	require.True(t, back.Interrupted, "flaky report reads it back")
+	require.Equal(t, 7, back.EndedRuns)
+	require.True(t, back.Flaky[1].ConfirmIncomplete)
+}
+
+func TestWriteJSON_of_a_sweep_that_ran_to_the_end_says_it_was_not_interrupted(t *testing.T) {
+	r, _ := newConfirmResults(t)
+	r.Confirming(0, "TestX/a_case")
+	confirmSweep(t, r)
+	var buf bytes.Buffer
+	require.NoError(t, results.WriteJSON(&buf, r.Report()))
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &got))
+	require.Equal(t, false, got["interrupted"])
+	x := got["flaky"].([]any)[0].(map[string]any)
+	require.Equal(t, false, x["confirmIncomplete"])
+}
