@@ -649,7 +649,7 @@ func TestDocs_code_samples_after_a_base_image_bump(t *testing.T) {
 				t.Fatal(err)
 			}
 			if n == 0 {
-				t.Skipf("no FROM line under example/ pins a %s", name)
+				t.Fatalf("no FROM line of a Dockerfile under example/ pins a %s, so there is nothing to bump; teach fromImage how the Dockerfiles name their images now", name)
 			}
 
 			problems, err := sampleProblems(repo)
@@ -742,11 +742,27 @@ func TestPinProblems(t *testing.T) {
 	}
 }
 
-func TestPinProblems_no_dockerfiles(t *testing.T) {
-	fsys := fstest.MapFS{docsContent + "/_index.md": {Data: []byte("# Humus\n")}}
+func TestPinProblems_nothing_pinned(t *testing.T) {
+	cases := []struct {
+		name  string
+		files fstest.MapFS
+		want  string
+	}{
+		{"no example", fstest.MapFS{}, "file does not exist"},
+		{"no Dockerfile", fstest.MapFS{"example/job/billing/main.go": {Data: []byte("package main\n")}}, "no Dockerfile found"},
+		{"no pin", fstest.MapFS{"example/job/billing/Dockerfile": {Data: []byte("ARG IMAGE\nFROM ${IMAGE}\nFROM build\n")}}, "pins a tag or digest"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fsys := maps.Clone(c.files)
+			fsys[docsContent+"/_index.md"] = &fstest.MapFile{Data: []byte("# Humus\n")}
 
-	if _, err := pinProblems(fsys); err == nil {
-		t.Error("pinProblems found no Dockerfile and returned no error")
+			_, err := pinProblems(fsys)
+
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("err = %v, want one saying %q", err, c.want)
+			}
+		})
 	}
 }
 
@@ -816,9 +832,9 @@ func TestBumpBaseImages(t *testing.T) {
 	}
 }
 
-// baseImageBumps moves, by what it moves, the tag or the digest a FROM line
-// pins, as a Renovate pull request moves them, and leaves the image alone if
-// it pins none.
+// baseImageBumps holds, keyed by what each one moves, a bump of the tag and a
+// bump of the digest a FROM line pins, as a Renovate pull request moves them.
+// Each leaves an image that pins no tag, or no digest, as it is.
 var baseImageBumps = map[string]func(baseImage) baseImage{
 	"tag": func(img baseImage) baseImage {
 		if img.tag != "" {
@@ -937,6 +953,9 @@ func pinProblems(repo fs.FS) ([]string, error) {
 			}
 		}
 	}
+	if len(pinnedBy) == 0 {
+		return nil, errors.New("no FROM line of a Dockerfile under example/ pins a tag or digest, so there is nothing to look for; teach fromImage how the Dockerfiles name their images now")
+	}
 	pins := slices.Sorted(maps.Keys(pinnedBy))
 	var problems []string
 	err = fs.WalkDir(repo, docsContent, func(p string, d fs.DirEntry, err error) error {
@@ -979,10 +998,16 @@ func bumpBaseImages(repo fs.FS, bump func(baseImage) baseImage) (fs.FS, int, err
 			if !ok {
 				continue
 			}
-			if next := bump(img); next != img {
-				lines[i] = strings.Replace(l, img.String(), next.String(), 1)
-				n++
+			next := bump(img)
+			if next == img {
+				continue
 			}
+			moved := strings.Replace(l, img.String(), next.String(), 1)
+			if moved == l {
+				return nil, 0, fmt.Errorf("%s:%d: %q is not written as %q, so the bump could not move it", p, i+1, l, img.String())
+			}
+			lines[i] = moved
+			n++
 		}
 		bumped[p] = &fstest.MapFile{Data: []byte(strings.Join(lines, "\n"))}
 	}
@@ -1000,6 +1025,50 @@ func (o overlayFS) Open(name string) (fs.File, error) {
 		return o.files.Open(name)
 	}
 	return o.FS.Open(name)
+}
+
+// repoBlob and repoTree begin the URLs of a file and of a folder of this
+// repository on its default branch.
+const (
+	repoBlob = "https://github.com/z5labs/humus/blob/main/"
+	repoTree = "https://github.com/z5labs/humus/tree/main/"
+)
+
+// TestDocs_repository_links checks that every link on the docs site to a file
+// or folder of this repository on its default branch names one that exists,
+// such as the Dockerfile each walkthrough's Deploying page links to.
+func TestDocs_repository_links(t *testing.T) {
+	links := 0
+	err := filepath.WalkDir(docsContent, func(page string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || filepath.Ext(page) != ".md" {
+			return err
+		}
+		b, err := os.ReadFile(page)
+		if err != nil {
+			return err
+		}
+		for _, target := range readmeLinks(string(b)) {
+			p, ok := strings.CutPrefix(target, repoBlob)
+			if !ok {
+				p, ok = strings.CutPrefix(target, repoTree)
+			}
+			if !ok {
+				continue
+			}
+			links++
+			p, _, _ = strings.Cut(p, "#")
+			if _, err := os.Stat(filepath.FromSlash(p)); err != nil {
+				t.Errorf("%s: %s names nothing in the repository: %v", page, target, err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if links == 0 {
+		t.Fatalf("found no links to the repository under %s", docsContent)
+	}
 }
 
 // docsSite is the URL the docs site is published at.
