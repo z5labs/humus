@@ -12,26 +12,12 @@ weight: 80
 
 ## The image
 
-One image holds `orderstatus` and `orderevents`, built static onto a
-distroless, non-root base:
-
-```dockerfile
-FROM docker.io/library/golang:1.27.3-trixie@sha256:fbb7ae40b62ff8afe31662df570d39b4f5052ac32b90dae8e60d7657a20a74f4 AS build
-WORKDIR /src
-COPY go.mod go.sum ./
-COPY queue/kafka/go.mod queue/kafka/go.sum queue/kafka/
-COPY example/kafka/orderstatus/go.mod example/kafka/orderstatus/go.sum example/kafka/orderstatus/
-RUN go -C example/kafka/orderstatus mod download
-COPY . .
-RUN CGO_ENABLED=0 go -C example/kafka/orderstatus build -trimpath -ldflags=-s -o /out/orderstatus . && \
-    CGO_ENABLED=0 go -C example/kafka/orderstatus build -trimpath -ldflags=-s -o /out/orderevents ./cmd/orderevents
-
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:d62067879de890a1def9da0e7766b7d20810a5e5555cef8506b752437d7a3e88
-COPY --from=build /out/orderstatus /orderstatus
-COPY --from=build /out/orderevents /orderevents
-USER 65532:65532
-ENTRYPOINT ["/orderstatus"]
-```
+One image holds `orderstatus` and `orderevents`. A Go stage builds each of
+them static, and the image copies them to `/orderstatus` and `/orderevents`
+on a distroless base, to run as the non-root user 65532 with `/orderstatus`
+as its entrypoint.
+[`example/kafka/orderstatus/Dockerfile`](https://github.com/z5labs/humus/blob/main/example/kafka/orderstatus/Dockerfile)
+names the exact images and their versions.
 
 Build it from the repository's root, since the module replaces humus with
 its directory:

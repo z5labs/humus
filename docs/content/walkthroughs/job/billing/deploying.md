@@ -11,24 +11,14 @@ weight: 70
 
 ## The image
 
-The image builds a static binary and runs it on distroless, as a user that
-isn't root. It is built from the repository's root, because the module
-replaces humus with `../../..`:
+A Go stage builds the job static, and the image copies it to `/billing` on a
+distroless base, to run as the non-root user 65532 with `/billing` as its
+entrypoint.
+[`example/job/billing/Dockerfile`](https://github.com/z5labs/humus/blob/main/example/job/billing/Dockerfile)
+names the exact images and their versions.
 
-```dockerfile
-FROM docker.io/library/golang:1.27.3-trixie@sha256:fbb7ae40b62ff8afe31662df570d39b4f5052ac32b90dae8e60d7657a20a74f4 AS build
-WORKDIR /src
-COPY go.mod go.sum ./
-COPY example/job/billing/go.mod example/job/billing/go.sum example/job/billing/
-RUN go -C example/job/billing mod download
-COPY . .
-RUN CGO_ENABLED=0 go -C example/job/billing build -trimpath -ldflags=-s -o /out/billing .
-
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:d62067879de890a1def9da0e7766b7d20810a5e5555cef8506b752437d7a3e88
-COPY --from=build /out/billing /billing
-USER 65532:65532
-ENTRYPOINT ["/billing"]
-```
+Build it from the repository's root, because the module replaces humus with
+`../../..`:
 
 ```sh
 docker build --file example/job/billing/Dockerfile --tag billing .
