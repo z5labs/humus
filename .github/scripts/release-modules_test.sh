@@ -238,7 +238,7 @@ expect_output "skip example/grpc/wallet/go.mod: under example/, whose modules ar
 expect_output "would set grpc/go.mod: require $root v0.16.0-rc.1 (now $pseudo)" "nested requirement dry run"
 expect_output "would set example/grpc/wallet/go.mod: require $root v0.16.0-rc.1 (now v0.15.0)" "nested requirement dry run"
 expect_output "would set example/grpc/wallet/go.mod: require $root/grpc v0.16.0-rc.1 (now $pseudo)" "nested requirement dry run"
-expect_output "release v0.16.0-rc.1 at the commit that sets these requirements on top of $before" "nested requirement dry run"
+expect_output "release v0.16.0-rc.1 at the commit that makes these changes on top of $before" "nested requirement dry run"
 reject_output 'would create example' "nested requirement dry run"
 [[ $(git -C "$repo" status --porcelain) == "" ]] || fail "nested requirement dry run: changed the working tree"
 
@@ -366,7 +366,7 @@ run "$repo" --dry-run v0.16.0
 expect_status 0 "stale dry run"
 expect_output "would set grpc/go.mod: require $root v0.16.0 (now $pseudo)" "stale dry run"
 expect_output "would set job/go.mod: require $root/grpc v0.16.0 (now v0.15.0)" "stale dry run"
-expect_output "release v0.16.0 at the commit that sets these requirements on top of $before" "stale dry run"
+expect_output "release v0.16.0 at the commit that makes these changes on top of $before" "stale dry run"
 expect_output "would create grpc/v0.16.0" "stale dry run"
 [[ $(git -C "$repo" status --porcelain) == "" ]] || fail "stale dry run: changed the working tree"
 
@@ -391,6 +391,113 @@ run "$repo" v0.16.0
 expect_status 0 "after bump"
 expect_output "created v0.16.0" "after bump"
 expect_output "created job/v0.16.0" "after bump"
+
+# A release sets every humus version the docs tell a reader to install or
+# require, at a version or at a branch, in every Markdown file but those under
+# testdata or a hidden directory; a dry run prints each line it would change,
+# and tagging refuses a commit at which one names another version. A
+# pre-release changes none of them, and tagging lets it through. Placeholders,
+# @none, an unreleased module's path, and a path inside another word are left
+# alone. A doc added after a release is set by the next one.
+repo=$(newrepo .=$root grpc=$root/grpc tools/flaky=$root/tools/flaky)
+mkdir -p "$repo/docs/content" "$repo/docs/testdata" "$repo/.github"
+cat >"$repo/README.md" <<EOF
+# humus
+
+\`\`\`sh
+go get $root@main
+\`\`\`
+
+Require the same version of every module, \`go get $root@vX.Y.Z $root/grpc@vX.Y.Z\`.
+EOF
+cat >"$repo/docs/content/_index.md" <<EOF
+Install it with go get $root/grpc/health@v0.15.0, or with go get $root@latest.
+
+Remove it with go get $root/grpc@none. Run go install $root/tools/flaky@main.
+See example.com/$root@main, which is not humus.
+
+\`\`\`go-mod
+require $root v0.15.0
+
+require (
+	$root/grpc v0.15.0 // indirect
+	example.com/other v1.2.3
+)
+\`\`\`
+EOF
+printf '\nTrack it with go get %s@HEAD.\n```go-mod\nrequire %s v0.15.0  \nrequire %s/grpc v0.15.0\r\n```\n' \
+  "$root" "$root" "$root" >>"$repo/docs/content/_index.md"
+printf 'go get %s@main\n' "$root" >"$repo/docs/testdata/fixture.md"
+printf 'go get %s@main\n' "$root" >"$repo/.github/notes.md"
+commit "$repo" docs
+before=$(git -C "$repo" rev-parse HEAD)
+
+run "$repo" --dry-run v0.16.0-rc.1
+expect_status 0 "docs pre-release dry run"
+expect_output "leave the docs alone: v0.16.0-rc.1 is a pre-release, so they keep naming the latest release" "docs pre-release dry run"
+reject_output 'would set [^ ]*\.md' "docs pre-release dry run"
+run "$repo" --bump v0.16.0-rc.1
+expect_status 0 "docs pre-release bump"
+expect_output "leave the docs alone: v0.16.0-rc.1 is a pre-release" "docs pre-release bump"
+[[ $(git -C "$repo" status --porcelain) == "" ]] || fail "docs pre-release bump: changed $(git -C "$repo" status --porcelain)"
+run "$repo" v0.16.0-rc.1
+expect_status 0 "docs pre-release tag"
+expect_output "created v0.16.0-rc.1" "docs pre-release tag"
+
+run "$repo" v0.16.0
+expect_status 1 "docs stale"
+expect_output "README.md:4 names a humus version other than v0.16.0: go get $root@main" "docs stale"
+expect_output "docs/content/_index.md:1 names a humus version other than v0.16.0" "docs stale"
+expect_output "release-modules.sh --bump v0.16.0" "docs stale"
+[[ $(remote_tags "$repo") == "refs/tags/grpc/v0.16.0-rc.1 refs/tags/v0.16.0-rc.1 " ]] ||
+  fail "docs stale: pushed $(remote_tags "$repo")"
+
+run "$repo" --dry-run v0.16.0
+expect_status 0 "docs dry run"
+expect_output "would set README.md:4: go get $root@v0.16.0 (now go get $root@main)" "docs dry run"
+expect_output "would set docs/content/_index.md:1: Install it with go get $root/grpc/health@v0.16.0, or with go get $root@v0.16.0. (now Install it with go get $root/grpc/health@v0.15.0, or with go get $root@latest.)" "docs dry run"
+expect_output "would set docs/content/_index.md:7: require $root v0.16.0 (now require $root v0.15.0)" "docs dry run"
+expect_output "would set docs/content/_index.md:10: $root/grpc v0.16.0 // indirect (now $root/grpc v0.15.0 // indirect)" "docs dry run"
+expect_output "would set docs/content/_index.md:15: Track it with go get $root@v0.16.0. (now Track it with go get $root@HEAD.)" "docs dry run"
+expect_output "would set docs/content/_index.md:17: require $root v0.16.0   (now require $root v0.15.0  )" "docs dry run"
+expect_output "would set docs/content/_index.md:18: require $root/grpc v0.16.0"$'\r'" (now require $root/grpc v0.15.0"$'\r'")" "docs dry run"
+expect_output "release v0.16.0 at the commit that makes these changes on top of $before" "docs dry run"
+reject_output 'would set (README\.md:7|docs/content/_index\.md:(3|4|9|11|12)|docs/testdata|\.github)' "docs dry run"
+[[ $(git -C "$repo" status --porcelain) == "" ]] || fail "docs dry run: changed the working tree"
+
+cp "$repo/docs/content/_index.md" "$tmp/index-before.md"
+run "$repo" --bump v0.16.0
+expect_status 0 "docs bump"
+expect_output "set README.md:4: go get $root@v0.16.0 (was go get $root@main)" "docs bump"
+expect_output "set docs/content/_index.md:7: require $root v0.16.0 (was require $root v0.15.0)" "docs bump"
+grep -qxF "go get $root@v0.16.0" "$repo/README.md" ||
+  fail "docs bump: README.md not set:"$'\n'"$(cat "$repo/README.md")"
+grep -qF "\`go get $root@vX.Y.Z $root/grpc@vX.Y.Z\`" "$repo/README.md" ||
+  fail "docs bump: changed the placeholder:"$'\n'"$(cat "$repo/README.md")"
+want_index=$(sed -e "s|grpc/health@v0.15.0|grpc/health@v0.16.0|" -e "s|$root@latest|$root@v0.16.0|" \
+  -e "s|^require $root v0.15.0|require $root v0.16.0|" -e "s|^require $root/grpc v0.15.0|require $root/grpc v0.16.0|" \
+  -e "s|$root@HEAD|$root@v0.16.0|" -e "s|	$root/grpc v0.15.0|	$root/grpc v0.16.0|" "$tmp/index-before.md")
+[[ $(cat "$repo/docs/content/_index.md") == "$want_index" ]] ||
+  fail "docs bump: docs/content/_index.md is"$'\n'"$(cat "$repo/docs/content/_index.md")"$'\n'"want"$'\n'"$want_index"
+grep -qxF "go get $root@main" "$repo/docs/testdata/fixture.md" || fail "docs bump: changed a testdata doc"
+grep -qxF "go get $root@main" "$repo/.github/notes.md" || fail "docs bump: changed a doc under a hidden directory"
+run "$repo" --bump v0.16.0
+expect_status 0 "docs bump again"
+expect_output "every humus version the docs name is already v0.16.0" "docs bump again"
+
+commit "$repo" "docs bump"
+run "$repo" v0.16.0
+expect_status 0 "docs tag"
+expect_output "created v0.16.0" "docs tag"
+got=$(git -C "$repo.git" show v0.16.0:README.md | grep "^go get ")
+[[ $got == "go get $root@v0.16.0" ]] || fail "docs tag: the tagged README says $got"
+
+printf 'go get %s/grpc@main\n' "$root" >"$repo/docs/content/later.md"
+commit "$repo" "later doc"
+run "$repo" --bump v0.17.0
+expect_status 0 "later doc bump"
+expect_output "set docs/content/later.md:1: go get $root/grpc@v0.17.0 (was go get $root/grpc@main)" "later doc bump"
+expect_output "set README.md:4: go get $root@v0.17.0 (was go get $root@v0.16.0)" "later doc bump"
 
 # A dry run before the bump cannot know the commit the tags will go on, so any
 # tag that already exists is a conflict.

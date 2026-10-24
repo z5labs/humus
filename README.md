@@ -18,7 +18,7 @@ inside Kubernetes. `humustest.Start` runs the same service in a test.
 ## Install
 
 ```sh
-go get github.com/z5labs/humus@main
+go get github.com/z5labs/humus@v0.16.0
 ```
 
 ## A service
@@ -89,6 +89,9 @@ Require the same version of every humus module you use:
 go get github.com/z5labs/humus@vX.Y.Z github.com/z5labs/humus/grpc@vX.Y.Z
 ```
 
+A release updates every humus version the docs name, here and on the
+documentation site, so they install the latest release. A pre-release leaves
+them as they are.
 The release workflow and how to run it are described in
 [`.github/workflows/release.yaml`](.github/workflows/release.yaml).
 

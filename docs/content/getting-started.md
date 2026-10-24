@@ -18,7 +18,7 @@ exits. It needs Go 1.27 or later, and nothing else. Its code is
 ```sh
 mkdir hello && cd hello
 go mod init example.com/hello
-go get github.com/z5labs/humus@main
+go get github.com/z5labs/humus@v0.16.0
 ```
 
 ## 2. Write Init
