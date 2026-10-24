@@ -782,6 +782,8 @@ func TestReport_marks_a_test_whose_confirm_runs_did_not_all_end(t *testing.T) {
 	rep := r.Report()
 	require.Equal(t, 36, rep.PlannedRuns)
 	require.Equal(t, 7, rep.EndedRuns)
+	require.Equal(t, 1, rep.Confirmed)
+	require.Equal(t, 2, rep.IncompleteConfirms, "TestX's confirm runs and TestH's didn't all end")
 	require.Empty(t, rep.Failing)
 	require.Len(t, rep.Flaky, 2)
 
@@ -874,7 +876,7 @@ health  TestH
 
 INTERRUPTED: 7 of 36 planned runs ended, and these results are of those
 0 tests passed every run
-confirmed 1 test in 3 runs
+confirmed 1 test in 3 runs, and the confirm runs of 2 tests didn't all end
 phases: sweep 1m0s, confirm 2m0s
 `
 	require.Equal(t, want, buf.String())
@@ -902,6 +904,7 @@ func TestWriteJSON_of_an_interrupted_sweep(t *testing.T) {
 	var got map[string]any
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &got))
 	require.Equal(t, true, got["interrupted"])
+	require.InDelta(t, 2, got["incompleteConfirms"], 0)
 	require.InDelta(t, 36, got["plannedRuns"], 0)
 	require.InDelta(t, 7, got["endedRuns"], 0)
 	flaky := got["flaky"].([]any)
@@ -935,4 +938,24 @@ func TestWriteJSON_of_a_sweep_that_ran_to_the_end_says_it_was_not_interrupted(t 
 	require.Equal(t, false, got["interrupted"])
 	x := got["flaky"].([]any)[0].(map[string]any)
 	require.Equal(t, false, x["confirmIncomplete"])
+}
+
+func TestReport_lists_a_test_whose_confirm_runs_that_ended_all_passed(t *testing.T) {
+	r, _ := newConfirmResults(t)
+	r.Listed(0, []string{"TestX"})
+	r.Planned(4 + 16)
+	require.NoError(t, r.Add(0, 1, 1, run.Result{Tests: []run.Test{{Name: "TestX", Outcome: run.Fail}}}))
+	r.Confirming(0, "TestX")
+	require.NoError(t, r.Confirmed(0, "TestX", 1, 1, passed("TestX")))
+	require.NoError(t, r.Confirmed(0, "TestX", 2, 2, passed("TestX")))
+	rep := r.Report()
+	require.Zero(t, rep.Passed, "it failed in the sweep, so it didn't pass every run")
+	require.Empty(t, rep.Failing)
+	require.Len(t, rep.Flaky, 1)
+	x := rep.Flaky[0]
+	require.True(t, x.Confirmed)
+	require.True(t, x.ConfirmIncomplete, "two of its sixteen confirm runs ended, so it isn't fully confirmed")
+	require.Equal(t, 2, x.Runs)
+	require.Zero(t, x.Failures+x.Hangs, "its counts are of the confirm runs that ended, which passed")
+	require.Equal(t, "flaky stress -tags unit -run '^TestX$' -cpu 1 -load 1 -count 4 ./grpc/grpchealth", x.Reproduce, "its sweep runs say where it fails")
 }

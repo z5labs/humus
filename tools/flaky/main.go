@@ -632,11 +632,17 @@ func stressRun(ctx context.Context, p bedrock.Process, f stressFlags) (results.R
 		Log:          log,
 		Progress:     time.Minute,
 	}, r, res)
-	// A sweep stopped by a signal still reports the runs that ended,
-	// whatever error stopping it gave, such as a build it killed.
-	interrupted := err != nil && ctx.Err() != nil
+	// A sweep stopped by a signal still reports the runs that ended. The
+	// signal gives ctx's error, or a build it killed; any other error,
+	// such as a run's output that couldn't be saved, is the sweep failing.
+	var buildErr *stress.BuildError
+	interrupted := err != nil && ctx.Err() != nil &&
+		(errors.Is(err, ctx.Err()) || errors.Is(err, context.Cause(ctx)) || errors.As(err, &buildErr))
 	if err != nil && !interrupted {
 		return results.Report{}, err
+	}
+	if buildErr != nil {
+		say(log, "warning: %v\n", err)
 	}
 
 	rep := res.Report()

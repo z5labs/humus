@@ -401,9 +401,12 @@ type Report struct {
 	// alone, or 0 times when it had no confirm runs, as with -run.
 	Levels []Level `json:"levels"`
 	// Confirmed is the number of tests it confirmed, and ConfirmRuns the
-	// number of their confirm runs.
-	Confirmed   int `json:"confirmed"`
-	ConfirmRuns int `json:"confirmRuns"`
+	// number of their confirm runs, which counts a test whose confirm runs
+	// didn't all end when any did. IncompleteConfirms is the number of
+	// tests whose confirm runs didn't all end, confirmed or not.
+	Confirmed          int `json:"confirmed"`
+	ConfirmRuns        int `json:"confirmRuns"`
+	IncompleteConfirms int `json:"incompleteConfirms"`
 	// Interrupted reports that the sweep was stopped, by SIGINT or SIGTERM,
 	// before every run it planned had ended, so the report is of the runs
 	// that ended. No confirm run started after the interrupt.
@@ -463,7 +466,8 @@ type Test struct {
 	// Test is the test's full name, or "" for a failure outside any test.
 	Test string `json:"test"`
 	// Confirmed reports that the test was confirmed, so Runs, Failures,
-	// Hangs and Pairs are its confirm runs, not its sweep runs.
+	// Hangs and Pairs are its confirm runs, not its sweep runs. It is
+	// confirmed fully only when ConfirmIncomplete is false too.
 	Confirmed bool `json:"confirmed"`
 	// ConfirmIncomplete reports that its confirm runs were planned, but
 	// didn't all end, as when the sweep was interrupted during them. Then
@@ -565,6 +569,9 @@ func (r *Results) Report() Report {
 		if t.Confirmed {
 			rep.Confirmed++
 			rep.ConfirmRuns += t.Runs
+		}
+		if t.ConfirmIncomplete {
+			rep.IncompleteConfirms++
 		}
 		bad[k] = true
 		if failing {
@@ -801,7 +808,11 @@ func WriteText(w io.Writer, rep Report) error {
 	}
 	p.printf("%s passed every run\n", plural(rep.Passed, "test", "tests"))
 	if slices.ContainsFunc(rep.Levels, func(l Level) bool { return l.Confirm > 0 }) {
-		p.printf("confirmed %s in %s\n", plural(rep.Confirmed, "test", "tests"), plural(rep.ConfirmRuns, "run", "runs"))
+		incomplete := ""
+		if rep.IncompleteConfirms > 0 {
+			incomplete = fmt.Sprintf(", and the confirm runs of %s didn't all end", plural(rep.IncompleteConfirms, "test", "tests"))
+		}
+		p.printf("confirmed %s in %s%s\n", plural(rep.Confirmed, "test", "tests"), plural(rep.ConfirmRuns, "run", "runs"), incomplete)
 	}
 	phases := make([]string, len(rep.Phases))
 	for i, ph := range rep.Phases {
