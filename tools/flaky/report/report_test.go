@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,7 @@ import (
 	"github.com/z5labs/humus/tools/flaky/internal/repotest"
 	"github.com/z5labs/humus/tools/flaky/report"
 	"github.com/z5labs/humus/tools/flaky/results"
+	"github.com/z5labs/humus/tools/flaky/run"
 )
 
 const commit = "6351c86978a51659d1d1dae16a9f4553bd64a712"
@@ -130,6 +132,182 @@ func TestRender_matches_the_golden_files(t *testing.T) {
 	}
 }
 
+// The ways a sweep can be interrupted, which interruptedResults adds the runs
+// of.
+const (
+	// duringTheSweep is interrupted during the sweep runs, so no test has
+	// confirm runs.
+	duringTheSweep = iota
+	// duringTheConfirms is interrupted during TestAToo's confirm runs,
+	// three of whose sixteen end.
+	duringTheConfirms
+	// beforeAnyConfirmEnded is interrupted before any of TestAToo's
+	// confirm runs ends.
+	beforeAnyConfirmEnded
+	// beforeAConfirmRanIt is interrupted after one of TestAToo's confirm
+	// runs ends without running it.
+	beforeAConfirmRanIt
+	// afterTheConfirmsPassed is interrupted after two of TestAToo's
+	// confirm runs end, both passing.
+	afterTheConfirmsPassed
+	// afterTheConfirmsEnded is interrupted after every one of TestAToo's
+	// confirm runs ends, one failing, during another test's confirm runs.
+	afterTheConfirmsEnded
+)
+
+func runOf(outcomes ...run.Outcome) run.Result {
+	res := run.Result{Output: []byte("PASS\n")}
+	for i, o := range outcomes {
+		t := run.Test{Name: []string{"TestA", "TestAToo"}[i], Outcome: o}
+		if o == run.Fail {
+			t.Output = []string{"    a_test.go:16: boom"}
+		}
+		res.Tests = append(res.Tests, t)
+	}
+	return res
+}
+
+// interruptedResults returns the results, at the commit head, of a sweep of
+// the package a that was interrupted the way how says. TestAToo fails in the
+// sweep once at cpu 1 load 1, and TestA passes every run.
+func interruptedResults(t *testing.T, head string, how int) results.Report {
+	r := results.New(results.Config{
+		Packages: []discover.Package{{Module: ".", Dir: "a", ImportPath: "example.com/repo/a", Level: "unit"}},
+		CPUs:     []int{1, 2},
+		Loads:    []int{1, 2},
+		Out:      t.TempDir(),
+		Levels:   []results.Level{{Name: "unit", Count: 3, Confirm: 4, Timeout: 2 * time.Minute, DefaultTimeout: 2 * time.Minute}},
+	})
+	r.Listed(0, []string{"TestA", "TestAToo"})
+	r.Planned(12)
+	cancelled := runOf(run.Pass, run.Fail)
+	cancelled.Cancelled = true
+	if how == duringTheSweep {
+		require.NoError(t, r.Add(0, 1, 1, runOf(run.Pass, run.Fail)))
+		require.NoError(t, r.Add(0, 1, 1, runOf(run.Pass, run.Pass)))
+		require.NoError(t, r.Add(0, 1, 2, runOf(run.Pass, run.Pass)))
+		require.NoError(t, r.Add(0, 2, 1, cancelled))
+	} else {
+		for _, cpu := range []int{1, 2} {
+			for _, load := range []int{1, 2} {
+				for i := range 3 {
+					outcome := run.Pass
+					if cpu == 1 && load == 1 && i == 0 {
+						outcome = run.Fail
+					}
+					require.NoError(t, r.Add(0, cpu, load, runOf(run.Pass, outcome)))
+				}
+			}
+		}
+		r.Planned(16)
+		r.Confirming(0, "TestAToo")
+		confirm := func(cpu, load int, res run.Result) {
+			res.Tests = slices.DeleteFunc(res.Tests, func(t run.Test) bool { return t.Name != "TestAToo" })
+			require.NoError(t, r.Confirmed(0, "TestAToo", cpu, load, res))
+		}
+		switch how {
+		case duringTheConfirms:
+			confirm(1, 1, runOf(run.Pass, run.Fail))
+			confirm(1, 1, runOf(run.Pass, run.Pass))
+			confirm(1, 2, runOf(run.Pass, run.Pass))
+		case beforeAConfirmRanIt:
+			confirm(1, 1, runOf())
+		case afterTheConfirmsPassed:
+			confirm(1, 1, runOf(run.Pass, run.Pass))
+			confirm(1, 2, runOf(run.Pass, run.Pass))
+		case afterTheConfirmsEnded:
+			for _, cpu := range []int{1, 2} {
+				for _, load := range []int{1, 2} {
+					for i := range 4 {
+						outcome := run.Pass
+						if cpu == 2 && load == 2 && i == 0 {
+							outcome = run.Fail
+						}
+						confirm(cpu, load, runOf(run.Pass, outcome))
+					}
+				}
+			}
+			r.Planned(16)
+		}
+		if how != afterTheConfirmsEnded {
+			confirm(2, 1, cancelled)
+		}
+	}
+	rep := r.Report()
+	rep.Interrupted = true
+	rep.Commit, rep.Go, rep.Cores = head, "go1.27.0", 8
+	return rep
+}
+
+func TestRender_of_an_interrupted_sweep_matches_the_golden_files(t *testing.T) {
+	cases := []struct {
+		name string
+		how  int
+	}{
+		{"interrupted_during_the_sweep", duringTheSweep},
+		{"interrupted_during_the_confirms", duringTheConfirms},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rep := interruptedResults(t, commit, c.how)
+			test, err := report.Find(rep, "a", "TestAToo")
+			require.NoError(t, err)
+			title, body := report.Render(report.Bug{
+				Test:        test,
+				Commit:      rep.Commit,
+				Go:          rep.Go,
+				Cores:       rep.Cores,
+				Interrupted: rep.Interrupted,
+				PlannedRuns: rep.PlannedRuns,
+				EndedRuns:   rep.EndedRuns,
+				Repository:  "https://github.com/example/repo",
+				Function:    "https://github.com/example/repo/blob/" + commit + "/a/a_test.go#L16",
+				Description: "It checks nothing, and fails anyway.",
+			})
+			wantTitle, err := os.ReadFile(filepath.Join("testdata", c.name+".title.golden"))
+			require.NoError(t, err)
+			wantBody, err := os.ReadFile(filepath.Join("testdata", c.name+".body.golden"))
+			require.NoError(t, err)
+			require.Equal(t, string(wantTitle), title+"\n")
+			require.Equal(t, string(wantBody), body)
+		})
+	}
+}
+
+func TestRender_of_an_interrupted_sweep_says_which_runs_the_counts_are(t *testing.T) {
+	cases := []struct {
+		name string
+		how  int
+		want string
+		also string
+	}{
+		{"no confirm runs", duringTheSweep, "The sweep was interrupted, when 3 of its 12 planned runs had ended, so the counts below are of the runs that ended. It has no confirm runs, so they are its sweep runs.\n\nAt [", ""},
+		{"confirm runs that ended", duringTheConfirms, "The sweep was interrupted, when 15 of its 28 planned runs had ended, so the counts below are of the runs that ended. Its confirm runs didn't all end: 3 of its 16 did, and they are of those.\n\nAt [", ""},
+		{"no confirm run ended", beforeAnyConfirmEnded, "The sweep was interrupted, when 12 of its 28 planned runs had ended, so the counts below are of the runs that ended. Its confirm runs didn't all end: 0 of its 16 did, so they are its sweep runs.\n\nAt [", ""},
+		{"no confirm run that ended ran it", beforeAConfirmRanIt, "The sweep was interrupted, when 13 of its 28 planned runs had ended, so the counts below are of the runs that ended. Its confirm runs didn't all end: 1 of its 16 did, and none of those ran it, so they are its sweep runs.\n\nAt [", ""},
+		{"confirm runs that all ended", afterTheConfirmsEnded, "The sweep was interrupted, when 28 of its 44 planned runs had ended, so the counts below are of the runs that ended.\n\nAt [", "`flaky stress` ran it 16 times:"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rep := interruptedResults(t, commit, c.how)
+			test, err := report.Find(rep, "a", "TestAToo")
+			require.NoError(t, err)
+			_, body := report.Render(report.Bug{
+				Test: test, Commit: commit, Repository: "https://github.com/o/r", Description: "d",
+				Interrupted: rep.Interrupted, PlannedRuns: rep.PlannedRuns, EndedRuns: rep.EndedRuns,
+			})
+			require.Contains(t, body, "## What happens\n\nd\n\n"+c.want)
+			require.Contains(t, body, c.also)
+		})
+	}
+}
+
+func TestRender_of_a_sweep_that_ran_to_the_end_says_nothing_of_an_interruption(t *testing.T) {
+	_, body := report.Render(report.Bug{Test: flakyTest(), Commit: commit, Repository: "https://github.com/o/r", Description: "d", PlannedRuns: 6024, EndedRuns: 6024})
+	require.NotContains(t, body, "interrupted")
+	require.Contains(t, body, "## What happens\n\nd\n\nAt [")
+}
+
 func TestRender_gives_a_level_run_at_one_pair_a_table_of_one_cell(t *testing.T) {
 	test := flakyTest()
 	test.Pairs = grid([5]int{4, 1, 50, 2, 0})
@@ -208,6 +386,28 @@ func TestFind_refuses_a_test_that_passed_every_confirm_run(t *testing.T) {
 	test.Failures, test.Hangs = 0, 0
 	_, err := report.Find(reportWith([]results.Test{test}, nil), "grpc/grpchealth", test.Test)
 	require.EqualError(t, err, "TestServe_reports_serving/after_a_restart passed every one of its 6,000 confirm runs alone, so the results have no failure of it to report")
+}
+
+func TestFind_refuses_a_test_whose_confirm_runs_that_ended_all_passed(t *testing.T) {
+	rep := interruptedResults(t, commit, afterTheConfirmsPassed)
+	_, err := report.Find(rep, "a", "TestAToo")
+	require.EqualError(t, err, "TestAToo passed every one of the 2 of its 16 confirm runs that ended, alone, so the results have no failure of it to report")
+}
+
+func TestFind_refuses_a_test_whose_thousands_of_confirm_runs_that_ended_all_passed(t *testing.T) {
+	test := flakyTest()
+	test.Failures, test.Hangs = 0, 0
+	test.ConfirmIncomplete, test.ConfirmPlanned, test.ConfirmEnded = true, 6000, 1234
+	_, err := report.Find(reportWith([]results.Test{test}, nil), "grpc/grpchealth", test.Test)
+	require.EqualError(t, err, "TestServe_reports_serving/after_a_restart passed every one of the 1,234 of its 6,000 confirm runs that ended, alone, so the results have no failure of it to report")
+}
+
+func TestFind_refuses_a_test_of_an_interrupted_sweep_that_failed_every_run_that_ended_at_some_pair(t *testing.T) {
+	rep := interruptedResults(t, commit, duringTheSweep)
+	rep.Flaky, rep.Failing = nil, rep.Flaky
+	rep.Failing[0].Pairs[0].Failures = rep.Failing[0].Pairs[0].Runs
+	_, err := report.Find(rep, "a", "TestAToo")
+	require.EqualError(t, err, "TestAToo failed every run at cpu 1 load 1, so it is failing rather than flaky")
 }
 
 func TestFind_refuses_a_test_that_failed_every_run_at_some_pair(t *testing.T) {
@@ -310,15 +510,44 @@ func (f *fakeGitHub) Create(_ context.Context, title, body string) (string, erro
 // whose results say it flaked at that repository's commit, with a
 // description and the notes when notes isn't "".
 func request(t *testing.T, notes string) report.Request {
+	return requestFor(t, notes, func(head string) results.Report {
+		test := flakyTest()
+		test.Package, test.ImportPath, test.Test = "a", "example.com/repo/a", "TestAToo"
+		return results.Report{
+			Commit: head, Go: "go1.27.0", Cores: 8,
+			Packages: []discover.Package{{Module: ".", Dir: "a", ImportPath: "example.com/repo/a", Level: "unit"}},
+			Flaky:    []results.Test{test},
+		}
+	})
+}
+
+// interruptedRequest returns a request like request's, whose results are of
+// a sweep interrupted the way how says.
+func interruptedRequest(t *testing.T, notes string, how int) report.Request {
+	return requestFor(t, notes, func(head string) results.Report { return interruptedResults(t, head, how) })
+}
+
+// requests are the requests for TestAToo that every check applies to: from a
+// sweep that ran to the end, and from sweeps interrupted during the sweep and
+// during the confirms.
+var requests = []struct {
+	name string
+	new  func(t *testing.T, notes string) report.Request
+}{
+	{"ran to the end", request},
+	{"interrupted during the sweep", func(t *testing.T, notes string) report.Request {
+		return interruptedRequest(t, notes, duringTheSweep)
+	}},
+	{"interrupted during the confirms", func(t *testing.T, notes string) report.Request {
+		return interruptedRequest(t, notes, duringTheConfirms)
+	}},
+}
+
+// requestFor returns a request for TestAToo in package a of a new repository,
+// whose results are what resultsAt returns for that repository's commit.
+func requestFor(t *testing.T, notes string, resultsAt func(head string) results.Report) report.Request {
 	dir, head := repo(t)
-	test := flakyTest()
-	test.Package, test.ImportPath, test.Test = "a", "example.com/repo/a", "TestAToo"
-	rep := results.Report{
-		Commit: head, Go: "go1.27.0", Cores: 8,
-		Packages: []discover.Package{{Module: ".", Dir: "a", ImportPath: "example.com/repo/a", Level: "unit"}},
-		Flaky:    []results.Test{test},
-	}
-	b, err := json.Marshal(rep)
+	b, err := json.Marshal(resultsAt(head))
 	require.NoError(t, err)
 	files := t.TempDir()
 	req := report.Request{
@@ -353,6 +582,52 @@ func TestFile_creates_the_discussion_and_prints_its_URL(t *testing.T) {
 	require.Contains(t, body, "\nOnly at cpu 2.\n\n## Why\n")
 	require.Contains(t, body, "- [`TestAToo`](https://github.com/z5labs/humus/blob/"+gitHead(t, req.Root)+"/a/a_test.go#L16)\n")
 	require.NotContains(t, body, "the closed report")
+	require.NotContains(t, body, "interrupted", "a sweep that ran to the end renders as before")
+}
+
+func TestFile_posts_a_test_of_an_interrupted_sweep_and_says_so(t *testing.T) {
+	cases := []struct {
+		name  string
+		how   int
+		want  []string
+		table string
+	}{
+		{
+			name:  "during the sweep",
+			how:   duringTheSweep,
+			want:  []string{"The sweep was interrupted, when 3 of its 12 planned runs had ended", "It has no confirm runs, so they are its sweep runs.", "`flaky stress` ran it 3 times:"},
+			table: "|       | load 1 | load 2 |\n|-------|--------|--------|\n| cpu 1 | 1 / 2  | 0 / 1  |\n| cpu 2 | 0 / 0  | 0 / 0  |\n",
+		},
+		{
+			name:  "during the confirms",
+			how:   duringTheConfirms,
+			want:  []string{"The sweep was interrupted, when 15 of its 28 planned runs had ended", "Its confirm runs didn't all end: 3 of its 16 did, and they are of those.", "`flaky stress` ran it 3 times:"},
+			table: "|       | load 1 | load 2 |\n|-------|--------|--------|\n| cpu 1 | 1 / 2  | 0 / 1  |\n| cpu 2 | 0 / 0  | 0 / 0  |\n",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			req := interruptedRequest(t, "", c.how)
+			gh := &fakeGitHub{}
+			var out bytes.Buffer
+			require.NoError(t, report.File(t.Context(), gh, req, &out))
+			require.Equal(t, "https://github.com/z5labs/humus/discussions/2000\n", out.String())
+			require.Len(t, gh.created, 1)
+			title, body := gh.created[0][0], gh.created[0][1]
+			require.Equal(t, "a: TestAToo fails intermittently", title)
+			for _, want := range c.want {
+				require.Contains(t, body, want)
+			}
+			require.Contains(t, body, c.table, "its table gives the runs that ended")
+
+			req.DryRun = true
+			dry := &fakeGitHub{}
+			out.Reset()
+			require.NoError(t, report.File(t.Context(), dry, req, &out))
+			require.Empty(t, dry.created)
+			require.Equal(t, "Title: "+title+"\n\n"+body, out.String(), "-dry-run prints what it would post")
+		})
+	}
 }
 
 func gitHead(t *testing.T, dir string) string {
@@ -382,15 +657,19 @@ func TestFile_with_DryRun_prints_the_title_and_body_and_creates_nothing(t *testi
 }
 
 func TestFile_refuses_when_an_open_report_names_the_test(t *testing.T) {
-	gh := &fakeGitHub{reports: []report.Earlier{
-		{URL: "https://github.com/z5labs/humus/discussions/1999", Title: "a: TestAToo fails intermittently", Open: true},
-	}}
-	err := report.File(t.Context(), gh, request(t, ""), &bytes.Buffer{})
-	var open *report.OpenError
-	require.ErrorAs(t, err, &open)
-	require.Equal(t, "https://github.com/z5labs/humus/discussions/1999", open.Report.URL)
-	require.EqualError(t, err, "an open report already names TestAToo: https://github.com/z5labs/humus/discussions/1999")
-	require.Empty(t, gh.created)
+	for _, r := range requests {
+		t.Run(r.name, func(t *testing.T) {
+			gh := &fakeGitHub{reports: []report.Earlier{
+				{URL: "https://github.com/z5labs/humus/discussions/1999", Title: "a: TestAToo fails intermittently", Open: true},
+			}}
+			err := report.File(t.Context(), gh, r.new(t, ""), &bytes.Buffer{})
+			var open *report.OpenError
+			require.ErrorAs(t, err, &open)
+			require.Equal(t, "https://github.com/z5labs/humus/discussions/1999", open.Report.URL)
+			require.EqualError(t, err, "an open report already names TestAToo: https://github.com/z5labs/humus/discussions/1999")
+			require.Empty(t, gh.created)
+		})
+	}
 }
 
 func TestFile_links_a_closed_report_that_names_the_test(t *testing.T) {
@@ -440,20 +719,22 @@ func TestFile_posts_nothing_when_a_check_fails(t *testing.T) {
 			require.NoError(t, os.WriteFile(req.Results, []byte("FLAKY: failed or hung in some runs\n"), 0o644))
 		}, "isn't the output of flaky stress -json"},
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			req := request(t, "")
-			c.change(t, &req)
-			gh := &fakeGitHub{}
-			var out bytes.Buffer
-			err := report.File(t.Context(), gh, req, &out)
-			require.ErrorContains(t, err, c.want)
-			var open *report.OpenError
-			require.False(t, errors.As(err, &open))
-			require.Empty(t, gh.searched, "it checks before it calls GitHub")
-			require.Empty(t, gh.created)
-			require.Empty(t, out.String())
-		})
+	for _, r := range requests {
+		for _, c := range cases {
+			t.Run(r.name+"/"+c.name, func(t *testing.T) {
+				req := r.new(t, "")
+				c.change(t, &req)
+				gh := &fakeGitHub{}
+				var out bytes.Buffer
+				err := report.File(t.Context(), gh, req, &out)
+				require.ErrorContains(t, err, c.want)
+				var open *report.OpenError
+				require.False(t, errors.As(err, &open))
+				require.Empty(t, gh.searched, "it checks before it calls GitHub")
+				require.Empty(t, gh.created)
+				require.Empty(t, out.String())
+			})
+		}
 	}
 }
 

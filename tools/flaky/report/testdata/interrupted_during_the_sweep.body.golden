@@ -1,0 +1,37 @@
+## What happens
+
+It checks nothing, and fails anyway.
+
+The sweep was interrupted, when 3 of its 12 planned runs had ended, so the counts below are of the runs that ended. It has no confirm runs, so they are its sweep runs.
+
+At [6351c869](https://github.com/example/repo/commit/6351c86978a51659d1d1dae16a9f4553bd64a712), with go1.27.0 on 8 cores, `flaky stress` ran it 3 times:
+
+|       | load 1 | load 2 |
+|-------|--------|--------|
+| cpu 1 | 1 / 2  | 0 / 1  |
+| cpu 2 | 0 / 0  | 0 / 0  |
+
+That is 1 failure and 0 hangs. Its first failure:
+
+```text
+    a_test.go:16: boom
+```
+
+It reproduces with:
+
+```sh
+flaky stress -tags unit -run '^TestAToo$' -cpu 1 -load 1 -count 3 ./a
+taskset -c 0 go -C . test -race -cover -count=3 -cpu 1 -timeout 2m0s -run '^TestAToo$' ./a
+```
+
+## Why
+
+This hasn't been triaged.
+
+## Expected
+
+`TestAToo` passes on every run, at every CPU count and load.
+
+## References
+
+- [`TestAToo`](https://github.com/example/repo/blob/6351c86978a51659d1d1dae16a9f4553bd64a712/a/a_test.go#L16)
