@@ -1,4 +1,4 @@
-FROM docker.io/library/golang:1.27.3-trixie@sha256:fbb7ae40b62ff8afe31662df570d39b4f5052ac32b90dae8e60d7657a20a74f4 AS build
+FROM docker.io/library/golang:1.27.3-trixie@sha256:c124b9ad3452f46061b5054607d26ea51730dae5372c5e469920063ba2bc6dcc AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 COPY queue/rabbitmq/go.mod queue/rabbitmq/go.sum queue/rabbitmq/
