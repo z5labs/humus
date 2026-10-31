@@ -103,25 +103,47 @@ turn. Don't use `Monitor` or `run_in_background`, which report after the turn en
 pass the time with `sleep` calls or by reading `stress.log` while it runs. A blocking call is
 the wait.
 
-If the skill has to stop while the sweep runs, stop `flaky` first, so it deletes the kind
-clusters it brought up, and wait for it to end before the worktree goes:
+If the skill has to stop the sweep while it runs, such as when it is asked to stop, stop `flaky`
+with `SIGTERM`. `flaky` then starts no more runs, waits for the runs going, deletes the kind
+clusters it brought up, and writes what the runs that ended found. Wait for it to end, the same
+way as above:
 
 ```
 pkill -TERM -f '^<WORK>/flaky stress'
 timeout 570 bash -c 'until test -f <WORK>/stress.exit; do sleep 10; done'
+if test -f <WORK>/stress.exit; then cat <WORK>/stress.exit; else echo running; fi
 ```
 
 Keep the `^`: only `flaky`'s command line starts with `<WORK>/flaky stress`. Without it the
 pattern matches the wrapper `bash -c` too, which then dies before it writes `stress.exit`.
+When it prints `running`, the runs going haven't ended yet: run the wait again, without the
+`pkill`. Then read what the sweep wrote, as for any interrupted sweep: the table below, then
+step 3. Only once that is done does the worktree go.
 
-When it ends, read `<WORK>/stress.exit`:
+When it ends, read `<WORK>/stress.exit`, and whether `results.json` says the sweep was
+interrupted:
+
+```
+cat <WORK>/stress.exit
+jq -r '[.interrupted, .endedRuns, .plannedRuns] | @tsv' <WORK>/results.json
+```
+
+When `results.json` is empty, `jq` prints nothing: the table counts that as empty, not
+interrupted.
 
 | exit | means | what the skill does |
 | --- | --- | --- |
 | 0 | every test passed every run | nothing to report: say so in the report, clean up, stop |
 | 1, with `results.json` not empty | a test failed or hung, or a walkthrough's cluster didn't come up | step 3 |
 | 1, with `results.json` empty | a test binary or an image didn't build | report the end of `stress.log`, clean up, stop |
+| 3, with `.interrupted` true in `results.json` | the sweep was interrupted, by the skill or by a signal from elsewhere, and `results.json` is what the runs that ended found | step 3, as on exit 1 |
 | 2 | a usage error, or the sweep itself failed | report the end of `stress.log`, clean up, stop |
+| anything else, or 3 without `.interrupted` true | `flaky` ended before it could write its results, such as when it was killed | report the end of `stress.log`, clean up, stop |
+
+An interrupted sweep's results are of the runs that ended. A test that failed or hung in them is
+reported as on exit 1, and `flaky report` says in its discussion that the sweep was interrupted.
+When none failed or hung, and every cluster came up, there is nothing to report: say so in the
+report, clean up, and stop.
 
 ## 3. Write a report for each test that failed or hung
 
@@ -247,7 +269,7 @@ discussions it posted are `triage-bug`'s to take on.
 ## 5. Clean up
 
 When the skill ends, whatever it found and even when it stops early. If `flaky stress` may still
-be running, stop it first (step 2). Then:
+be running, stop it first, and read what it wrote (step 2). Then:
 
 ```
 git -C <MAIN> worktree remove --force <WORK>/worktree
@@ -262,6 +284,10 @@ output and the reports stay under `WORK`.
 Finish with a short status:
 
 - the commit, and the flags and packages the sweep ran;
+- when `.interrupted` is true, that the sweep was interrupted, and how many of its planned runs
+  ended, from `.endedRuns` and `.plannedRuns`, such as `interrupted: 1200 of 4000 planned runs
+  ended`, and whether the skill stopped it itself. Then the counts below are of the runs that
+  ended;
 - how many tests were flaky, failing and passed, from `.flaky`, `.failing` and `.passed`;
 - the tests, sorted by what `flaky report` did, each with its package and full name:
   - **posted**, with the discussion's link; with `--dry-run`, **would be posted**, with the
