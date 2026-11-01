@@ -7,7 +7,7 @@ replace github.com/z5labs/humus => ../../..
 replace github.com/z5labs/humus/kube => ../../../kube
 
 require (
-	github.com/jackc/pgx/v5 v5.11.0
+	github.com/jackc/pgx/v5 v5.12.0
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/k3s v0.44.0

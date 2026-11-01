@@ -7,7 +7,7 @@ replace github.com/z5labs/humus => ../../..
 require (
 	github.com/go-jose/go-jose/v4 v4.1.7
 	github.com/google/uuid v1.6.0
-	github.com/jackc/pgx/v5 v5.11.0
+	github.com/jackc/pgx/v5 v5.12.0
 	github.com/jackc/tern/v2 v2.4.3
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/stretchr/testify v1.12.1
