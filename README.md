@@ -120,12 +120,24 @@ golangci-lint at the version
 
 A hook runs after Claude Code has started, so the plugins it declares wait for
 `/reload-plugins`. Run both from the cloud environment's setup script as well,
-and they are in place from the first prompt:
+and they are in place from the first prompt.
+
+A cloud session also drops the `permissions.allow` rules in
+`.claude/settings.json`, because it never shows the workspace trust dialog,
+and keeps only the `deny` rules. User settings need no trust, so the setup
+script's first line copies the repository's `permissions` into them, where an
+unattended backlog run finds the same rules a trusted local checkout does.
+`install-plugins.sh` then merges into that file:
 
 ```bash
+mkdir -p ~/.claude && jq '{permissions}' /home/user/humus/.claude/settings.json > ~/.claude/settings.json
 bash /home/user/humus/.claude/hooks/install-plugins.sh /home/user/humus || true
 bash /home/user/humus/.claude/hooks/install-golangci-lint.sh /home/user/humus || true
 ```
+
+The first line replaces `~/.claude/settings.json`, which is right in a fresh
+cloud container. If the setup script already writes user settings, merge the
+`permissions` into them instead.
 
 golangci-lint is downloaded from github.com, which redirects to
 release-assets.githubusercontent.com, so the environment's network access has
