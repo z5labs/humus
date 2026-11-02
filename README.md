@@ -103,6 +103,34 @@ report bugs in [Bugs](https://github.com/z5labs/humus/discussions/categories/bug
 and propose changes in
 [General](https://github.com/z5labs/humus/discussions/categories/general).
 
+## Claude Code cloud sessions
+
+This repository's stories are worked by the
+[backlog plugin](https://github.com/z5labs/devex/tree/main/plugins/backlog),
+which [`.claude/settings.json`](.claude/settings.json) enables. A
+[Claude Code cloud session](https://code.claude.com/docs/en/claude-code-on-the-web)
+ignores the plugins a repository enables, and its image's golangci-lint can be
+too old to lint this repository's Go. Two scripts fix that, and both run as
+`SessionStart` hooks:
+[`install-plugins.sh`](.claude/hooks/install-plugins.sh) declares the plugins
+in the session's user settings, and
+[`install-golangci-lint.sh`](.claude/hooks/install-golangci-lint.sh) installs
+golangci-lint at the version
+[`.github/workflows/build.yaml`](.github/workflows/build.yaml) pins.
+
+A hook runs after Claude Code has started, so the plugins it declares wait for
+`/reload-plugins`. Run both from the cloud environment's setup script as well,
+and they are in place from the first prompt:
+
+```bash
+bash /home/user/humus/.claude/hooks/install-plugins.sh /home/user/humus || true
+bash /home/user/humus/.claude/hooks/install-golangci-lint.sh /home/user/humus || true
+```
+
+golangci-lint is downloaded from github.com, which redirects to
+release-assets.githubusercontent.com, so the environment's network access has
+to allow both.
+
 ## License
 
 Released under the [MIT License](LICENSE).
