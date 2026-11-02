@@ -114,7 +114,21 @@ version_of() {
 # install_release — download the pinned release for this machine, check it, and
 # put its golangci-lint in BIN_DIR. Says why and returns 1 when it cannot.
 install_release() {
-  local os arch name tmp sum got
+  local os arch name tmp sum got tool sha
+  # Checked first, so a missing tool is named rather than read as a blocked
+  # host or a bad checksum.
+  for tool in curl tar; do
+    command -v "$tool" >/dev/null 2>&1 || { say "$tool is not installed; golangci-lint not installed"; return 1; }
+  done
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha=(sha256sum)
+  elif command -v shasum >/dev/null 2>&1; then
+    sha=(shasum -a 256)
+  else
+    say "neither sha256sum nor shasum is installed, so the download cannot be checked; golangci-lint not installed"
+    return 1
+  fi
+
   os=$(uname -s | tr '[:upper:]' '[:lower:]')
   case $(uname -m) in
     x86_64 | amd64) arch=amd64 ;;
@@ -138,11 +152,7 @@ install_release() {
   fi
 
   sum=$(awk -v f="$name.tar.gz" '$2 == f { print $1 }' "$tmp/checksums.txt")
-  if command -v sha256sum >/dev/null 2>&1; then
-    got=$(sha256sum "$tmp/$name.tar.gz" | awk '{ print $1 }')
-  else
-    got=$(shasum -a 256 "$tmp/$name.tar.gz" 2>/dev/null | awk '{ print $1 }')
-  fi
+  got=$("${sha[@]}" "$tmp/$name.tar.gz" 2>/dev/null | awk '{ print $1 }')
   if [ -z "$sum" ] || [ "$sum" != "$got" ]; then
     say "$name.tar.gz does not match its checksum in golangci-lint-$want-checksums.txt; golangci-lint not installed"
     rm -rf "$tmp"

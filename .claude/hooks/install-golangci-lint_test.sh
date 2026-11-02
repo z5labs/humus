@@ -52,7 +52,28 @@ release() {
   fake_lint "$stage/$name/golangci-lint" "$v"
   mkdir -p "$out"
   tar -czf "$out/$name.tar.gz" -C "$stage" "$name"
-  (cd "$out" && sha256sum "$name.tar.gz" >"golangci-lint-$v-checksums.txt")
+  (cd "$out" && sha256 "$name.tar.gz" >"golangci-lint-$v-checksums.txt")
+}
+
+# sha256 <file> — its checksum line, from sha256sum or, where there is none
+# (macOS), shasum, which prints the same format.
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$@"
+  else
+    shasum -a 256 "$@"
+  fi
+}
+
+# only <tool...> — a directory holding just those of these tools this machine
+# has, for a PATH that lacks the rest.
+only() {
+  local d t
+  d=$(mktemp -d "$dir/tools.XXXXXX")
+  for t in "$@"; do
+    command -v "$t" >/dev/null 2>&1 && ln -s "$(command -v "$t")" "$d/$t"
+  done
+  printf '%s' "$d"
 }
 
 # root <build.yaml contents> — a repository root holding that workflow.
@@ -233,6 +254,22 @@ if [ ! -e "$bin/golangci-lint" ] && [[ $out == *"does not match its checksum"* ]
   pass "installs nothing from an archive that does not match its checksum"
 else
   fail "installs nothing from an archive that does not match its checksum" "$out"
+fi
+
+needs=(bash awk sort grep sed head paste tr uname)
+bin="$dir/j/bin"
+out=$(run_script "$bin" "$bin:$(only "${needs[@]}" tar sha256sum shasum)" "$r")
+if [ ! -e "$bin/golangci-lint" ] && [ "$out" = "install-golangci-lint: curl is not installed; golangci-lint not installed" ]; then
+  pass "names a missing curl rather than a blocked host"
+else
+  fail "names a missing curl rather than a blocked host" "$out"
+fi
+
+out=$(run_script "$bin" "$bin:$(only "${needs[@]}" curl tar)" "$r")
+if [ ! -e "$bin/golangci-lint" ] && [[ $out == *"neither sha256sum nor shasum is installed"* ]]; then
+  pass "names a missing checksum tool rather than a bad checksum"
+else
+  fail "names a missing checksum tool rather than a bad checksum" "$out"
 fi
 
 # --- hook mode ------------------------------------------------------------------
