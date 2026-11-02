@@ -1,4 +1,84 @@
 {
+  "permissions": {
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Agent",
+      "Skill",
+      "SendMessage",
+      "TaskCreate",
+      "TaskUpdate",
+      "ScheduleWakeup",
+      "EnterWorktree",
+      "ExitWorktree",
+      "Edit(**)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git checkout*)",
+      "Bash(git switch*)",
+      "Bash(git branch*)",
+      "Bash(git fetch*)",
+      "Bash(git pull*)",
+      "Bash(git push*)",
+      "Bash(git rebase*)",
+      "Bash(git merge*)",
+      "Bash(git worktree*)",
+      "Bash(git remote*)",
+      "Bash(git rev-parse*)",
+      "Bash(gh api*)",
+      "Bash(gh run*)",
+      "Bash(gh workflow*)",
+      "Bash(ls*)",
+      "Bash(mkdir*)",
+      "Bash(jq*)",
+      "Bash(rg*)",
+      "Bash(find*)",
+      "Bash(diff*)",
+      "Bash(.github/scripts/go-modules.sh*)",
+      "Bash(go -C*)",
+      "Bash(go build*)",
+      "Bash(go test*)",
+      "Bash(go vet*)",
+      "Bash(gofmt*)",
+      "Bash(golangci-lint*)"
+    ],
+    "deny": [
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git push --delete*)",
+      "Bash(git stash*)",
+      "Bash(gh repo delete*)",
+      "Bash(gh repo archive*)",
+      "Bash(gh api --method DELETE*)",
+      "Bash(gh api -X DELETE*)",
+      "Bash(gh auth logout*)",
+      "Bash(gh auth token*)",
+      "Bash(rm -rf*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/install-plugins.sh"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/install-golangci-lint.sh",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  },
   "extraKnownMarketplaces": {
     "z5labs-devex": {
       "source": {

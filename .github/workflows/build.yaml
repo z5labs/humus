@@ -13,6 +13,7 @@ on:
       - 'example/*/*/deploy/**'
       - 'example/*/*/proto/**'
       - '.github/scripts/**'
+      - '.claude/hooks/**'
       - '.github/workflows/build.yaml'
   pull_request:
     branches:
@@ -356,6 +357,12 @@ jobs:
         - name: Test the release script
           if: ${{ !cancelled() }}
           run: .github/scripts/release-modules_test.sh
+
+        # The hook reads golangci-lint's pin from this file, so a change here
+        # that it can no longer read fails this step.
+        - name: Test the golangci-lint install hook
+          if: ${{ !cancelled() }}
+          run: .claude/hooks/install-golangci-lint_test.sh
 
   # The check the ruleset requires. It runs whatever happened to the jobs it
   # needs, and passes only when every one of them succeeded: a job that
