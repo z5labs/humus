@@ -364,6 +364,10 @@ jobs:
           if: ${{ !cancelled() }}
           run: .claude/hooks/install-golangci-lint_test.sh
 
+        - name: Test the cloud environment setup script
+          if: ${{ !cancelled() }}
+          run: .claude/hooks/cloud-setup_test.sh
+
   # The check the ruleset requires. It runs whatever happened to the jobs it
   # needs, and passes only when every one of them succeeded: a job that
   # failed, was cancelled or was skipped fails it. A skipped required check

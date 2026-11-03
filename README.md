@@ -122,31 +122,40 @@ A hook runs after Claude Code has started, when the session's plugins are
 already chosen. It only writes the settings, and a cloud session cannot run
 the `/reload-plugins` its message suggests, so the hook alone cannot be relied
 on to load the plugins there. golangci-lint needs no reload, so its hook is
-enough for `verify`. Add the lines below to the cloud environment's setup
-script, which runs before Claude Code starts: open the environment menu in the
-session's title bar, then Edit. A new session then has the plugins from the
-first prompt, and the hooks find nothing left to do.
+enough for `verify`. A cloud session also drops the `permissions.allow` rules
+in `.claude/settings.json`, because it never shows the workspace trust dialog,
+and keeps only the `deny` rules.
 
-A cloud session also drops the `permissions.allow` rules in
-`.claude/settings.json`, because it never shows the workspace trust dialog,
-and keeps only the `deny` rules. User settings need no trust, so the setup
-script's first line copies the repository's `permissions` into them, where an
-unattended backlog run finds the same rules a trusted local checkout does.
-`install-plugins.sh` then merges into that file:
+[`cloud-setup.sh`](.claude/hooks/cloud-setup.sh) covers all three before
+Claude Code starts. It copies the repository's `permissions` into user
+settings, which need no trust, and then runs both scripts. Give this
+repository a cloud environment of its own, and make this its setup script.
+Open the environment menu in the session's title bar, then Edit:
 
 ```bash
-mkdir -p ~/.claude && jq '{permissions}' /home/user/humus/.claude/settings.json > ~/.claude/settings.json
-bash /home/user/humus/.claude/hooks/install-plugins.sh /home/user/humus || true
-bash /home/user/humus/.claude/hooks/install-golangci-lint.sh /home/user/humus || true
+bash /home/user/humus/.claude/hooks/cloud-setup.sh || true
 ```
 
-The first line replaces `~/.claude/settings.json`, which is right in a fresh
-cloud container. If the setup script already writes user settings, merge the
-`permissions` into them instead.
+A new session then has the plugins and the permissions from the first prompt.
+
+The environment needs to be this repository's own because the environment,
+not the repository, keeps what the setup script did. The script runs on the
+environment's first session, and later sessions start from a
+[snapshot](https://code.claude.com/docs/en/cloud-environments#environment-caching)
+of the disk without running it, so an environment shared with another
+repository keeps whichever repository's setup built the snapshot. The
+snapshot is rebuilt when the setup script or the allowed hosts change, or
+after about seven days, so a change to `cloud-setup.sh` reaches new sessions
+then. In between, the hooks keep the golangci-lint pin and the plugin settings
+current.
+
+`cloud-setup.sh` is for a cloud environment, not a laptop: it writes the
+repository's permission list into user settings, which apply to every
+repository Claude Code opens.
 
 golangci-lint is downloaded from github.com, which redirects to
-release-assets.githubusercontent.com, so the environment's network access has
-to allow both.
+release-assets.githubusercontent.com. The default **Trusted** network level
+reaches both.
 
 ## License
 
