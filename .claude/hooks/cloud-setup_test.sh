@@ -87,6 +87,19 @@ out=$(run "$r2" "$c" "$r2")
 check "copies nothing when the repository sets no permissions" \
   '[ ! -e "$c/settings.json" ] && [[ $out == *"has no permissions object"* ]]' "$out"
 
+r7=$(fixture "$project")
+rm "$r7/.claude/settings.json"
+c="$dir/unreadable"
+out=$(run "$r7" "$c" "$r7")
+check "says it cannot read the repository's settings when they are missing" \
+  '[ ! -e "$c/settings.json" ] && [[ $out == *"cannot read $r7/.claude/settings.json"* ]] && [ "$(grep -c "" "$r7/calls")" -eq 2 ]' "$out"
+
+r8=$(fixture 'not json')
+c="$dir/notjson"
+out=$(run "$r8" "$c" "$r8")
+check "says the repository's settings are not JSON, rather than that they lack permissions" \
+  '[ ! -e "$c/settings.json" ] && [[ $out == *"$r8/.claude/settings.json is not a JSON object"* ]] && [[ $out != *"no permissions object"* ]]' "$out"
+
 # The repository's own settings: every allow and deny entry arrives.
 r3=$(fixture "$(cat "$repo/.claude/settings.json")")
 c="$dir/real"

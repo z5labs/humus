@@ -62,6 +62,10 @@ settings="$dir/settings.json"
 merge_permissions() {
   local perms current merged tmp
   command -v jq >/dev/null 2>&1 || { say "jq is not installed; permissions not copied"; return; }
+  # Three causes, three messages: each points at a different fix.
+  [ -r "$project" ] || { say "cannot read $project; permissions not copied"; return; }
+  jq -e 'type == "object"' "$project" >/dev/null 2>&1 ||
+    { say "$project is not a JSON object; permissions not copied"; return; }
   perms=$(jq -ec '.permissions | objects' "$project" 2>/dev/null) ||
     { say "$project has no permissions object; permissions not copied"; return; }
   current='{}'
