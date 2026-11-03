@@ -118,13 +118,14 @@ in the session's user settings, and
 golangci-lint at the version
 [`.github/workflows/build.yaml`](.github/workflows/build.yaml) pins.
 
-A hook runs after Claude Code has started, and a cloud session cannot run
-`/reload-plugins`. The hook alone therefore never loads the plugins there,
-even though its message suggests that command. Add the lines below to the
-cloud environment's setup script, which runs before Claude Code starts: open
-the environment menu in the session's title bar, then Edit. A new session
-then has the plugins from the first prompt, and the hooks find nothing left to
-do.
+A hook runs after Claude Code has started, when the session's plugins are
+already chosen. It only writes the settings, and a cloud session cannot run
+the `/reload-plugins` its message suggests, so the hook alone cannot be relied
+on to load the plugins there. golangci-lint needs no reload, so its hook is
+enough for `verify`. Add the lines below to the cloud environment's setup
+script, which runs before Claude Code starts: open the environment menu in the
+session's title bar, then Edit. A new session then has the plugins from the
+first prompt, and the hooks find nothing left to do.
 
 A cloud session also drops the `permissions.allow` rules in
 `.claude/settings.json`, because it never shows the workspace trust dialog,
