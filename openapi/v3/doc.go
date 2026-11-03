@@ -368,12 +368,15 @@
 // too. The API records it as an exception event on the request's span,
 // sets the span's status to Error, and emits one ERROR record, "response
 // failed", in the request's context, with the same attributes. When the
-// client went away, it goes on the span only. The client went away when
-// the request's context is done, or when a write to the writer the
-// WriterTo is handed failed because the connection did: over HTTP/2, such
-// a write can fail before the server cancels the request's context. A
-// write the server refuses, a body for a status that has none or more
-// bytes than the WriterTo's Len, is the server's failure. Then the API
+// client went away, it goes on the span only. The client went away when a
+// write to the writer the WriterTo is handed failed because the connection
+// did: over HTTP/2, such a write can fail before the server cancels the
+// request's context. With no failed write, it went away when the request's
+// context is done. A write the server refuses, a body for a status that
+// has none or more bytes than the WriterTo's Len, is the server's failure,
+// and is logged whatever the request's context: an HTTP/1.1 client that
+// has read the whole Content-Length may close its connection, which
+// cancels the context before the write past the Len fails. Then the API
 // panics with http.ErrAbortHandler, which
 // httpserver and net/http pass through without logging, so httpserver
 // records no "handler panicked" for it.
