@@ -261,9 +261,12 @@ func (rt *route) log(r *http.Request, body string, err error) {
 }
 
 // logAlways emits one ERROR record, body, for err, in the request's
-// context, whether or not the context is done.
+// context, whether or not the context is done. The record is emitted in
+// context.WithoutCancel of it, so it still carries the span's trace and
+// span IDs, and a processor or exporter that heeds the context doesn't drop
+// it for a cancellation that has already happened.
 func (rt *route) logAlways(r *http.Request, body string, err error) {
-	emit(r.Context(), rt.logger, log.SeverityError, body,
+	emit(context.WithoutCancel(r.Context()), rt.logger, log.SeverityError, body,
 		semconv.HTTPRequestMethodKey.String(r.Method),
 		semconv.HTTPRoute(rt.path.String()),
 		semconv.ErrorType(err),
