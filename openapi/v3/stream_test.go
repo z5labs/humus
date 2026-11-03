@@ -708,3 +708,99 @@ func (noContentCodec) MediaType() string { return "" }
 func (noContentCodec) Schema() (openapi.Schema, error) { return nil, nil }
 
 func (noContentCodec) Encode(v writerFunc) (io.WriterTo, error) { return v, nil }
+
+// TestAPI_logs_a_write_past_its_Len_after_the_client_has_its_Len extends
+// TestAPI_logs_a_write_the_server_refuses for #1348. Its body writes its
+// Len, waits until every other goroutine in the bubble is blocked, then
+// writes past its Len. So the client has read the whole body the
+// Content-Length promised before the server refuses the write, and a client
+// that closes its connection then has the request's context canceled
+// first. The refused write is the server's failure all the same.
+func TestAPI_logs_a_write_past_its_Len_after_the_client_has_its_Len(t *testing.T) {
+	for _, p := range []struct {
+		name   string
+		client func(*server) *http.Client
+	}{
+		{"over HTTP/2", func(s *server) *http.Client { return s.client }},
+		// The client sends Connection: close, and closes the connection
+		// once it has read Content-Length bytes.
+		{"over HTTP/1.1, closing the connection", func(s *server) *http.Client { return s.http1 }},
+		// The client keeps the connection, idle, once it has read
+		// Content-Length bytes.
+		{"over HTTP/1.1, keeping the connection", func(s *server) *http.Client {
+			s.http1.Transport.(*http.Transport).DisableKeepAlives = false
+			return s.http1
+		}},
+	} {
+		t.Run(p.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctxErr := make(chan error, 1)
+				s := serveAPI(t, []openapi.Operation{
+					openapi.Get(rows, func(ctx context.Context, _ openapi.Request[openapi.EmptyBody]) (pausedLen, error) {
+						return pausedLen{body: "row 1\n", ctx: ctx, ctxErr: ctxErr}, nil
+					}, pausedLenEncoder),
+				})
+
+				req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://localhost:8443/rows", nil)
+				require.NoError(t, err)
+				r := <-start(p.client(s), req)
+				var got string
+				if r.err == nil {
+					b, _ := io.ReadAll(r.resp.Body)
+					got = string(b)
+					_ = r.resp.Body.Close()
+				}
+
+				s.stop()
+				t.Logf("the client read %q, err %v", got, r.err)
+				t.Logf("the request's context, at the write past its Len: %v", <-ctxErr)
+				spans := serverSpans(s.tel)
+				require.Len(t, spans, 1)
+				t.Logf("the server span: status %v, exceptions %q", spans[0].Status(), exceptionMessages(spans[0]))
+				recs := records(s.tel)
+				for _, rec := range recs {
+					t.Logf("record at %v: %s %v", rec.Timestamp(), rec.Body().AsString(), attrs(rec))
+				}
+				require.Len(t, exceptionMessages(spans[0]), 1)
+				require.Equal(t, codes.Error, spans[0].Status().Code)
+				require.Len(t, recs, 1, "a write the server refused is the server's failure")
+				require.Equal(t, "response failed", recs[0].Body().AsString())
+			})
+		})
+	}
+}
+
+// pausedLen is a body its WriteTo writes twice, whose Len counts it once.
+// Between the writes it waits until every other goroutine in the bubble is
+// blocked, and it sends the request's context's error when it has.
+type pausedLen struct {
+	body   string
+	ctx    context.Context
+	ctxErr chan<- error
+}
+
+func (b pausedLen) Len() int { return len(b.body) }
+
+func (b pausedLen) WriteTo(w io.Writer) (int64, error) {
+	m, err := io.WriteString(w, b.body)
+	n := int64(m)
+	if err != nil {
+		b.ctxErr <- b.ctx.Err()
+		return n, err
+	}
+	synctest.Wait()
+	b.ctxErr <- b.ctx.Err()
+	m, err = io.WriteString(w, b.body)
+	return n + int64(m), err
+}
+
+// pausedLenCodec is pausedLen's Encoder.
+type pausedLenCodec struct{}
+
+func pausedLenEncoder() openapi.Encoder[pausedLen] { return pausedLenCodec{} }
+
+func (pausedLenCodec) MediaType() string { return "text/plain" }
+
+func (pausedLenCodec) Schema() (openapi.Schema, error) { return nil, nil }
+
+func (pausedLenCodec) Encode(v pausedLen) (io.WriterTo, error) { return v, nil }

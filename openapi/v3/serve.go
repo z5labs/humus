@@ -245,15 +245,28 @@ func (rt *route) record(r *http.Request, err error) {
 }
 
 // log emits one ERROR record, body, for err, in the request's context,
-// unless the context is done because the client went away. A failed write
-// can show the client went away before the context does: abort, which
-// knows of the write, decides that itself before it calls log.
+// unless the context is done, which before the response is written means
+// the client went away. Once the response is written, a done context
+// doesn't say why a write of it failed: abort, which knows of the write,
+// decides that itself, and calls log only for a failure no write explains.
+// A write the server refuses is logged whatever the context, by abort,
+// through logAlways: an HTTP/1.1 client that has read the whole
+// Content-Length may close its connection, and so cancel the context,
+// before the write past the Len fails.
 func (rt *route) log(r *http.Request, body string, err error) {
-	ctx := r.Context()
-	if ctx.Err() != nil {
+	if r.Context().Err() != nil {
 		return
 	}
-	emit(ctx, rt.logger, log.SeverityError, body,
+	rt.logAlways(r, body, err)
+}
+
+// logAlways emits one ERROR record, body, for err, in the request's
+// context, whether or not the context is done. The record is emitted in
+// context.WithoutCancel of it, so it still carries the span's trace and
+// span IDs, and a processor or exporter that heeds the context doesn't drop
+// it for a cancellation that has already happened.
+func (rt *route) logAlways(r *http.Request, body string, err error) {
+	emit(context.WithoutCancel(r.Context()), rt.logger, log.SeverityError, body,
 		semconv.HTTPRequestMethodKey.String(r.Method),
 		semconv.HTTPRoute(rt.path.String()),
 		semconv.ErrorType(err),
@@ -266,8 +279,8 @@ func (rt *route) log(r *http.Request, body string, err error) {
 // WriterTo isn't recovered: it is the end user's answer that panicked, so
 // it reaches httpserver, which records it and aborts the response.
 func (rt *route) write(w http.ResponseWriter, r *http.Request, status int, mediaType string, wt io.WriterTo) {
-	if lost, err := write(w, status, mediaType, wt); err != nil {
-		rt.abort(r, err, lost)
+	if f, err := write(w, status, mediaType, wt); err != nil {
+		rt.abort(r, err, f)
 	}
 }
 
@@ -283,37 +296,48 @@ func (rt *route) respond(w http.ResponseWriter, r *http.Request, wt io.WriterTo)
 		rt.answerPanic(w, r, p)
 		return
 	}
-	var lost bool
+	var f fault
 	var err error
-	if p := guard(func() { lost, err = writeSized(w, rt.status, rt.codecs.encMediaType, n, wt) }); p != nil {
+	if p := guard(func() { f, err = writeSized(w, rt.status, rt.codecs.encMediaType, n, wt) }); p != nil {
 		rt.recordPanic(r, p)
 		panic(http.ErrAbortHandler)
 	}
 	if err != nil {
-		rt.abort(r, err, lost)
+		rt.abort(r, err, f)
 	}
 }
 
 // abort cuts short a response whose WriterTo failed with err once the
-// status was written. lost reports whether a write of the response failed
-// because the connection did.
+// status was written. f says which write of the response failed, if one
+// did, and why.
 //
 // That failure can't change the response, so it is cut short: the error is
 // recorded on the request's span, with the span's status set to Error, and
 // as one ERROR record, "response failed", unless the client went away.
-// The client went away when the request's context is done, or when lost,
-// whatever the WriterTo returned: over HTTP/2 a write fails on a closed
-// connection before the server cancels the stream's context, which it does
-// only once it reads the client's reset or sees the connection end.
+//
+// A write the server refused is the server's failure, so it is logged
+// whatever the request's context: once a client has read the whole
+// Content-Length, it may close its connection, as an HTTP/1.1 client that
+// sent Connection: close does, and net/http then cancels the context before
+// the write past the Len fails. A write that failed because the connection
+// did means the client went away, whatever the WriterTo returned: over
+// HTTP/2 a write fails on a closed connection before the server cancels the
+// stream's context, which it does only once it reads the client's reset or
+// sees the connection end. With no failed write, the client went away when
+// the request's context is done.
+//
 // Then abort panics with http.ErrAbortHandler, which net/http and
 // httpserver pass through without logging. On HTTP/2 the stream is reset,
 // and on HTTP/1.1 the connection is closed, so the client sees a failed
 // response rather than a complete one.
-func (rt *route) abort(r *http.Request, err error, lost bool) {
+func (rt *route) abort(r *http.Request, err error, f fault) {
 	span := trace.SpanFromContext(r.Context())
 	span.RecordError(err)
 	span.SetStatus(codes.Error, "response failed")
-	if !lost {
+	switch f {
+	case refused:
+		rt.logAlways(r, "response failed", err)
+	case noFault:
 		rt.log(r, "response failed", err)
 	}
 	panic(http.ErrAbortHandler)
@@ -393,9 +417,9 @@ func (rt *route) recordPanic(r *http.Request, p *panicked) {
 // it is the Content-Length, so it must count the bytes WriteTo writes. The
 // WriterTo is handed a writer that flushes each write, so a body that
 // streams reaches the client as it is written. It returns the WriterTo's
-// error, and whether a write of the response failed because the connection
-// did; see flushWriter.
-func write(w http.ResponseWriter, status int, mediaType string, wt io.WriterTo) (lost bool, err error) {
+// error, and the fault of a write of the response that failed; see
+// flushWriter.
+func write(w http.ResponseWriter, status int, mediaType string, wt io.WriterTo) (fault, error) {
 	return writeSized(w, status, mediaType, length(wt), wt)
 }
 
@@ -408,7 +432,7 @@ func length(wt io.WriterTo) int {
 }
 
 // writeSized is write, given the WriterTo's length, or -1 for none.
-func writeSized(w http.ResponseWriter, status int, mediaType string, n int, wt io.WriterTo) (lost bool, err error) {
+func writeSized(w http.ResponseWriter, status int, mediaType string, n int, wt io.WriterTo) (fault, error) {
 	if mediaType != "" {
 		w.Header().Set("Content-Type", mediaType)
 	}
@@ -417,11 +441,11 @@ func writeSized(w http.ResponseWriter, status int, mediaType string, n int, wt i
 	}
 	w.WriteHeader(status)
 	if wt == nil {
-		return false, nil
+		return noFault, nil
 	}
 	fw := &flushWriter{w: w, rc: http.NewResponseController(w), status: status, n: n}
-	_, err = wt.WriteTo(fw)
-	return fw.lost, err
+	_, err := wt.WriteTo(fw)
+	return fw.fault, err
 }
 
 // bodyAllowed reports whether a response with status has a body, and so a
@@ -430,36 +454,55 @@ func bodyAllowed(status int) bool {
 	return status >= http.StatusOK && status != http.StatusNoContent && status != http.StatusNotModified
 }
 
+// fault says why a write of a response failed.
+type fault int
+
+const (
+	noFault fault = iota // no write failed
+	lost                 // a write or flush failed because the connection did
+	refused              // the server refused a write
+)
+
 // flushWriter is the writer a WriterTo is handed: it flushes each write.
 //
-// It notes when a write or a flush fails because the connection did. A
-// write the server refuses, a body for a status that has none or more
-// bytes than the Content-Length, fails before anything reaches the
-// connection, and is the server's failure. Any other failure is the
-// connection's.
+// It notes why a write or a flush fails. A write the server refuses, a
+// body for a status that has none or more bytes than the Content-Length,
+// fails before anything reaches the connection, and is the server's
+// failure, whatever the connection did. Any other failure is the
+// connection's. Once a write is refused, the response is the server's
+// failure, so a later failure doesn't change the fault.
 type flushWriter struct {
 	w      io.Writer
 	rc     *http.ResponseController
 	status int
-	n      int  // the Content-Length, or -1 for none
-	wrote  int  // the bytes handed to w
-	lost   bool // a write or flush failed because the connection did
+	n      int   // the Content-Length, or -1 for none
+	wrote  int   // the bytes handed to w
+	fault  fault // why a write or flush failed
 }
 
 func (f *flushWriter) Write(p []byte) (int, error) {
 	f.wrote += len(p)
 	n, err := f.w.Write(p)
 	if err != nil {
-		if bodyAllowed(f.status) && (f.n < 0 || f.wrote <= f.n) {
-			f.lost = true
+		if !bodyAllowed(f.status) || (f.n >= 0 && f.wrote > f.n) {
+			f.fail(refused)
+		} else {
+			f.fail(lost)
 		}
 		return n, err
 	}
 	if err := f.rc.Flush(); err != nil && !errors.Is(err, http.ErrNotSupported) {
-		f.lost = true
+		f.fail(lost)
 		return n, err
 	}
 	return n, nil
+}
+
+// fail notes a failed write's fault, unless a write was already refused.
+func (f *flushWriter) fail(why fault) {
+	if f.fault != refused {
+		f.fault = why
+	}
 }
 
 // emit emits one record at sev, with body and attrs, through logger.
