@@ -11,8 +11,8 @@ require (
 	github.com/jackc/tern/v2 v2.4.3
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/stretchr/testify v1.12.1
-	github.com/testcontainers/testcontainers-go v0.44.0
-	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
+	github.com/testcontainers/testcontainers-go v0.45.0
+	github.com/testcontainers/testcontainers-go/modules/postgres v0.45.0
 	github.com/z5labs/bedrock v0.25.0
 	github.com/z5labs/bedrock/circuit v0.25.0
 	github.com/z5labs/bedrock/fit v0.25.0

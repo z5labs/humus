@@ -9,8 +9,8 @@ replace github.com/z5labs/humus => ..
 require (
 	github.com/go-logr/logr v1.4.4
 	github.com/stretchr/testify v1.12.1
-	github.com/testcontainers/testcontainers-go v0.44.0
-	github.com/testcontainers/testcontainers-go/modules/k3s v0.44.0
+	github.com/testcontainers/testcontainers-go v0.45.0
+	github.com/testcontainers/testcontainers-go/modules/k3s v0.45.0
 	github.com/z5labs/bedrock v0.25.0
 	github.com/z5labs/bedrock/fit v0.25.0
 	github.com/z5labs/humus v0.16.0
