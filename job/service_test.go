@@ -637,3 +637,71 @@ func TestService_a_job_next_to_a_probes_server_ends_the_App(t *testing.T) {
 		require.Error(t, err, "the probes server outlived the job")
 	})
 }
+
+// holdStop is a Serve context that is never done. It has an AfterFunc
+// method, so context.WithCancelCause registers the run's context with it
+// through AfterFunc, and calls the stop function AfterFunc returned on the
+// goroutine that cancels the run's context, after the run's context is done.
+// The stop function waits for release to close.
+type holdStop struct {
+	context.Context
+	done    chan struct{}
+	release <-chan struct{}
+}
+
+func newHoldStop(release <-chan struct{}) holdStop {
+	return holdStop{Context: context.Background(), done: make(chan struct{}), release: release}
+}
+
+func (h holdStop) Done() <-chan struct{} { return h.done }
+
+func (h holdStop) AfterFunc(func()) func() bool {
+	return func() bool {
+		<-h.release
+		return true
+	}
+}
+
+// shutdownAfterServeReturns serves a job whose run returns ctx.Err() once
+// its context is done, calls Shutdown with ctx while Serve is running, and
+// holds Shutdown, after it cancels the run, until Serve has returned. It
+// returns Shutdown's and Serve's errors.
+func shutdownAfterServeReturns(t *testing.T, ctx context.Context) (shutdownErr, serveErr error) {
+	t.Helper()
+	running := make(chan struct{})
+	svc := job.NewService(setup(t, humustest.NewTelemetry()), func(ctx context.Context) error {
+		close(running)
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		serveErr = svc.Serve(newHoldStop(served))
+	}()
+	<-running
+
+	shutdownErr = svc.Shutdown(ctx)
+	<-served
+	t.Logf("Shutdown returned %v; Serve returned %v", shutdownErr, serveErr)
+	return shutdownErr, serveErr
+}
+
+func TestService_Shutdown_with_a_done_context_returns_its_error_when_Serve_returns_first(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		done, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		shutdownErr, serveErr := shutdownAfterServeReturns(t, done)
+		require.ErrorIs(t, shutdownErr, done.Err())
+		require.NoError(t, serveErr)
+	})
+}
+
+func TestService_Shutdown_with_a_live_context_returns_nil_when_Serve_returns_first(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		shutdownErr, serveErr := shutdownAfterServeReturns(t, context.Background())
+		require.NoError(t, shutdownErr)
+		require.NoError(t, serveErr)
+	})
+}

@@ -123,21 +123,27 @@ func (s *Service) Serve(ctx context.Context) error {
 
 // Shutdown cancels run's context and waits for Serve to return. It returns
 // nil once Serve has returned, or at once when Serve was never called or had
-// already returned. If ctx is done first, it returns an error that wraps
-// ctx's error, and Serve keeps waiting for run.
+// already returned when Shutdown was called. If ctx is done first, it returns
+// an error that wraps ctx's error, and Serve keeps waiting for run. A ctx
+// that is already done when Shutdown is called, on a Service that is
+// serving, always gets that error, whether or not Serve returns while
+// Shutdown runs.
 func (s *Service) Shutdown(ctx context.Context) error {
 	s.serving.CompareAndSwap(nil, notServed)
 	c := s.serving.Load()
 	if c == notServed {
 		return nil
 	}
-	c.cancel(errShutdown)
-
 	select {
 	case <-c.served:
 		return nil
 	default:
 	}
+	c.cancel(errShutdown)
+
+	// ctx is checked after the cancel, and Serve is not looked at in
+	// between: a Serve that returns once its run sees the cancel must not
+	// turn a done ctx into a nil.
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("job: shutting down the Service: %w", err)
 	}
