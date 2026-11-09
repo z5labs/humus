@@ -198,6 +198,20 @@ func answerFetch(c *kfake.Cluster, code int16) {
 	})
 }
 
+// answerSessionClose makes the cluster answer at once every Fetch that
+// closes its fetch session, as franz-go's Client.Close sends, instead of
+// holding it for its MaxWait.
+func answerSessionClose(c *kfake.Cluster) {
+	c.ControlKey(kmsg.Fetch.Int16(), func(req kmsg.Request) (kmsg.Response, error, bool) {
+		c.KeepControl()
+		r := req.(*kmsg.FetchRequest)
+		if r.SessionEpoch != -1 {
+			return nil, nil, false
+		}
+		return r.ResponseKind(), nil, true
+	})
+}
+
 // answerHeartbeat makes the cluster answer the next Heartbeat with code.
 func answerHeartbeat(c *kfake.Cluster, code int16) {
 	c.ControlKey(kmsg.Heartbeat.Int16(), func(req kmsg.Request) (kmsg.Response, error, bool) {

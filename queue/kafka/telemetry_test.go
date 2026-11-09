@@ -18,6 +18,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/twmb/franz-go/pkg/kerr"
+	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/plugin/kotel"
 	"github.com/z5labs/bedrock"
@@ -356,68 +357,93 @@ func TestService_kotel_instrument_names(t *testing.T) {
 	})
 }
 
+// recordsAProcessingError runs a Service under d whose Process fails on the
+// record at offset 1, with prepare applied to its cluster first, and checks
+// the error's telemetry. Under AtLeastOnce the error stops the Service, and
+// the App, on their own, so the App is not signalled; under AtMostOnce it is
+// shut down with SIGTERM.
+func recordsAProcessingError(t *testing.T, d queue.Delivery, prepare func(*kfake.Cluster)) {
+	t.Helper()
+	h := humustest.NewHost(t)
+	c := cluster(t, h, 1)
+	produce(t, h, c, 3)
+	if prepare != nil {
+		prepare(c)
+	}
+
+	s := settings(c.ListenAddrs()...)
+	s.Delivery = d
+	bad := errors.New("cannot process")
+	tel := humustest.NewTelemetry()
+	proc, status := humustest.Start(t, consumes(s, func(_ context.Context, m kafka.Message) error {
+		if m.Offset == 1 {
+			return bad
+		}
+		return nil
+	}), humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+	if d == queue.AtMostOnce {
+		synctest.Wait()
+		proc.Signal(syscall.SIGTERM)
+	}
+	st := <-status
+	if d == queue.AtLeastOnce {
+		require.ErrorIs(t, st.Cause(), bad)
+	} else {
+		require.Zero(t, st.Code(), st.Cause())
+	}
+
+	spans := spansNamed(tel, processSpan)
+	failed := spanAt(t, spans, 1)
+	require.Equal(t, codes.Error, failed.Status().Code)
+	require.Equal(t, "cannot process", failed.Status().Description)
+	require.Equal(t, "*errors.errorString", spanAttrs(failed)["error.type"].AsString())
+	var exception bool
+	for _, e := range failed.Events() {
+		if e.Name == "exception" {
+			exception = true
+		}
+	}
+	require.True(t, exception, "the error is recorded on the span as an exception event")
+	require.Equal(t, codes.Unset, spanAt(t, spans, 0).Status().Code)
+	if d == queue.AtMostOnce {
+		logged := records(tel.Logs(), "processing a record failed")
+		require.Len(t, logged, 1)
+		require.Equal(t, failed.SpanContext().TraceID(), logged[0].TraceID(), "the ERROR record carries the record's span")
+		require.Equal(t, failed.SpanContext().SpanID(), logged[0].SpanID())
+	}
+
+	var failures, successes uint64
+	for _, dp := range histogramPoints(t, tel, "messaging.process.duration") {
+		a := setAttrs(dp.Attributes)
+		if _, ok := a["error.type"]; ok {
+			require.Equal(t, with("messaging.operation.name", "process", "error.type", "*errors.errorString"), a)
+			failures += dp.Count
+			continue
+		}
+		successes += dp.Count
+	}
+	require.Equal(t, uint64(1), failures)
+	require.NotZero(t, successes)
+}
+
 func TestService_records_a_processing_error(t *testing.T) {
 	for _, d := range []queue.Delivery{queue.AtLeastOnce, queue.AtMostOnce} {
 		t.Run(string(d), func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				h := humustest.NewHost(t)
-				c := cluster(t, h, 1)
-				produce(t, h, c, 3)
-
-				s := settings(c.ListenAddrs()...)
-				s.Delivery = d
-				bad := errors.New("cannot process")
-				tel := humustest.NewTelemetry()
-				proc, status := humustest.Start(t, consumes(s, func(_ context.Context, m kafka.Message) error {
-					if m.Offset == 1 {
-						return bad
-					}
-					return nil
-				}), humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
-				synctest.Wait()
-				proc.Signal(syscall.SIGTERM)
-				st := <-status
-				if d == queue.AtLeastOnce {
-					require.ErrorIs(t, st.Cause(), bad)
-				} else {
-					require.Zero(t, st.Code(), st.Cause())
-				}
-
-				spans := spansNamed(tel, processSpan)
-				failed := spanAt(t, spans, 1)
-				require.Equal(t, codes.Error, failed.Status().Code)
-				require.Equal(t, "cannot process", failed.Status().Description)
-				require.Equal(t, "*errors.errorString", spanAttrs(failed)["error.type"].AsString())
-				var exception bool
-				for _, e := range failed.Events() {
-					if e.Name == "exception" {
-						exception = true
-					}
-				}
-				require.True(t, exception, "the error is recorded on the span as an exception event")
-				require.Equal(t, codes.Unset, spanAt(t, spans, 0).Status().Code)
-				if d == queue.AtMostOnce {
-					logged := records(tel.Logs(), "processing a record failed")
-					require.Len(t, logged, 1)
-					require.Equal(t, failed.SpanContext().TraceID(), logged[0].TraceID(), "the ERROR record carries the record's span")
-					require.Equal(t, failed.SpanContext().SpanID(), logged[0].SpanID())
-				}
-
-				var failures, successes uint64
-				for _, dp := range histogramPoints(t, tel, "messaging.process.duration") {
-					a := setAttrs(dp.Attributes)
-					if _, ok := a["error.type"]; ok {
-						require.Equal(t, with("messaging.operation.name", "process", "error.type", "*errors.errorString"), a)
-						failures += dp.Count
-						continue
-					}
-					successes += dp.Count
-				}
-				require.Equal(t, uint64(1), failures)
-				require.NotZero(t, successes)
+				recordsAProcessingError(t, d, nil)
 			})
 		})
 	}
+}
+
+// TestService_records_an_at_least_once_processing_error_when_its_session_close_is_answered_at_once
+// is the at-least-once case with the cluster answering the Fetch that
+// closes franz-go's fetch session at once, so Client.Close never waits on
+// the cluster and the App stops as soon as the Service returns the error.
+func TestService_records_an_at_least_once_processing_error_when_its_session_close_is_answered_at_once(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		recordsAProcessingError(t, queue.AtLeastOnce, answerSessionClose)
+	})
 }
 
 func TestService_records_the_messaging_instruments(t *testing.T) {
