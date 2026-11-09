@@ -12,8 +12,8 @@ require (
 	github.com/testcontainers/testcontainers-go v0.45.0
 	github.com/twmb/franz-go v1.22.2
 	github.com/twmb/franz-go/pkg/kadm v1.19.0
-	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261022190701-123ec885bc97
-	github.com/twmb/franz-go/pkg/kmsg v1.15.0
+	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261108214834-f6ae20be6c4c
+	github.com/twmb/franz-go/pkg/kmsg v1.15.1
 	github.com/twmb/franz-go/plugin/kotel v1.7.1
 	github.com/z5labs/bedrock v0.25.0
 	github.com/z5labs/bedrock/circuit v0.25.0
