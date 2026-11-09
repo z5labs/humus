@@ -452,7 +452,7 @@ func (p *Producer) Produce(ctx context.Context, records ...Record) error {
 		if injected := inj.inject(call); injected != nil {
 			err = failUnsent(krs, injected)
 		} else {
-			err = produceError(krs, p.client.ProduceSync(call, krs...))
+			err = produceError(krs, p.produce(call, krs))
 		}
 		// Settled before the result is handed back, so a caller's next
 		// call meets the breaker this one left.
@@ -468,6 +468,57 @@ func (p *Producer) Produce(ctx context.Context, records ...Record) error {
 		return fmt.Errorf("kafka: producing: %w", ctx.Err())
 	case <-p.refused:
 		return p.refusalErr()
+	}
+}
+
+// While a call's deadline has passed and its records have no result yet,
+// produce asks franz-go for a metadata refresh every nudgeEvery, for up to
+// nudgeFor: franz-go's MetadataMinAge, 5s by default, after which franz-go
+// refreshes on its own.
+const (
+	nudgeEvery = 50 * time.Millisecond
+	nudgeFor   = 5 * time.Second
+)
+
+// produce hands krs to the client with call, and returns their results
+// once every record has one.
+//
+// franz-go checks a record's context only when it tries the record's
+// partition. After a retriable error such as NOT_ENOUGH_REPLICAS it marks
+// the partition failing and doesn't try it again until its next metadata
+// refresh, which waits until MetadataMinAge has passed since the last one.
+// So a deadline that passes during that wait would fail the records only
+// at the next try, up to 5s late. Once call's deadline, DeliveryTimeout,
+// has passed, produce asks franz-go for an immediate refresh, which clears
+// the failing state, so franz-go tries the partition at once and fails the
+// records by their context. It asks again every nudgeEvery, in case a try
+// answered at the deadline marked the partition failing after the refresh.
+//
+// produce waits for franz-go's results rather than returning at the
+// deadline itself: a record left in the client with its context done would
+// fail the records a later call buffers behind it on its partition.
+func (p *Producer) produce(call context.Context, krs []*kgo.Record) kgo.ProduceResults {
+	synced := make(chan kgo.ProduceResults, 1)
+	go func() {
+		synced <- p.client.ProduceSync(call, krs...)
+	}()
+	select {
+	case rs := <-synced:
+		return rs
+	case <-call.Done():
+	}
+	nudge := time.NewTicker(nudgeEvery)
+	defer nudge.Stop()
+	stop := time.After(nudgeFor)
+	for {
+		p.client.ForceMetadataRefresh()
+		select {
+		case rs := <-synced:
+			return rs
+		case <-nudge.C:
+		case <-stop:
+			return <-synced
+		}
 	}
 }
 

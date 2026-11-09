@@ -115,9 +115,11 @@ func TestProduce_fails_at_once_once_the_breaker_opens(t *testing.T) {
 
 		for i := range 5 {
 			require.ErrorIs(t, errs[i], context.DeadlineExceeded, "call %d", i)
-			// DeliveryTimeout, in fake time. The first call, which also
-			// connects, may return a few milliseconds after its deadline,
-			// at franz-go's next check of it.
+			// DeliveryTimeout, in fake time. A call may return a few
+			// milliseconds after its deadline: then the Producer has
+			// franz-go refresh its metadata at once, and franz-go fails
+			// the record at the try that follows, whether the deadline
+			// fell on a try or while franz-go waited to try again.
 			require.InDelta(t, 10*time.Second, took[i], float64(100*time.Millisecond), "call %d took %v", i, took[i])
 		}
 		require.ErrorIs(t, errs[5], circuit.ErrRejected)

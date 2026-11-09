@@ -246,20 +246,25 @@
 // acknowledge the records of one call, franz-go's retries included. A
 // record that isn't acknowledged by then fails, even one already sent, and
 // may still have been stored, so a caller that produces it again may store
-// it twice, which is at-least-once. DeliveryTimeout is the one retry
-// setting: how long a call lets franz-go keep trying. There is no retry
-// count, no backoff and no retry budget, and no bedrock retry.Retrier
-// around Produce, because franz-go retries, and a retry around it would do
-// harm. franz-go's idempotent producer retries a batch on the sequence
-// numbers that let the broker drop a batch it already stored, so a retry
-// around Produce, handing the records over again under new sequence
-// numbers, would store twice a record whose first send landed. franz-go
-// retries a partition's batches in order, and a retry around Produce would
-// send its records after whatever other calls produced in the meantime.
-// And franz-go's retries don't multiply with callers: it retries a
-// partition's batch, which holds every caller's records for that
-// partition, once per backoff, so a thousand callers waiting on a dead
-// partition cost one retry per backoff, not a thousand.
+// it twice, which is at-least-once. Such a call returns at
+// DeliveryTimeout, or a few milliseconds after, also while franz-go waits
+// to retry a partition: a retriable error such as NOT_ENOUGH_REPLICAS
+// makes franz-go wait for a metadata refresh, up to 5s, before it tries
+// the partition again, so at the deadline the Producer has franz-go
+// refresh at once, and franz-go fails the records at the try that follows.
+// DeliveryTimeout is the one retry setting: how long a call lets franz-go
+// keep trying. There is no retry count, no backoff and no retry budget,
+// and no bedrock retry.Retrier around Produce, because franz-go retries,
+// and a retry around it would do harm. franz-go's idempotent producer
+// retries a batch on the sequence numbers that let the broker drop a batch
+// it already stored, so a retry around Produce, handing the records over
+// again under new sequence numbers, would store twice a record whose first
+// send landed. franz-go retries a partition's batches in order, and a
+// retry around Produce would send its records after whatever other calls
+// produced in the meantime. And franz-go's retries don't multiply with
+// callers: it retries a partition's batch, which holds every caller's
+// records for that partition, once per backoff, so a thousand callers
+// waiting on a dead partition cost one retry per backoff, not a thousand.
 // Acks from all in-sync replicas and idempotence are franz-go's defaults,
 // and not settings, and so are its partitioner, which hashes keyed records
 // with murmur2 as Kafka's Java producer does, its linger, compression,
