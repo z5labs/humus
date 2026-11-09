@@ -15,6 +15,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kfake"
@@ -392,6 +393,88 @@ func TestProduce_DeliveryTimeout_bounds_a_call_against_a_hung_broker(t *testing.
 		require.ErrorContains(t, err, "kafka: producing to orders, partition 0: ")
 		require.Equal(t, kafka.DefaultProducerSettings().DeliveryTimeout, took)
 	})
+}
+
+// logRecords logs every record in tel with its time since start, so a
+// failed run shows what franz-go did and when.
+func logRecords(t *testing.T, tel *humustest.Telemetry, start time.Time) {
+	t.Helper()
+	for _, r := range tel.Logs() {
+		t.Logf("+%v %s %s %v", r.Timestamp().Sub(start), r.Severity(), r.Body().AsString(), attrs(r))
+	}
+}
+
+// Each call through a closed breaker, against a cluster that answers every
+// Produce with a retriable error, returns at its DeliveryTimeout, also when
+// its deadline falls on the instant of one of franz-go's tries.
+func TestProduce_returns_at_DeliveryTimeout_while_the_cluster_fails(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := humustest.NewHost(t)
+		c := cluster(t, h, 1)
+		answerProduce(c, kerr.NotEnoughReplicas.Code, always)
+
+		tel := humustest.NewTelemetry()
+		ps := producerSettings(c.ListenAddrs()...)
+		ps.BreakerPolicy = circuit.Policy{
+			Trip:  func(circuit.Counts) bool { return false }, // never opens
+			Probe: tripOnFirstFailure.Probe,
+		}
+		begin := time.Now()
+		var errs []error
+		var took []time.Duration
+		producesWith(t, h, tel, ps, func(ctx context.Context, p *kafka.Producer) error {
+			for range 10 {
+				start := time.Now()
+				errs = append(errs, p.Produce(ctx, value(0)))
+				took = append(took, time.Since(start))
+			}
+			return nil
+		})
+
+		for i := range errs {
+			assert.ErrorIs(t, errs[i], context.DeadlineExceeded, "call %d", i)
+			assert.InDelta(t, 10*time.Second, took[i], float64(100*time.Millisecond), "call %d took %v", i, took[i])
+		}
+		if t.Failed() {
+			t.Logf("took: %v", took)
+			logRecords(t, tel, begin)
+		}
+	})
+}
+
+// A call against a cluster that answers every Produce with a retriable
+// error returns at its DeliveryTimeout when that timeout falls between two
+// of franz-go's tries, while franz-go waits for a metadata refresh, not
+// only when it falls on one.
+func TestProduce_returns_at_a_DeliveryTimeout_between_tries(t *testing.T) {
+	for _, timeout := range []time.Duration{7 * time.Second, 12 * time.Second} {
+		t.Run(timeout.String(), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				h := humustest.NewHost(t)
+				c := cluster(t, h, 1)
+				answerProduce(c, kerr.NotEnoughReplicas.Code, always)
+
+				tel := humustest.NewTelemetry()
+				ps := producerSettings(c.ListenAddrs()...)
+				ps.DeliveryTimeout = timeout
+				begin := time.Now()
+				var err error
+				var took time.Duration
+				producesWith(t, h, tel, ps, func(ctx context.Context, p *kafka.Producer) error {
+					err = p.Produce(ctx, value(0))
+					took = time.Since(begin)
+					return nil
+				})
+
+				assert.ErrorIs(t, err, context.DeadlineExceeded)
+				assert.ErrorContains(t, err, "kafka: producing to orders, partition 0: ")
+				assert.InDelta(t, timeout, took, float64(100*time.Millisecond), "the call took %v", took)
+				if t.Failed() {
+					logRecords(t, tel, begin)
+				}
+			})
+		})
+	}
 }
 
 func TestProduce_a_caller_giving_up_does_not_fail_another_callers_records(t *testing.T) {
