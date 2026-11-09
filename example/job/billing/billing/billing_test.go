@@ -129,21 +129,27 @@ func (s *store) Pending(ctx context.Context) ([]postgres.Invoice, error) {
 }
 
 func (s *store) SettleCharged(ctx context.Context, id uuid.UUID, chargeID string) (bool, error) {
-	return s.settle(ctx, id, func(inv *invoice) { inv.state, inv.chargeID = "charged", chargeID })
-}
-
-func (s *store) SettleDeclined(ctx context.Context, id uuid.UUID, declineCode string) (bool, error) {
-	return s.settle(ctx, id, func(inv *invoice) { inv.state, inv.declineCode = "declined", declineCode })
-}
-
-func (s *store) SettleFailed(ctx context.Context, id uuid.UUID, answer string) (bool, error) {
-	return s.settle(ctx, id, func(inv *invoice) { inv.state, inv.answer = "failed", answer })
-}
-
-func (s *store) settle(ctx context.Context, id uuid.UUID, set func(*invoice)) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
+	return s.settle(id, func(inv *invoice) { inv.state, inv.chargeID = "charged", chargeID })
+}
+
+func (s *store) SettleDeclined(ctx context.Context, id uuid.UUID, declineCode string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return s.settle(id, func(inv *invoice) { inv.state, inv.declineCode = "declined", declineCode })
+}
+
+func (s *store) SettleFailed(ctx context.Context, id uuid.UUID, answer string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return s.settle(id, func(inv *invoice) { inv.state, inv.answer = "failed", answer })
+}
+
+func (s *store) settle(id uuid.UUID, set func(*invoice)) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.settleErr != nil {
@@ -286,18 +292,13 @@ func (e *env) subscribe(accountIDs ...string) {
 
 func (e *env) run(t *testing.T, period time.Time, concurrency int) billing.Run {
 	t.Helper()
-	return e.runOn(t, e.host.Host(), period, concurrency)
-}
-
-func (e *env) runOn(t *testing.T, host humus.Host, period time.Time, concurrency int) billing.Run {
-	t.Helper()
 	u, err := url.Parse("https://payments:8443")
 	require.NoError(t, err)
 	settings := httpclient.DefaultSettings()
 	settings.BaseURL = u
 	settings.TLS = &tls.Config{RootCAs: e.ca.Pool()}
 	sdk := e.sdk(t)
-	client, err := payments.NewClient(&humus.Setup{Host: host, Telemetry: sdk}, settings, e.key)
+	client, err := payments.NewClient(&humus.Setup{Host: e.host.Host(), Telemetry: sdk}, settings, e.key)
 	require.NoError(t, err)
 	return billing.Run{Invoices: e.store, Payments: client, Period: period, Concurrency: concurrency, Telemetry: sdk}
 }
@@ -666,6 +667,12 @@ func (c *heldConn) Close() error {
 
 func (e *env) heldRun(t *testing.T, period time.Time, run context.Context, a *answered) billing.Run {
 	t.Helper()
+	u, err := url.Parse("https://payments:8443")
+	require.NoError(t, err)
+	settings := httpclient.DefaultSettings()
+	settings.BaseURL = u
+	settings.TLS = &tls.Config{RootCAs: e.ca.Pool()}
+	sdk := e.sdk(t)
 	host := e.host.Host()
 	dial := host.Dial
 	host.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -675,7 +682,9 @@ func (e *env) heldRun(t *testing.T, period time.Time, run context.Context, a *an
 		}
 		return &heldConn{Conn: c, run: run, answered: a}, nil
 	}
-	return e.runOn(t, host, period, 1)
+	client, err := payments.NewClient(&humus.Setup{Host: host, Telemetry: sdk}, settings, e.key)
+	require.NoError(t, err)
+	return billing.Run{Invoices: e.store, Payments: client, Period: period, Concurrency: 1, Telemetry: sdk}
 }
 
 func TestRun_a_lost_answer_never_reaches_the_client_while_its_connection_closes(t *testing.T) {
