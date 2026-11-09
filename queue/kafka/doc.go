@@ -349,11 +349,14 @@
 // the Setup's OnStop, which runs once every Service has returned. It
 // flushes the client with the grace period's context, which waits for the
 // records still in it, such as those of a call that returned when its
-// context was done, and then closes the client. When the grace period runs
-// out first, closing the client fails what is left with
-// kgo.ErrClientClosed, those records are lost, and the function returns an
-// error that wraps the context's error, which the lifecycle reports as a
-// *humus.GracePeriodError. A Produce after that, from a goroutine the end
+// context was done, and then closes the client. Then it waits, with the
+// same context, until kotel's produce counters have counted every record
+// the cluster acknowledged, so the telemetry SDK's last collection has
+// them. When the grace period runs out first, closing the client fails what
+// is left with kgo.ErrClientClosed, those records are lost, kotel's
+// counters may miss records franz-go had yet to report to it, and the
+// function returns an error that wraps the context's error, which the
+// lifecycle reports as a *humus.GracePeriodError. A Produce after that, from a goroutine the end
 // user left running, fails at once with an error that wraps
 // kgo.ErrClientClosed. If the end user's Init fails after NewProducer, the
 // lifecycle runs the function too, so the client is closed and none of
@@ -578,6 +581,15 @@
 // records and the bytes fetched, and, for the Producer, the records and
 // the bytes produced, in messaging.kafka.produce_records.count and
 // messaging.kafka.produce_bytes.count. kotel's tracer is not used.
+//
+// The Producer's produce counters count every record the cluster
+// acknowledged, the last ones before the App exits among them, such as a
+// job's that produces and returns, or a dead letter a Processor produces
+// during the shutdown. franz-go reports a written batch to kotel from a
+// goroutine nothing waits for, which can run after the records' calls have
+// returned, so the Producer's OnStop function waits, within the grace
+// period, until kotel has counted every acknowledged record, and the
+// telemetry SDK's Shutdown, which comes after it, collects them.
 //
 // humus renames neither set of instruments. Their names are semconv's and
 // kotel's, at the versions this module pins, so a change to the names of

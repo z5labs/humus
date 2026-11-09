@@ -8,6 +8,7 @@ package kafka_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"syscall"
 	"testing"
@@ -17,10 +18,12 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/config"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -31,6 +34,7 @@ import (
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/queue"
 	"github.com/z5labs/humus/queue/kafka"
+	"github.com/z5labs/humus/telemetry"
 )
 
 // sendSpan is the name of the span of a record produced to topic.
@@ -427,6 +431,166 @@ func TestProducer_records_kotels_produce_counters(t *testing.T) {
 				require.Equal(t, topic, a["topic"], name)
 			}
 		}
+	})
+}
+
+// lateMeterProvider is a MeterProvider whose kotel produce_bytes counter
+// waits delay before each Add, as franz-go's produce hook does when its
+// goroutine is scheduled late. kotel adds to produce_bytes before
+// produce_records, so both wait. Each Add is logged with log.
+type lateMeterProvider struct {
+	metric.MeterProvider
+	delay time.Duration
+	log   func(format string, args ...any)
+}
+
+func (p lateMeterProvider) Meter(name string, opts ...metric.MeterOption) metric.Meter {
+	m := p.MeterProvider.Meter(name, opts...)
+	if name != kotelScope {
+		return m
+	}
+	return lateMeter{Meter: m, delay: p.delay, log: p.log}
+}
+
+type lateMeter struct {
+	metric.Meter
+	delay time.Duration
+	log   func(format string, args ...any)
+}
+
+func (m lateMeter) Int64Counter(name string, opts ...metric.Int64CounterOption) (metric.Int64Counter, error) {
+	c, err := m.Meter.Int64Counter(name, opts...)
+	if err != nil || name != "messaging.kafka.produce_bytes.count" {
+		return c, err
+	}
+	return lateCounter{Int64Counter: c, delay: m.delay, log: m.log}, nil
+}
+
+type lateCounter struct {
+	metric.Int64Counter
+	delay time.Duration
+	log   func(format string, args ...any)
+}
+
+func (c lateCounter) Add(ctx context.Context, n int64, opts ...metric.AddOption) {
+	c.log("kotel's produce hook called, waiting %v", c.delay)
+	time.Sleep(c.delay)
+	c.Int64Counter.Add(ctx, n, opts...)
+	c.log("kotel added %d to messaging.kafka.produce_bytes.count", n)
+}
+
+// lateBuilder is tel's Builder with its MeterProvider a lateMeterProvider,
+// logging the SDK's Shutdown with log.
+func lateBuilder(tel *humustest.Telemetry, delay time.Duration, log func(format string, args ...any)) telemetry.Builder {
+	return func(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+		sdk, err := tel.Builder()(ctx, p, dial)
+		sdk.MeterProvider = lateMeterProvider{MeterProvider: sdk.MeterProvider, delay: delay, log: log}
+		shutdown := sdk.Shutdown
+		sdk.Shutdown = func(ctx context.Context) error {
+			log("the SDK shuts down, collecting the final metrics")
+			return shutdown(ctx)
+		}
+		return sdk, err
+	}
+}
+
+func TestProducer_records_kotels_produce_counters_when_the_hook_runs_late(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := humustest.NewHost(t)
+		c := cluster(t, h, 1)
+
+		tel := humustest.NewTelemetry()
+		start := time.Now()
+		log := func(format string, args ...any) {
+			t.Logf("at %v: "+format, append([]any{time.Since(start)}, args...)...)
+		}
+		_, status := humustest.Start(t, produces(producerSettings(c.ListenAddrs()...), func(ctx context.Context, p *kafka.Producer) error {
+			return p.Produce(ctx, value(0), value(1), value(2))
+		}), humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(lateBuilder(tel, time.Second, log))))
+		st := <-status
+		require.Zero(t, st.Code(), "cause: %v", st.Cause())
+		log("the App exited")
+
+		time.Sleep(2 * time.Second) // past the hook's delay
+		synctest.Wait()             // franz-go's hook goroutine has added to kotel's counters
+		t.Logf("kotel's metrics: %v", metricNames(t, tel, kotelScope))
+
+		require.Equal(t, int64(3), sum(t, tel, kotelScope, "messaging.kafka.produce_records.count"))
+		require.NotZero(t, sum(t, tel, kotelScope, "messaging.kafka.produce_bytes.count"))
+	})
+}
+
+func TestProducer_grace_period_cuts_the_wait_for_kotels_produce_counters_short(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := humustest.NewHost(t)
+		c := cluster(t, h, 1)
+
+		tel := humustest.NewTelemetry()
+		start := time.Now()
+		log := func(format string, args ...any) {
+			t.Logf("at %v: "+format, append([]any{time.Since(start)}, args...)...)
+		}
+		_, status := humustest.Start(t, produces(producerSettings(c.ListenAddrs()...), func(ctx context.Context, p *kafka.Producer) error {
+			return p.Produce(ctx, value(0))
+		}),
+			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(lateBuilder(tel, time.Minute, log))),
+			humustest.WithEnv(map[string]string{"HUMUS_SHUTDOWN_GRACE_PERIOD": "2s"}),
+		)
+
+		st := <-status
+		require.Equal(t, humus.ExitFailure, st.Code(), "cause: %v", st.Cause())
+		gerr, ok := errors.AsType[*humus.GracePeriodError](st.Cause())
+		require.True(t, ok, "the cause is a *humus.GracePeriodError: %v", st.Cause())
+		require.Equal(t, 2*time.Second, gerr.GracePeriod)
+		require.ErrorIs(t, st.Cause(), context.DeadlineExceeded)
+		require.ErrorContains(t, st.Cause(), "kafka: waiting for kotel's produce counters")
+		require.Less(t, time.Since(start), time.Minute, "the App exited before kotel's late add")
+
+		time.Sleep(time.Minute) // past the hook's delay
+		synctest.Wait()
+	})
+}
+
+func TestInit_dead_letter_is_counted_by_kotel_when_the_hook_runs_late(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := humustest.NewHost(t)
+		c := cluster(t, h, 1, kfake.SeedTopics(1, dlqTopic))
+		produceRecords(t, h, c, []*kgo.Record{{Topic: topic, Key: []byte("key-0"), Value: []byte("0")}})
+
+		tel := humustest.NewTelemetry()
+		start := time.Now()
+		log := func(format string, args ...any) {
+			t.Logf("at %v: "+format, append([]any{time.Since(start)}, args...)...)
+		}
+		p, status := humustest.Start(t, deadLetterInit,
+			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(lateBuilder(tel, time.Second, log))),
+			humustest.WithEnv(map[string]string{
+				"KAFKA_BROKERS":  strings.Join(c.ListenAddrs(), ","),
+				"KAFKA_GROUP_ID": "orders-consumer",
+				"KAFKA_TOPICS":   "orders",
+			}),
+		)
+		synctest.Wait()
+		log("SIGTERM")
+		p.Signal(syscall.SIGTERM)
+		st := <-status
+		require.Zero(t, st.Code(), "cause: %v", st.Cause())
+		log("the App exited")
+		require.Len(t, readAll(t, h, c, dlqTopic), 1)
+
+		time.Sleep(2 * time.Second) // past the hook's delay
+		synctest.Wait()             // franz-go's hook goroutine has added to kotel's counters
+		t.Logf("kotel's metrics: %v", metricNames(t, tel, kotelScope))
+
+		data, ok := metricNamed(t, tel, kotelScope, "messaging.kafka.produce_records.count").Data.(metricdata.Sum[int64])
+		require.True(t, ok)
+		var dead int64
+		for _, dp := range data.DataPoints {
+			if setAttrs(dp.Attributes)["topic"] == dlqTopic {
+				dead += dp.Value
+			}
+		}
+		require.Equal(t, int64(1), dead)
 	})
 }
 
