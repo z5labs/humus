@@ -172,8 +172,12 @@ func requireTwoPartitionsProcessedConcurrently(t *testing.T, h *humustest.Host, 
 	}), humustest.WithApp(humus.WithHost(h.Host())))
 	select {
 	case <-processed:
+	case st := <-status:
+		require.Failf(t, "the Service stopped before it processed every record", "code %v, cause %v", st.Code(), st.Cause())
 	case <-time.After(10 * time.Minute):
-		require.Fail(t, "the Service did not process every record")
+		p.Signal(syscall.SIGTERM)
+		st := <-status
+		require.Failf(t, "the Service did not process every record in 10 minutes", "code %v, cause %v", st.Code(), st.Cause())
 	}
 	synctest.Wait()
 	p.Signal(syscall.SIGTERM)
