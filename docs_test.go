@@ -19,7 +19,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // docsContent is the content directory of the docs site, relative to this
