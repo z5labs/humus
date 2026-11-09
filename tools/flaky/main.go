@@ -37,6 +37,15 @@
 // labels the containers it pins to cores of its own so.
 // -containers caps how many testcontainers runs go at once.
 //
+// The go command, git and the test binaries are given only some of the
+// variables flaky was started with, when they are set: the go command's and
+// the toolchain's, such as PATH, HOME, GOFLAGS and GOCACHE; Docker's, such as
+// DOCKER_HOST; kind's; and testcontainers-go's configuration, such as
+// TESTCONTAINERS_RYUK_DISABLED, TESTCONTAINERS_RYUK_CONTAINER_PRIVILEGED and
+// TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE. So a testcontainers test runs with
+// the configuration go test would give it in the same shell. No test binary
+// sees a token: gh's variables go only to gh, for flaky report.
+//
 // A walkthrough is a module with a Dockerfile and a deploy/kind/up.sh, and its
 // functional tests are its packages at the functional level. Its image is
 // built with the test binaries, from the repository's root, and tagged with

@@ -14,7 +14,11 @@ import (
 
 // names are the variables a child process is given, when they are set. A
 // bedrock.Environment can't be listed, so the go command, git and the test
-// binaries see these and nothing else.
+// binaries see these and nothing else: the go command's and the toolchain's,
+// Docker's and kind's, and testcontainers-go's configuration, so a
+// testcontainers test runs with the configuration go test gives it, such as
+// TESTCONTAINERS_RYUK_DISABLED on a daemon Ryuk can't run on. None is a token
+// or a credential: DOCKER_AUTH_CONFIG and gh's variables aren't here.
 var names = []string{
 	"PATH", "HOME", "USER", "LANG", "TMPDIR", "TZ",
 	"XDG_CACHE_HOME", "XDG_CONFIG_HOME",
@@ -24,6 +28,11 @@ var names = []string{
 	"CGO_ENABLED", "CC", "CXX", "PKG_CONFIG",
 	"DOCKER_HOST", "DOCKER_CONFIG", "DOCKER_CERT_PATH", "DOCKER_TLS_VERIFY",
 	"KUBECONFIG", "KIND_CLUSTER_NAME", "KIND_EXPERIMENTAL_PROVIDER",
+	"TESTCONTAINERS_RYUK_DISABLED", "TESTCONTAINERS_RYUK_CONTAINER_PRIVILEGED",
+	"TESTCONTAINERS_RYUK_CONNECTION_TIMEOUT", "TESTCONTAINERS_RYUK_RECONNECTION_TIMEOUT",
+	"TESTCONTAINERS_RYUK_VERBOSE", "RYUK_CONNECTION_TIMEOUT", "RYUK_RECONNECTION_TIMEOUT",
+	"RYUK_VERBOSE", "TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE", "TESTCONTAINERS_HOST_OVERRIDE",
+	"TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX", "TESTCONTAINERS_PROVIDER",
 }
 
 // ghNames are the variables the gh command is given, besides names, when

@@ -225,6 +225,28 @@ func TestStress_runs_the_testcontainers_level_s_own_tests_that_match_run(t *test
 	require.Zero(t, rep.Passed, "with no untagged binary built beside it, TestA still doesn't run at the testcontainers level")
 }
 
+func TestStress_runs_a_testcontainers_test_with_the_testcontainers_configuration_flaky_was_given(t *testing.T) {
+	needCores(t, 2)
+	dockertest.Fake(t)
+	repo := repotest.New(t, "0.0.1")
+	repotest.Write(t, repo, "a/a_containers_test.go", "//go:build testcontainers\n\npackage a\n\nimport (\n\t\"os\"\n\t\"testing\"\n)\n\n"+
+		"func TestAContainers(t *testing.T) {\n\tif v := os.Getenv(\"TESTCONTAINERS_RYUK_DISABLED\"); v != \"true\" {\n\t\tt.Errorf(\"TESTCONTAINERS_RYUK_DISABLED is %q\", v)\n\t}\n}\n")
+	repotest.Commit(t, repo)
+
+	vars := flakyEnv(t)
+	vars["TESTCONTAINERS_RYUK_DISABLED"] = "true"
+	t.Chdir(filepath.Join(repo, "a"))
+	p, status := bedrocktest.Start(t, bedrock.AppFunc(flaky),
+		bedrocktest.WithArgs("stress", "-tags", "testcontainers", "-cpu", "1", "-load", "1", "-count", "1", "-confirm", "1", "-keep", "1", "-json", "./a"),
+		bedrocktest.WithEnv(vars))
+	st := <-status
+	require.Equal(t, 0, st.Code(), "a testcontainers test sees TESTCONTAINERS_RYUK_DISABLED=true, as go test would show it\nstdout:\n%s\nstderr:\n%s", p.Stdout(), p.Stderr())
+	var rep results.Report
+	require.NoError(t, json.Unmarshal([]byte(p.Stdout()), &rep))
+	require.Empty(t, rep.Failing)
+	require.Equal(t, 1, rep.Passed)
+}
+
 func TestStress_runs_a_level_it_does_not_know_as_the_unit_tests_run_with_its_tag(t *testing.T) {
 	needCores(t, 2)
 	docker := dockertest.Fake(t)

@@ -24,6 +24,24 @@ func TestChild_passes_on_the_variables_it_knows_that_are_set(t *testing.T) {
 	require.Equal(t, []string{"PATH=/bin", "GOFLAGS=-mod=mod"}, got)
 }
 
+func TestChild_passes_on_testcontainers_go_s_configuration(t *testing.T) {
+	got := env.Child(bedrock.NewStaticEnvironment(map[string]string{
+		"TESTCONTAINERS_RYUK_DISABLED":             "true",
+		"TESTCONTAINERS_RYUK_CONTAINER_PRIVILEGED": "true",
+		"TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE":    "/run/user/1000/podman/podman.sock",
+		"RYUK_VERBOSE":                             "true",
+		"TESTCONTAINERS_PROVIDER":                  "podman",
+		"DOCKER_AUTH_CONFIG":                       "not passed on",
+	}))
+	require.ElementsMatch(t, []string{
+		"TESTCONTAINERS_RYUK_DISABLED=true",
+		"TESTCONTAINERS_RYUK_CONTAINER_PRIVILEGED=true",
+		"TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/run/user/1000/podman/podman.sock",
+		"RYUK_VERBOSE=true",
+		"TESTCONTAINERS_PROVIDER=podman",
+	}, got)
+}
+
 func TestChild_is_never_nil_so_a_child_never_inherits_the_real_environment(t *testing.T) {
 	got := env.Child(bedrock.NewStaticEnvironment(map[string]string{}))
 	require.NotNil(t, got)
