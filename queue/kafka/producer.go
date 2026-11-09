@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"go.opentelemetry.io/otel/semconv/v1.43.0/messagingconv"
@@ -70,6 +72,9 @@ type Producer struct {
 	// metrics are humus's own instruments of the breaker.
 	metrics *instruments
 
+	// kotel is kotel's Meter, which the OnStop function waits for.
+	kotel *kotelMeter
+
 	// faults is the App's failure injection, from the Setup, and forward
 	// is ProducerSettings.ForwardScenario.
 	faults  fault.Injector
@@ -88,7 +93,9 @@ type Producer struct {
 // NewProducer runs every check on settings, reporting every bad field in
 // one error that names each one, and builds the franz-go client and the
 // circuit breaker. It opens no connection: the first Produce does. It
-// registers a function with s.OnStop that flushes the client and closes it.
+// registers a function with s.OnStop that flushes the client, closes it,
+// and waits for kotel's produce counters to count every record the cluster
+// acknowledged, so the telemetry SDK's Shutdown collects them.
 //
 // The breaker, built with settings.Breaker and settings.BreakerPolicy,
 // guards the cluster: one Producer is one client to one cluster, with one
@@ -131,6 +138,7 @@ func NewProducer(s *humus.Setup, settings ProducerSettings) (*Producer, error) {
 		metrics:         metrics,
 		faults:          s.Faults,
 		forward:         settings.ForwardScenario,
+		kotel:           newKotelMeter(s.Telemetry.MeterProvider),
 		refused:         make(chan struct{}),
 	}
 	breaker, err := circuit.New(settings.Breaker, settings.BreakerPolicy, metrics.countCalls(classify), p.observe)
@@ -145,8 +153,7 @@ func NewProducer(s *humus.Setup, settings ProducerSettings) (*Producer, error) {
 		kgo.WithHooks(
 			sendHook{sent: sent, operations: operations},
 			connectHook{onRefusal: p.refuse},
-			// kotel's Meter creates its instruments and starts nothing.
-			kotel.NewMeter(kotel.MeterProvider(s.Telemetry.MeterProvider)),
+			p.kotel,
 		),
 		kgo.AllowIdempotentProduceCancellation(),
 	}
@@ -226,9 +233,12 @@ func (p *Producer) refusalErr() error {
 }
 
 // stop flushes the client with ctx, which the lifecycle bounds by the grace
-// period, and then closes it. When ctx is done first, Close fails the
-// records still in the client with kgo.ErrClientClosed, and stop returns an
-// error that wraps ctx's error.
+// period, closes it, and then waits, with ctx, until kotel has counted
+// every record the cluster acknowledged in its produce counters, so the
+// SDK's Shutdown, which runs after the OnStop functions, collects them.
+// When ctx is done first, Close fails the records still in the client with
+// kgo.ErrClientClosed, kotel's counters may miss records franz-go has yet
+// to report to it, and stop returns an error that wraps ctx's error.
 func (p *Producer) stop(ctx context.Context) error {
 	err := p.client.Flush(ctx)
 	p.closed.Store(true)
@@ -236,7 +246,89 @@ func (p *Producer) stop(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("kafka: flushing the Producer: %w", err)
 	}
+	if err := p.kotel.wait(ctx); err != nil {
+		return fmt.Errorf("kafka: waiting for kotel's produce counters: %w", err)
+	}
 	return nil
+}
+
+// kotelMeter is kotel's Meter, which counts the records it has counted in
+// its produce counters against the records the cluster acknowledged, so
+// the Producer can wait for kotel to catch up before the App exits.
+//
+// franz-go calls OnProduceBatchWritten, kotel's produce counters, from a
+// goroutine it starts after it has handed the batch's records their
+// results, and nothing waits for that goroutine: without the wait, it can
+// run after the SDK's Shutdown, and kotel's adds are lost.
+type kotelMeter struct {
+	*kotel.Meter
+
+	mu sync.Mutex
+	// acked is the number of records the cluster acknowledged.
+	acked int64
+	// counted is the number of records kotel has counted in
+	// messaging.kafka.produce_records.count.
+	counted int64
+	// caughtUp is closed, and replaced, whenever counted grows.
+	caughtUp chan struct{}
+}
+
+var (
+	_ kgo.HookProduceBatchWritten     = (*kotelMeter)(nil)
+	_ kgo.HookProduceRecordUnbuffered = (*kotelMeter)(nil)
+)
+
+// newKotelMeter returns kotel's Meter with mp, which creates its
+// instruments and starts nothing.
+func newKotelMeter(mp metric.MeterProvider) *kotelMeter {
+	return &kotelMeter{
+		Meter:    kotel.NewMeter(kotel.MeterProvider(mp)),
+		caughtUp: make(chan struct{}),
+	}
+}
+
+// OnProduceRecordUnbuffered counts r as acknowledged when err is nil. It
+// is called before r's result is handed to ProduceSync, so a record whose
+// call has returned, or that a Flush has waited for, is already counted.
+func (m *kotelMeter) OnProduceRecordUnbuffered(_ *kgo.Record, err error) {
+	if err != nil {
+		return
+	}
+	m.mu.Lock()
+	m.acked++
+	m.mu.Unlock()
+}
+
+// OnProduceBatchWritten adds the batch to kotel's produce counters, and
+// then counts its records as counted by kotel.
+func (m *kotelMeter) OnProduceBatchWritten(meta kgo.BrokerMetadata, topic string, partition int32, pbm kgo.ProduceBatchMetrics) {
+	m.Meter.OnProduceBatchWritten(meta, topic, partition, pbm)
+	m.mu.Lock()
+	m.counted += int64(pbm.NumRecords)
+	close(m.caughtUp)
+	m.caughtUp = make(chan struct{})
+	m.mu.Unlock()
+}
+
+// wait returns nil once kotel has counted every record acknowledged so
+// far, and ctx's error if ctx is done first. franz-go reports a batch to
+// kotel only when the cluster acknowledged its records, with their number,
+// so once kotel has counted as many records as were acknowledged, its adds
+// for them are done.
+func (m *kotelMeter) wait(ctx context.Context) error {
+	for {
+		m.mu.Lock()
+		done, caughtUp := m.counted >= m.acked, m.caughtUp
+		m.mu.Unlock()
+		if done {
+			return nil
+		}
+		select {
+		case <-caughtUp:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
 
 // Produce produces records, and returns nil once the cluster has
