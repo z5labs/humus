@@ -16,18 +16,24 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/kmsg"
 	"github.com/twmb/franz-go/pkg/sasl/plain"
+	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/circuit"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
+	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/queue/kafka"
+	"github.com/z5labs/humus/telemetry"
 )
 
 // The bodies of the Producer's log records for the breaker's transitions.
@@ -381,6 +387,195 @@ func TestProduce_a_call_after_a_refusal_does_not_reach_the_breaker(t *testing.T)
 			require.ErrorIs(t, err, kerr.SaslAuthenticationFailed, "call %d", i)
 			require.NotErrorIs(t, err, circuit.ErrRejected, "the refusal is returned before the breaker; call %d", i)
 		}
+	})
+}
+
+// refusedProducer is producerSettings with SASL credentials c refuses, and a
+// breaker that opens on the first failure.
+func refusedProducer(c *kfake.Cluster, user string) kafka.ProducerSettings {
+	ps := producerSettings(c.ListenAddrs()...)
+	ps.SASL = plain.Auth{User: user, Pass: rand.Text()}.AsMechanism()
+	ps.BreakerPolicy = tripOnFirstFailure
+	return ps
+}
+
+// slowCalls is a MeterProvider whose humus.circuit.calls takes a
+// millisecond to count each call. The Producer counts a call there before
+// the breaker counts it, so the call's change of state, and its log record,
+// come a millisecond after the call's records have their result. In a
+// bubble, the rest of the bubble runs before that millisecond passes.
+type slowCalls struct{ metric.MeterProvider }
+
+func (p slowCalls) Meter(name string, opts ...metric.MeterOption) metric.Meter {
+	return slowCallsMeter{p.MeterProvider.Meter(name, opts...)}
+}
+
+type slowCallsMeter struct{ metric.Meter }
+
+func (m slowCallsMeter) Int64Counter(name string, opts ...metric.Int64CounterOption) (metric.Int64Counter, error) {
+	c, err := m.Meter.Int64Counter(name, opts...)
+	if err != nil || name != "humus.circuit.calls" {
+		return c, err
+	}
+	return slowCounter{c}, nil
+}
+
+type slowCounter struct{ metric.Int64Counter }
+
+func (c slowCounter) Add(ctx context.Context, incr int64, opts ...metric.AddOption) {
+	time.Sleep(time.Millisecond)
+	c.Int64Counter.Add(ctx, incr, opts...)
+}
+
+// slowCallsBuilder is tel's Builder, with slowCalls in front of its
+// MeterProvider.
+func slowCallsBuilder(tel *humustest.Telemetry) telemetry.Builder {
+	return func(ctx context.Context, proc bedrock.Process, d telemetry.Dialer) (telemetry.SDK, error) {
+		sdk, err := tel.Builder()(ctx, proc, d)
+		sdk.MeterProvider = slowCalls{sdk.MeterProvider}
+		return sdk, err
+	}
+}
+
+// calls adds up humus.circuit.calls in tel, 0 when it has no data point.
+// Unlike sum, it doesn't fail the test.
+func calls(t *testing.T, tel *humustest.Telemetry) int64 {
+	t.Helper()
+	rm, err := tel.Metrics(t.Context())
+	assert.NoError(t, err)
+	var n int64
+	for _, sm := range rm.ScopeMetrics {
+		if sm.Scope.Name != serviceScope {
+			continue
+		}
+		for _, m := range sm.Metrics {
+			if data, ok := m.Data.(metricdata.Sum[int64]); ok && m.Name == "humus.circuit.calls" {
+				for _, dp := range data.DataPoints {
+					n += dp.Value
+				}
+			}
+		}
+	}
+	return n
+}
+
+// The job returns as soon as the first call returns the refusal, so the
+// first call's records fail while the Producer's OnStop function flushes
+// the client.
+func TestProduce_a_refused_call_whose_records_fail_while_the_App_stops_is_counted(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		user, password := rand.Text(), rand.Text()
+		h := humustest.NewHost(t)
+		c := cluster(t, h, 1, kfake.EnableSASL(), kfake.Superuser("PLAIN", user, password))
+		refuseWrongPasswords(c, password)
+
+		var first error
+		tel := humustest.NewTelemetry()
+		producesWith(t, h, tel, refusedProducer(c, user), func(ctx context.Context, p *kafka.Producer) error {
+			first = p.Produce(ctx, value(0))
+			return nil
+		})
+
+		require.ErrorIs(t, first, kerr.SaslAuthenticationFailed)
+		require.Equal(t, []string{breakerOpen}, breakerLogs(tel), "the first call's records counted")
+		require.Equal(t, int64(1), sum(t, tel, serviceScope, "humus.circuit.calls"), "the first call counted")
+	})
+}
+
+// The caller gives up on a call the cluster can't store, and the job
+// returns, so the call's records fail while the Producer's OnStop function
+// flushes the client. No SASL: the same happens without a refusal.
+func TestProduce_a_call_whose_caller_gave_up_and_whose_records_fail_while_the_App_stops_is_counted(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := humustest.NewHost(t)
+		c := cluster(t, h, 1)
+		answerProduce(c, kerr.NotEnoughReplicas.Code, always)
+
+		var first error
+		tel := humustest.NewTelemetry()
+		ps := producerSettings(c.ListenAddrs()...)
+		ps.BreakerPolicy = tripOnFirstFailure
+		producesWith(t, h, tel, ps, func(ctx context.Context, p *kafka.Producer) error {
+			ctx, cancel := context.WithTimeout(ctx, time.Second)
+			defer cancel()
+			first = p.Produce(ctx, value(0))
+			return nil
+		})
+
+		require.ErrorIs(t, first, context.DeadlineExceeded)
+		require.Equal(t, []string{breakerOpen}, breakerLogs(tel), "the call's records counted")
+		require.Equal(t, int64(1), sum(t, tel, serviceScope, "humus.circuit.calls"), "the call counted")
+	})
+}
+
+// As TestProduce_a_refused_call_whose_records_fail_while_the_App_stops_is_counted,
+// with the call counted a millisecond after its records fail.
+func TestProduce_the_App_stops_once_a_refused_call_is_counted(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		user, password := rand.Text(), rand.Text()
+		h := humustest.NewHost(t)
+		c := cluster(t, h, 1, kfake.EnableSASL(), kfake.Superuser("PLAIN", user, password))
+		refuseWrongPasswords(c, password)
+
+		var first error
+		tel := humustest.NewTelemetry()
+		_, status := humustest.Start(t, produces(refusedProducer(c, user), func(ctx context.Context, p *kafka.Producer) error {
+			first = p.Produce(ctx, value(0))
+			return nil
+		}), humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(slowCallsBuilder(tel))))
+		st := <-status
+		require.Zero(t, st.Code(), "cause: %v", st.Cause())
+
+		require.ErrorIs(t, first, kerr.SaslAuthenticationFailed)
+		// assert, not require: without the wait, a FailNow while the
+		// Producer's goroutine is still counting the call panics the
+		// bubble.
+		assert.Equal(t, []string{breakerOpen}, breakerLogs(tel), "the first call's records counted")
+		assert.Equal(t, int64(1), calls(t, tel), "the first call counted")
+
+		// Once the held count has landed, the record and the count are
+		// still there, not merely late: without the wait they came after
+		// the App shut its telemetry down, and were dropped.
+		time.Sleep(2 * time.Millisecond)
+		assert.Equal(t, []string{breakerOpen}, breakerLogs(tel), "the first call's records counted, a moment later")
+		assert.Equal(t, int64(1), calls(t, tel), "the first call counted, a moment later")
+	})
+}
+
+// As TestProduce_a_call_whose_caller_gave_up_and_whose_records_fail_while_the_App_stops_is_counted,
+// with the call counted a millisecond after its records fail.
+func TestProduce_the_App_stops_once_a_call_whose_caller_gave_up_is_counted(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := humustest.NewHost(t)
+		c := cluster(t, h, 1)
+		answerProduce(c, kerr.NotEnoughReplicas.Code, always)
+
+		var first error
+		tel := humustest.NewTelemetry()
+		ps := producerSettings(c.ListenAddrs()...)
+		ps.BreakerPolicy = tripOnFirstFailure
+		_, status := humustest.Start(t, produces(ps, func(ctx context.Context, p *kafka.Producer) error {
+			ctx, cancel := context.WithTimeout(ctx, time.Second)
+			defer cancel()
+			first = p.Produce(ctx, value(0))
+			return nil
+		}), humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(slowCallsBuilder(tel))))
+		st := <-status
+		require.Zero(t, st.Code(), "cause: %v", st.Cause())
+
+		require.ErrorIs(t, first, context.DeadlineExceeded)
+		// assert, not require: without the wait, a FailNow while the
+		// Producer's goroutine is still counting the call panics the
+		// bubble.
+		assert.Equal(t, []string{breakerOpen}, breakerLogs(tel), "the call's records counted")
+		assert.Equal(t, int64(1), calls(t, tel), "the call counted")
+
+		// Once the held count has landed, the record and the count are
+		// still there, not merely late: without the wait they came after
+		// the App shut its telemetry down, and were dropped.
+		time.Sleep(2 * time.Millisecond)
+		assert.Equal(t, []string{breakerOpen}, breakerLogs(tel), "the call's records counted, a moment later")
+		assert.Equal(t, int64(1), calls(t, tel), "the call counted, a moment later")
 	})
 }
 

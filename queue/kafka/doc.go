@@ -355,15 +355,25 @@
 // flushes the client with the grace period's context, which waits for the
 // records still in it, such as those of a call that returned when its
 // context was done, and then closes the client. Then it waits, with the
-// same context, until kotel's produce counters have counted every record
-// the cluster acknowledged, so the telemetry SDK's last collection has
-// them. When the grace period runs out first, closing the client fails what
-// is left with kgo.ErrClientClosed, those records are lost, kotel's
-// counters may miss records franz-go had yet to report to it, and the
-// function returns an error that wraps the context's error, which the
-// lifecycle reports as a *humus.GracePeriodError. A Produce after that,
-// from a goroutine the end user left running, fails at once with an error
-// that wraps kgo.ErrClientClosed. If the end user's Init fails after
+// same context, until the breaker has counted every call it admitted, and
+// until kotel's produce counters have counted every record the cluster
+// acknowledged, so the telemetry SDK's last collection has them. It
+// returns once every call it admitted has been counted, not only once the
+// client holds no records: franz-go hands a record its result before
+// Flush sees it gone, and the breaker counts the call after that, so
+// without the wait a call's circuit breaker record and its
+// humus.circuit.calls and humus.circuit.transitions counts could come after
+// the telemetry SDK's Shutdown and be lost. That holds for a call that
+// returned the credentials' refusal, one whose context was done after its
+// records were handed to the client, and one whose caller is still
+// waiting. When the grace period runs out first, closing the client fails
+// what is left with kgo.ErrClientClosed, those records are lost, the
+// breaker may not count their calls, kotel's counters may miss records
+// franz-go had yet to report to it, and the function returns an error that
+// wraps the context's error, which the lifecycle reports as a
+// *humus.GracePeriodError. A Produce after that, from a goroutine the end
+// user left running, fails at once with an error that wraps
+// kgo.ErrClientClosed. If the end user's Init fails after
 // NewProducer, the lifecycle runs the function too, so the client is
 // closed and none of franz-go's goroutines outlive the App.
 //
