@@ -14,11 +14,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -64,7 +67,10 @@ type store struct {
 	settleErr     error
 }
 
-func (s *store) Issue(_ context.Context, period time.Time) (int64, error) {
+func (s *store) Issue(ctx context.Context, period time.Time) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.issueErr != nil {
@@ -100,7 +106,10 @@ func (s *store) find(accountID string, period time.Time) *invoice {
 	return nil
 }
 
-func (s *store) Pending(context.Context) ([]postgres.Invoice, error) {
+func (s *store) Pending(ctx context.Context) ([]postgres.Invoice, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var pending []*invoice
@@ -119,15 +128,24 @@ func (s *store) Pending(context.Context) ([]postgres.Invoice, error) {
 	return invoices, nil
 }
 
-func (s *store) SettleCharged(_ context.Context, id uuid.UUID, chargeID string) (bool, error) {
+func (s *store) SettleCharged(ctx context.Context, id uuid.UUID, chargeID string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	return s.settle(id, func(inv *invoice) { inv.state, inv.chargeID = "charged", chargeID })
 }
 
-func (s *store) SettleDeclined(_ context.Context, id uuid.UUID, declineCode string) (bool, error) {
+func (s *store) SettleDeclined(ctx context.Context, id uuid.UUID, declineCode string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	return s.settle(id, func(inv *invoice) { inv.state, inv.declineCode = "declined", declineCode })
 }
 
-func (s *store) SettleFailed(_ context.Context, id uuid.UUID, answer string) (bool, error) {
+func (s *store) SettleFailed(ctx context.Context, id uuid.UUID, answer string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	return s.settle(id, func(inv *invoice) { inv.state, inv.answer = "failed", answer })
 }
 
@@ -216,6 +234,15 @@ func charging(r *http.Request, account string, w http.ResponseWriter) {
 	}
 	w.WriteHeader(http.StatusCreated)
 	_, _ = io.WriteString(w, `{"id":"ch_`+r.Header.Get("Idempotency-Key")+`"}`)
+}
+
+func lose(r *http.Request, cancel context.CancelCauseFunc, signal error) {
+	cancel(signal)
+	select {
+	case <-r.Context().Done():
+	case <-time.After(time.Minute):
+	}
+	panic(http.ErrAbortHandler)
 }
 
 type env struct {
@@ -558,15 +585,10 @@ func TestRun_a_signal_while_a_charges_answer_is_lost_leaves_its_invoice_pending_
 		lost := true
 		e := newEnv(t, func(r *http.Request, account string, w http.ResponseWriter) {
 			mu.Lock()
-			lose := lost
+			losing := lost
 			mu.Unlock()
-			if lose {
-				cancel(signal)
-				select {
-				case <-r.Context().Done():
-				case <-time.After(time.Minute):
-				}
-				return
+			if losing {
+				lose(r, cancel, signal)
 			}
 			charging(r, account, w)
 		})
@@ -594,5 +616,95 @@ func TestRun_a_signal_while_a_charges_answer_is_lost_leaves_its_invoice_pending_
 		require.Equal(t, []string{first[0].ID.String(), first[0].ID.String()}, keys)
 		require.Equal(t, "charged", e.store.of(t, "acct-1")[0].state)
 		require.Equal(t, "ch_"+first[0].ID.String(), e.store.of(t, "acct-1")[0].chargeID)
+	})
+}
+
+type answered struct {
+	returned atomic.Bool
+	read     chan struct{}
+	once     sync.Once
+	got      atomic.Bool
+}
+
+func newAnswered() *answered {
+	return &answered{read: make(chan struct{})}
+}
+
+func (a *answered) lose(r *http.Request, cancel context.CancelCauseFunc, signal error) {
+	defer a.returned.Store(true)
+	lose(r, cancel, signal)
+}
+
+func (a *answered) trace(ctx context.Context) context.Context {
+	return httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		GotFirstResponseByte: func() { a.got.Store(true) },
+	})
+}
+
+type heldConn struct {
+	net.Conn
+	run      context.Context
+	answered *answered
+}
+
+func (c *heldConn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	if n > 0 && c.answered.returned.Load() {
+		c.answered.once.Do(func() { close(c.answered.read) })
+	}
+	return n, err
+}
+
+func (c *heldConn) Close() error {
+	if c.run.Err() != nil {
+		select {
+		case <-c.answered.read:
+		case <-time.After(time.Minute):
+		}
+	}
+	return c.Conn.Close()
+}
+
+func (e *env) heldRun(t *testing.T, period time.Time, run context.Context, a *answered) billing.Run {
+	t.Helper()
+	u, err := url.Parse("https://payments:8443")
+	require.NoError(t, err)
+	settings := httpclient.DefaultSettings()
+	settings.BaseURL = u
+	settings.TLS = &tls.Config{RootCAs: e.ca.Pool()}
+	sdk := e.sdk(t)
+	host := e.host.Host()
+	dial := host.Dial
+	host.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		c, err := dial(ctx, network, address)
+		if err != nil {
+			return nil, err
+		}
+		return &heldConn{Conn: c, run: run, answered: a}, nil
+	}
+	client, err := payments.NewClient(&humus.Setup{Host: host, Telemetry: sdk}, settings, e.key)
+	require.NoError(t, err)
+	return billing.Run{Invoices: e.store, Payments: client, Period: period, Concurrency: 1, Telemetry: sdk}
+}
+
+func TestRun_a_lost_answer_never_reaches_the_client_while_its_connection_closes(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		signal := errors.New("interrupt")
+		ctx, cancel := context.WithCancelCause(t.Context())
+		a := newAnswered()
+		e := newEnv(t, func(r *http.Request, _ string, _ http.ResponseWriter) {
+			a.lose(r, cancel, signal)
+		})
+		e.subscribe("acct-1", "acct-2")
+		ctx = a.trace(ctx)
+
+		err := e.heldRun(t, month(1999, time.December), ctx, a).Run(ctx)
+
+		synctest.Wait()
+		require.Equal(t, signal, err)
+		require.Equal(t, "pending", e.store.of(t, "acct-1")[0].state)
+		require.Equal(t, "pending", e.store.of(t, "acct-2")[0].state)
+		require.Len(t, e.api.requests(), 1)
+		require.False(t, a.got.Load(), "the fake payments API answered the charge whose answer it loses")
 	})
 }
