@@ -106,34 +106,112 @@ func TestService_processes_and_commits_two_partitions(t *testing.T) {
 		c := cluster(t, h, 2)
 		produceTo(t, h, c, map[int32]int{0: 5, 1: 5})
 
-		var (
-			mu        sync.Mutex
-			seen      = map[int32][]int64{}
-			inFlight  int
-			maxFlight int
-		)
-		p, status := humustest.Start(t, consumes(settings(c.ListenAddrs()...), func(ctx context.Context, m kafka.Message) error {
-			mu.Lock()
-			inFlight++
-			maxFlight = max(maxFlight, inFlight)
-			mu.Unlock()
-			time.Sleep(time.Second)
-			mu.Lock()
-			inFlight--
-			seen[m.Partition] = append(seen[m.Partition], m.Offset)
-			mu.Unlock()
-			return nil
-		}), humustest.WithApp(humus.WithHost(h.Host())))
-		synctest.Wait()
-		time.Sleep(10 * time.Second)
-		synctest.Wait()
-		p.Signal(syscall.SIGTERM)
+		requireTwoPartitionsProcessedConcurrently(t, h, c)
+	})
+}
 
-		st := <-status
-		require.Zero(t, st.Code(), st.Cause())
-		require.Equal(t, map[int32][]int64{0: {0, 1, 2, 3, 4}, 1: {0, 1, 2, 3, 4}}, seen)
-		require.Equal(t, 2, maxFlight, "the two partitions are processed concurrently")
-		require.Equal(t, map[int32]int64{0: 5, 1: 5}, committed(c))
+func TestService_processes_two_partitions_concurrently_when_one_offset_loads_after_the_first_fetch(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := humustest.NewHost(t)
+		c := cluster(t, h, 2)
+		produceTo(t, h, c, map[int32]int{0: 5, 1: 5})
+		answerListOffsetsFor(c, 0)
+		fetches := watchFetches(c)
+
+		requireTwoPartitionsProcessedConcurrently(t, h, c)
+		require.NotEmpty(t, fetches())
+		require.Equal(t, []int32{0}, fetches()[0], "the first Fetch leaves out partition 1")
+	})
+}
+
+// requireTwoPartitionsProcessedConcurrently consumes c's two partitions of
+// five records each, and requires that each partition is processed in order
+// and committed, and that a record of each is in flight at once.
+//
+// The first record of each partition is held until the other partition's
+// first record has started, so the two overlap however late franz-go first
+// fetches one of them: a client makes a topic's partitions fetchable one at
+// a time, so its first fetch can leave out a partition, and the cluster holds
+// the next for franz-go's FetchMaxWait of 5s. A Service that processes the
+// partitions one after the other releases the held record after a minute,
+// with only it in flight.
+func requireTwoPartitionsProcessedConcurrently(t *testing.T, h *humustest.Host, c *kfake.Cluster) {
+	t.Helper()
+	var (
+		mu        sync.Mutex
+		seen      = map[int32][]int64{}
+		total     int
+		inFlight  int
+		maxFlight int
+		started   = map[int32]chan struct{}{0: make(chan struct{}), 1: make(chan struct{})}
+		processed = make(chan struct{})
+	)
+	p, status := humustest.Start(t, consumes(settings(c.ListenAddrs()...), func(ctx context.Context, m kafka.Message) error {
+		mu.Lock()
+		inFlight++
+		maxFlight = max(maxFlight, inFlight)
+		if m.Offset == 0 {
+			close(started[m.Partition])
+		}
+		mu.Unlock()
+		if m.Offset == 0 {
+			select {
+			case <-started[1-m.Partition]:
+			case <-time.After(time.Minute):
+			}
+		}
+		mu.Lock()
+		inFlight--
+		seen[m.Partition] = append(seen[m.Partition], m.Offset)
+		total++
+		if total == 10 {
+			close(processed)
+		}
+		mu.Unlock()
+		return nil
+	}), humustest.WithApp(humus.WithHost(h.Host())))
+	select {
+	case <-processed:
+	case <-time.After(10 * time.Minute):
+		require.Fail(t, "the Service did not process every record")
+	}
+	synctest.Wait()
+	p.Signal(syscall.SIGTERM)
+
+	st := <-status
+	require.Zero(t, st.Code(), st.Cause())
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, map[int32][]int64{0: {0, 1, 2, 3, 4}, 1: {0, 1, 2, 3, 4}}, seen)
+	require.Equal(t, 2, maxFlight, "the two partitions are processed concurrently")
+	require.Equal(t, map[int32]int64{0: 5, 1: 5}, committed(c))
+}
+
+// answerListOffsetsFor answers the next ListOffsets with offset 0 for the
+// partitions in ok, and with an error franz-go retries a second later for
+// every other partition.
+func answerListOffsetsFor(c *kfake.Cluster, ok ...int32) {
+	c.ControlKey(kmsg.ListOffsets.Int16(), func(req kmsg.Request) (kmsg.Response, error, bool) {
+		r := req.(*kmsg.ListOffsetsRequest)
+		resp := r.ResponseKind().(*kmsg.ListOffsetsResponse)
+		for _, rt := range r.Topics {
+			st := kmsg.NewListOffsetsResponseTopic()
+			st.Topic = rt.Topic
+			for _, rp := range rt.Partitions {
+				sp := kmsg.NewListOffsetsResponseTopicPartition()
+				sp.Partition = rp.Partition
+				sp.Timestamp = -1
+				sp.ErrorCode = kerr.NotLeaderForPartition.Code
+				if slices.Contains(ok, rp.Partition) {
+					sp.ErrorCode = 0
+					sp.Offset = 0
+					sp.LeaderEpoch = 0
+				}
+				st.Partitions = append(st.Partitions, sp)
+			}
+			resp.Topics = append(resp.Topics, st)
+		}
+		return resp, nil, true
 	})
 }
 
