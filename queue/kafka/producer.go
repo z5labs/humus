@@ -75,6 +75,10 @@ type Producer struct {
 	// kotel is kotel's Meter, which the OnStop function waits for.
 	kotel *kotelMeter
 
+	// calls are the calls the breaker admitted whose tickets the breaker
+	// has yet to count, which the OnStop function waits for.
+	calls admitted
+
 	// faults is the App's failure injection, from the Setup, and forward
 	// is ProducerSettings.ForwardScenario.
 	faults  fault.Injector
@@ -94,8 +98,9 @@ type Producer struct {
 // one error that names each one, and builds the franz-go client and the
 // circuit breaker. It opens no connection: the first Produce does. It
 // registers a function with s.OnStop that flushes the client, closes it,
-// and waits for kotel's produce counters to count every record the cluster
-// acknowledged, so the telemetry SDK's Shutdown collects them.
+// and waits for the breaker to count every call it admitted, and for
+// kotel's produce counters to count every record the cluster acknowledged,
+// so the telemetry SDK's Shutdown collects them.
 //
 // The breaker, built with settings.Breaker and settings.BreakerPolicy,
 // guards the cluster: one Producer is one client to one cluster, with one
@@ -233,12 +238,19 @@ func (p *Producer) refusalErr() error {
 }
 
 // stop flushes the client with ctx, which the lifecycle bounds by the grace
-// period, closes it, and then waits, with ctx, until kotel has counted
-// every record the cluster acknowledged in its produce counters, so the
-// SDK's Shutdown, which runs after the OnStop functions, collects them.
+// period, closes it, and then waits, with ctx, until the breaker has
+// counted every call it admitted, and kotel has counted every record the
+// cluster acknowledged in its produce counters, so the SDK's Shutdown,
+// which runs after the OnStop functions, collects the breaker's log
+// records and counts and kotel's. It returns once every admitted call has
+// been counted, not only once the client holds no records: franz-go hands
+// a record its result before Flush sees it gone, and the call is counted
+// on Produce's goroutine after that.
+//
 // When ctx is done first, Close fails the records still in the client with
-// kgo.ErrClientClosed, kotel's counters may miss records franz-go has yet
-// to report to it, and stop returns an error that wraps ctx's error.
+// kgo.ErrClientClosed, the breaker may not count the calls of those
+// records, kotel's counters may miss records franz-go has yet to report to
+// it, and stop returns an error that wraps ctx's error.
 func (p *Producer) stop(ctx context.Context) error {
 	err := p.client.Flush(ctx)
 	p.closed.Store(true)
@@ -246,10 +258,61 @@ func (p *Producer) stop(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("kafka: flushing the Producer: %w", err)
 	}
+	if err := p.calls.wait(ctx); err != nil {
+		return fmt.Errorf("kafka: waiting for the breaker to count the calls: %w", err)
+	}
 	if err := p.kotel.wait(ctx); err != nil {
 		return fmt.Errorf("kafka: waiting for kotel's produce counters: %w", err)
 	}
 	return nil
+}
+
+// admitted counts the calls the breaker admitted whose tickets are not
+// settled yet. Its zero value is ready to use.
+type admitted struct {
+	mu sync.Mutex
+	// n is the number of calls admitted and not yet settled.
+	n int
+	// idle is closed, and replaced, whenever n drops to 0.
+	idle chan struct{}
+}
+
+// add counts a call the breaker admitted.
+func (a *admitted) add() {
+	a.mu.Lock()
+	if a.n == 0 {
+		a.idle = make(chan struct{})
+	}
+	a.n++
+	a.mu.Unlock()
+}
+
+// settled counts a call whose ticket the breaker has counted.
+func (a *admitted) settled() {
+	a.mu.Lock()
+	a.n--
+	if a.n == 0 {
+		close(a.idle)
+	}
+	a.mu.Unlock()
+}
+
+// wait returns nil once no admitted call is waiting to be settled, and
+// ctx's error if ctx is done first.
+func (a *admitted) wait(ctx context.Context) error {
+	for {
+		a.mu.Lock()
+		n, idle := a.n, a.idle
+		a.mu.Unlock()
+		if n == 0 {
+			return nil
+		}
+		select {
+		case <-idle:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
 
 // kotelMeter is kotel's Meter, which counts the records it has counted in
@@ -359,7 +422,9 @@ func (m *kotelMeter) wait(ctx context.Context) error {
 //
 // Each call is one call through the Producer's circuit breaker, admitted
 // before any of its records reach franz-go and counted once every record
-// has its result, which may be after Produce returns. A call that succeeds
+// has its result, which may be after Produce returns but is before the
+// Producer's OnStop function returns, unless the grace period runs out
+// first. A call that succeeds
 // counts as a success, and one whose records failed because the cluster
 // didn't store them in time counts as a failure. A call whose records
 // failed only for their own reasons or their topics', such as
@@ -446,8 +511,10 @@ func (p *Producer) Produce(ctx context.Context, records ...Record) error {
 	inj := p.evaluate(krs)
 
 	results := make(chan error, 1)
+	p.calls.add()
 	go func() {
 		defer cancel()
+		defer p.calls.settled()
 		var err error
 		if injected := inj.inject(call); injected != nil {
 			err = failUnsent(krs, injected)
