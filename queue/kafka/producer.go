@@ -75,18 +75,16 @@ type Producer struct {
 	// kotel is kotel's Meter, which the OnStop function waits for.
 	kotel *kotelMeter
 
-	// calls are the calls the breaker admitted whose tickets the breaker
-	// has yet to count, which the OnStop function waits for.
+	// calls are the calls past the closed check that the breaker has yet
+	// to count, or reject, which the OnStop function waits for. It is
+	// closed once the OnStop function has flushed the client and is about
+	// to close it, and a Produce after that fails at once.
 	calls admitted
 
 	// faults is the App's failure injection, from the Setup, and forward
 	// is ProducerSettings.ForwardScenario.
 	faults  fault.Injector
 	forward bool
-
-	// closed is set once the OnStop function has flushed the client and is
-	// about to close it.
-	closed atomic.Bool
 
 	// refusal is the first refusal of the credentials by a broker, nil
 	// until there is one. refused is closed once it is set.
@@ -253,7 +251,7 @@ func (p *Producer) refusalErr() error {
 // it, and stop returns an error that wraps ctx's error.
 func (p *Producer) stop(ctx context.Context) error {
 	err := p.client.Flush(ctx)
-	p.closed.Store(true)
+	p.calls.close()
 	p.client.Close()
 	if err != nil {
 		return fmt.Errorf("kafka: flushing the Producer: %w", err)
@@ -267,27 +265,47 @@ func (p *Producer) stop(ctx context.Context) error {
 	return nil
 }
 
-// admitted counts the calls the breaker admitted whose tickets are not
-// settled yet. Its zero value is ready to use.
+// admitted counts the calls to Produce that are past the closed check and
+// not yet counted by the breaker, or rejected by it. Its zero value is
+// ready to use.
+//
+// The closed check and the count are one step under one lock, so once
+// close returns, every call that will ever be counted already is, and wait
+// can't miss a call that passed the check just before the Producer closed.
 type admitted struct {
 	mu sync.Mutex
 	// n is the number of calls admitted and not yet settled.
 	n int
 	// idle is closed, and replaced, whenever n drops to 0.
 	idle chan struct{}
+	// closed is set by close, after which add admits nothing.
+	closed bool
 }
 
-// add counts a call the breaker admitted.
-func (a *admitted) add() {
+// add counts a call, and reports false, counting nothing, once close has
+// been called.
+func (a *admitted) add() bool {
 	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed {
+		return false
+	}
 	if a.n == 0 {
 		a.idle = make(chan struct{})
 	}
 	a.n++
+	return true
+}
+
+// close stops add admitting calls.
+func (a *admitted) close() {
+	a.mu.Lock()
+	a.closed = true
 	a.mu.Unlock()
 }
 
-// settled counts a call whose ticket the breaker has counted.
+// settled counts a call the breaker has counted or rejected, or that
+// returned before reaching it.
 func (a *admitted) settled() {
 	a.mu.Lock()
 	a.n--
@@ -464,9 +482,18 @@ func (p *Producer) Produce(ctx context.Context, records ...Record) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("kafka: producing: %w", err)
 	}
-	if p.closed.Load() {
+	if !p.calls.add() {
 		return fmt.Errorf("kafka: producing: %w", kgo.ErrClientClosed)
 	}
+	// The call stays in p.calls until the breaker has counted it, on the
+	// goroutine it is handed off to below, or until Produce returns
+	// without handing it off.
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			p.calls.settled()
+		}
+	}()
 	if err := p.refusalErr(); err != nil {
 		return err
 	}
@@ -495,9 +522,8 @@ func (p *Producer) Produce(ctx context.Context, records ...Record) error {
 		return fmt.Errorf("kafka: producing: %w", err)
 	}
 	// The ticket is settled once every record has its result, which may be
-	// after Produce returns, so the guard is a flag set once the ticket is
+	// after Produce returns, so the guard is the flag set once the ticket is
 	// handed off, not a deferred Release.
-	handedOff := false
 	defer func() {
 		if !handedOff {
 			t.Release()
@@ -511,7 +537,6 @@ func (p *Producer) Produce(ctx context.Context, records ...Record) error {
 	inj := p.evaluate(krs)
 
 	results := make(chan error, 1)
-	p.calls.add()
 	go func() {
 		defer cancel()
 		defer p.calls.settled()
