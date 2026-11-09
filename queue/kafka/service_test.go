@@ -501,6 +501,7 @@ func requireRevokeCommitsTheRecordInFlight(t *testing.T, h *humustest.Host, c *k
 	}
 	require.Equal(t, []int64{0}, processed[0][moved], "the first App finished the record in flight when the second App joined, and took no other of the moved partition")
 	require.Equal(t, int64(1), startedAt[moved], "the record in flight was committed before the partition moved")
+	require.NotEmpty(t, processed[1][moved], "the second App processed the moved partition")
 	require.Equal(t, int64(1), processed[1][moved][0], "the second App started right after the record in flight")
 	require.Equal(t, append(slices.Clone(processed[0][moved]), processed[1][moved]...), offsets(revokeRecords), "no record of the moved partition was processed twice or skipped")
 	require.Equal(t, map[int32]int64{0: revokeRecords, 1: revokeRecords}, committed(c))
