@@ -30,6 +30,7 @@ func TestChild_passes_on_testcontainers_go_s_configuration(t *testing.T) {
 		"TESTCONTAINERS_RYUK_CONTAINER_PRIVILEGED": "true",
 		"TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE":    "/run/user/1000/podman/podman.sock",
 		"RYUK_VERBOSE":                             "true",
+		"TESTCONTAINERS_PROVIDER":                  "podman",
 		"DOCKER_AUTH_CONFIG":                       "not passed on",
 	}))
 	require.ElementsMatch(t, []string{
@@ -37,6 +38,7 @@ func TestChild_passes_on_testcontainers_go_s_configuration(t *testing.T) {
 		"TESTCONTAINERS_RYUK_CONTAINER_PRIVILEGED=true",
 		"TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/run/user/1000/podman/podman.sock",
 		"RYUK_VERBOSE=true",
+		"TESTCONTAINERS_PROVIDER=podman",
 	}, got)
 }
 
