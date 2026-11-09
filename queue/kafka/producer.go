@@ -264,9 +264,11 @@ type kotelMeter struct {
 	*kotel.Meter
 
 	mu sync.Mutex
-	// acked is the number of records the cluster acknowledged, and counted
-	// the number kotel has counted in messaging.kafka.produce_records.count.
-	acked, counted int64
+	// acked is the number of records the cluster acknowledged.
+	acked int64
+	// counted is the number of records kotel has counted in
+	// messaging.kafka.produce_records.count.
+	counted int64
 	// caughtUp is closed, and replaced, whenever counted grows.
 	caughtUp chan struct{}
 }

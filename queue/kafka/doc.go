@@ -356,11 +356,11 @@
 // is left with kgo.ErrClientClosed, those records are lost, kotel's
 // counters may miss records franz-go had yet to report to it, and the
 // function returns an error that wraps the context's error, which the
-// lifecycle reports as a *humus.GracePeriodError. A Produce after that, from a goroutine the end
-// user left running, fails at once with an error that wraps
-// kgo.ErrClientClosed. If the end user's Init fails after NewProducer, the
-// lifecycle runs the function too, so the client is closed and none of
-// franz-go's goroutines outlive the App.
+// lifecycle reports as a *humus.GracePeriodError. A Produce after that,
+// from a goroutine the end user left running, fails at once with an error
+// that wraps kgo.ErrClientClosed. If the end user's Init fails after
+// NewProducer, the lifecycle runs the function too, so the client is
+// closed and none of franz-go's goroutines outlive the App.
 //
 // The Producer's client logs through the Setup's LoggerProvider, under the
 // scope github.com/twmb/franz-go/pkg/kgo, as the Service's does.
