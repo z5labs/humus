@@ -323,11 +323,7 @@ func TestRun_a_run_stopped_by_a_signal_still_gauges_and_records_what_it_left_pen
 		signal := errors.New("interrupt")
 		ctx, cancel := context.WithCancelCause(t.Context())
 		e := newEnv(t, func(r *http.Request, _ string, _ http.ResponseWriter) {
-			cancel(signal)
-			select {
-			case <-r.Context().Done():
-			case <-time.After(time.Minute):
-			}
+			lose(r, cancel, signal)
 		})
 		e.subscribe("acct-1", "acct-2", "acct-3")
 
@@ -338,6 +334,29 @@ func TestRun_a_run_stopped_by_a_signal_still_gauges_and_records_what_it_left_pen
 		counts := ended(t, e.tel)
 		require.Equal(t, int64(3), counts["billing.invoices.pending"])
 		require.Equal(t, int64(3), counts["billing.invoices.issued"])
+	})
+}
+
+func TestRun_a_run_stopped_by_a_signal_gauges_every_invoice_pending_while_its_connection_closes(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		signal := errors.New("interrupt")
+		ctx, cancel := context.WithCancelCause(t.Context())
+		a := newAnswered()
+		e := newEnv(t, func(r *http.Request, _ string, _ http.ResponseWriter) {
+			a.lose(r, cancel, signal)
+		})
+		e.subscribe("acct-1", "acct-2", "acct-3")
+		ctx = a.trace(ctx)
+
+		err := e.heldRun(t, month(1999, time.December), ctx, a).Run(ctx)
+
+		synctest.Wait()
+		require.Equal(t, signal, err)
+		require.Equal(t, []int64{3}, gauge(t, instruments(t, e.tel)["billing.invoices.pending"]))
+		counts := ended(t, e.tel)
+		require.Equal(t, int64(3), counts["billing.invoices.pending"])
+		require.Equal(t, int64(3), counts["billing.invoices.issued"])
+		require.False(t, a.got.Load(), "the fake payments API answered the charge whose answer it loses")
 	})
 }
 
