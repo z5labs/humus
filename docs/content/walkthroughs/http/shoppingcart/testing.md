@@ -236,7 +236,9 @@ type Target struct {
 
 The cases come in two lists. Each case in `Alone` runs by itself, since the
 catalog's failures it rehearses count toward the breaker every add goes
-through:
+through. Each one leaves that breaker closed for the cases after it, in
+the same run or the next run on the same cluster: a half-open breaker lets
+one add through at a time and sheds the rest:
 
 ```go
 type Case struct {
@@ -541,17 +543,26 @@ func delay(point string, d time.Duration) fit.Rule {
 }
 ```
 
+The failure injection cases in `Parallel` leave the breaker as they found
+it:
+
 | Case | Its scenario | What it shows |
 |---|---|---|
 | `SlowCatalog` | delays the catalog point 2s | the item is still added, after the delay |
 | `CartDatabaseDown` | aborts `postgresql:carts` | a 503 saying to try again, and the cart is unchanged after it |
 | `UntrustedScenario` | aborts the catalog point, from a token without the trust scope | the scenario is stripped, and the item is added |
-| `CatalogDown` | aborts the catalog point | a 503 naming the catalog, and no item, then an add once the breaker admits it |
-| `CatalogDatabaseDown` | aborts `postgresql:catalog` | the cart forwards the scenario to the catalog, and answers the catalog's 503 with a 503 naming the catalog, and no item |
-| `CatalogBreakerOpens` | aborts the catalog point on every add | the breaker opens, and sheds the adds, until the scenario ends |
+
+The ones in `Alone` run one after another, after them:
+
+| Case | Its scenario | What it shows | What it leaves behind |
+|---|---|---|---|
+| `CatalogDown` | aborts the catalog point | a 503 naming the catalog, and no item, then an add once the breaker admits it | a closed breaker, with its failed attempts counted |
+| `CatalogDatabaseDown` | aborts `postgresql:catalog` | the cart forwards the scenario to the catalog, and answers the catalog's 503 with a 503 naming the catalog, and no item | a closed breaker, with its failed attempts counted |
+| `CatalogBreakerOpens` | aborts the catalog point on every add | the breaker opens, and sheds the adds, until the scenario ends | a closed breaker, after the 3 adds that close it |
 
 `CatalogBreakerOpens` adds until the breaker sheds the add, then waits for
-it to admit one again:
+it to admit one again, and adds until 3 have been admitted, which closes
+the breaker:
 
 ```go
 func CatalogBreakerOpens(t testing.TB, target Target) {
@@ -570,9 +581,13 @@ func CatalogBreakerOpens(t testing.TB, target Target) {
 	}
 	require.Empty(t, s.getCart(ctx, t, c.CartID).Items)
 
-	added := s.addItemOnceAdmitted(ctx, t, c.CartID, p.ProductID)
-	require.InDelta(t, p.UnitPrice, added.UnitPrice, 1e-9)
-	require.Equal(t, []item{added}, s.getCart(ctx, t, c.CartID).Items)
+	var added []item
+	for range probesToClose {
+		it := s.addItemOnceAdmitted(ctx, t, c.CartID, p.ProductID)
+		require.InDelta(t, p.UnitPrice, it.UnitPrice, 1e-9)
+		added = append(added, it)
+	}
+	require.Equal(t, added, s.getCart(ctx, t, c.CartID).Items)
 }
 ```
 

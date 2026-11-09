@@ -33,8 +33,9 @@ const (
 	cartsPoint           = "postgresql:carts"
 	catalogDatabasePoint = "postgresql:catalog"
 
-	slowCatalog = 2 * time.Second
-	pollEvery   = 500 * time.Millisecond
+	slowCatalog   = 2 * time.Second
+	pollEvery     = 500 * time.Millisecond
+	probesToClose = 3
 
 	tryAgain = "Try again"
 	shed     = "isn't calling the catalog"
@@ -257,9 +258,13 @@ func CatalogBreakerOpens(t testing.TB, target Target) {
 	}
 	require.Empty(t, s.getCart(ctx, t, c.CartID).Items)
 
-	added := s.addItemOnceAdmitted(ctx, t, c.CartID, p.ProductID)
-	require.InDelta(t, p.UnitPrice, added.UnitPrice, 1e-9)
-	require.Equal(t, []item{added}, s.getCart(ctx, t, c.CartID).Items)
+	var added []item
+	for range probesToClose {
+		it := s.addItemOnceAdmitted(ctx, t, c.CartID, p.ProductID)
+		require.InDelta(t, p.UnitPrice, it.UnitPrice, 1e-9)
+		added = append(added, it)
+	}
+	require.Equal(t, added, s.getCart(ctx, t, c.CartID).Items)
 }
 
 type cart struct {

@@ -38,6 +38,7 @@ const (
 	telemetryTimeout = 4 * time.Minute
 	pollInterval     = 2 * time.Second
 	addEvery         = 500 * time.Millisecond
+	probesToClose    = 3
 	shed             = "isn't calling the catalog"
 	breakerOpened    = "circuit breaker open"
 )
@@ -191,14 +192,16 @@ func openTheCatalogsBreaker(t *testing.T, target cases.Target) []string {
 		pause(ctx, t, addEvery)
 	}
 
-	for {
+	for admitted := 0; admitted < probesToClose; {
 		code, body := send(ctx, t, target.CartClient, target.Cart, http.MethodPost, items, shopper, "", "", item)
 		if code == http.StatusCreated {
-			return traces
+			admitted++
+			continue
 		}
 		require.Equal(t, http.StatusServiceUnavailable, code, "%s", body)
 		pause(ctx, t, addEvery)
 	}
+	return traces
 }
 
 func send(ctx context.Context, t *testing.T, client *http.Client, base *url.URL, method, path, token, scenario, traceID string, body any) (int, []byte) {

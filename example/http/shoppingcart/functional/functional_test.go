@@ -10,9 +10,11 @@ package functional
 
 import (
 	"bufio"
+	"bytes"
 	"cmp"
 	"context"
 	"crypto"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -28,6 +30,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -38,6 +41,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/z5labs/humus/example/http/shoppingcart/cases"
+	catalogendpoint "github.com/z5labs/humus/example/http/shoppingcart/catalog/endpoint"
+	"github.com/z5labs/humus/example/http/shoppingcart/endpoint"
 )
 
 const (
@@ -47,6 +52,8 @@ const (
 	port        = 8443
 	scenarioKey = "acme.fault"
 	timeout     = 2 * time.Minute
+
+	addsAtOnce = 8
 )
 
 var kubeContext = flag.String("context", "kind-"+cmp.Or(os.Getenv("KIND_CLUSTER_NAME"), "kind"), "the kubectl context of the cluster up.sh brought the shoppingcart up on")
@@ -72,6 +79,122 @@ func TestShoppingcart_passes_the_shared_cases_on_kind(t *testing.T) {
 			c.Run(t, target)
 		})
 	}
+}
+
+func TestShoppingcart_passes_the_parallel_cases_after_the_catalogs_breaker_opened(t *testing.T) {
+	target := sharedTarget(t)
+	cases.CatalogBreakerOpens(t, target)
+	inParallel(t, target, 0)
+}
+
+func TestShoppingcart_passes_the_parallel_cases_on_new_connections_after_the_catalogs_breaker_opened(t *testing.T) {
+	target := sharedTarget(t)
+	cases.CatalogBreakerOpens(t, target)
+
+	next := target
+	next.CartClient = newClient(t)
+	next.CatalogClient = next.CartClient
+	inParallel(t, next, 0)
+}
+
+func TestShoppingcart_passes_the_parallel_cases_while_SlowCatalog_is_the_first_probe_after_the_catalogs_breaker_opened(t *testing.T) {
+	target := sharedTarget(t)
+	cases.CatalogBreakerOpens(t, target)
+	inParallel(t, target, 500*time.Millisecond)
+}
+
+func TestShoppingcart_passes_the_parallel_cases_after_the_telemetry_check_opened_the_catalogs_breaker(t *testing.T) {
+	target := sharedTarget(t)
+	openTheCatalogsBreaker(t, target)
+	inParallel(t, target, 0)
+}
+
+func TestShoppingcart_adds_items_at_once_after_the_catalogs_breaker_opened(t *testing.T) {
+	target := sharedTarget(t)
+	cases.CatalogBreakerOpens(t, target)
+	require.Equal(t, slices.Repeat([]int{http.StatusCreated}, addsAtOnce), addAtOnce(t, target, addsAtOnce))
+}
+
+func inParallel(t *testing.T, target cases.Target, afterSlowCatalog time.Duration) {
+	t.Helper()
+	t.Run("in parallel", func(t *testing.T) {
+		for _, c := range cases.Parallel {
+			t.Run(c.Name, func(t *testing.T) {
+				t.Parallel()
+				if c.Name != "SlowCatalog" {
+					time.Sleep(afterSlowCatalog)
+				}
+				c.Run(t, target)
+			})
+		}
+	})
+}
+
+func addAtOnce(t *testing.T, target cases.Target, n int) []int {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), target.Timeout)
+	defer cancel()
+
+	productID := "sku-" + rand.Text()
+	writer, err := target.Token(rand.Text(), catalogendpoint.ScopeWrite)
+	require.NoError(t, err)
+	code, body := send(ctx, t, target.CatalogClient, target.Catalog, http.MethodPut, "/products/"+productID, writer, "", "", map[string]any{"unitPrice": 1.5})
+	require.Equal(t, http.StatusOK, code, "%s", body)
+
+	shopper, err := target.Token(rand.Text(), endpoint.ScopeWrite)
+	require.NoError(t, err)
+	carts := make([]string, n)
+	for i := range carts {
+		code, body := send(ctx, t, target.CartClient, target.Cart, http.MethodPost, "/carts", shopper, "", "", nil)
+		require.Equal(t, http.StatusCreated, code, "%s", body)
+		var c struct {
+			CartID string `json:"cartId"`
+		}
+		require.NoError(t, json.Unmarshal(body, &c))
+		carts[i] = c.CartID
+	}
+
+	item, err := json.Marshal(map[string]any{"productId": productID, "quantity": 1})
+	require.NoError(t, err)
+	codes := make([]int, n)
+	errs := make([]error, n)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i, cartID := range carts {
+		wg.Go(func() {
+			<-start
+			var body []byte
+			codes[i], body, errs[i] = post(ctx, target.CartClient, target.Cart.JoinPath("carts", cartID, "items").String(), shopper, item)
+			if errs[i] == nil && codes[i] != http.StatusCreated {
+				t.Logf("add %d of %d at once: %d %s", i+1, n, codes[i], body)
+			}
+		})
+	}
+	close(start)
+	wg.Wait()
+	for i, err := range errs {
+		require.NoError(t, err, "add %d of %d at once", i+1, n)
+	}
+	return codes
+}
+
+func post(ctx context.Context, client *http.Client, u, token string, body []byte) (int, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, nil, fmt.Errorf("POST %s: %w", u, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, nil, fmt.Errorf("POST %s: %w", u, err)
+	}
+	return resp.StatusCode, b, nil
 }
 
 func sharedTarget(t *testing.T) cases.Target {
