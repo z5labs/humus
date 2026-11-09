@@ -32,7 +32,9 @@
 // -keep cores, the first ones, are kept back from the runs, for flaky,
 // dockerd and the testcontainers containers. flaky watches Docker's events,
 // and pins each container labelled org.testcontainers to them as it starts,
-// so only the code under test gets each run's CPU count and load.
+// so only the code under test gets each run's CPU count and load. A container
+// whose flaky.scope label has a value is left alone: flaky's own Docker test
+// labels the containers it pins to cores of its own so.
 // -containers caps how many testcontainers runs go at once.
 //
 // A walkthrough is a module with a Dockerfile and a deploy/kind/up.sh, and its

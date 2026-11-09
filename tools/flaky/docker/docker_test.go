@@ -25,7 +25,7 @@ func TestEventsArgs_list_each_testcontainers_container_as_it_starts(t *testing.T
 	require.Equal(t, []string{
 		"events", "--since", "1700000000",
 		"--filter", "type=container", "--filter", "event=start", "--filter", "label=org.testcontainers",
-		"--format", "{{.Actor.ID}}",
+		"--format", `{{.Actor.ID}} {{index .Actor.Attributes "flaky.scope"}}`,
 	}, docker.EventsArgs(time.Unix(1700000000, 5)))
 }
 
@@ -49,6 +49,36 @@ func TestPin_pins_each_container_that_starts_and_warns_of_one_it_cannot(t *testi
 	require.Contains(t, log.String(), "warning: pinning container bad1 to cores 0,1: exit status 1: Error: No such container: bad1\n")
 	require.NotContains(t, log.String(), "abc")
 	require.NotContains(t, log.String(), "docker events ended", "Stop ends the watch without a warning")
+}
+
+func TestPin_leaves_a_container_labelled_with_a_scope_alone(t *testing.T) {
+	dir := dockertest.Fake(t)
+	dockertest.Touch(t, dir, "ids", "abc \nscoped1 s1\ndef\n")
+	var log dockertest.Buffer
+	p, err := docker.Pin(t.Context(), []int{0}, env.Child(bedrock.OSEnvironment{}), &log)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		return strings.Count(dockertest.Read(t, dir, "updates"), "\n") == 2
+	}, 10*time.Second, 10*time.Millisecond)
+	require.NoError(t, p.Stop())
+
+	require.Equal(t, "update --cpuset-cpus 0 abc\nupdate --cpuset-cpus 0 def\n", dockertest.Read(t, dir, "updates"))
+	require.Empty(t, log.String())
+}
+
+func TestPinScope_pins_only_the_containers_labelled_with_its_scope(t *testing.T) {
+	dir := dockertest.Fake(t)
+	dockertest.Touch(t, dir, "ids", "abc\nscoped1 s1\nother s2\nbad1\nscoped2 s1\n")
+	var log dockertest.Buffer
+	p, err := docker.PinScope(t.Context(), "s1", []int{5}, env.Child(bedrock.OSEnvironment{}), &log)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		return strings.Count(dockertest.Read(t, dir, "updates"), "\n") == 2
+	}, 10*time.Second, 10*time.Millisecond)
+	require.NoError(t, p.Stop())
+
+	require.Equal(t, "update --cpuset-cpus 5 scoped1\nupdate --cpuset-cpus 5 scoped2\n", dockertest.Read(t, dir, "updates"))
+	require.Empty(t, log.String(), "a container outside its scope isn't pinned, so it isn't warned of")
 }
 
 func TestPin_warns_when_the_watch_ends_before_it_is_stopped(t *testing.T) {
