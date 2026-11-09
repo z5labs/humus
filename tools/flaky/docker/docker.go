@@ -13,6 +13,11 @@
 // org.testcontainers to the cores kept back from the lanes as it starts, with
 // docker update --cpuset-cpus. Only the code under test, which runs in the
 // test's process, gets the run's CPU count and load.
+//
+// A container that also carries the label flaky.scope is left alone. That is
+// how this package's own Docker test, which pins its containers to cores of
+// its own, runs inside a sweep: the sweep's watch doesn't pin its containers,
+// and its watch pins no container but its own.
 package docker
 
 import (
@@ -34,6 +39,10 @@ import (
 // Label is the label testcontainers-go puts on every container it starts.
 const Label = "org.testcontainers"
 
+// Scope is the label that keeps a container labelled Label from being pinned
+// by Pin.
+const Scope = "flaky.scope"
+
 // Check returns an error when the docker command can't reach a daemon, which
 // the level named level needs.
 func Check(ctx context.Context, level string, env []string) error {
@@ -48,7 +57,8 @@ func Check(ctx context.Context, level string, env []string) error {
 }
 
 // EventsArgs returns the arguments of the docker events command that lists
-// the ID of each container labelled Label as it starts, from since on.
+// each container labelled Label as it starts, from since on: its ID, a space,
+// and its Scope label, which is empty when it has none.
 func EventsArgs(since time.Time) []string {
 	return []string{
 		"events",
@@ -56,7 +66,7 @@ func EventsArgs(since time.Time) []string {
 		"--filter", "type=container",
 		"--filter", "event=start",
 		"--filter", "label=" + Label,
-		"--format", "{{.Actor.ID}}",
+		"--format", `{{.Actor.ID}} {{index .Actor.Attributes "` + Scope + `"}}`,
 	}
 }
 
@@ -66,8 +76,8 @@ func UpdateArgs(id string, cores []int) []string {
 	return []string{"update", "--cpuset-cpus", run.CoreList(cores), id}
 }
 
-// Pinner pins each container labelled Label to its cores as the container
-// starts, until it is stopped.
+// Pinner pins each container labelled Label, and not Scope, to its cores as
+// the container starts, until it is stopped.
 type Pinner struct {
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -77,12 +87,19 @@ type Pinner struct {
 }
 
 // Pin starts watching Docker's events, and pins each container labelled Label
-// to cores as it starts, until Stop is called. Every container that starts
-// once Pin has returned is pinned, and some that started in the second before.
+// to cores as it starts, until Stop is called. A container that is labelled
+// Scope as well isn't pinned. Every other container that starts once Pin has
+// returned is pinned, and some that started in the second before.
 //
 // A container it can't pin, and the watch ending before Stop, are warned of
 // on log.
 func Pin(ctx context.Context, cores []int, env []string, log io.Writer) (*Pinner, error) {
+	return pin(ctx, "", cores, env, log)
+}
+
+// pin is Pin, except that it pins only the containers whose Scope label is
+// scope. Pin's scope is "", which a container without the label has.
+func pin(ctx context.Context, scope string, cores []int, env []string, log io.Writer) (*Pinner, error) {
 	if len(cores) == 0 {
 		return nil, errors.New("no cores to pin the testcontainers containers to")
 	}
@@ -115,8 +132,8 @@ func Pin(ctx context.Context, cores []int, env []string, log io.Writer) (*Pinner
 		defer stopCmd()
 		sc := bufio.NewScanner(out)
 		for sc.Scan() {
-			id := strings.TrimSpace(sc.Text())
-			if id == "" {
+			id, labelled, _ := strings.Cut(strings.TrimSpace(sc.Text()), " ")
+			if id == "" || strings.TrimSpace(labelled) != scope {
 				continue
 			}
 			if err := update(ctx, id, cores, env); err != nil && ctx.Err() == nil {
