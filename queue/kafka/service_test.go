@@ -834,32 +834,125 @@ func TestService_at_least_once_failure_lets_the_other_partitions_finish(t *testi
 		c := cluster(t, h, 2)
 		produceTo(t, h, c, map[int32]int{0: 5, 1: 5})
 
-		bad := errors.New("cannot process")
-		var (
-			mu   sync.Mutex
-			seen = map[int32][]int64{}
-		)
-		_, status := humustest.Start(t, consumes(settings(c.ListenAddrs()...), func(ctx context.Context, m kafka.Message) error {
-			if m.Partition == 0 {
-				// Partition 0 fails at its first record while partition
-				// 1 is in the middle of its first.
-				time.Sleep(time.Second)
-				return bad
-			}
-			time.Sleep(3 * time.Second)
-			mu.Lock()
-			seen[m.Partition] = append(seen[m.Partition], m.Offset)
-			mu.Unlock()
-			return nil
-		}), humustest.WithApp(humus.WithHost(h.Host())))
-
-		st := <-status
-		require.Equal(t, humus.ExitFailure, st.Code())
-		require.ErrorIs(t, st.Cause(), bad)
-		require.ErrorContains(t, st.Cause(), "orders, partition 0, offset 0")
-		require.Equal(t, []int64{0}, seen[1], "partition 1 finished its record in flight, and took no other")
-		require.Equal(t, map[int32]int64{1: 1}, committed(c), "partition 1 committed its record in flight; partition 0 committed nothing")
+		requireFailureLetsTheOtherPartitionsFinish(t, h, c)
 	})
+}
+
+func TestService_at_least_once_failure_lets_the_other_partitions_finish_when_the_first_Fetch_leaves_out_partition_0(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := humustest.NewHost(t)
+		c := cluster(t, h, 2)
+		produceTo(t, h, c, map[int32]int{0: 5, 1: 5})
+		answerListOffsetsFor(c, 1)
+		fetches := watchFetches(c)
+
+		requireFailureLetsTheOtherPartitionsFinish(t, h, c)
+		require.NotEmpty(t, fetches())
+		require.Equal(t, []int32{1}, fetches()[0], "the first Fetch leaves out partition 0")
+	})
+}
+
+func TestService_at_least_once_failure_lets_the_other_partitions_finish_when_the_first_Fetch_leaves_out_partition_1(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := humustest.NewHost(t)
+		c := cluster(t, h, 2)
+		produceTo(t, h, c, map[int32]int{0: 5, 1: 5})
+		answerListOffsetsFor(c, 0)
+		fetches := watchFetches(c)
+
+		requireFailureLetsTheOtherPartitionsFinish(t, h, c)
+		require.NotEmpty(t, fetches())
+		require.Equal(t, []int32{0}, fetches()[0], "the first Fetch leaves out partition 1")
+	})
+}
+
+// requireFailureLetsTheOtherPartitionsFinish consumes c's two partitions of
+// five records each, failing partition 0's first record, and requires
+// doc.go's promise for an at-least-once failure: it stops the whole Service,
+// partition 1 finishes the record it has in flight and commits it, no record
+// starts after the failure, and partition 0 commits nothing.
+//
+// Partition 0's first record fails once partition 1's first record has
+// started, and partition 1's first record finishes a second after that
+// failure, so partition 1 has a record in flight when partition 0 fails
+// however late franz-go first fetches either partition: a client makes a
+// topic's partitions fetchable one at a time, so its first fetch can leave
+// out a partition, and the cluster holds the next for franz-go's
+// FetchMaxWait of 5s. If a partition's first record never arrives, the other
+// stops waiting after a minute, and the checks fail.
+func requireFailureLetsTheOtherPartitionsFinish(t *testing.T, h *humustest.Host, c *kfake.Cluster) {
+	t.Helper()
+	bad := errors.New("cannot process")
+	var (
+		mu sync.Mutex
+		// started and seen list the offsets of each partition whose
+		// processing started and finished, in order.
+		started = map[int32][]int64{}
+		seen    = map[int32][]int64{}
+		// late lists the records that started after partition 0 failed.
+		late []string
+		// inFlight is closed when partition 1's first record starts, and
+		// failed when partition 0's first record fails.
+		inFlight = make(chan struct{})
+		failed   = make(chan struct{})
+	)
+	p, status := humustest.Start(t, consumes(settings(c.ListenAddrs()...), func(ctx context.Context, m kafka.Message) error {
+		mu.Lock()
+		started[m.Partition] = append(started[m.Partition], m.Offset)
+		select {
+		case <-failed:
+			late = append(late, "partition "+strconv.Itoa(int(m.Partition))+", offset "+strconv.FormatInt(m.Offset, 10))
+		default:
+		}
+		if m.Partition == 1 && m.Offset == 0 {
+			close(inFlight)
+		}
+		mu.Unlock()
+
+		if m.Partition == 0 {
+			select {
+			case <-inFlight:
+			case <-time.After(time.Minute):
+			}
+			time.Sleep(time.Second)
+			mu.Lock()
+			select {
+			case <-failed:
+			default:
+				close(failed)
+			}
+			mu.Unlock()
+			return bad
+		}
+		select {
+		case <-failed:
+		case <-time.After(time.Minute):
+		}
+		time.Sleep(time.Second)
+		mu.Lock()
+		seen[m.Partition] = append(seen[m.Partition], m.Offset)
+		mu.Unlock()
+		return nil
+	}), humustest.WithApp(humus.WithHost(h.Host())))
+
+	var st bedrock.ExitStatus
+	select {
+	case st = <-status:
+	case <-time.After(10 * time.Minute):
+		p.Signal(syscall.SIGTERM)
+		st := <-status
+		require.Failf(t, "the Service did not stop on the failure in 10 minutes", "code %v, cause %v", st.Code(), st.Cause())
+		return
+	}
+	require.Equal(t, humus.ExitFailure, st.Code())
+	require.ErrorIs(t, st.Cause(), bad)
+	require.ErrorContains(t, st.Cause(), "orders, partition 0, offset 0")
+	mu.Lock()
+	defer mu.Unlock()
+	require.Empty(t, late, "no record starts after the failure")
+	require.Equal(t, map[int32][]int64{0: {0}, 1: {0}}, started, "each partition started its first record, and no other")
+	require.Equal(t, []int64{0}, seen[1], "partition 1 finished its record in flight, and took no other")
+	require.Equal(t, map[int32]int64{1: 1}, committed(c), "partition 1 committed its record in flight; partition 0 committed nothing")
 }
 
 func TestService_at_most_once_skips_and_logs_a_batch_whose_commit_was_refused(t *testing.T) {
