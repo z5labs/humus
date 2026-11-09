@@ -14,7 +14,7 @@
 // docker update --cpuset-cpus. Only the code under test, which runs in the
 // test's process, gets the run's CPU count and load.
 //
-// A container that also carries the label flaky.scope is left alone. That is
+// A container whose flaky.scope label has a value is left alone. That is
 // how this package's own Docker test, which pins its containers to cores of
 // its own, runs inside a sweep: the sweep's watch doesn't pin its containers,
 // and its watch pins no container but its own.
@@ -39,8 +39,8 @@ import (
 // Label is the label testcontainers-go puts on every container it starts.
 const Label = "org.testcontainers"
 
-// Scope is the label that keeps a container labelled Label from being pinned
-// by Pin.
+// Scope is the label that, given a value, keeps a container labelled Label
+// from being pinned by Pin. An empty value is the same as none.
 const Scope = "flaky.scope"
 
 // Check returns an error when the docker command can't reach a daemon, which
@@ -87,8 +87,8 @@ type Pinner struct {
 }
 
 // Pin starts watching Docker's events, and pins each container labelled Label
-// to cores as it starts, until Stop is called. A container that is labelled
-// Scope as well isn't pinned. Every other container that starts once Pin has
+// to cores as it starts, until Stop is called. A container whose Scope label
+// has a value isn't pinned. Every other container that starts once Pin has
 // returned is pinned, and some that started in the second before.
 //
 // A container it can't pin, and the watch ending before Stop, are warned of

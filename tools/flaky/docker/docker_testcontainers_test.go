@@ -131,9 +131,10 @@ func updated(t *testing.T, done, id string) {
 	}, 30*time.Second, 100*time.Millisecond, "the delayed Pinner pins %s", id)
 }
 
-// pinCores returns the test's kept-back core, and another core for the
-// sweep's Pinner, as flaky stress keeps cores back of its own while the test
-// runs on a lane.
+// pinCores returns the test's kept-back core, the first of the cores it may
+// run on, as lanes.Kept picks it, and the last of them for the Pinner that
+// stands in for the sweep's. In a sweep, the test runs on a lane, and the
+// sweep's Pinner pins to cores outside it; here the two only need to differ.
 func pinCores(t *testing.T, childEnv []string) (kept, sweep []int) {
 	t.Helper()
 	require.NoError(t, docker.Check(t.Context(), "testcontainers", childEnv))
