@@ -380,79 +380,143 @@ func TestService_revoke_commits_the_record_in_flight_before_the_partition_moves(
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
 		c := cluster(t, h, 2)
-		const n = 20
-		produceTo(t, h, c, map[int32]int{0: n, 1: n})
+		produceTo(t, h, c, map[int32]int{0: revokeRecords, 1: revokeRecords})
 
-		var (
-			mu sync.Mutex
-			// processed[app][partition] lists the offsets each App
-			// finished processing, in order.
-			processed = [2]map[int32][]int64{{}, {}}
-			// startedAt is the committed offset of each partition when
-			// the second App processed its first record of it.
-			startedAt = map[int32]int64{}
-		)
-		processor := func(app int) queue.ProcessorFunc[kafka.Message] {
-			return func(ctx context.Context, m kafka.Message) error {
-				if app == 1 {
-					mu.Lock()
-					if _, ok := startedAt[m.Partition]; !ok {
-						startedAt[m.Partition] = committed(c)[m.Partition]
-					}
-					mu.Unlock()
-				}
-				time.Sleep(time.Second)
-				mu.Lock()
-				processed[app][m.Partition] = append(processed[app][m.Partition], m.Offset)
-				mu.Unlock()
-				return nil
-			}
-		}
-
-		tel := humustest.NewTelemetry()
-		first, firstStatus := humustest.Start(t, consumes(settings(c.ListenAddrs()...), processor(0)),
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
-		time.Sleep(2500 * time.Millisecond) // the first App is mid-record on both partitions
-
-		second, secondStatus := humustest.Start(t, consumes(settings(c.ListenAddrs()...), processor(1)),
-			humustest.WithApp(humus.WithHost(h.Host())))
-		time.Sleep(time.Minute)
-		synctest.Wait()
-
-		first.Signal(syscall.SIGTERM)
-		st := <-firstStatus
-		require.Zero(t, st.Code(), st.Cause())
-		second.Signal(syscall.SIGTERM)
-		st = <-secondStatus
-		require.Zero(t, st.Code(), st.Cause())
-
-		require.Len(t, startedAt, 1, "one partition moved to the second App")
-		for moved, at := range startedAt {
-			before := processed[0][moved]
-			require.NotEmpty(t, before, "the first App processed the moved partition before the revoke")
-			require.Equal(t, before[len(before)-1]+1, at,
-				"the record in flight finished and was committed before the partition moved, and the second App started after it")
-			require.Equal(t, at, processed[1][moved][0])
-			require.Equal(t, append(before, processed[1][moved]...), offsets(n), "no record of the moved partition was processed twice or skipped")
-		}
-		require.Equal(t, map[int32]int64{0: n, 1: n}, committed(c))
-
-		var moved int32
-		for p := range startedAt {
-			moved = p
-		}
-		var rebalanced bool
-		for _, r := range records(tel.Logs(), "partitions revoked") {
-			a := attrs(r)
-			require.Equal(t, topic, a["messaging.destination.name"])
-			require.Equal(t, group, a["messaging.consumer.group.name"])
-			require.NotContains(t, a, "messaging.destination.partition.ids", "the partitions are humus's own attribute")
-			if a["humus.messaging.destination.partition.ids"] == "["+strconv.Itoa(int(moved))+"]" {
-				rebalanced = true
-			}
-		}
-		require.True(t, rebalanced, "the first App logged the revoke of the moved partition alone")
+		requireRevokeCommitsTheRecordInFlight(t, h, c)
 	})
+}
+
+func TestService_revoke_commits_the_record_in_flight_before_the_partition_moves_when_partition_1_is_fetchable_late(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := humustest.NewHost(t)
+		c := cluster(t, h, 2)
+		produceTo(t, h, c, map[int32]int{0: revokeRecords, 1: revokeRecords})
+		answerListOffsetsFor(c, 0)
+		fetches := watchFetches(c)
+
+		requireRevokeCommitsTheRecordInFlight(t, h, c)
+		require.NotEmpty(t, fetches())
+		require.Equal(t, []int32{0}, fetches()[0], "the first Fetch leaves out partition 1")
+	})
+}
+
+// revokeRecords is how many records each of the two partitions holds in
+// requireRevokeCommitsTheRecordInFlight.
+const revokeRecords = 20
+
+// requireRevokeCommitsTheRecordInFlight consumes c's two partitions of
+// revokeRecords records each with a first App, then starts a second App,
+// whose join moves one partition to it. It requires that the first App's
+// record of the moved partition in flight when the second App joined is
+// committed before the partition moves, and that the second App starts
+// right after it, with no record of the moved partition processed twice or
+// skipped.
+//
+// The second App joins once the first App has the first record of each
+// partition in flight, however late franz-go first fetches one of them: a
+// client makes a topic's partitions fetchable one at a time, so its first
+// fetch can leave out a partition, and the cluster holds the next for
+// franz-go's FetchMaxWait of 5s. The first App holds each first record in
+// flight until it logs a revoke, so the moved partition's record in flight
+// when the second App joins is the one the revoke waits for.
+func requireRevokeCommitsTheRecordInFlight(t *testing.T, h *humustest.Host, c *kfake.Cluster) {
+	t.Helper()
+	tel := humustest.NewTelemetry()
+	revoking := func() bool { return len(records(tel.Logs(), "partitions revoked")) > 0 }
+
+	var (
+		mu sync.Mutex
+		// processed[app][partition] lists the offsets each App finished
+		// processing, in order.
+		processed = [2]map[int32][]int64{{}, {}}
+		// startedAt is the committed offset of each partition when the
+		// second App processed its first record of it.
+		startedAt = map[int32]int64{}
+		// started is closed when the first App starts its first record of
+		// each partition.
+		started = map[int32]chan struct{}{0: make(chan struct{}), 1: make(chan struct{})}
+	)
+	processor := func(app int) queue.ProcessorFunc[kafka.Message] {
+		return func(ctx context.Context, m kafka.Message) error {
+			first := app == 0 && m.Offset == 0
+			mu.Lock()
+			if first {
+				select {
+				case <-started[m.Partition]:
+				default:
+					close(started[m.Partition])
+				}
+			}
+			if app == 1 {
+				if _, ok := startedAt[m.Partition]; !ok {
+					startedAt[m.Partition] = committed(c)[m.Partition]
+				}
+			}
+			mu.Unlock()
+			if first {
+				for deadline := time.Now().Add(time.Minute); !revoking() && time.Now().Before(deadline); {
+					time.Sleep(100 * time.Millisecond)
+				}
+			}
+			time.Sleep(time.Second)
+			mu.Lock()
+			processed[app][m.Partition] = append(processed[app][m.Partition], m.Offset)
+			mu.Unlock()
+			return nil
+		}
+	}
+
+	first, firstStatus := humustest.Start(t, consumes(settings(c.ListenAddrs()...), processor(0)),
+		humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+	for _, p := range []int32{0, 1} {
+		select {
+		case <-started[p]:
+		case st := <-firstStatus:
+			require.Failf(t, "the first App stopped before it started a record of each partition", "code %v, cause %v", st.Code(), st.Cause())
+		case <-time.After(time.Minute):
+			first.Signal(syscall.SIGTERM)
+			st := <-firstStatus
+			require.Failf(t, "the first App did not start a record of each partition in a minute", "partition %d, code %v, cause %v", p, st.Code(), st.Cause())
+		}
+	}
+
+	second, secondStatus := humustest.Start(t, consumes(settings(c.ListenAddrs()...), processor(1)),
+		humustest.WithApp(humus.WithHost(h.Host())))
+	time.Sleep(time.Minute)
+	synctest.Wait()
+
+	first.Signal(syscall.SIGTERM)
+	st := <-firstStatus
+	require.Zero(t, st.Code(), st.Cause())
+	second.Signal(syscall.SIGTERM)
+	st = <-secondStatus
+	require.Zero(t, st.Code(), st.Cause())
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, startedAt, 1, "one partition moved to the second App")
+	var moved int32
+	for p := range startedAt {
+		moved = p
+	}
+	require.Equal(t, []int64{0}, processed[0][moved], "the first App finished the record in flight when the second App joined, and took no other of the moved partition")
+	require.Equal(t, int64(1), startedAt[moved], "the record in flight was committed before the partition moved")
+	require.NotEmpty(t, processed[1][moved], "the second App processed the moved partition")
+	require.Equal(t, int64(1), processed[1][moved][0], "the second App started right after the record in flight")
+	require.Equal(t, append(slices.Clone(processed[0][moved]), processed[1][moved]...), offsets(revokeRecords), "no record of the moved partition was processed twice or skipped")
+	require.Equal(t, map[int32]int64{0: revokeRecords, 1: revokeRecords}, committed(c))
+
+	var rebalanced bool
+	for _, r := range records(tel.Logs(), "partitions revoked") {
+		a := attrs(r)
+		require.Equal(t, topic, a["messaging.destination.name"])
+		require.Equal(t, group, a["messaging.consumer.group.name"])
+		require.NotContains(t, a, "messaging.destination.partition.ids", "the partitions are humus's own attribute")
+		if a["humus.messaging.destination.partition.ids"] == "["+strconv.Itoa(int(moved))+"]" {
+			rebalanced = true
+		}
+	}
+	require.True(t, rebalanced, "the first App logged the revoke of the moved partition alone")
 }
 
 // offsets returns 0 to n-1.
