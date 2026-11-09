@@ -176,55 +176,150 @@ func TestProduce_a_records_own_failure_does_not_open_the_breaker(t *testing.T) {
 	})
 }
 
+// heldRequest says when the cluster in closesAgain answers the first Produce
+// request of the last of the calls that fail.
+type heldRequest int
+
+const (
+	// notHeld has the cluster answer it when it comes, like every other.
+	notHeld heldRequest = iota
+	// answeredBeforeRecovery has the cluster hold it past the call's
+	// DeliveryTimeout, then answer it while it still fails.
+	answeredBeforeRecovery
+	// answeredAfterRecovery has the cluster hold it past the call's
+	// DeliveryTimeout, then handle it once it has recovered, so its record
+	// is stored although the call failed.
+	answeredAfterRecovery
+)
+
+// holdOnce returns a failing for answerProduce that reports failing, and
+// that, the first time it is asked while hold is set, waits for released
+// first. The cluster handles nothing else while it waits. It closes handled
+// once it has read failing for the held request.
+func holdOnce(failing, hold *atomic.Bool, released <-chan struct{}, handled chan<- struct{}) func() bool {
+	return func() bool {
+		if !hold.CompareAndSwap(true, false) {
+			return failing.Load()
+		}
+		<-released
+		defer close(handled)
+		return failing.Load()
+	}
+}
+
+// closesAgain has five calls fail while the cluster answers every Produce
+// with a retriable error, so that the breaker opens, and has the cluster
+// answer the first Produce request of the last of them as held says. It then
+// checks that the next call is rejected, and that once the cluster recovers
+// and OpenFor has passed, three probes and the call after them succeed, the
+// breaker closes again, and the topic holds the records of those four calls,
+// in order. It returns the values the topic holds.
+//
+// A call that fails at its DeliveryTimeout may still have its record stored,
+// as doc.go says: with franz-go retrying every 5s, the last try of a call
+// goes out as its 10s deadline passes, and the cluster can handle that
+// request after it has recovered. So the topic may hold the record of a
+// failed call before the four.
+func closesAgain(t *testing.T, held heldRequest) []string {
+	t.Helper()
+	h := humustest.NewHost(t)
+	c := cluster(t, h, 1)
+	var failing, hold atomic.Bool
+	failing.Store(true)
+	released := make(chan struct{})
+	handled := make(chan struct{})
+	answerProduce(c, kerr.NotEnoughReplicas.Code, holdOnce(&failing, &hold, released, handled))
+
+	var failed []error
+	var rejected error
+	var probes []error
+	var after error
+	tel := humustest.NewTelemetry()
+	ps := producerSettings(c.ListenAddrs()...)
+	producesWith(t, h, tel, ps, func(ctx context.Context, p *kafka.Producer) error {
+		for i := range 5 {
+			hold.Store(held != notHeld && i == 4)
+			failed = append(failed, p.Produce(ctx, value(100+i)))
+		}
+		rejected = p.Produce(ctx, value(105))
+		if held == answeredBeforeRecovery {
+			close(released)
+			<-handled
+		}
+		failing.Store(false) // the cluster recovers
+		if held == answeredAfterRecovery {
+			close(released)
+			<-handled
+		}
+		time.Sleep(ps.Breaker.OpenFor)
+		for i := range 3 {
+			probes = append(probes, p.Produce(ctx, value(i)))
+		}
+		after = p.Produce(ctx, value(3))
+		return nil
+	})
+
+	require.Len(t, failed, 5)
+	for i, err := range failed {
+		require.ErrorIs(t, err, context.DeadlineExceeded, "call %d", i)
+	}
+	require.ErrorIs(t, rejected, circuit.ErrRejected)
+	require.Len(t, probes, 3)
+	for i, err := range probes {
+		require.NoError(t, err, "probe %d", i)
+	}
+	require.NoError(t, after)
+	require.Equal(t, []string{breakerOpen, breakerHalfOpen, breakerClosed}, breakerLogs(tel))
+
+	halfOpen := records(tel.Logs(), breakerHalfOpen)
+	require.Len(t, halfOpen, 1)
+	require.Equal(t, log.SeverityInfo, halfOpen[0].Severity())
+	require.Equal(t, "open", attrs(halfOpen[0])["humus.circuit.previous_state"])
+
+	closed := records(tel.Logs(), breakerClosed)
+	require.Len(t, closed, 1)
+	require.Equal(t, log.SeverityInfo, closed[0].Severity())
+	a := attrs(closed[0])
+	require.Equal(t, "half-open", a["humus.circuit.previous_state"])
+	require.Equal(t, "3", a["humus.circuit.successes"])
+	require.Equal(t, "3", a["humus.circuit.consecutive_successes"])
+	require.Equal(t, "kafka", a["messaging.system"])
+
+	var stored []string
+	for _, r := range readAll(t, h, c, topic) {
+		stored = append(stored, string(r.Value))
+	}
+	succeeded := []string{"0", "1", "2", "3"}
+	require.GreaterOrEqual(t, len(stored), len(succeeded), "stored: %v", stored)
+	before := stored[:len(stored)-len(succeeded)]
+	require.Equal(t, succeeded, stored[len(before):], "the calls that succeeded, in order, last: %v", stored)
+	seen := map[string]bool{}
+	for _, v := range before {
+		require.Contains(t, []string{"100", "101", "102", "103", "104"}, v, "only a failed call's record comes before them: %v", stored)
+		require.False(t, seen[v], "a failed call's record is stored once: %v", stored)
+		seen[v] = true
+	}
+	return stored
+}
+
 func TestProduce_the_breaker_closes_again(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		h := humustest.NewHost(t)
-		c := cluster(t, h, 1)
-		var failing atomic.Bool
-		failing.Store(true)
-		answerProduce(c, kerr.NotEnoughReplicas.Code, failing.Load)
+		closesAgain(t, notHeld)
+	})
+}
 
-		var rejected error
-		var probes []error
-		var after error
-		tel := humustest.NewTelemetry()
-		ps := producerSettings(c.ListenAddrs()...)
-		producesWith(t, h, tel, ps, func(ctx context.Context, p *kafka.Producer) error {
-			for range 5 {
-				_ = p.Produce(ctx, value(0))
-			}
-			rejected = p.Produce(ctx, value(0))
-			failing.Store(false) // the cluster recovers
-			time.Sleep(ps.Breaker.OpenFor)
-			for i := range 3 {
-				probes = append(probes, p.Produce(ctx, value(i)))
-			}
-			after = p.Produce(ctx, value(3))
-			return nil
-		})
+func TestProduce_the_breaker_closes_again_when_no_failed_calls_record_is_stored(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		stored := closesAgain(t, answeredBeforeRecovery)
+		require.Equal(t, []string{"0", "1", "2", "3"}, stored)
+	})
+}
 
-		require.ErrorIs(t, rejected, circuit.ErrRejected)
-		require.Len(t, probes, 3)
-		for i, err := range probes {
-			require.NoError(t, err, "probe %d", i)
-		}
-		require.NoError(t, after)
-		require.Equal(t, []string{breakerOpen, breakerHalfOpen, breakerClosed}, breakerLogs(tel))
-
-		halfOpen := records(tel.Logs(), breakerHalfOpen)
-		require.Len(t, halfOpen, 1)
-		require.Equal(t, log.SeverityInfo, halfOpen[0].Severity())
-		require.Equal(t, "open", attrs(halfOpen[0])["humus.circuit.previous_state"])
-
-		closed := records(tel.Logs(), breakerClosed)
-		require.Len(t, closed, 1)
-		require.Equal(t, log.SeverityInfo, closed[0].Severity())
-		a := attrs(closed[0])
-		require.Equal(t, "half-open", a["humus.circuit.previous_state"])
-		require.Equal(t, "3", a["humus.circuit.successes"])
-		require.Equal(t, "3", a["humus.circuit.consecutive_successes"])
-		require.Equal(t, "kafka", a["messaging.system"])
-		require.Len(t, readAll(t, h, c, topic), 4)
+func TestProduce_the_breaker_closes_again_when_a_failed_calls_request_is_stored_after_recovery(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		stored := closesAgain(t, answeredAfterRecovery)
+		require.Equal(t, []string{"104", "0", "1", "2", "3"}, stored,
+			"the last failed call's record, stored once the cluster recovered, then the 4 calls that succeeded")
 	})
 }
 
