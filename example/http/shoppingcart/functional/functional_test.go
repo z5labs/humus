@@ -10,6 +10,7 @@ package functional
 
 import (
 	"bufio"
+	"bytes"
 	"cmp"
 	"context"
 	"crypto"
@@ -153,22 +154,47 @@ func addAtOnce(t *testing.T, target cases.Target, n int) []int {
 		carts[i] = c.CartID
 	}
 
+	item, err := json.Marshal(map[string]any{"productId": productID, "quantity": 1})
+	require.NoError(t, err)
 	codes := make([]int, n)
+	errs := make([]error, n)
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	for i, cartID := range carts {
 		wg.Go(func() {
 			<-start
-			code, body := send(ctx, t, target.CartClient, target.Cart, http.MethodPost, "/carts/"+cartID+"/items", shopper, "", "", map[string]any{"productId": productID, "quantity": 1})
-			codes[i] = code
-			if code != http.StatusCreated {
-				t.Logf("add %d of %d at once: %d %s", i+1, n, code, body)
+			var body []byte
+			codes[i], body, errs[i] = post(ctx, target.CartClient, target.Cart.JoinPath("carts", cartID, "items").String(), shopper, item)
+			if errs[i] == nil && codes[i] != http.StatusCreated {
+				t.Logf("add %d of %d at once: %d %s", i+1, n, codes[i], body)
 			}
 		})
 	}
 	close(start)
 	wg.Wait()
+	for i, err := range errs {
+		require.NoError(t, err, "add %d of %d at once", i+1, n)
+	}
 	return codes
+}
+
+func post(ctx context.Context, client *http.Client, u, token string, body []byte) (int, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, nil, fmt.Errorf("POST %s: %w", u, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, nil, fmt.Errorf("POST %s: %w", u, err)
+	}
+	return resp.StatusCode, b, nil
 }
 
 func sharedTarget(t *testing.T) cases.Target {
