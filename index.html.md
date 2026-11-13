@@ -66,6 +66,10 @@ To start from a service type instead, find it here:
 | RabbitMQ | [Consuming and publishing with RabbitMQ](/humus/services/rabbitmq/) | [Mailer](/humus/walkthroughs/rabbitmq/mailer/) | [`example/rabbitmq/mailer`](https://github.com/z5labs/humus/tree/main/example/rabbitmq/mailer) |
 | Kubernetes controllers | [Writing a Kubernetes controller](/humus/services/kubernetes/) | [Databases controller](/humus/walkthroughs/kube/databases/) | [`example/kube/databases`](https://github.com/z5labs/humus/tree/main/example/kube/databases) |
 
+To move a service from another Go framework to humus, start from
+[Migrating to humus](/humus/migrating/) instead. Its guides are
+grouped by service type, and they aren't part of the reading order.
+
 ## Resources
 
 - [GitHub Repository](https://github.com/z5labs/humus)
