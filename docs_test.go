@@ -31,6 +31,11 @@ const docsContent = "docs/content"
 // so each walkthrough's pages mirror its example's path.
 const walkthroughs = docsContent + "/walkthroughs"
 
+// migrating is the docs site's Migrating to humus section. It groups its
+// guides by service type, and the code of the guide whose page is
+// migrating/<type>/<name>.md is under example/<type>/<name>/.
+const migrating = docsContent + "/migrating"
+
 // gettingStarted is the docs site's Getting started page, and
 // gettingStartedExample the path under example/ of the service it builds.
 const (
@@ -43,17 +48,20 @@ const (
 const readme = "README.md"
 
 // TestDocs_code_samples checks that every code sample the docs site quotes is
-// taken from the code it documents. A Go sample on any other page must appear,
-// line for line, in a _test.go file of this module, so it is taken from a test
-// or a tested example. A Go, YAML, JSON, Dockerfile or protobuf sample on a
-// page under walkthroughs/<type>/<name>/ must appear, line for line, in a file
-// under example/<type>/<name>/, its _test.go files included, so it is taken from the
-// walkthrough's own code or tests. The Getting started page follows the same
-// rule for the service it builds, under example/job/hello/, and so does the
-// README, whose service is the same one. Files under hidden directories and
-// node_modules are not read for either rule. Indentation is compared relative
-// to the sample, so a sample may quote the body of a function or a nested
-// block.
+// taken from the code it documents. A Go, YAML, JSON, Dockerfile or protobuf
+// sample on a page under walkthroughs/<type>/<name>/ must appear, line for
+// line, in a file under example/<type>/<name>/, its _test.go files included,
+// so it is taken from the walkthrough's own code or tests. A migration guide's
+// page, migrating/<type>/<name>.md, or a page under migrating/<type>/<name>/,
+// follows the same rule for the guide's own code under example/<type>/<name>/,
+// so the framework's code it quotes is checked as well as humus's. The Getting
+// started page follows the same rule for the service it builds, under
+// example/job/hello/, and so does the README, whose service is the same one. A
+// Go sample on any other page must appear, line for line, in a _test.go file
+// of this module, so it is taken from a test or a tested example. Files under
+// hidden directories and node_modules are not read for either rule.
+// Indentation is compared relative to the sample, so a sample may quote the
+// body of a function or a nested block.
 func TestDocs_code_samples(t *testing.T) {
 	problems, err := sampleProblems(os.DirFS("."))
 	if err != nil {
@@ -131,6 +139,7 @@ func TestFrontMatter(t *testing.T) {
 // pageFrontMatter is the part of a page's YAML front matter the tests read.
 type pageFrontMatter struct {
 	Description string `yaml:"description"`
+	Weight      int    `yaml:"weight"`
 }
 
 // frontMatter parses the YAML front matter that opens page between two ---
@@ -149,6 +158,158 @@ func frontMatter(page string) (pageFrontMatter, error) {
 		return fm, fmt.Errorf("parsing the front matter: %w", err)
 	}
 	return fm, nil
+}
+
+// serviceTypes names the service types as example/ names their folders, in
+// the order the Service types section gives them.
+var serviceTypes = []string{"http", "grpc", "job", "kafka", "rabbitmq", "kube"}
+
+// TestDocs_migration_groups checks that the Migrating to humus section groups
+// its guides by service type, in the order Service types gives them: every
+// guide is in a service type's folder, named as example/ names it, whose
+// landing page's weight puts the group in that order, and every group holds a
+// guide, as a type with no guide has no group.
+func TestDocs_migration_groups(t *testing.T) {
+	problems, err := groupProblems(os.DirFS("."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range problems {
+		t.Error(p)
+	}
+}
+
+func TestGroupProblems(t *testing.T) {
+	index := func(weight int) *fstest.MapFile {
+		return &fstest.MapFile{Data: fmt.Appendf(nil, "---\ntitle: T\nweight: %d\n---\n", weight)}
+	}
+	guide := &fstest.MapFile{Data: []byte("---\ntitle: Guide\n---\n")}
+
+	cases := []struct {
+		name  string
+		files fstest.MapFS
+		want  []string
+	}{
+		{"no group", fstest.MapFS{}, nil},
+		{"groups in order", fstest.MapFS{
+			"http/_index.md":       index(10),
+			"http/echo.md":         guide,
+			"kafka/_index.md":      index(40),
+			"kafka/watermill/a.md": guide,
+			"kafka/watermill/b.md": guide,
+			"kube/_index.md":       index(60),
+			"kube/kubebuilder.md":  guide,
+		}, nil},
+		{"groups out of order", fstest.MapFS{
+			"http/_index.md":  index(50),
+			"http/echo.md":    guide,
+			"kafka/_index.md": index(40),
+			"kafka/w.md":      guide,
+		}, []string{migrating + "/kafka/_index.md: weight 40 does not put kafka after http, weight 50"}},
+		{"a group with no weight", fstest.MapFS{
+			"http/_index.md": index(0),
+			"http/echo.md":   guide,
+		}, []string{migrating + "/http/_index.md: no weight"}},
+		{"a folder that names no service type", fstest.MapFS{
+			"kubernetes/_index.md":      index(60),
+			"kubernetes/kubebuilder.md": guide,
+		}, []string{migrating + "/kubernetes: not a service type"}},
+		{"a group with no landing page", fstest.MapFS{
+			"http/echo.md": guide,
+		}, []string{migrating + "/http: no _index.md"}},
+		{"a group with no guide", fstest.MapFS{
+			"http/_index.md": index(10),
+		}, []string{migrating + "/http: no guide"}},
+		{"a guide outside a group", fstest.MapFS{
+			"echo.md": guide,
+		}, []string{migrating + "/echo.md: not in a service type's group"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fsys := fstest.MapFS{migrating + "/_index.md": {Data: []byte("---\ntitle: Migrating to humus\n---\n")}}
+			for p, f := range c.files {
+				fsys[migrating+"/"+p] = f
+			}
+
+			problems, err := groupProblems(fsys)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if len(problems) != len(c.want) {
+				t.Fatalf("problems = %q, want %d", problems, len(c.want))
+			}
+			for i, want := range c.want {
+				if !strings.HasPrefix(problems[i], want) {
+					t.Errorf("problem = %q, want it to begin %q", problems[i], want)
+				}
+			}
+		})
+	}
+}
+
+// groupProblems describes each way the Migrating to humus section in repo
+// does not group its guides by service type, in the order serviceTypes gives
+// them.
+func groupProblems(repo fs.FS) ([]string, error) {
+	entries, err := fs.ReadDir(repo, migrating)
+	if err != nil {
+		return nil, err
+	}
+	var problems []string
+	weights := map[string]int{}
+	for _, e := range entries {
+		p := path.Join(migrating, e.Name())
+		if !e.IsDir() {
+			if e.Name() != "_index.md" && path.Ext(e.Name()) == ".md" {
+				problems = append(problems, fmt.Sprintf("%s: not in a service type's group; a guide's page is under %s/<type>/, with <type> one of %s",
+					p, migrating, strings.Join(serviceTypes, ", ")))
+			}
+			continue
+		}
+		if !slices.Contains(serviceTypes, e.Name()) {
+			problems = append(problems, fmt.Sprintf("%s: not a service type; a group is named as example/ names its type, one of %s",
+				p, strings.Join(serviceTypes, ", ")))
+			continue
+		}
+		group, err := fs.ReadDir(repo, p)
+		if err != nil {
+			return nil, err
+		}
+		if !slices.ContainsFunc(group, func(g fs.DirEntry) bool { return g.IsDir() || g.Name() != "_index.md" && path.Ext(g.Name()) == ".md" }) {
+			problems = append(problems, fmt.Sprintf("%s: no guide; a service type with no guide has no group", p))
+		}
+		b, err := fs.ReadFile(repo, path.Join(p, "_index.md"))
+		if errors.Is(err, fs.ErrNotExist) {
+			problems = append(problems, fmt.Sprintf("%s: no _index.md, so the sidebar does not show its guides as a group", p))
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		fm, err := frontMatter(string(b))
+		if err != nil {
+			return nil, fmt.Errorf("%s/_index.md: %w", p, err)
+		}
+		if fm.Weight == 0 {
+			problems = append(problems, fmt.Sprintf("%s/_index.md: no weight, so the sidebar does not order the group as Service types orders its type", p))
+			continue
+		}
+		weights[e.Name()] = fm.Weight
+	}
+	prev := ""
+	for _, typ := range serviceTypes {
+		w, ok := weights[typ]
+		if !ok {
+			continue
+		}
+		if prev != "" && w <= weights[prev] {
+			problems = append(problems, fmt.Sprintf("%s/%s/_index.md: weight %d does not put %s after %s, weight %d, as Service types does",
+				migrating, typ, w, typ, prev, weights[prev]))
+		}
+		prev = typ
+	}
+	return problems, nil
 }
 
 func TestSamples(t *testing.T) {
@@ -208,11 +369,16 @@ func TestSampleProblems(t *testing.T) {
 		"example/rabbitmq/mailer/wiremock/send.json": {Data: []byte("{\n  \"status\": 202\n}\n")},
 		"example/rabbitmq/mailer/Dockerfile":         {Data: []byte("ENTRYPOINT [\"/mailer\"]\n")},
 		"example/rabbitmq/mailer/proto/mail.proto":   {Data: []byte("message Mail {}\n")},
+		"example/http/echo/echo/main.go":             {Data: []byte("func main() {\n\te.GET(\"/carts/:id\", getCart)\n}\n")},
+		"example/http/echo/humus/app.go":             {Data: []byte("func Init() {\n\thttpserver.NewService(e)\n}\n")},
+		"example/http/echo/cases/cases_test.go":      {Data: []byte("func TestCart(t *testing.T) {\n\tt.Log(\"only in the guide's test\")\n}\n")},
+		"example/http/echo/humus/deploy/app.yaml":    {Data: []byte("kind: Deployment\nmetadata:\n  name: carts\n")},
 	}
 
 	const (
 		step    = walkthroughs + "/job/billing/step.md"
 		feature = docsContent + "/services/jobs.md"
+		guide   = migrating + "/http/echo.md"
 	)
 	cases := []struct {
 		name  string
@@ -255,6 +421,20 @@ func TestSampleProblems(t *testing.T) {
 		{"sh is unchecked in the README", readme, "sh", []string{"go get github.com/z5labs/humus@main"}, false},
 		{"the section's index keeps the feature pages' rule", walkthroughs + "/_index.md", "yaml", []string{"kind: Pod"}, false},
 		{"a service type's folder keeps the feature pages' rule", walkthroughs + "/job/_index.md", "yaml", []string{"kind: Pod"}, false},
+		{"go from the framework's code in the guide", guide, "go", []string{"e.GET(\"/carts/:id\", getCart)"}, false},
+		{"go from humus's code in the guide", guide, "go", []string{"func Init() {", "\thttpserver.NewService(e)", "}"}, false},
+		{"go from the guide's test", guide, "go", []string{"t.Log(\"only in the guide's test\")"}, false},
+		{"yaml from the guide", guide, "yaml", []string{"metadata:", "  name: carts"}, false},
+		{"go on a page of a guide written as a folder", migrating + "/http/echo/routes.md", "go", []string{"httpserver.NewService(e)"}, false},
+		{"go the guide does not hold", guide, "go", []string{"e.POST(\"/carts\", newCart)"}, true},
+		{"go from a walkthrough in a guide", guide, "go", []string{"humus.Main(app.Init)"}, true},
+		{"go from a test outside example in a guide", guide, "go", []string{"t.Log(\"ok\")"}, true},
+		{"yaml from a walkthrough in a guide", guide, "yaml", []string{"kind: CronJob"}, true},
+		{"sh is unchecked in a guide", guide, "sh", []string{"go run ./humus"}, false},
+		{"go from a guide on a feature page", feature, "go", []string{"httpserver.NewService(e)"}, true},
+		{"the migrating section's index keeps the feature pages' rule", migrating + "/_index.md", "go", []string{"t.Log(\"ok\")"}, false},
+		{"a guide's service type group keeps the feature pages' rule", migrating + "/http/_index.md", "go", []string{"t.Log(\"ok\")"}, false},
+		{"go from a guide on its service type group's page", migrating + "/http/_index.md", "go", []string{"httpserver.NewService(e)"}, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -286,16 +466,27 @@ func TestSampleProblems(t *testing.T) {
 	}
 }
 
-func TestSampleProblems_missing_walkthrough(t *testing.T) {
-	fsys := fstest.MapFS{
-		readme:                                {Data: []byte("# Humus\n")},
-		walkthroughs + "/job/billing/step.md": {Data: []byte("```go\nfunc main() {}\n```\n")},
+func TestSampleProblems_missing_example(t *testing.T) {
+	cases := []struct {
+		name string
+		page string
+	}{
+		{"a walkthrough", walkthroughs + "/job/billing/step.md"},
+		{"a migration guide", migrating + "/http/echo.md"},
 	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fsys := fstest.MapFS{
+				readme: {Data: []byte("# Humus\n")},
+				c.page: {Data: []byte("```go\nfunc main() {}\n```\n")},
+			}
 
-	_, err := sampleProblems(fsys)
+			_, err := sampleProblems(fsys)
 
-	if !errors.Is(err, fs.ErrNotExist) {
-		t.Errorf("err = %v, want fs.ErrNotExist", err)
+			if !errors.Is(err, fs.ErrNotExist) {
+				t.Errorf("err = %v, want fs.ErrNotExist", err)
+			}
+		})
 	}
 }
 
@@ -353,7 +544,9 @@ func TestQuotedIn(t *testing.T) {
 }
 
 // walkthroughLangs names, by the languages their fences give, the samples on a
-// walkthrough's pages that must be taken from the walkthrough's files.
+// walkthrough's pages that must be taken from the walkthrough's files. The
+// same samples on a migration guide's pages must be taken from the guide's
+// code.
 var walkthroughLangs = map[string]string{
 	"go":         "Go",
 	"yaml":       "YAML",
@@ -429,14 +622,34 @@ func sampleProblems(repo fs.FS) ([]string, error) {
 
 // exampleName returns the path, <type>/<name>, under example/ of the example
 // whose files the samples on page are taken from: the Getting started page's
-// service, which is the README's too, or the walkthrough page's example. It
-// returns "" for any other page, whose Go samples are taken from the _test.go
-// files of this module.
+// service, which is the README's too, the walkthrough page's example, or the
+// migration guide's code. It returns "" for any other page, whose Go samples
+// are taken from the _test.go files of this module.
 func exampleName(page string) string {
 	if page == gettingStarted || page == readme {
 		return gettingStartedExample
 	}
+	if name := guideName(page); name != "" {
+		return name
+	}
 	return walkthroughName(page)
+}
+
+// guideName returns the path, <type>/<name>, under example/ of the code of
+// the migration guide whose page is page, migrating/<type>/<name>.md, or
+// whose pages include it, under migrating/<type>/<name>/. It returns "" for
+// any other page, the section's and its groups' landing pages included.
+func guideName(page string) string {
+	rest, ok := strings.CutPrefix(page, migrating+"/")
+	if !ok {
+		return ""
+	}
+	typ, rest, ok := strings.Cut(rest, "/")
+	if !ok || rest == "_index.md" {
+		return ""
+	}
+	name, _, _ := strings.Cut(rest, "/")
+	return typ + "/" + strings.TrimSuffix(name, ".md")
 }
 
 // walkthroughName returns the path, <type>/<name>, of the walkthrough whose

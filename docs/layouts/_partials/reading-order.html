@@ -1,12 +1,18 @@
 {{- /*
   The site's reading order, starting from the page or section it is given:
   that page, then every page and section under it, depth first, each
-  section's children by weight, as the sidebar orders them. Given the home
-  page, it is every page of the site, from the overview to the last step of
-  the last walkthrough.
+  section's children by weight, as the sidebar orders them. A section whose
+  front matter sets reading_order to false is left out, with every page under
+  it: Migrating to humus is one, which a reader comes to from another
+  framework rather than in order. Given the home page, it is every other page
+  of the site, from the overview to the last step of the last walkthrough.
+  Given a section left out, it is that section and its pages.
 */ -}}
 {{- $order := slice . -}}
 {{- range (where .Pages "Kind" "in" (slice "page" "section")).ByWeight -}}
+  {{- if eq .Params.reading_order false -}}
+    {{- continue -}}
+  {{- end -}}
   {{- if eq .Kind "section" -}}
     {{- $order = $order | append (partial "reading-order.html" .) -}}
   {{- else -}}
