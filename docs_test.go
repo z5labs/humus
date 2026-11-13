@@ -220,6 +220,10 @@ func TestGroupProblems(t *testing.T) {
 		{"a group with no guide", fstest.MapFS{
 			"http/_index.md": index(10),
 		}, []string{migrating + "/http: no guide"}},
+		{"a group whose only folder holds no page", fstest.MapFS{
+			"http/_index.md":       index(10),
+			"http/assets/echo.png": guide,
+		}, []string{migrating + "/http: no guide"}},
 		{"a guide outside a group", fstest.MapFS{
 			"echo.md": guide,
 		}, []string{migrating + "/echo.md: not in a service type's group"}},
@@ -276,7 +280,20 @@ func groupProblems(repo fs.FS) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !slices.ContainsFunc(group, func(g fs.DirEntry) bool { return g.IsDir() || g.Name() != "_index.md" && path.Ext(g.Name()) == ".md" }) {
+		guides := 0
+		for _, g := range group {
+			switch {
+			case g.IsDir():
+				pages, err := fs.Glob(repo, path.Join(p, g.Name(), "*.md"))
+				if err != nil {
+					return nil, err
+				}
+				guides += min(len(pages), 1)
+			case g.Name() != "_index.md" && path.Ext(g.Name()) == ".md":
+				guides++
+			}
+		}
+		if guides == 0 {
 			problems = append(problems, fmt.Sprintf("%s: no guide; a service type with no guide has no group", p))
 		}
 		b, err := fs.ReadFile(repo, path.Join(p, "_index.md"))
@@ -292,7 +309,7 @@ func groupProblems(repo fs.FS) ([]string, error) {
 			return nil, fmt.Errorf("%s/_index.md: %w", p, err)
 		}
 		if fm.Weight == 0 {
-			problems = append(problems, fmt.Sprintf("%s/_index.md: no weight, so the sidebar does not order the group as Service types orders its type", p))
+			problems = append(problems, fmt.Sprintf("%s/_index.md: no weight, so the sidebar does not order the group as Service types orders its type; Hugo sorts a weight of 0 as none, after every weighted page", p))
 			continue
 		}
 		weights[e.Name()] = fm.Weight
