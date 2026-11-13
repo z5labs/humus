@@ -2,16 +2,28 @@
   /llms.txt, in the format https://llmstxt.org/ proposes: the site's title,
   the home page's description, and every page, in the reading order the
   sidebar and each page's next link follow, linked to its Markdown copy and
-  described by its own description.
+  described by its own description. Each section left out of the reading
+  order, such as Migrating to humus, follows under its own heading, its pages
+  in the order the sidebar gives them.
 */ -}}
 {{- define "partials/llms-description.txt" -}}
   {{- . | plainify | replaceRE `\s+` " " | strings.TrimSpace -}}
+{{- end -}}
+{{- define "partials/llms-pages.txt" -}}
+{{- range . }}
+- [{{ .Title }}]({{ (.OutputFormats.Get "markdown").Permalink }}): {{ partial "llms-description.txt" .Description }}
+{{- end }}
 {{- end -}}
 # {{ site.Title }}
 
 > {{ partial "llms-description.txt" .Description }}
 
 ## Docs
-{{- range partialCached "reading-order.html" site.Home }}
-- [{{ .Title }}]({{ (.OutputFormats.Get "markdown").Permalink }}): {{ partial "llms-description.txt" .Description }}
+{{- partial "llms-pages.txt" (partialCached "reading-order.html" site.Home) }}
+{{- range (where site.Pages "Kind" "section").ByWeight }}
+{{- if eq .Params.reading_order false }}
+
+## {{ .Title }}
+{{- partial "llms-pages.txt" (partial "reading-order.html" .) }}
+{{- end }}
 {{- end }}
