@@ -46,3 +46,6 @@ The guides are listed under their service types, in the order
 - [Fiber]({{< relref "/migrating/http/fiber" >}}): a Fiber v3 service, run on
   `httpserver` through Fiber's adaptor with its routes unchanged, then its
   routes moved onto `openapi/v3` a few at a time.
+- [Huma]({{< relref "/migrating/http/huma" >}}): a Huma v2 API, run on
+  `httpserver` with its operations unchanged, then its operations moved onto
+  `openapi/v3` a few at a time, until `openapi/v3`'s document describes it.

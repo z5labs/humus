@@ -23,6 +23,10 @@
 /example/http/fiber/step1/step1
 /example/http/fiber/step2/step2
 /example/http/fiber/step3/step3
+/example/http/huma/start/start
+/example/http/huma/step1/step1
+/example/http/huma/step2/step2
+/example/http/huma/step3/step3
 
 # Test binary, built with `go test -c`
 *.test
