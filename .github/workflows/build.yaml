@@ -27,11 +27,16 @@ jobs:
   # file, which passes only when every job before it passed, so the jobs it
   # waits on can be added, split or renamed without changing the ruleset.
   #
-  # `./...` does not descend into a nested module, so lint, compile and test
-  # each run once per module that go-modules.sh lists, in a matrix, and every
-  # module's run at the same time. A module added to the repository is in the
-  # list, and so in every matrix, with no change here. No matrix fails fast,
-  # so one run reports every failure.
+  # `./...` does not descend into a nested module, so each module that
+  # go-modules.sh lists is linted and unit tested on its own, in a job of its
+  # own in the Lint and test matrix, and every module's job runs at the same
+  # time. A module added to the repository is in the list, and so in the
+  # matrix, with no change here. No matrix fails fast, so one run reports
+  # every failure.
+  #
+  # No job builds every module: go test and golangci-lint both fail on a type
+  # error, in a package without tests too, and every main package without
+  # tests is linked by the docker build in its walkthrough's kind job.
   #
   # Every job but Scripts, which compiles nothing, restores a Go cache of its
   # own, named in its restore-go-cache step, rather than setup-go's cache,
@@ -77,90 +82,14 @@ jobs:
             key: ${{ steps.go-cache.outputs.key }}
             path: ${{ steps.go-cache.outputs.path }}
 
-  lint:
-    name: Lint (${{ matrix.module }})
-    needs: modules
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        module: ${{ fromJSON(needs.modules.outputs.modules) }}
-    steps:
-        - name: Checkout
-          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
-          with:
-            go-version: '1.27.4'
-            cache: false
-
-        - id: go-cache
-          uses: ./.github/actions/restore-go-cache
-          with:
-            name: lint(${{ matrix.module }})
-            path: ~/.cache/golangci-lint
-
-        - name: Install golangci-lint
-          uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
-          with:
-            version: v2.15.0
-            install-only: true
-            skip-cache: true
-
-        - name: Lint
-          working-directory: ${{ matrix.module }}
-          run: golangci-lint run
-
-        - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
-          uses: ./.github/actions/save-go-cache
-          with:
-            key: ${{ steps.go-cache.outputs.key }}
-            path: ${{ steps.go-cache.outputs.path }}
-
-  compile:
-    name: Compile (${{ matrix.module }})
-    needs: modules
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        module: ${{ fromJSON(needs.modules.outputs.modules) }}
-    steps:
-        - name: Checkout
-          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
-          with:
-            go-version: '1.27.4'
-            cache: false
-
-        - id: go-cache
-          uses: ./.github/actions/restore-go-cache
-          with:
-            name: compile(${{ matrix.module }})
-
-        - name: Build
-          run: go -C "$MODULE" build ./...
-          env:
-            MODULE: ${{ matrix.module }}
-
-        - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
-          uses: ./.github/actions/save-go-cache
-          with:
-            key: ${{ steps.go-cache.outputs.key }}
-            path: ${{ steps.go-cache.outputs.path }}
-
-  # A package's coverage comes only from its own module's tests, so each
-  # module's job gates its own packages, and between them the gate still
-  # covers every package outside example/.
-  test:
-    name: Test (${{ matrix.module }})
+  # A module's lint and its unit tests share a job, so they share its setup
+  # and its one cache, which holds golangci-lint's cache beside Go's. The
+  # tests and the coverage gate run whether lint passed or not, so one run
+  # reports both. A package's coverage comes only from its own module's
+  # tests, so each module's job gates its own packages, and between them the
+  # gate still covers every package outside example/.
+  lint-and-test:
+    name: Lint and test (${{ matrix.module }})
     needs: modules
     runs-on: ubuntu-latest
     permissions:
@@ -184,15 +113,31 @@ jobs:
         - id: go-cache
           uses: ./.github/actions/restore-go-cache
           with:
-            name: test(${{ matrix.module }})
+            name: lint-and-test(${{ matrix.module }})
+            path: ~/.cache/golangci-lint
 
+        - name: Install golangci-lint
+          uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
+          with:
+            version: v2.15.0
+            install-only: true
+            skip-cache: true
+
+        - name: Lint
+          working-directory: ${{ matrix.module }}
+          run: golangci-lint run
+
+        # The cache step runs only when checkout and setup-go succeeded, so
+        # the steps from here on run once Go is set up, whatever happened to
+        # golangci-lint.
         - name: Test
+          if: ${{ !cancelled() && steps.go-cache.outcome == 'success' }}
           run: |
             go -C "$MODULE" test -count=1 -race -cover \
               -coverprofile="$RUNNER_TEMP/coverage.out" ./...
 
         - name: List the packages the coverage gate covers
-          if: ${{ !cancelled() }}
+          if: ${{ !cancelled() && steps.go-cache.outcome == 'success' }}
           run: |
             examples="$(go list -m)/example"
             go -C "$MODULE" list ./... > "$RUNNER_TEMP/module-packages.txt"
@@ -200,7 +145,7 @@ jobs:
               "$RUNNER_TEMP/module-packages.txt" > "$RUNNER_TEMP/packages.txt"
 
         - name: Require 80% statement coverage of every library package
-          if: ${{ !cancelled() }}
+          if: ${{ !cancelled() && steps.go-cache.outcome == 'success' }}
           run: .github/scripts/coverage-gate.sh 80 "$RUNNER_TEMP/packages.txt" "$RUNNER_TEMP/coverage.out"
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
@@ -209,11 +154,11 @@ jobs:
             key: ${{ steps.go-cache.outputs.key }}
             path: ${{ steps.go-cache.outputs.path }}
 
-  # The tests behind the testcontainers tag run in the testcontainers
-  # jobs below, and the tests behind the functional tag in the kind jobs, so
-  # here they are only compiled and vetted, without starting a container,
-  # alongside the unit tests. Every module under example/ that go-modules.sh
-  # lists is vetted with both tags, so a new example needs no change here.
+  # The tests behind the testcontainers tag run in the testcontainers jobs
+  # below, so here they are only compiled and vetted, without starting a
+  # container. Every module under example/ that go-modules.sh lists is
+  # vetted with the tag, so a new example needs no change here. Vet the
+  # functional tests vets the examples with the functional tag.
   vet-testcontainers:
     name: Vet the testcontainers tests
     needs: modules
@@ -247,9 +192,6 @@ jobs:
             for module in $(jq -r '.[] | select(startswith("example/"))' <<<"$MODULES"); do
               echo "::group::go vet -tags testcontainers ($module)"
               go -C "$module" vet -tags testcontainers ./... || failed=1
-              echo "::endgroup::"
-              echo "::group::go vet -tags functional ($module)"
-              go -C "$module" vet -tags functional ./... || failed=1
               echo "::endgroup::"
             done
             exit "$failed"
@@ -376,9 +318,7 @@ jobs:
     name: Build
     needs:
       - modules
-      - lint
-      - compile
-      - test
+      - lint-and-test
       - vet-testcontainers
       - vet-functional
       - conformance
@@ -395,9 +335,9 @@ jobs:
             jq -e 'all(.[]; .result == "success")' <<<"$NEEDS" >/dev/null
 
   # The tests behind the testcontainers build tag run Kafka in a container
-  # and open real sockets, so they run here rather than in Test: they don't
-  # slow the unit tests, they don't count toward the coverage gate, and this
-  # job is a required check of its own.
+  # and open real sockets, so they run here rather than with the unit tests:
+  # they don't slow the unit tests, they don't count toward the coverage
+  # gate, and this job is a required check of its own.
   kafka-testcontainers:
     name: Kafka (testcontainers)
     runs-on: ubuntu-latest
@@ -429,10 +369,10 @@ jobs:
             path: ${{ steps.go-cache.outputs.path }}
 
   # The tests behind the testcontainers build tag run RabbitMQ in a container
-  # and open real sockets, so they run here rather than in Test: they don't
-  # slow the unit tests, they don't count toward the coverage gate, and this
-  # job is a required check of its own. humus keeps no fake broker, so these
-  # are the only tests of queue/rabbitmq that reach one.
+  # and open real sockets, so they run here rather than with the unit tests:
+  # they don't slow the unit tests, they don't count toward the coverage
+  # gate, and this job is a required check of its own. humus keeps no fake
+  # broker, so these are the only tests of queue/rabbitmq that reach one.
   rabbitmq-testcontainers:
     name: RabbitMQ (testcontainers)
     runs-on: ubuntu-latest
@@ -465,11 +405,11 @@ jobs:
 
   # The tests behind the testcontainers build tag run k3s's Kubernetes API
   # server in a container and open real sockets, so they run here rather than
-  # in Test: they don't slow the unit tests, they don't count toward the
-  # coverage gate, and this job is a required check of its own. humus keeps
-  # no fake API server, so these are the only tests of kube that reach one.
-  # They run with -v, so the log shows how long each test took, and how long
-  # k3s took to start, pulling its image included.
+  # with the unit tests: they don't slow the unit tests, they don't count
+  # toward the coverage gate, and this job is a required check of its own.
+  # humus keeps no fake API server, so these are the only tests of kube that
+  # reach one. They run with -v, so the log shows how long each test took,
+  # and how long k3s took to start, pulling its image included.
   kube-testcontainers:
     name: Kubernetes (testcontainers)
     runs-on: ubuntu-latest
@@ -882,7 +822,7 @@ jobs:
   # tests behind the functional tag then run the shared cases against it, and
   # find a request's trace, logs and metrics in the overlay's LGTM stack. The
   # ruleset doesn't require this job, and Build doesn't wait on it; Vet the
-  # testcontainers tests vets them.
+  # functional tests vets them.
   mailer-kind:
     name: Mailer walkthrough (kind)
     runs-on: ubuntu-latest

@@ -17,12 +17,13 @@
 # targeted Go version (1.27.0)".
 #
 # The version is the `version` input of the golangci-lint-action step in
-# .github/workflows/build.yaml. That is the one pin: CI's lint job installs that
-# version, and this reads it from there, so a bump there reaches cloud sessions
-# with no change here. Like the action, it downloads the release archive from
-# github.com/golangci/golangci-lint/releases, checks it against the release's
-# checksums file, and puts the binary in BIN_DIR, ~/.local/bin by default,
-# which a cloud session's PATH puts ahead of the image's /usr/local/bin.
+# .github/workflows/build.yaml. That is the one pin: CI's Lint and test jobs
+# install that version, and this reads it from there, so a bump there reaches
+# cloud sessions with no change here. Like the action, it downloads the
+# release archive from github.com/golangci/golangci-lint/releases, checks it
+# against the release's checksums file, and puts the binary in BIN_DIR,
+# ~/.local/bin by default, which a cloud session's PATH puts ahead of the
+# image's /usr/local/bin.
 #
 # When the golangci-lint first on PATH already reports the pinned version, it
 # does nothing and says nothing.
