@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>HTTP on Humus</title><link>https://z5labs.github.io/humus/pr-preview/pr-1439/migrating/http/</link><description>Recent content in HTTP on Humus</description><generator>Hugo</generator><language>en-us</language><atom:link href="https://z5labs.github.io/humus/pr-preview/pr-1439/migrating/http/index.xml" rel="self" type="application/rss+xml"/><item><title>Migrating from Echo</title><link>https://z5labs.github.io/humus/pr-preview/pr-1439/migrating/http/echo/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/pr-preview/pr-1439/migrating/http/echo/</guid><description>&lt;p&gt;This guide moves a small &lt;a href="https://echo.labstack.com"&gt;Echo&lt;/a&gt; v5 service to
+humus. Its first step runs the Echo engine on humus, so the process,
+settings, TLS, telemetry, probes and shutdown are humus&amp;rsquo;s from then on. Its
+next steps move the routes onto &lt;code&gt;openapi/v3&lt;/code&gt; a few at a time, while Echo
+serves the rest, until the service no longer requires Echo.&lt;/p&gt;
+&lt;p&gt;Two things make that work. An Echo engine is an &lt;code&gt;http.Handler&lt;/code&gt;, which
+&lt;code&gt;httpserver.NewService&lt;/code&gt; serves. And an &lt;code&gt;openapi.API&lt;/code&gt; hands every request no
+operation serves to its &lt;code&gt;Unmatched&lt;/code&gt; handlers, which can be the Echo engine.&lt;/p&gt;</description></item><item><title>Migrating from Gin</title><link>https://z5labs.github.io/humus/pr-preview/pr-1439/migrating/http/gin/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/pr-preview/pr-1439/migrating/http/gin/</guid><description>&lt;p&gt;This guide moves a small &lt;a href="https://gin-gonic.com/en/docs/"&gt;Gin&lt;/a&gt; v1 service to
+humus. Its first step runs the Gin engine on humus, so the process,
+settings, TLS, telemetry, probes and shutdown are humus&amp;rsquo;s from then on. Its
+next steps move the routes onto &lt;code&gt;openapi/v3&lt;/code&gt; a few at a time, while Gin
+serves the rest, until the service no longer requires Gin.&lt;/p&gt;
+&lt;p&gt;Two things make that work. A Gin engine is an &lt;code&gt;http.Handler&lt;/code&gt;, which
+&lt;code&gt;httpserver.NewService&lt;/code&gt; serves. And an &lt;code&gt;openapi.API&lt;/code&gt; hands every request no
+operation serves to its &lt;code&gt;Unmatched&lt;/code&gt; handlers, which can be the Gin engine.&lt;/p&gt;</description></item><item><title>Migrating from Fiber</title><link>https://z5labs.github.io/humus/pr-preview/pr-1439/migrating/http/fiber/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/pr-preview/pr-1439/migrating/http/fiber/</guid><description>&lt;p&gt;This guide moves a small &lt;a href="https://docs.gofiber.io"&gt;Fiber&lt;/a&gt; v3 service to
+humus. Its first step runs the Fiber app on humus, so the process, settings,
+TLS, telemetry, probes and shutdown are humus&amp;rsquo;s from then on. Its next steps
+move the routes onto &lt;code&gt;openapi/v3&lt;/code&gt; a few at a time, while Fiber serves the
+rest, until the service requires neither Fiber nor fasthttp.&lt;/p&gt;
+&lt;p&gt;Fiber runs on fasthttp, not &lt;code&gt;net/http&lt;/code&gt;, so each handler is rewritten when its
+route moves. Two things still let the service move a few routes at a time.
+Fiber&amp;rsquo;s &lt;a href="https://docs.gofiber.io/middleware/adaptor"&gt;adaptor&lt;/a&gt; middleware
+serves a Fiber app as an &lt;code&gt;http.HandlerFunc&lt;/code&gt;, which &lt;code&gt;httpserver.NewService&lt;/code&gt;
+serves. And an &lt;code&gt;openapi.API&lt;/code&gt; hands every request no operation serves to its
+&lt;code&gt;Unmatched&lt;/code&gt; handlers, which can be the adapted app.&lt;/p&gt;</description></item><item><title>Migrating from Huma</title><link>https://z5labs.github.io/humus/pr-preview/pr-1439/migrating/http/huma/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/pr-preview/pr-1439/migrating/http/huma/</guid><description>&lt;p&gt;This guide moves a small &lt;a href="https://huma.rocks"&gt;Huma&lt;/a&gt; v2 API to humus. Its
+first step runs the Huma API on humus, so the process, settings, TLS,
+telemetry, probes and shutdown are humus&amp;rsquo;s from then on. Its next steps move
+the operations onto &lt;code&gt;openapi/v3&lt;/code&gt; a few at a time, while Huma serves the rest,
+until the API no longer requires Huma and one OpenAPI document, &lt;code&gt;openapi/v3&lt;/code&gt;&amp;rsquo;s,
+describes it.&lt;/p&gt;
+&lt;p&gt;Huma and &lt;code&gt;openapi/v3&lt;/code&gt; both declare typed operations and write the document
+from them, so most of the move translates declarations: Huma&amp;rsquo;s input and
+output structs, and their tags, become typed paths, parameters and codecs.
+Two things let the operations move a few at a time. A Huma API on its
+&lt;code&gt;humago&lt;/code&gt; adapter is served by an &lt;code&gt;http.ServeMux&lt;/code&gt;, which
+&lt;code&gt;httpserver.NewService&lt;/code&gt; serves. And an &lt;code&gt;openapi.API&lt;/code&gt; hands every request no
+operation serves to its &lt;code&gt;Unmatched&lt;/code&gt; handlers, which can be that ServeMux.&lt;/p&gt;</description></item></channel></rss>
