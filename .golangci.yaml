@@ -13,10 +13,10 @@ linters:
     - forbidigo
   exclusions:
     rules:
-      # The service the Echo migration guide starts from isn't a humus App:
-      # it reads its environment and its signals as Echo's documentation
-      # does, which is what the guide moves it off.
-      - path: ^example/http/echo/start/
+      # The services the Echo and Gin migration guides start from aren't
+      # humus Apps: each reads its environment and its signals as its
+      # framework's documentation does, which is what its guide moves it off.
+      - path: ^example/http/(echo|gin)/start/
         linters:
           - forbidigo
   settings:

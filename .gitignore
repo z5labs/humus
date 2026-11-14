@@ -15,6 +15,10 @@
 /example/http/echo/step1/step1
 /example/http/echo/step2/step2
 /example/http/echo/step3/step3
+/example/http/gin/start/start
+/example/http/gin/step1/step1
+/example/http/gin/step2/step2
+/example/http/gin/step3/step3
 
 # Test binary, built with `go test -c`
 *.test

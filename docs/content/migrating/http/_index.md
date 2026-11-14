@@ -17,3 +17,4 @@ while the framework serves the rest, until the service no longer requires
 the framework.
 
 - [Echo]({{< relref "/migrating/http/echo" >}})
+- [Gin]({{< relref "/migrating/http/gin" >}})
