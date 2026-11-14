@@ -29,7 +29,7 @@ operation serves to its `Unmatched` handlers, which can be the Echo engine.
 | the address, from `os.Getenv` | `httpserver.Settings`, sourced and checked with `config.Struct`: [Configuring a humus service]({{< relref "/fundamentals/configuration" >}}) |
 | `StartTLS`, or TLS left to a proxy | `Settings.TLS`, which is required: [TLS]({{< relref "/services/http/serving#tls" >}}) |
 | graceful shutdown on SIGTERM, within `GracefulTimeout` | a 5s drain, then a 10s grace period: [The defaults]({{< relref "/services/http/serving#the-defaults" >}}) |
-| `e.Logger` | the Setup's `LoggerProvider`, through the OpenTelemetry Logs API: [Telemetry]({{< relref "/fundamentals/telemetry#where-the-providers-come-from" >}}) |
+| `e.Logger` | while Echo serves routes, Echo's logger on the Process's stdout, rather than the real one; for the service's own records, the Setup's `LoggerProvider`, through the OpenTelemetry Logs API: [Telemetry]({{< relref "/fundamentals/telemetry#where-the-providers-come-from" >}}) |
 | `middleware.RequestLogger()` | none: each request is a span, with its metrics: [Telemetry]({{< relref "/services/http/serving#telemetry" >}}) |
 | `middleware.Recover()` | the API's `CatchAll` answers a panic: [Panics]({{< relref "/services/http/openapi#panics" >}}) |
 | `middleware.BodyLimit` | none: `http.MaxBytesHandler` around the API, and the decoder answers 413: [Operations]({{< relref "/services/http/openapi#operations" >}}) |
