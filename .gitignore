@@ -9,8 +9,12 @@
 *.dylib
 
 # go build ./... writes a module's executable into the module's directory
-# when main is the module's only package, so verifying a change builds this one.
+# when main is the module's only package, so verifying a change builds these.
 /example/job/hello/hello
+/example/http/echo/start/start
+/example/http/echo/step1/step1
+/example/http/echo/step2/step2
+/example/http/echo/step3/step3
 
 # Test binary, built with `go test -c`
 *.test

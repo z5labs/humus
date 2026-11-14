@@ -11,6 +11,14 @@ linters:
   enable:
     - depguard
     - forbidigo
+  exclusions:
+    rules:
+      # The service the Echo migration guide starts from isn't a humus App:
+      # it reads its environment and its signals as Echo's documentation
+      # does, which is what the guide moves it off.
+      - path: ^example/http/echo/start/
+        linters:
+          - forbidigo
   settings:
     depguard:
       rules:

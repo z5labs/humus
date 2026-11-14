@@ -17,3 +17,6 @@ the API's OpenAPI document from the same declarations.
 The [shoppingcart walkthrough]({{< relref "/walkthroughs/http/shoppingcart" >}})
 builds a production-ready API on both, step by step, and its code is
 [`example/http/shoppingcart`](https://github.com/z5labs/humus/tree/main/example/http/shoppingcart).
+
+A service on Echo moves to both a few routes at a time, as
+[Migrating from Echo]({{< relref "/migrating/http/echo" >}}) shows.
