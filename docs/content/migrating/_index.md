@@ -64,3 +64,11 @@ The guides are listed under their service types, in the order
   publishing onto a `rabbitmq.Publisher`, its topology into a definitions
   file, and its retries and poison queue onto a delay queue and a
   dead-letter exchange.
+
+### Kubernetes controllers
+
+- [kubebuilder]({{< relref "/migrating/kube/kubebuilder" >}}): a kubebuilder
+  v4 operator, its reconciler moved onto a `kube.Reconciler` on client-go,
+  with no controller-runtime, its custom resource declared as Go values with
+  its CRD kept by a golden test, its finalizer onto `kube.Finalize`, and its
+  RBAC written by hand.

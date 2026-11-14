@@ -13,13 +13,19 @@ linters:
     - forbidigo
   exclusions:
     rules:
-      # The services the Echo, Gin, Fiber, Huma and Watermill migration
-      # guides start from aren't humus Apps: each reads its environment and
-      # its signals as its framework's documentation does, which is what its
-      # guide moves it off.
-      - path: ^example/(http/(echo|gin|fiber|huma)|(kafka|rabbitmq)/watermill)/start/
+      # The services the Echo, Gin, Fiber, Huma, Watermill and kubebuilder
+      # migration guides start from aren't humus Apps: each reads its
+      # environment, its flags and its signals as its framework's
+      # documentation does, which is what its guide moves it off.
+      - path: ^example/(http/(echo|gin|fiber|huma)|(kafka|rabbitmq)/watermill|kube/kubebuilder)/start/
         linters:
           - forbidigo
+      # The operator the kubebuilder migration guide starts from is built on
+      # controller-runtime, which its guide moves it off. Its module is the
+      # only one that requires controller-runtime.
+      - path: ^example/kube/kubebuilder/start/
+        linters:
+          - depguard
   settings:
     depguard:
       rules:

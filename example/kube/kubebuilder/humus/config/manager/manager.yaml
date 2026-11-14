@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: controller-manager
+  namespace: system
+  labels:
+    control-plane: controller-manager
+spec:
+  selector:
+    matchLabels:
+      control-plane: controller-manager
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        control-plane: controller-manager
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - image: controller:latest
+        name: manager
+        env:
+        - name: CONTROLLER_NAME
+          value: 4b13e8ac.example.com
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: PROBES_ADDR
+          value: :8081
+        - name: PROBES_TLS_CERT_FILE
+          value: /etc/manager/probes/tls.crt
+        - name: PROBES_TLS_KEY_FILE
+          value: /etc/manager/probes/tls.key
+        ports:
+        - containerPort: 8081
+          name: probes
+          protocol: TCP
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - "ALL"
+        livenessProbe:
+          httpGet:
+            path: /health/liveness
+            port: probes
+            scheme: HTTPS
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /health/readiness
+            port: probes
+            scheme: HTTPS
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        volumeMounts:
+        - name: probes
+          mountPath: /etc/manager/probes
+          readOnly: true
+      volumes:
+      - name: probes
+        secret:
+          secretName: controller-manager-probes
+      serviceAccountName: controller-manager
+      terminationGracePeriodSeconds: 30

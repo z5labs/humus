@@ -116,6 +116,47 @@ func TestRepository_holds_no_compiled_executables(t *testing.T) {
 	}
 }
 
+// TestModules_require_no_controller_runtime checks every go.mod git tracks,
+// and every untracked one it does not ignore: none requires controller-runtime
+// or controller-tools, directly or as an indirect requirement, but the module
+// of the operator the kubebuilder migration guide starts from, which requires
+// controller-runtime. A go.mod requires every module that provides a package
+// its module's packages or tests import, however indirectly, so neither is
+// compiled into any other module. depguard denies importing either
+// everywhere else; this catches one that arrives through a dependency. A
+// module that is only in another's graph, providing it no package, isn't
+// checked: reading each module's whole graph would download it. See the
+// Kubernetes controllers proposal, #851.
+func TestModules_require_no_controller_runtime(t *testing.T) {
+	out, err := exec.CommandContext(t.Context(), "git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "go.mod", "**/go.mod").Output()
+	require.NoError(t, err)
+
+	const start = "example/kube/kubebuilder/start/go.mod"
+	var mods []string
+	for _, path := range strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00") {
+		b, err := os.ReadFile(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			// Deleted from the working tree but not yet from the index.
+			continue
+		}
+		require.NoError(t, err)
+		mods = append(mods, path)
+		denied := []string{"sigs.k8s.io/controller-tools"}
+		if path != start {
+			denied = append(denied, "sigs.k8s.io/controller-runtime")
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			for _, mod := range denied {
+				if fields := strings.Fields(strings.TrimPrefix(strings.TrimSpace(line), "require ")); len(fields) > 0 && fields[0] == mod {
+					t.Errorf("%s requires %s", path, mod)
+				}
+			}
+		}
+	}
+	require.Contains(t, mods, "go.mod")
+	require.Contains(t, mods, start)
+}
+
 // readHead returns up to the first n bytes of the regular file at path, and
 // nothing for anything else, such as a directory holding a nested repository.
 func readHead(path string, n int) ([]byte, error) {
