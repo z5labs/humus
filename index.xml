@@ -354,7 +354,17 @@ back:&lt;/p&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;h2 id="classify"&gt;Classify&lt;/h2&gt;
 &lt;p&gt;&lt;code&gt;httpclient&lt;/code&gt;&amp;rsquo;s default &lt;code&gt;Classify&lt;/code&gt;, plus two answers. A 409 means a charge with
 this key is still in flight, so it is retried, and every 5xx counts against
-the breaker:&lt;/p&gt;</description></item><item><title>Jobs</title><link>https://z5labs.github.io/humus/services/jobs/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/services/jobs/</guid><description>&lt;p&gt;A job is a process that does one piece of work and exits. The
+the breaker:&lt;/p&gt;</description></item><item><title>Migrating from Fiber</title><link>https://z5labs.github.io/humus/migrating/http/fiber/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/migrating/http/fiber/</guid><description>&lt;p&gt;This guide moves a small &lt;a href="https://docs.gofiber.io"&gt;Fiber&lt;/a&gt; v3 service to
+humus. Its first step runs the Fiber app on humus, so the process, settings,
+TLS, telemetry, probes and shutdown are humus&amp;rsquo;s from then on. Its next steps
+move the routes onto &lt;code&gt;openapi/v3&lt;/code&gt; a few at a time, while Fiber serves the
+rest, until the service requires neither Fiber nor fasthttp.&lt;/p&gt;
+&lt;p&gt;Fiber runs on fasthttp, not &lt;code&gt;net/http&lt;/code&gt;, so each handler is rewritten when its
+route moves. Two things still let the service move a few routes at a time.
+Fiber&amp;rsquo;s &lt;a href="https://docs.gofiber.io/middleware/adaptor"&gt;adaptor&lt;/a&gt; middleware
+serves a Fiber app as an &lt;code&gt;http.HandlerFunc&lt;/code&gt;, which &lt;code&gt;httpserver.NewService&lt;/code&gt;
+serves. And an &lt;code&gt;openapi.API&lt;/code&gt; hands every request no operation serves to its
+&lt;code&gt;Unmatched&lt;/code&gt; handlers, which can be the adapted app.&lt;/p&gt;</description></item><item><title>Jobs</title><link>https://z5labs.github.io/humus/services/jobs/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/services/jobs/</guid><description>&lt;p&gt;A job is a process that does one piece of work and exits. The
 &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/job"&gt;&lt;code&gt;job&lt;/code&gt;&lt;/a&gt; package turns that
 work, the run, into a &lt;code&gt;humus.Service&lt;/code&gt; that runs it once, stops it on either
 shutdown signal and records one span around it. The job runs on

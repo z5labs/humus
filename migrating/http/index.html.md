@@ -9,3 +9,4 @@ the framework.
 
 - [Echo](/humus/migrating/http/echo/)
 - [Gin](/humus/migrating/http/gin/)
+- [Fiber](/humus/migrating/http/fiber/)
