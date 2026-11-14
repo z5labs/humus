@@ -43,3 +43,6 @@ The guides are listed under their service types, in the order
 - [Gin]({{< relref "/migrating/http/gin" >}}): a Gin v1 service, run on
   `httpserver` with its routes unchanged, then its routes moved onto
   `openapi/v3` a few at a time.
+- [Fiber]({{< relref "/migrating/http/fiber" >}}): a Fiber v3 service, run on
+  `httpserver` through Fiber's adaptor with its routes unchanged, then its
+  routes moved onto `openapi/v3` a few at a time.
