@@ -1,0 +1,109 @@
+{
+  "exchanges": [
+    {
+      "name": "orders",
+      "vhost": "/",
+      "type": "fanout",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "invoices",
+      "vhost": "/",
+      "type": "fanout",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "orders.poison",
+      "vhost": "/",
+      "type": "fanout",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "orders_invoicer.retry",
+      "vhost": "/",
+      "type": "fanout",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    }
+  ],
+  "queues": [
+    {
+      "name": "orders_invoicer",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "orders_invoicer.retry",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "quorum"
+      }
+    },
+    {
+      "name": "orders.poison",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "quorum"
+      }
+    }
+  ],
+  "bindings": [
+    {
+      "source": "orders",
+      "vhost": "/",
+      "destination": "orders_invoicer",
+      "destination_type": "queue",
+      "routing_key": "",
+      "arguments": {}
+    },
+    {
+      "source": "orders_invoicer.retry",
+      "vhost": "/",
+      "destination": "orders_invoicer.retry",
+      "destination_type": "queue",
+      "routing_key": "",
+      "arguments": {}
+    },
+    {
+      "source": "orders.poison",
+      "vhost": "/",
+      "destination": "orders.poison",
+      "destination_type": "queue",
+      "routing_key": "",
+      "arguments": {}
+    }
+  ],
+  "policies": [
+    {
+      "name": "orders_invoicer.retry",
+      "vhost": "/",
+      "pattern": "^orders_invoicer\\.retry$",
+      "apply-to": "queues",
+      "priority": 0,
+      "definition": {
+        "message-ttl": 10000,
+        "dead-letter-exchange": "",
+        "dead-letter-routing-key": "orders_invoicer",
+        "dead-letter-strategy": "at-least-once",
+        "overflow": "reject-publish"
+      }
+    }
+  ]
+}

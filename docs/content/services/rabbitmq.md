@@ -41,6 +41,9 @@ its [revision 1](https://github.com/z5labs/humus/discussions/765#discussioncomme
 The [mailer walkthrough]({{< relref "/walkthroughs/rabbitmq/mailer" >}})
 builds a production-ready worker on `queue/rabbitmq`, step by step, and its
 code is [`example/rabbitmq/mailer`](https://github.com/z5labs/humus/tree/main/example/rabbitmq/mailer).
+A consumer on Watermill moves to `queue/rabbitmq` as
+[Migrating from Watermill]({{< relref "/migrating/rabbitmq/watermill" >}})
+shows.
 
 ## The contract
 
