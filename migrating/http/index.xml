@@ -5,4 +5,11 @@ next steps move the routes onto &lt;code&gt;openapi/v3&lt;/code&gt; a few at a t
 serves the rest, until the service no longer requires Echo.&lt;/p&gt;
 &lt;p&gt;Two things make that work. An Echo engine is an &lt;code&gt;http.Handler&lt;/code&gt;, which
 &lt;code&gt;httpserver.NewService&lt;/code&gt; serves. And an &lt;code&gt;openapi.API&lt;/code&gt; hands every request no
-operation serves to its &lt;code&gt;Unmatched&lt;/code&gt; handlers, which can be the Echo engine.&lt;/p&gt;</description></item></channel></rss>
+operation serves to its &lt;code&gt;Unmatched&lt;/code&gt; handlers, which can be the Echo engine.&lt;/p&gt;</description></item><item><title>Migrating from Gin</title><link>https://z5labs.github.io/humus/migrating/http/gin/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/migrating/http/gin/</guid><description>&lt;p&gt;This guide moves a small &lt;a href="https://gin-gonic.com/en/docs/"&gt;Gin&lt;/a&gt; v1 service to
+humus. Its first step runs the Gin engine on humus, so the process,
+settings, TLS, telemetry, probes and shutdown are humus&amp;rsquo;s from then on. Its
+next steps move the routes onto &lt;code&gt;openapi/v3&lt;/code&gt; a few at a time, while Gin
+serves the rest, until the service no longer requires Gin.&lt;/p&gt;
+&lt;p&gt;Two things make that work. A Gin engine is an &lt;code&gt;http.Handler&lt;/code&gt;, which
+&lt;code&gt;httpserver.NewService&lt;/code&gt; serves. And an &lt;code&gt;openapi.API&lt;/code&gt; hands every request no
+operation serves to its &lt;code&gt;Unmatched&lt;/code&gt; handlers, which can be the Gin engine.&lt;/p&gt;</description></item></channel></rss>

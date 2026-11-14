@@ -8,3 +8,4 @@ while the framework serves the rest, until the service no longer requires
 the framework.
 
 - [Echo](/humus/migrating/http/echo/)
+- [Gin](/humus/migrating/http/gin/)

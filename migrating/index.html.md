@@ -28,3 +28,6 @@ The guides are listed under their service types, in the order
 - [Echo](/humus/migrating/http/echo/): an Echo v5 service, run on
   `httpserver` with its routes unchanged, then its routes moved onto
   `openapi/v3` a few at a time.
+- [Gin](/humus/migrating/http/gin/): a Gin v1 service, run on
+  `httpserver` with its routes unchanged, then its routes moved onto
+  `openapi/v3` a few at a time.
