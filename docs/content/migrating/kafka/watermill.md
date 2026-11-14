@@ -35,7 +35,7 @@ the humus service, rather than each leaving a service that runs.
 | the handler, a `message.HandlerFunc` | a `queue.Processor`, whose `Process` gets a `kafka.Message`: [The contract]({{< relref "/services/kafka#the-contract" >}}) |
 | `kafka.DefaultMarshaler`, and a message's payload and metadata | the record's key, value and headers, in `kafka.Message` and `kafka.Record`: [The contract]({{< relref "/services/kafka#the-contract" >}}) |
 | a message's UUID, from `watermill.NewUUID` | none: a record is known by its topic, partition and offset, and an order by its key |
-| `kafka.Publisher`, and the messages the handler returns | a `kafka.Producer`, from `kafka.NewProducer`, which the `Processor` produces with before it returns: [Producing]({{< relref "/services/kafka#producing" >}}) |
+| `kafka.Publisher`, and the messages the handler returns | a `kafka.Producer`, from `kafka.NewProducer`, which the `Processor` calls before it returns: [Producing]({{< relref "/services/kafka#producing" >}}) |
 | `middleware.Retry` | a retry topic, `orders.retry`, for what may pass later, tried again after `RETRY_DELAY`: [Retries and dead letters]({{< relref "/walkthroughs/kafka/orderstatus/retries" >}}) |
 | `middleware.PoisonQueue` | a dead-letter topic, for what never will pass, and for what still fails after `RETRY_ATTEMPTS`: [Dead letters]({{< relref "/services/kafka#dead-letters" >}}) |
 | `middleware.Recoverer` | none: a panicking `Processor` crashes the process, and its record is processed again after the restart. The `Processor` returns an error instead: [Retries and panics]({{< relref "/services/kafka#retries-and-panics" >}}) |
