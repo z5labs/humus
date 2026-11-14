@@ -13,6 +13,8 @@ builds a production-ready API on both, step by step, and its code is
 A service on Echo, Gin or Fiber moves to both a few routes at a time, as
 [Migrating from Echo](/humus/migrating/http/echo/),
 [Migrating from Gin](/humus/migrating/http/gin/) and
-[Migrating from Fiber](/humus/migrating/http/fiber/) show.
+[Migrating from Fiber](/humus/migrating/http/fiber/) show, and an
+API on Huma a few operations at a time, as
+[Migrating from Huma](/humus/migrating/http/huma/) shows.
 
 Next: [Serving HTTP](/humus/services/http/serving/)

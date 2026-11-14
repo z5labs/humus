@@ -465,7 +465,19 @@ depends on nothing but the standard library and serves no protocol.
 &lt;p&gt;The design behind this page is in
 &lt;a href="https://github.com/z5labs/humus/discussions/634#discussioncomment-18976159"&gt;Proposal: health monitors and probes, Revision 2&lt;/a&gt;,
 and, for exposing the probes, in
-&lt;a href="https://github.com/z5labs/humus/discussions/761"&gt;Proposal: exposing health probes&lt;/a&gt;.&lt;/p&gt;</description></item><item><title>Consuming and producing Kafka</title><link>https://z5labs.github.io/humus/services/kafka/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/services/kafka/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/queue/kafka"&gt;&lt;code&gt;queue/kafka&lt;/code&gt;&lt;/a&gt;
+&lt;a href="https://github.com/z5labs/humus/discussions/761"&gt;Proposal: exposing health probes&lt;/a&gt;.&lt;/p&gt;</description></item><item><title>Migrating from Huma</title><link>https://z5labs.github.io/humus/migrating/http/huma/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/migrating/http/huma/</guid><description>&lt;p&gt;This guide moves a small &lt;a href="https://huma.rocks"&gt;Huma&lt;/a&gt; v2 API to humus. Its
+first step runs the Huma API on humus, so the process, settings, TLS,
+telemetry, probes and shutdown are humus&amp;rsquo;s from then on. Its next steps move
+the operations onto &lt;code&gt;openapi/v3&lt;/code&gt; a few at a time, while Huma serves the rest,
+until the API no longer requires Huma and one OpenAPI document, &lt;code&gt;openapi/v3&lt;/code&gt;&amp;rsquo;s,
+describes it.&lt;/p&gt;
+&lt;p&gt;Huma and &lt;code&gt;openapi/v3&lt;/code&gt; both declare typed operations and write the document
+from them, so most of the move translates declarations: Huma&amp;rsquo;s input and
+output structs, and their tags, become typed paths, parameters and codecs.
+Two things let the operations move a few at a time. A Huma API on its
+&lt;code&gt;humago&lt;/code&gt; adapter is served by an &lt;code&gt;http.ServeMux&lt;/code&gt;, which
+&lt;code&gt;httpserver.NewService&lt;/code&gt; serves. And an &lt;code&gt;openapi.API&lt;/code&gt; hands every request no
+operation serves to its &lt;code&gt;Unmatched&lt;/code&gt; handlers, which can be that ServeMux.&lt;/p&gt;</description></item><item><title>Consuming and producing Kafka</title><link>https://z5labs.github.io/humus/services/kafka/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/services/kafka/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/queue/kafka"&gt;&lt;code&gt;queue/kafka&lt;/code&gt;&lt;/a&gt;
 package consumes Kafka topics as a &lt;code&gt;humus.Service&lt;/code&gt;, with
 &lt;a href="https://github.com/twmb/franz-go"&gt;franz-go&lt;/a&gt;. The Service joins a consumer
 group, dials the brokers through the Setup&amp;rsquo;s Host, and hands each record to
