@@ -13,11 +13,11 @@ linters:
     - forbidigo
   exclusions:
     rules:
-      # The services the Echo, Gin, Fiber and Huma migration guides start
-      # from aren't humus Apps: each reads its environment and its signals as
-      # its framework's documentation does, which is what its guide moves it
-      # off.
-      - path: ^example/http/(echo|gin|fiber|huma)/start/
+      # The services the Echo, Gin, Fiber, Huma and Watermill migration
+      # guides start from aren't humus Apps: each reads its environment and
+      # its signals as its framework's documentation does, which is what its
+      # guide moves it off.
+      - path: ^example/(http/(echo|gin|fiber|huma)|kafka/watermill)/start/
         linters:
           - forbidigo
   settings:

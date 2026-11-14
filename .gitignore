@@ -27,6 +27,8 @@
 /example/http/huma/step1/step1
 /example/http/huma/step2/step2
 /example/http/huma/step3/step3
+/example/kafka/watermill/start/start
+/example/kafka/watermill/humus/humus
 
 # Test binary, built with `go test -c`
 *.test
