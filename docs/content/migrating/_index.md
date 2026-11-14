@@ -33,4 +33,10 @@ that code.
 ## The guides
 
 The guides are listed under their service types, in the order
-[Service types]({{< relref "/services" >}}) gives them. None is published yet.
+[Service types]({{< relref "/services" >}}) gives them.
+
+### HTTP
+
+- [Echo]({{< relref "/migrating/http/echo" >}}): an Echo v5 service, run on
+  `httpserver` with its routes unchanged, then its routes moved onto
+  `openapi/v3` a few at a time.
