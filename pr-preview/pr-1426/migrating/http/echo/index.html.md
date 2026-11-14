@@ -18,7 +18,7 @@ operation serves to its `Unmatched` handlers, which can be the Echo engine.
 | the address, from `os.Getenv` | `httpserver.Settings`, sourced and checked with `config.Struct`: [Configuring a humus service](/humus/pr-preview/pr-1426/fundamentals/configuration/) |
 | `StartTLS`, or TLS left to a proxy | `Settings.TLS`, which is required: [TLS](/humus/pr-preview/pr-1426/services/http/serving/#tls) |
 | graceful shutdown on SIGTERM, within `GracefulTimeout` | a 5s drain, then a 10s grace period: [The defaults](/humus/pr-preview/pr-1426/services/http/serving/#the-defaults) |
-| `e.Logger` | the Setup's `LoggerProvider`, through the OpenTelemetry Logs API: [Telemetry](/humus/pr-preview/pr-1426/fundamentals/telemetry/#where-the-providers-come-from) |
+| `e.Logger` | while Echo serves routes, Echo's logger on the Process's stdout, rather than the real one; for the service's own records, the Setup's `LoggerProvider`, through the OpenTelemetry Logs API: [Telemetry](/humus/pr-preview/pr-1426/fundamentals/telemetry/#where-the-providers-come-from) |
 | `middleware.RequestLogger()` | none: each request is a span, with its metrics: [Telemetry](/humus/pr-preview/pr-1426/services/http/serving/#telemetry) |
 | `middleware.Recover()` | the API's `CatchAll` answers a panic: [Panics](/humus/pr-preview/pr-1426/services/http/openapi/#panics) |
 | `middleware.BodyLimit` | none: `http.MaxBytesHandler` around the API, and the decoder answers 413: [Operations](/humus/pr-preview/pr-1426/services/http/openapi/#operations) |
