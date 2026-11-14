@@ -21,4 +21,6 @@ builds a production-ready API on both, step by step, and its code is
 A service on Echo, Gin or Fiber moves to both a few routes at a time, as
 [Migrating from Echo]({{< relref "/migrating/http/echo" >}}),
 [Migrating from Gin]({{< relref "/migrating/http/gin" >}}) and
-[Migrating from Fiber]({{< relref "/migrating/http/fiber" >}}) show.
+[Migrating from Fiber]({{< relref "/migrating/http/fiber" >}}) show, and an
+API on Huma a few operations at a time, as
+[Migrating from Huma]({{< relref "/migrating/http/huma" >}}) shows.
