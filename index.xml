@@ -9,7 +9,14 @@ places enforce requirements, one for each way humus serves requests:
 &lt;code&gt;auth.NewHandler&lt;/code&gt; for a plain &lt;code&gt;http.Handler&lt;/code&gt; served by
 &lt;a href="https://z5labs.github.io/humus/services/http/serving/"&gt;&lt;code&gt;httpserver&lt;/code&gt;&lt;/a&gt;, and
 &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/grpc/grpcauth"&gt;&lt;code&gt;grpcauth&lt;/code&gt;&lt;/a&gt;&amp;rsquo;s
-&lt;code&gt;Interceptors&lt;/code&gt; for a &lt;a href="https://z5labs.github.io/humus/services/grpc/serving/"&gt;&lt;code&gt;grpcserver&lt;/code&gt;&lt;/a&gt; Service.&lt;/p&gt;</description></item><item><title>Getting started</title><link>https://z5labs.github.io/humus/getting-started/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/getting-started/</guid><description>&lt;p&gt;The service is a job: it greets the name its environment gives it, once, and
+&lt;code&gt;Interceptors&lt;/code&gt; for a &lt;a href="https://z5labs.github.io/humus/services/grpc/serving/"&gt;&lt;code&gt;grpcserver&lt;/code&gt;&lt;/a&gt; Service.&lt;/p&gt;</description></item><item><title>Migrating from Echo</title><link>https://z5labs.github.io/humus/migrating/http/echo/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/migrating/http/echo/</guid><description>&lt;p&gt;This guide moves a small &lt;a href="https://echo.labstack.com"&gt;Echo&lt;/a&gt; v5 service to
+humus. Its first step runs the Echo engine on humus, so the process,
+settings, TLS, telemetry, probes and shutdown are humus&amp;rsquo;s from then on. Its
+next steps move the routes onto &lt;code&gt;openapi/v3&lt;/code&gt; a few at a time, while Echo
+serves the rest, until the service no longer requires Echo.&lt;/p&gt;
+&lt;p&gt;Two things make that work. An Echo engine is an &lt;code&gt;http.Handler&lt;/code&gt;, which
+&lt;code&gt;httpserver.NewService&lt;/code&gt; serves. And an &lt;code&gt;openapi.API&lt;/code&gt; hands every request no
+operation serves to its &lt;code&gt;Unmatched&lt;/code&gt; handlers, which can be the Echo engine.&lt;/p&gt;</description></item><item><title>Getting started</title><link>https://z5labs.github.io/humus/getting-started/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/getting-started/</guid><description>&lt;p&gt;The service is a job: it greets the name its environment gives it, once, and
 exits. It needs Go 1.27 or later, and nothing else. Its code is
 &lt;a href="https://github.com/z5labs/humus/tree/main/example/job/hello"&gt;&lt;code&gt;example/job/hello&lt;/code&gt;&lt;/a&gt;.&lt;/p&gt;
 &lt;h2 id="1-create-the-module"&gt;1. Create the module&lt;/h2&gt;
