@@ -118,11 +118,15 @@ func TestRepository_holds_no_compiled_executables(t *testing.T) {
 
 // TestModules_require_no_controller_runtime checks every go.mod git tracks,
 // and every untracked one it does not ignore: none requires controller-runtime
-// or controller-tools but the module of the operator the kubebuilder migration
-// guide starts from, which requires controller-runtime. depguard denies
-// importing either everywhere else, and this keeps them out of every other
-// module's graph too, directly or through a dependency. See the Kubernetes
-// controllers proposal, #851.
+// or controller-tools, directly or as an indirect requirement, but the module
+// of the operator the kubebuilder migration guide starts from, which requires
+// controller-runtime. A go.mod requires every module that provides a package
+// its module's packages or tests import, however indirectly, so neither is
+// compiled into any other module. depguard denies importing either
+// everywhere else; this catches one that arrives through a dependency. A
+// module that is only in another's graph, providing it no package, isn't
+// checked: reading each module's whole graph would download it. See the
+// Kubernetes controllers proposal, #851.
 func TestModules_require_no_controller_runtime(t *testing.T) {
 	out, err := exec.CommandContext(t.Context(), "git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "go.mod", "**/go.mod").Output()
 	require.NoError(t, err)
