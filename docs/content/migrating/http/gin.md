@@ -167,8 +167,8 @@ func abortBinding(c *gin.Context, err error) {
 }
 ```
 
-Every error aborts the request with an RFC 9457 problem detail, a panic's
-and an unmatched request's too:
+Every error aborts the request with an RFC 9457 problem detail, and so do a
+panic and a request no route serves:
 
 ```go
 type problemDetails struct {
