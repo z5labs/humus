@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>HTTP on Humus</title><link>https://z5labs.github.io/humus/pr-preview/pr-1427/migrating/http/</link><description>Recent content in HTTP on Humus</description><generator>Hugo</generator><language>en-us</language><atom:link href="https://z5labs.github.io/humus/pr-preview/pr-1427/migrating/http/index.xml" rel="self" type="application/rss+xml"/><item><title>Migrating from Echo</title><link>https://z5labs.github.io/humus/pr-preview/pr-1427/migrating/http/echo/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/pr-preview/pr-1427/migrating/http/echo/</guid><description>&lt;p&gt;This guide moves a small &lt;a href="https://echo.labstack.com"&gt;Echo&lt;/a&gt; v5 service to
+humus. Its first step runs the Echo engine on humus, so the process,
+settings, TLS, telemetry, probes and shutdown are humus&amp;rsquo;s from then on. Its
+next steps move the routes onto &lt;code&gt;openapi/v3&lt;/code&gt; a few at a time, while Echo
+serves the rest, until the service no longer requires Echo.&lt;/p&gt;
+&lt;p&gt;Two things make that work. An Echo engine is an &lt;code&gt;http.Handler&lt;/code&gt;, which
+&lt;code&gt;httpserver.NewService&lt;/code&gt; serves. And an &lt;code&gt;openapi.API&lt;/code&gt; hands every request no
+operation serves to its &lt;code&gt;Unmatched&lt;/code&gt; handlers, which can be the Echo engine.&lt;/p&gt;</description></item><item><title>Migrating from Gin</title><link>https://z5labs.github.io/humus/pr-preview/pr-1427/migrating/http/gin/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/pr-preview/pr-1427/migrating/http/gin/</guid><description>&lt;p&gt;This guide moves a small &lt;a href="https://gin-gonic.com/en/docs/"&gt;Gin&lt;/a&gt; v1 service to
+humus. Its first step runs the Gin engine on humus, so the process,
+settings, TLS, telemetry, probes and shutdown are humus&amp;rsquo;s from then on. Its
+next steps move the routes onto &lt;code&gt;openapi/v3&lt;/code&gt; a few at a time, while Gin
+serves the rest, until the service no longer requires Gin.&lt;/p&gt;
+&lt;p&gt;Two things make that work. A Gin engine is an &lt;code&gt;http.Handler&lt;/code&gt;, which
+&lt;code&gt;httpserver.NewService&lt;/code&gt; serves. And an &lt;code&gt;openapi.API&lt;/code&gt; hands every request no
+operation serves to its &lt;code&gt;Unmatched&lt;/code&gt; handlers, which can be the Gin engine.&lt;/p&gt;</description></item></channel></rss>
