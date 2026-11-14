@@ -32,6 +32,9 @@ The [order status processor walkthrough](/humus/walkthroughs/kafka/orderstatus/)
 builds a production-ready consumer and producer on `queue/kafka`, step by
 step, and its code is
 [`example/kafka/orderstatus`](https://github.com/z5labs/humus/tree/main/example/kafka/orderstatus).
+A consumer on Watermill moves to `queue/kafka` as
+[Migrating from Watermill](/humus/migrating/kafka/watermill/)
+shows.
 
 ## The contract
 

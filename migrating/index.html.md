@@ -37,3 +37,10 @@ The guides are listed under their service types, in the order
 - [Huma](/humus/migrating/http/huma/): a Huma v2 API, run on
   `httpserver` with its operations unchanged, then its operations moved onto
   `openapi/v3` a few at a time, until `openapi/v3`'s document describes it.
+
+### Kafka
+
+- [Watermill](/humus/migrating/kafka/watermill/): a Watermill v1
+  consumer on Kafka, its handler moved onto a `queue.Processor` and its
+  publishing onto a `kafka.Producer`, its retries and poison queue onto a
+  retry topic and a dead-letter topic.
