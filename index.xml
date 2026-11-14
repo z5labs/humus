@@ -112,7 +112,16 @@ process, settings, telemetry, probes and shutdown become humus&amp;rsquo;s.&lt;/
 &lt;a href="https://github.com/ThreeDotsLabs/watermill-kafka"&gt;watermill-kafka&lt;/a&gt;, is
 built on Sarama, and &lt;code&gt;queue/kafka&lt;/code&gt; is built on franz-go, so the client
 changes with the Router. The guide&amp;rsquo;s steps go from the Watermill service to
-the humus service, rather than each leaving a service that runs.&lt;/p&gt;</description></item><item><title>Configuring a humus service</title><link>https://z5labs.github.io/humus/fundamentals/configuration/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/fundamentals/configuration/</guid><description>&lt;p&gt;humus packages are configured with plain Go values. They read no environment
+the humus service, rather than each leaving a service that runs.&lt;/p&gt;</description></item><item><title>Migrating from Watermill</title><link>https://z5labs.github.io/humus/migrating/rabbitmq/watermill/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/migrating/rabbitmq/watermill/</guid><description>&lt;p&gt;This guide moves a small &lt;a href="https://watermill.io"&gt;Watermill&lt;/a&gt; v1 service on
+RabbitMQ to humus&amp;rsquo;s &lt;code&gt;queue/rabbitmq&lt;/code&gt;. Its Router&amp;rsquo;s handler becomes a
+&lt;code&gt;queue.Processor&lt;/code&gt;, and its publishing goes through a &lt;code&gt;rabbitmq.Publisher&lt;/code&gt;,
+with publisher confirms. Its process, settings, telemetry, probes and
+shutdown become humus&amp;rsquo;s.&lt;/p&gt;
+&lt;p&gt;Watermill&amp;rsquo;s AMQP backend,
+&lt;a href="https://github.com/ThreeDotsLabs/watermill-amqp"&gt;watermill-amqp&lt;/a&gt;, is built
+on amqp091-go, as &lt;code&gt;queue/rabbitmq&lt;/code&gt; is, so the client stays and the code
+around it changes. The guide&amp;rsquo;s steps go from the Watermill service to the
+humus service, rather than each leaving a service that runs.&lt;/p&gt;</description></item><item><title>Configuring a humus service</title><link>https://z5labs.github.io/humus/fundamentals/configuration/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/fundamentals/configuration/</guid><description>&lt;p&gt;humus packages are configured with plain Go values. They read no environment
 variables for their settings, define no variable names and read no files on
 your behalf; the few variables humus does read are
 &lt;a href="#the-variables-humus-reads"&gt;listed below&lt;/a&gt;. Every
