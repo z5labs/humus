@@ -18,3 +18,4 @@ the framework.
 
 - [Echo]({{< relref "/migrating/http/echo" >}})
 - [Gin]({{< relref "/migrating/http/gin" >}})
+- [Fiber]({{< relref "/migrating/http/fiber" >}})
