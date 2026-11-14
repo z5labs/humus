@@ -32,6 +32,9 @@ builds a production-ready controller on `kube`, step by step: a `Database`
 resource whose controller provisions a database and its role in PostgreSQL,
 owns a Secret of their credentials, and drops them with a finalizer. Its
 code is [`example/kube/databases`](https://github.com/z5labs/humus/tree/main/example/kube/databases).
+An operator built with kubebuilder moves to `kube` as
+[Migrating from kubebuilder](/humus/migrating/kube/kubebuilder/)
+shows.
 
 ## Why not kubebuilder
 

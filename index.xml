@@ -65,7 +65,17 @@ take any other, and depend on &lt;code&gt;net/http&lt;/code&gt;&amp;rsquo;s type
 so a unit test of that code passes any client. The client dials only
 through the Setup&amp;rsquo;s Host, so a test runs the end user&amp;rsquo;s whole App, its
 outbound calls included, on humustest&amp;rsquo;s network, as &lt;a href="#testing"&gt;Testing&lt;/a&gt;
-shows.&lt;/p&gt;</description></item><item><title>Serving gRPC</title><link>https://z5labs.github.io/humus/services/grpc/serving/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/services/grpc/serving/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/grpc/grpcserver"&gt;&lt;code&gt;grpcserver&lt;/code&gt;&lt;/a&gt;
+shows.&lt;/p&gt;</description></item><item><title>Migrating from kubebuilder</title><link>https://z5labs.github.io/humus/migrating/kube/kubebuilder/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/migrating/kube/kubebuilder/</guid><description>&lt;p&gt;This guide moves a small &lt;a href="https://book.kubebuilder.io"&gt;kubebuilder&lt;/a&gt; v4
+operator to humus&amp;rsquo;s &lt;code&gt;kube&lt;/code&gt; module. Its reconciler runs on client-go through
+humus, with no controller-runtime. Its process, settings, telemetry, probes,
+leader election and shutdown become humus&amp;rsquo;s. An operator built with
+operator-sdk&amp;rsquo;s Go plugin, which is built on kubebuilder, moves the same way.&lt;/p&gt;
+&lt;p&gt;kubebuilder generates the CRD and the RBAC from
+&lt;a href="https://book.kubebuilder.io/reference/markers.html"&gt;markers&lt;/a&gt; in comments,
+with controller-gen. humus declares the custom resource as Go values with typed
+constraints, keeps its CRD true to the types with a golden test, and leaves
+the RBAC to the end user. The guide&amp;rsquo;s steps go from the kubebuilder operator
+to the humus controller, rather than each leaving an operator that runs.&lt;/p&gt;</description></item><item><title>Serving gRPC</title><link>https://z5labs.github.io/humus/services/grpc/serving/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/services/grpc/serving/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/grpc/grpcserver"&gt;&lt;code&gt;grpcserver&lt;/code&gt;&lt;/a&gt;
 package serves gRPC over TLS as a &lt;code&gt;humus.Service&lt;/code&gt;. The end user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt;
 sources its &lt;code&gt;Settings&lt;/code&gt;, builds the Service with &lt;code&gt;grpcserver.NewService&lt;/code&gt;,
 registers their generated services on it, as they would on a &lt;code&gt;*grpc.Server&lt;/code&gt;,
