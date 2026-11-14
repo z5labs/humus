@@ -8,14 +8,14 @@
 #
 # Prints, one per line and relative to the repository root, the directory of
 # every Go module in the repository that holds at least one Go package. `./...`
-# does not descend into a nested module, so CI builds, lints and tests each
-# module listed here on its own.
+# does not descend into a nested module, so CI lints and tests each module
+# listed here on its own.
 #
 # A module with no Go packages, such as the Hugo module under docs/, has
-# nothing to build, lint or test; it is reported on stderr and left out.
+# nothing to lint or test; it is reported on stderr and left out.
 #
-# The flaky module under tools/ is listed like any other, so CI lints, builds
-# and tests it.
+# The flaky module under tools/ is listed like any other, so CI lints and
+# tests it.
 
 set -euo pipefail
 

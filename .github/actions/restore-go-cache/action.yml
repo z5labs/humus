@@ -16,7 +16,7 @@ description: >-
 
 inputs:
   name:
-    description: The job's name in its cache key, such as test(kube). No other job may use it.
+    description: The job's name in its cache key, such as lint-and-test(kube). No other job may use it.
     required: true
   path:
     description: Paths to cache besides Go's build and module caches, one per line.
