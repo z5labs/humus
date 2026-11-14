@@ -56,3 +56,11 @@ The guides are listed under their service types, in the order
   consumer on Kafka, its handler moved onto a `queue.Processor` and its
   publishing onto a `kafka.Producer`, its retries and poison queue onto a
   retry topic and a dead-letter topic.
+
+### RabbitMQ
+
+- [Watermill]({{< relref "/migrating/rabbitmq/watermill" >}}): a Watermill
+  v1 consumer on RabbitMQ, its handler moved onto a `queue.Processor` and its
+  publishing onto a `rabbitmq.Publisher`, its topology into a definitions
+  file, and its retries and poison queue onto a delay queue and a
+  dead-letter exchange.

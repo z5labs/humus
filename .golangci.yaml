@@ -17,7 +17,7 @@ linters:
       # guides start from aren't humus Apps: each reads its environment and
       # its signals as its framework's documentation does, which is what its
       # guide moves it off.
-      - path: ^example/(http/(echo|gin|fiber|huma)|kafka/watermill)/start/
+      - path: ^example/(http/(echo|gin|fiber|huma)|(kafka|rabbitmq)/watermill)/start/
         linters:
           - forbidigo
   settings:
