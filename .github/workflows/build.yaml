@@ -345,6 +345,65 @@ jobs:
             jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$NEEDS"
             jq -e 'all(.[]; .result == "success")' <<<"$NEEDS" >/dev/null
 
+  # The container and kind jobs below that the ruleset doesn't require, those
+  # of the walkthroughs, flaky and the migration guides, each run only when
+  # the change affects a module they test, and are skipped otherwise. ci
+  # affected decides, as package affected in tools/ci describes: a change
+  # affects a module when it touches a file of the module's own directory,
+  # such as its Go files, its Dockerfile, its deploy/ directory or its WireMock
+  # mappings; a file a package it builds from in another module of the
+  # repository is compiled or embeds from, such as humus's own packages
+  # through its replace; or the go.mod or go.sum of a module of the
+  # repository in its build list. A change to this file, to .github/actions/
+  # or to tools/ci affects every module. The change is the pull request's
+  # against its base, or the merge queue entry's against the commit it is
+  # queued on, so this job fetches the history, without its files. A push to
+  # main has no base, so every module is affected and every job runs, and
+  # saves its cache. When this job fails, nothing was decided, and every job
+  # runs too. Each job's if names the modules it tests, so a job added for
+  # another module needs an if like theirs and no change to ci. Kafka,
+  # RabbitMQ and Kubernetes (testcontainers) are required checks, so they
+  # always run, as Build and the jobs it waits on do.
+  affected:
+    name: Affected modules
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    outputs:
+      modules: ${{ steps.affected.outputs.modules }}
+    steps:
+        - name: Checkout
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+          with:
+            fetch-depth: 0
+            filter: blob:none
+
+        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+          with:
+            go-version: '1.27.4'
+            cache: false
+
+        - id: go-cache
+          uses: ./.github/actions/restore-go-cache
+          with:
+            name: affected
+
+        - name: List the affected modules
+          id: affected
+          env:
+            BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          run: |
+            affected=$(go -C tools/ci run . affected --base "$BASE")
+            echo "$affected"
+            echo "modules=$(jq -cnR '[inputs | select(. != "")]' <<<"$affected")" >> "$GITHUB_OUTPUT"
+
+        - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
+          uses: ./.github/actions/save-go-cache
+          with:
+            key: ${{ steps.go-cache.outputs.key }}
+            path: ${{ steps.go-cache.outputs.path }}
+
   # The tests behind the testcontainers build tag run Kafka in a container
   # and open real sockets, so they run here rather than with the unit tests:
   # they don't slow the unit tests, they don't count toward the coverage
@@ -458,6 +517,10 @@ jobs:
   # testcontainers tests vets them.
   shoppingcart-testcontainers:
     name: Shoppingcart walkthrough (testcontainers)
+    # It runs when the change affects example/http/shoppingcart, as Affected
+    # modules decides.
+    needs: affected
+    if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/http/shoppingcart"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -494,6 +557,9 @@ jobs:
   # doesn't wait on it; Vet the testcontainers tests vets them.
   flaky-testcontainers:
     name: flaky (testcontainers)
+    # It runs when the change affects tools/flaky, as Affected modules decides.
+    needs: affected
+    if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"tools/flaky"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -539,6 +605,10 @@ jobs:
   # vets them.
   shoppingcart-kind:
     name: Shoppingcart walkthrough (kind)
+    # It runs when the change affects example/http/shoppingcart, as Affected
+    # modules decides.
+    needs: affected
+    if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/http/shoppingcart"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -600,6 +670,10 @@ jobs:
   # and Build doesn't wait on it; Vet the testcontainers tests vets them.
   billing-testcontainers:
     name: Billing walkthrough (testcontainers)
+    # It runs when the change affects example/job/billing, as Affected modules
+    # decides.
+    needs: affected
+    if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/job/billing"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -642,6 +716,10 @@ jobs:
   # functional tests vets them.
   billing-kind:
     name: Billing walkthrough (kind)
+    # It runs when the change affects example/job/billing, as Affected modules
+    # decides.
+    needs: affected
+    if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/job/billing"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -708,6 +786,10 @@ jobs:
   # job, and Build doesn't wait on it; Vet the testcontainers tests vets them.
   orderstatus-testcontainers:
     name: Order status walkthrough (testcontainers)
+    # It runs when the change affects example/kafka/orderstatus, as Affected
+    # modules decides.
+    needs: affected
+    if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/kafka/orderstatus"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -752,6 +834,10 @@ jobs:
   # doesn't wait on it; Vet the functional tests vets them.
   orderstatus-kind:
     name: Order status walkthrough (kind)
+    # It runs when the change affects example/kafka/orderstatus, as Affected
+    # modules decides.
+    needs: affected
+    if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/kafka/orderstatus"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -813,6 +899,10 @@ jobs:
   # testcontainers tests vets them.
   mailer-testcontainers:
     name: Mailer walkthrough (testcontainers)
+    # It runs when the change affects example/rabbitmq/mailer, as Affected
+    # modules decides.
+    needs: affected
+    if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/rabbitmq/mailer"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -852,6 +942,10 @@ jobs:
   # functional tests vets them.
   mailer-kind:
     name: Mailer walkthrough (kind)
+    # It runs when the change affects example/rabbitmq/mailer, as Affected
+    # modules decides.
+    needs: affected
+    if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/rabbitmq/mailer"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -913,6 +1007,10 @@ jobs:
   # Build doesn't wait on it; Vet the testcontainers tests vets them.
   watermill-rabbitmq-testcontainers:
     name: Watermill RabbitMQ migration guide (testcontainers)
+    # It runs when the change affects example/rabbitmq/watermill/start or
+    # example/rabbitmq/watermill/humus, as Affected modules decides.
+    needs: affected
+    if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/rabbitmq/watermill/start"') || contains(needs.affected.outputs.modules, '"example/rabbitmq/watermill/humus"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -953,6 +1051,10 @@ jobs:
   # testcontainers tests vets them.
   kubebuilder-testcontainers:
     name: kubebuilder migration guide (testcontainers)
+    # It runs when the change affects example/kube/kubebuilder/start or
+    # example/kube/kubebuilder/humus, as Affected modules decides.
+    needs: affected
+    if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/kube/kubebuilder/start"') || contains(needs.affected.outputs.modules, '"example/kube/kubebuilder/humus"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -990,6 +1092,10 @@ jobs:
   # job, and Build doesn't wait on it; Vet the testcontainers tests vets them.
   databases-testcontainers:
     name: Databases walkthrough (testcontainers)
+    # It runs when the change affects example/kube/databases, as Affected
+    # modules decides.
+    needs: affected
+    if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/kube/databases"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -1038,6 +1144,10 @@ jobs:
   # Build doesn't wait on it; Vet the functional tests vets them.
   databases-kind:
     name: Databases walkthrough (kind)
+    # It runs when the change affects example/kube/databases, as Affected
+    # modules decides.
+    needs: affected
+    if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/kube/databases"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -1106,6 +1216,10 @@ jobs:
   # tests vets them.
   wallet-testcontainers:
     name: Wallet walkthrough (testcontainers)
+    # It runs when the change affects example/grpc/wallet, as Affected modules
+    # decides.
+    needs: affected
+    if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/grpc/wallet"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -1206,6 +1320,10 @@ jobs:
   # wait on it; Vet the functional tests vets them.
   wallet-kind:
     name: Wallet walkthrough (kind)
+    # It runs when the change affects example/grpc/wallet, as Affected modules
+    # decides.
+    needs: affected
+    if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/grpc/wallet"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
