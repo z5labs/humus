@@ -23,9 +23,9 @@ type quote struct {
 }
 
 // feed returns a feed's handler: an event stream of the quotes it receives,
-// with a keep-alive comment every 15s, until the Service's Shutdown begins
-// or the client goes away. In the end user's Init, writeTimeout is the
-// httpserver.Settings' WriteTimeout.
+// with a keep-alive comment every 15s, until quotes is closed, the Service's
+// Shutdown begins or the client goes away. In the end user's Init,
+// writeTimeout is the httpserver.Settings' WriteTimeout.
 func feed(quotes <-chan quote, writeTimeout time.Duration) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -41,7 +41,10 @@ func feed(quotes <-chan quote, writeTimeout time.Duration) http.HandlerFunc {
 				return
 			case <-r.Context().Done():
 				return
-			case q := <-quotes:
+			case q, ok := <-quotes:
+				if !ok {
+					return
+				}
 				if err := stream.Send(sse.Event{Name: "quote", Data: q.Price, ID: q.Seq}); err != nil {
 					return
 				}
