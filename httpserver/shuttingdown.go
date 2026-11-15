@@ -34,9 +34,14 @@ func ShuttingDown(ctx context.Context) <-chan struct{} {
 // and it is closed by a function registered with srv.RegisterOnShutdown,
 // which net/http runs when Shutdown begins. Nothing else changes: no
 // request's context is cancelled by it.
-func watchShutdown(srv *http.Server) {
+//
+// It returns that function, which closes the channel once however often it
+// is called, for a shutdown that closes srv without calling its Shutdown.
+func watchShutdown(srv *http.Server) (closeChannel func()) {
 	done := make(chan struct{})
 	base := context.WithValue(context.Background(), shuttingDownKey{}, (<-chan struct{})(done))
 	srv.BaseContext = func(net.Listener) context.Context { return base }
-	srv.RegisterOnShutdown(sync.OnceFunc(func() { close(done) }))
+	closeChannel = sync.OnceFunc(func() { close(done) })
+	srv.RegisterOnShutdown(closeChannel)
+	return closeChannel
 }
