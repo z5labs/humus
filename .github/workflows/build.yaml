@@ -364,6 +364,21 @@ jobs:
   # another module needs an if like theirs and no change to ci. Kafka,
   # RabbitMQ and Kubernetes (testcontainers) are required checks, so they
   # always run, as Build and the jobs it waits on do.
+  #
+  # Those jobs also start only once every job Build waits on has finished,
+  # so each one needs Affected modules and the same jobs Build needs, and a
+  # job added to Build's needs belongs in theirs too. The account runs at
+  # most 20 jobs at a time, and the Lint and test jobs start only after
+  # Modules, so a job with no needs but Affected modules would take a runner
+  # first, and when other runs are using the runners too, Build's Lint and
+  # test jobs would queue behind every one of them. Waiting on Build's jobs
+  # puts the checks the ruleset requires first, and the results of these
+  # jobs come later. Their if checks !cancelled() rather than success(), so
+  # they still run when one of Build's jobs failed, and one run still reports
+  # every failure, but not when the run was cancelled. A push to main skips
+  # Scripts, and these jobs run all the same, and save their caches. Kafka,
+  # RabbitMQ and Kubernetes (testcontainers) need nothing, so they start with
+  # the run, as Build's jobs do.
   affected:
     name: Affected modules
     runs-on: ubuntu-latest
@@ -519,7 +534,14 @@ jobs:
     name: Shoppingcart walkthrough (testcontainers)
     # It runs when the change affects example/http/shoppingcart, as Affected
     # modules decides.
-    needs: affected
+    needs:
+      - affected
+      - modules
+      - lint-and-test
+      - vet-testcontainers
+      - vet-functional
+      - conformance
+      - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/http/shoppingcart"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -558,7 +580,14 @@ jobs:
   flaky-testcontainers:
     name: flaky (testcontainers)
     # It runs when the change affects tools/flaky, as Affected modules decides.
-    needs: affected
+    needs:
+      - affected
+      - modules
+      - lint-and-test
+      - vet-testcontainers
+      - vet-functional
+      - conformance
+      - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"tools/flaky"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -607,7 +636,14 @@ jobs:
     name: Shoppingcart walkthrough (kind)
     # It runs when the change affects example/http/shoppingcart, as Affected
     # modules decides.
-    needs: affected
+    needs:
+      - affected
+      - modules
+      - lint-and-test
+      - vet-testcontainers
+      - vet-functional
+      - conformance
+      - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/http/shoppingcart"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -672,7 +708,14 @@ jobs:
     name: Billing walkthrough (testcontainers)
     # It runs when the change affects example/job/billing, as Affected modules
     # decides.
-    needs: affected
+    needs:
+      - affected
+      - modules
+      - lint-and-test
+      - vet-testcontainers
+      - vet-functional
+      - conformance
+      - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/job/billing"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -718,7 +761,14 @@ jobs:
     name: Billing walkthrough (kind)
     # It runs when the change affects example/job/billing, as Affected modules
     # decides.
-    needs: affected
+    needs:
+      - affected
+      - modules
+      - lint-and-test
+      - vet-testcontainers
+      - vet-functional
+      - conformance
+      - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/job/billing"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -788,7 +838,14 @@ jobs:
     name: Order status walkthrough (testcontainers)
     # It runs when the change affects example/kafka/orderstatus, as Affected
     # modules decides.
-    needs: affected
+    needs:
+      - affected
+      - modules
+      - lint-and-test
+      - vet-testcontainers
+      - vet-functional
+      - conformance
+      - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/kafka/orderstatus"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -836,7 +893,14 @@ jobs:
     name: Order status walkthrough (kind)
     # It runs when the change affects example/kafka/orderstatus, as Affected
     # modules decides.
-    needs: affected
+    needs:
+      - affected
+      - modules
+      - lint-and-test
+      - vet-testcontainers
+      - vet-functional
+      - conformance
+      - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/kafka/orderstatus"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -901,7 +965,14 @@ jobs:
     name: Mailer walkthrough (testcontainers)
     # It runs when the change affects example/rabbitmq/mailer, as Affected
     # modules decides.
-    needs: affected
+    needs:
+      - affected
+      - modules
+      - lint-and-test
+      - vet-testcontainers
+      - vet-functional
+      - conformance
+      - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/rabbitmq/mailer"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -944,7 +1015,14 @@ jobs:
     name: Mailer walkthrough (kind)
     # It runs when the change affects example/rabbitmq/mailer, as Affected
     # modules decides.
-    needs: affected
+    needs:
+      - affected
+      - modules
+      - lint-and-test
+      - vet-testcontainers
+      - vet-functional
+      - conformance
+      - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/rabbitmq/mailer"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -1009,7 +1087,14 @@ jobs:
     name: Watermill RabbitMQ migration guide (testcontainers)
     # It runs when the change affects example/rabbitmq/watermill/start or
     # example/rabbitmq/watermill/humus, as Affected modules decides.
-    needs: affected
+    needs:
+      - affected
+      - modules
+      - lint-and-test
+      - vet-testcontainers
+      - vet-functional
+      - conformance
+      - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/rabbitmq/watermill/start"') || contains(needs.affected.outputs.modules, '"example/rabbitmq/watermill/humus"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1053,7 +1138,14 @@ jobs:
     name: kubebuilder migration guide (testcontainers)
     # It runs when the change affects example/kube/kubebuilder/start or
     # example/kube/kubebuilder/humus, as Affected modules decides.
-    needs: affected
+    needs:
+      - affected
+      - modules
+      - lint-and-test
+      - vet-testcontainers
+      - vet-functional
+      - conformance
+      - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/kube/kubebuilder/start"') || contains(needs.affected.outputs.modules, '"example/kube/kubebuilder/humus"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1094,7 +1186,14 @@ jobs:
     name: Databases walkthrough (testcontainers)
     # It runs when the change affects example/kube/databases, as Affected
     # modules decides.
-    needs: affected
+    needs:
+      - affected
+      - modules
+      - lint-and-test
+      - vet-testcontainers
+      - vet-functional
+      - conformance
+      - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/kube/databases"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1146,7 +1245,14 @@ jobs:
     name: Databases walkthrough (kind)
     # It runs when the change affects example/kube/databases, as Affected
     # modules decides.
-    needs: affected
+    needs:
+      - affected
+      - modules
+      - lint-and-test
+      - vet-testcontainers
+      - vet-functional
+      - conformance
+      - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/kube/databases"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -1218,7 +1324,14 @@ jobs:
     name: Wallet walkthrough (testcontainers)
     # It runs when the change affects example/grpc/wallet, as Affected modules
     # decides.
-    needs: affected
+    needs:
+      - affected
+      - modules
+      - lint-and-test
+      - vet-testcontainers
+      - vet-functional
+      - conformance
+      - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/grpc/wallet"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1322,7 +1435,14 @@ jobs:
     name: Wallet walkthrough (kind)
     # It runs when the change affects example/grpc/wallet, as Affected modules
     # decides.
-    needs: affected
+    needs:
+      - affected
+      - modules
+      - lint-and-test
+      - vet-testcontainers
+      - vet-functional
+      - conformance
+      - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/grpc/wallet"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
