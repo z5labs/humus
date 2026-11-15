@@ -1,0 +1,1 @@
+{{define "row"}}<div id="contact-{{.ID}}"{{if .OOB}} hx-swap-oob="true"{{end}}><span class="text">{{.Name}} {{.Email}}</span> <button hx-get="{{.EditURL}}" hx-target="closest div" hx-swap="outerHTML">Edit</button></div>{{end}}
