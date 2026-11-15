@@ -8,6 +8,9 @@ on:
       - '**.go'
       - 'go.mod'
       - 'go.sum'
+      # A push that changes how the job's Go cache is filled saves it again.
+      - '.github/workflows/codeql.yaml'
+      - '.github/actions/**'
 
   pull_request:
     branches:
