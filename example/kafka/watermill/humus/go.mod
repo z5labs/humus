@@ -32,6 +32,7 @@ require (
 	github.com/twmb/franz-go/plugin/kotel v1.7.1 // indirect
 	github.com/z5labs/bedrock/circuit v0.25.0 // indirect
 	github.com/z5labs/bedrock/fit v0.25.0 // indirect
+	github.com/z5labs/bedrock/host v0.26.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel v1.47.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.23.0 // indirect
