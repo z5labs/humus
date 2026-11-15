@@ -5,8 +5,9 @@ description: >
   How to serve HTTP with the httpserver package: an Init that sources
   httpserver.Settings and returns the Service from NewService, the
   certificate it requires, the protocols it serves, how it drains and shuts
-  down on httpserver.Main's defaults, what it records, and how to test it
-  with httpservertest.
+  down on httpserver.Main's defaults, how an event stream ends at Shutdown
+  and writes its events with sse, what it records, and how to test it with
+  httpservertest.
 type: docs
 weight: 10
 ---
@@ -343,6 +344,90 @@ goroutine as a leak, still blocked when the test ends, which is how the
 end user's tests find such a handler. A connection a handler hijacks, such
 as a WebSocket, isn't tracked by `Shutdown` or by `Close`: the handler
 closes it itself.
+
+### Event streams
+
+A response that runs until its client leaves, such as an event stream,
+holds `Shutdown` to the end of the grace period. On `httpserver.Main`'s
+defaults it is cut at SIGTERM+15s, and the App exits 1 with a
+`*humus.GracePeriodError`. So a feed watches
+[`httpserver.ShuttingDown`](https://pkg.go.dev/github.com/z5labs/humus/httpserver#ShuttingDown)
+and writes its events with
+[`sse`](https://pkg.go.dev/github.com/z5labs/humus/sse):
+
+```go
+// feed returns a feed's handler: an event stream of the quotes it receives,
+// with a keep-alive comment every 15s, until quotes is closed, the Service's
+// Shutdown begins or the client goes away. In the end user's Init,
+// writeTimeout is the httpserver.Settings' WriteTimeout.
+func feed(quotes <-chan quote, writeTimeout time.Duration) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		stream, err := sse.NewStream(w, writeTimeout)
+		if err != nil {
+			return
+		}
+		keepAlive := time.NewTicker(15 * time.Second)
+		defer keepAlive.Stop()
+		for {
+			select {
+			case <-httpserver.ShuttingDown(r.Context()):
+				return
+			case <-r.Context().Done():
+				return
+			case q, ok := <-quotes:
+				if !ok {
+					return
+				}
+				if err := stream.Send(sse.Event{Name: "quote", Data: q.Price, ID: q.Seq}); err != nil {
+					return
+				}
+			case <-keepAlive.C:
+				if err := stream.Comment("keep-alive"); err != nil {
+					return
+				}
+			}
+		}
+	}
+}
+```
+
+- **`httpserver.ShuttingDown(r.Context())` is closed when the Service's
+  `Shutdown` begins,** after the drain. A feed, a streamed page or a long
+  poll selects on it and on `r.Context().Done()`, and returns. A request
+  that starts after `Shutdown` began gets it already closed, and a context
+  no Service serves gets nil.
+- **It cancels nothing.** `r.Context()` is done only for the two reasons
+  [Request contexts](#request-contexts) gives. Every other response, an
+  event-stream action's included, finishes within the grace period. The
+  handler decides: a feed returns, and an action finishes.
+- **How a stream ends is the handler's.** Returning ends it cleanly, and an
+  `EventSource` reconnects after that, by
+  [WHATWG HTML §9.2](https://html.spec.whatwg.org/multipage/server-sent-events.html).
+  Panicking with `http.ErrAbortHandler` aborts it. Which ending a client
+  library reconnects after is that library's.
+- **Each write is bounded, and the time between writes isn't.**
+  `sse.NewStream` takes the Settings' `WriteTimeout`, and each write must
+  finish within it. The deadline is cleared between writes, since over
+  HTTP/2 a deadline moved forward only before each write still resets an
+  idle stream. A writer that can't reach its deadline fails `NewStream` with
+  `http.ErrNotSupported`. A library's own stream writer that never sets the
+  deadline clears it once, with
+  `http.NewResponseController(w).SetWriteDeadline(time.Time{})`.
+- **The headers are the handler's.** `NewStream` sets only
+  `Content-Type: text/event-stream`, so `Cache-Control` is the handler's to
+  set.
+- **Beside an API, a stream is a plain handler.** openapi/v3 has no
+  event-stream support, so an event stream beside an API is a plain handler
+  that uses `sse`. An openapi operation whose encoder streams watches
+  `ShuttingDown` through the value its handler returns.
+- **A stream is one span,** which lasts as long as the stream, and so does
+  its `http.server.request.duration`. Nothing leaves them out, so the end
+  user's latency alerts filter stream routes out by
+  [their route](#the-span-and-the-metrics).
+
+The design is in
+[Proposal: Hypermedia UIs](https://github.com/z5labs/humus/discussions/1454).
 
 ## The defaults
 
