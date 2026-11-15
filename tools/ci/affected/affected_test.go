@@ -217,21 +217,111 @@ func TestSelect_decides_a_module_it_has_never_seen_by_the_same_rules(t *testing.
 	require.Empty(t, affected.Select([]affected.Module{m}, o, []string{"queue/sqs/queue_test.go", "queue/kafka/go.mod"}))
 }
 
+func TestSelect_a_file_of_Lint_affects_no_module(t *testing.T) {
+	require.Empty(t, selected(t, mods, ".golangci.yaml"), "not even the root module, whose directory holds it")
+}
+
+// tagged are modules with Go files behind the tags of affected.Tags.
+var (
+	kafka    = affected.Module{Dir: "queue/kafka", Tags: []string{"testcontainers"}}
+	walkthru = affected.Module{
+		Dir:      "example/kube/databases",
+		Packages: []affected.Package{{Dir: "kube"}},
+		Requires: []string{"kube"},
+		Tags:     []string{"testcontainers", "functional"},
+	}
+	tagged = []affected.Module{root, kafka, walkthru, flaky}
+)
+
+func TestDecide_lints_and_vets_only_the_modules_the_change_affects(t *testing.T) {
+	got := affected.Decide(tagged, owners, []string{"kube/reconcile.go", "tools/flaky/main.go"})
+	require.Equal(t, affected.Plan{
+		Affected: []affected.Affected{
+			{Dir: "example/kube/databases", Because: "kube/reconcile.go"},
+			{Dir: "tools/flaky", Because: "tools/flaky/main.go"},
+		},
+		Linted: []affected.Affected{
+			{Dir: "example/kube/databases", Because: "kube/reconcile.go"},
+			{Dir: "tools/flaky", Because: "tools/flaky/main.go"},
+		},
+		Vetted: map[string][]string{
+			"testcontainers": {"example/kube/databases"},
+			"functional":     {"example/kube/databases"},
+		},
+	}, got, "tools/flaky is affected but has no file behind either tag")
+}
+
+func TestDecide_a_file_of_Lint_lints_every_module_and_affects_none(t *testing.T) {
+	got := affected.Decide(tagged, owners, []string{".golangci.yaml", "queue/kafka/consumer.go"})
+	require.Equal(t, affected.Plan{
+		Affected: []affected.Affected{{Dir: "queue/kafka", Because: "queue/kafka/consumer.go"}},
+		Linted: []affected.Affected{
+			{Dir: ".", Because: ".golangci.yaml"},
+			{Dir: "queue/kafka", Because: ".golangci.yaml"},
+			{Dir: "example/kube/databases", Because: ".golangci.yaml"},
+			{Dir: "tools/flaky", Because: ".golangci.yaml"},
+		},
+		Vetted: map[string][]string{"testcontainers": {"queue/kafka"}, "functional": {}},
+	}, got)
+}
+
+func TestDecide_no_change_runs_nothing(t *testing.T) {
+	for _, changed := range [][]string{nil, {"docs/content/walkthroughs/databases.md"}} {
+		got := affected.Decide(tagged, owners, changed)
+		require.Empty(t, got.Affected, changed)
+		require.Empty(t, got.Linted, changed)
+		require.Equal(t, map[string][]string{"testcontainers": {}, "functional": {}}, got.Vetted, changed)
+	}
+}
+
+func TestDecide_a_file_of_Always_runs_everything(t *testing.T) {
+	got := affected.Decide(tagged, owners, []string{"tools/ci/main.go"})
+	all := []affected.Affected{
+		{Dir: ".", Because: "tools/ci/main.go"},
+		{Dir: "queue/kafka", Because: "tools/ci/main.go"},
+		{Dir: "example/kube/databases", Because: "tools/ci/main.go"},
+		{Dir: "tools/flaky", Because: "tools/ci/main.go"},
+	}
+	require.Equal(t, affected.Plan{
+		Affected: all,
+		Linted:   all,
+		Vetted: map[string][]string{
+			"testcontainers": {"queue/kafka", "example/kube/databases"},
+			"functional":     {"example/kube/databases"},
+		},
+	}, got)
+}
+
+func TestEverything_lints_every_module_and_vets_every_one_with_tagged_files(t *testing.T) {
+	all := []affected.Affected{{Dir: "."}, {Dir: "queue/kafka"}, {Dir: "example/kube/databases"}, {Dir: "tools/flaky"}}
+	require.Equal(t, affected.Plan{
+		Affected: all,
+		Linted:   all,
+		Vetted: map[string][]string{
+			"testcontainers": {"queue/kafka", "example/kube/databases"},
+			"functional":     {"example/kube/databases"},
+		},
+	}, affected.Everything(tagged))
+}
+
 // repository returns a repository with a root module, whose packages are p,
-// q, which embeds a file, and r, which nothing imports; a module ex, which
-// replaces the root module and imports p, and q only in a test behind the
-// testcontainers tag; and a module other, which nothing requires.
+// which has a file behind !functional, q, which embeds a file, and r, which
+// nothing imports; a module ex, which replaces the root module and imports
+// p, and q only in a test behind the testcontainers tag, and has a file
+// behind functional; and a module other, which nothing requires.
 func repository(t *testing.T) string {
 	t.Helper()
 	repo := gittest.New(t)
 	gittest.Write(t, repo, "go.mod", "module example.com/repo\n\ngo 1.27.0\n")
 	gittest.Write(t, repo, "p/p.go", "package p\n")
+	gittest.Write(t, repo, "p/notfunctional.go", "// Copyright\n\n//go:build !functional\n\npackage p\n")
 	gittest.Write(t, repo, "q/q.go", "package q\n\nimport _ \"embed\"\n\n//go:embed data.txt\nvar Data string\n")
 	gittest.Write(t, repo, "q/data.txt", "data\n")
 	gittest.Write(t, repo, "r/r.go", "package r\n")
 	gittest.Write(t, repo, "ex/go.mod", "module example.com/repo/ex\n\ngo 1.27.0\n\nrequire example.com/repo v0.0.0\n\nreplace example.com/repo => ../\n")
 	gittest.Write(t, repo, "ex/main.go", "package main\n\nimport _ \"example.com/repo/p\"\n\nfunc main() {}\n")
 	gittest.Write(t, repo, "ex/main_test.go", "//go:build testcontainers\n\npackage main\n\nimport _ \"example.com/repo/q\"\n")
+	gittest.Write(t, repo, "ex/functional/functional_test.go", "//go:build functional && linux\n\npackage functional\n")
 	gittest.Write(t, repo, "ex/Dockerfile", "FROM scratch\n")
 	gittest.Write(t, repo, "other/go.mod", "module example.com/repo/other\n\ngo 1.27.0\n")
 	gittest.Write(t, repo, "other/o.go", "package o\n")
@@ -254,11 +344,13 @@ func TestLoad_lists_the_packages_and_modules_of_the_repository_a_module_builds_f
 			{Dir: "q", Embeds: []string{"data.txt"}},
 		},
 		Requires: []string{"."},
+		Tags:     []string{"testcontainers", "functional"},
 	}, m)
 
 	m, err = affected.Load(t.Context(), root, ".", gittest.Env())
 	require.NoError(t, err)
-	require.Equal(t, affected.Module{Dir: "."}, m, "a module's own packages are its directory's files")
+	require.Equal(t, affected.Module{Dir: "."}, m,
+		"a module's own packages are its directory's files, and a tag under a ! is not one its files are behind")
 }
 
 func TestLoad_fails_when_go_list_fails(t *testing.T) {
@@ -301,7 +393,12 @@ func TestRun_with_no_base_affects_every_module(t *testing.T) {
 	repo := repository(t)
 	got, err := affected.Run(t.Context(), filepath.Join(repo, "ex"), "", gittest.Env())
 	require.NoError(t, err)
-	require.Equal(t, []affected.Affected{{Dir: "."}, {Dir: "ex"}, {Dir: "other"}}, got)
+	all := []affected.Affected{{Dir: "."}, {Dir: "ex"}, {Dir: "other"}}
+	require.Equal(t, affected.Plan{
+		Affected: all,
+		Linted:   all,
+		Vetted:   map[string][]string{"testcontainers": {"ex"}, "functional": {"ex"}},
+	}, got)
 }
 
 // touch adds a line to the file name, a slash-separated path under dir,
@@ -328,6 +425,7 @@ func TestRun_picks_the_modules_the_change_from_base_affects(t *testing.T) {
 		{"other/o.go", []string{"other"}},
 		{"docs/go.mod", nil},
 		{"tools/ci/README.md", []string{".", "ex", "other"}},
+		{".golangci.yaml", nil},
 	} {
 		repo := repository(t)
 		base := gittest.Git(t, repo, "rev-parse", "HEAD")
@@ -337,12 +435,32 @@ func TestRun_picks_the_modules_the_change_from_base_affects(t *testing.T) {
 		got, err := affected.Run(t.Context(), repo, base, gittest.Env())
 		require.NoError(t, err, tc.file)
 		var dirs []string
-		for _, a := range got {
+		for _, a := range got.Affected {
 			require.Equal(t, tc.file, a.Because, tc.file)
 			dirs = append(dirs, a.Dir)
 		}
 		require.Equal(t, tc.want, dirs, tc.file)
 	}
+}
+
+func TestRun_plans_lint_and_vet_from_the_change(t *testing.T) {
+	repo := repository(t)
+	base := gittest.Git(t, repo, "rev-parse", "HEAD")
+	touch(t, repo, ".golangci.yaml")
+	touch(t, repo, "p/p.go")
+	gittest.Commit(t, repo, "change")
+
+	got, err := affected.Run(t.Context(), repo, base, gittest.Env())
+	require.NoError(t, err)
+	require.Equal(t, affected.Plan{
+		Affected: []affected.Affected{{Dir: ".", Because: "p/p.go"}, {Dir: "ex", Because: "p/p.go"}},
+		Linted: []affected.Affected{
+			{Dir: ".", Because: ".golangci.yaml"},
+			{Dir: "ex", Because: ".golangci.yaml"},
+			{Dir: "other", Because: ".golangci.yaml"},
+		},
+		Vetted: map[string][]string{"testcontainers": {"ex"}, "functional": {"ex"}},
+	}, got)
 }
 
 func TestRun_fails_when_it_cannot_decide(t *testing.T) {

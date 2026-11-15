@@ -228,11 +228,48 @@ func TestAffected_fails_when_it_cannot_decide(t *testing.T) {
 	require.Contains(t, stderr, "ci affected: git diff")
 }
 
-func TestAffected_takes_only_a_base(t *testing.T) {
-	for _, args := range [][]string{{"--base"}, {"HEAD"}, {"--base", "HEAD", "extra"}, {"--head", "HEAD"}} {
+func TestAffected_json_prints_what_each_job_runs_for(t *testing.T) {
+	dir := repo(t)
+	gittest.Write(t, dir, "grpc/p_test.go", "//go:build testcontainers\n\npackage p\n")
+	gittest.Commit(t, dir, "tagged")
+	gittest.Write(t, dir, ".golangci.yaml", "version: \"2\"\n")
+	gittest.Append(t, dir, "grpc/p.go", "\n")
+	gittest.Commit(t, dir, "change")
+
+	st, stdout, stderr := runCI(t, "affected", "--json", "--base", "HEAD^")
+	require.Equal(t, 0, st.Code(), stderr)
+	require.JSONEq(t, `{
+		"modules": ["grpc"],
+		"lint": [".", "grpc"],
+		"vet_testcontainers": ["grpc"],
+		"vet_functional": []
+	}`, stdout)
+	require.Equal(t, "ci affected: grpc: grpc/p.go\nci affected: .: lint and unit tests only: .golangci.yaml\n", stderr)
+
+	st, stdout, stderr = runCI(t, "affected", "--base", "HEAD", "--json")
+	require.Equal(t, 0, st.Code(), stderr)
+	require.JSONEq(t, `{"modules": [], "lint": [], "vet_testcontainers": [], "vet_functional": []}`, stdout,
+		"no change runs nothing, and says so with empty arrays")
+	require.Empty(t, stderr)
+
+	st, stdout, _ = runCI(t, "affected", "--json")
+	require.Equal(t, 0, st.Code())
+	require.JSONEq(t, `{
+		"modules": [".", "grpc"],
+		"lint": [".", "grpc"],
+		"vet_testcontainers": ["grpc"],
+		"vet_functional": []
+	}`, stdout, "with no base")
+}
+
+func TestAffected_takes_only_a_base_and_json(t *testing.T) {
+	for _, args := range [][]string{
+		{"--base"}, {"HEAD"}, {"--base", "HEAD", "extra"}, {"--head", "HEAD"},
+		{"--base", "HEAD", "--base", "HEAD"}, {"--json", "--json"}, {"--json", "--base"},
+	} {
 		st, stdout, stderr := runCI(t, append([]string{"affected"}, args...)...)
 		require.Equal(t, 2, st.Code(), args)
 		require.Empty(t, stdout, args)
-		require.Contains(t, stderr, "usage: ci affected [--base <rev>]", args)
+		require.Contains(t, stderr, "usage: ci affected [--base <rev>] [--json]", args)
 	}
 }
