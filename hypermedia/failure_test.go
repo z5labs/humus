@@ -557,9 +557,11 @@ func TestSite_records_on_the_span_alone_when_the_client_went_away(t *testing.T) 
 		name    string
 		ctx     func() context.Context
 		writeTo error // the error of a write to the connection, or nil
-		handler hypermedia.Handler
-		want    []string // the records emitted
-		status  string   // the span's status
+		// readFromTo is the error of the writer's own ReadFrom, or nil.
+		readFromTo error
+		handler    hypermedia.Handler
+		want       []string // the records emitted
+		status     string   // the span's status
 	}{
 		{
 			name:    "an error before the response starts",
@@ -598,6 +600,38 @@ func TestSite_records_on_the_span_alone_when_the_client_went_away(t *testing.T) 
 			status: "response failed",
 		},
 		{
+			name:       "a ReadFrom the server refused is logged whatever the context",
+			ctx:        gone,
+			readFromTo: http.ErrContentLength,
+			handler: func(w http.ResponseWriter, _ *http.Request) error {
+				_, err := w.(io.ReaderFrom).ReadFrom(strings.NewReader("a file"))
+				return err
+			},
+			want:   []string{"response failed"},
+			status: "response failed",
+		},
+		{
+			name:       "a ReadFrom that failed otherwise is the connection's when the context is done",
+			ctx:        gone,
+			readFromTo: errors.New("connection reset by peer"),
+			handler: func(w http.ResponseWriter, _ *http.Request) error {
+				_, err := w.(io.ReaderFrom).ReadFrom(strings.NewReader("a file"))
+				return err
+			},
+			status: "response failed",
+		},
+		{
+			name:       "a ReadFrom that failed otherwise is logged while the context is live",
+			ctx:        context.Background,
+			readFromTo: errors.New("the file is unreadable"),
+			handler: func(w http.ResponseWriter, _ *http.Request) error {
+				_, err := w.(io.ReaderFrom).ReadFrom(strings.NewReader("a file"))
+				return err
+			},
+			want:   []string{"response failed"},
+			status: "response failed",
+		},
+		{
 			name: "a panic is logged whatever the context",
 			ctx:  gone,
 			handler: func(http.ResponseWriter, *http.Request) error {
@@ -613,6 +647,7 @@ func TestSite_records_on_the_span_alone_when_the_client_went_away(t *testing.T) 
 				hypermedia.NewRoute(http.MethodGet, One, tc.handler))
 			fw := newFakeWriter()
 			fw.writeErr = tc.writeTo
+			fw.readFromErr = tc.readFromTo
 			rs.serve(fw, httptest.NewRequestWithContext(tc.ctx(), http.MethodGet, "/contacts/7", nil))
 			require.Equal(t, tc.want, rs.bodies())
 			require.Equal(t, sdktrace.Status{Code: codes.Error, Description: tc.status}, rs.span().Status())
@@ -628,6 +663,8 @@ type fakeWriter struct {
 	codes    []int
 	body     strings.Builder
 	writeErr error // the error of each Write, or nil
+	// readFromErr is the error of each ReadFrom, or nil.
+	readFromErr error
 
 	flushes  int
 	hijacked bool
@@ -663,6 +700,9 @@ func (f *fakeWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 }
 
 func (f *fakeWriter) ReadFrom(r io.Reader) (int64, error) {
+	if f.readFromErr != nil {
+		return 0, f.readFromErr
+	}
 	b, err := io.ReadAll(r)
 	f.readFrom += string(b)
 	return int64(len(b)), err

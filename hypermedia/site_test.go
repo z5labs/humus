@@ -128,6 +128,13 @@ func TestNewSite_returns_one_error_naming_every_mistake(t *testing.T) {
 	}
 }
 
+func TestNewSite_reports_a_nil_Setup_beside_valid_routes(t *testing.T) {
+	_, err := hypermedia.NewSite(nil, func(http.ResponseWriter, *http.Request, error) error { return nil }, []hypermedia.Route{
+		hypermedia.NewRoute(http.MethodGet, contact, says("one")),
+	})
+	require.EqualError(t, err, "hypermedia: NewSite: s is nil")
+}
+
 func TestNewSite_checks_a_path_once_for_its_routes(t *testing.T) {
 	bad := hypermedia.Root().Lit("")
 	_, err := hypermedia.NewSite(&humus.Setup{Telemetry: telemetry.Noop()}, func(http.ResponseWriter, *http.Request, error) error { return nil }, []hypermedia.Route{

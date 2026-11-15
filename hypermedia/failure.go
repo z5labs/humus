@@ -269,10 +269,19 @@ func (w *watcher) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 
 // ReadFrom copies src to w, with w's own ReadFrom when it has one, so a
 // file served on HTTP/1.1 can still be sent with sendfile.
+//
+// The error of w's own ReadFrom may be src's or the connection's, and
+// telling them apart would mean wrapping src, which hides the file from
+// sendfile. So only a write the server refused is noted, and any other
+// failure is the connection's only when the request's context says so.
 func (w *watcher) ReadFrom(src io.Reader) (int64, error) {
 	w.started = true
 	if rf, ok := w.w.(io.ReaderFrom); ok {
-		return rf.ReadFrom(src)
+		n, err := rf.ReadFrom(src)
+		if isRefusal(err) {
+			w.fail(refused)
+		}
+		return n, err
 	}
 	// The struct hides w's ReadFrom from io.Copy, which would otherwise
 	// call it again.
@@ -289,14 +298,18 @@ func (w *watcher) Unwrap() http.ResponseWriter {
 // bytes than the Content-Length, or a write after a Hijack. Any other
 // failure is the connection's.
 func (w *watcher) note(err error) {
-	switch {
-	case errors.Is(err, http.ErrBodyNotAllowed),
-		errors.Is(err, http.ErrContentLength),
-		errors.Is(err, http.ErrHijacked):
+	if isRefusal(err) {
 		w.fail(refused)
-	default:
-		w.fail(lost)
+		return
 	}
+	w.fail(lost)
+}
+
+// isRefusal reports whether err is a write the server refused.
+func isRefusal(err error) bool {
+	return errors.Is(err, http.ErrBodyNotAllowed) ||
+		errors.Is(err, http.ErrContentLength) ||
+		errors.Is(err, http.ErrHijacked)
 }
 
 // fail notes a failed write's fault, unless a write was already refused,
