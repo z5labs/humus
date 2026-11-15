@@ -731,3 +731,34 @@ func TestService_Shutdown(t *testing.T) {
 		})
 	})
 }
+
+func TestService_Shutdown_with_a_done_context_closes_the_ShuttingDown_channel(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ca := humustest.NewCA(t)
+		h := humustest.NewHost(t)
+		s := &humus.Setup{Host: h.Host(), Telemetry: telemetry.Noop()}
+		channels := make(chan (<-chan struct{}), 1)
+		handler := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			channels <- httpserver.ShuttingDown(r.Context())
+			<-r.Context().Done()
+		})
+		svc, err := httpserver.NewService(s, settingsFor(t, ca), handler)
+		require.NoError(t, err)
+		served := make(chan error, 1)
+		go func() { served <- svc.Serve(t.Context()) }()
+
+		got := get(client(h, ca, offersH2), "https://localhost:8443/")
+		ch := <-channels
+
+		done, cancel := context.WithCancel(t.Context())
+		cancel()
+		require.ErrorIs(t, svc.Shutdown(done), context.Canceled)
+		select {
+		case <-ch:
+		default:
+			t.Fatal("the channel is still open after Shutdown closed every connection")
+		}
+		require.Error(t, (<-got).err, "the request's connection is closed")
+		require.NoError(t, <-served)
+	})
+}

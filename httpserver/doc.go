@@ -106,6 +106,28 @@
 // still served. It is done when the client goes away, or when Shutdown runs
 // out of time and closes its connection.
 //
+// A handler whose response runs until its client leaves, such as an event
+// stream, a streamed page or a long poll, selects on the channel
+// [ShuttingDown] returns, which is closed when Shutdown begins, and
+// returns, so Shutdown isn't held to the end of the grace period:
+//
+//	for {
+//		select {
+//		case <-httpserver.ShuttingDown(r.Context()):
+//			return
+//		case <-r.Context().Done():
+//			return
+//		case ev := <-events:
+//			writeEvent(w, ev)
+//		}
+//	}
+//
+// Every other request, one that answers with text/event-stream included,
+// finishes within the grace period, as today. ShuttingDown cancels
+// nothing, so a request's context is done for the same two reasons as
+// before: its client went away, or Shutdown ran out of time and closed its
+// connection.
+//
 // A handler should return once r.Context() is done. One that ignores it
 // outlives the App after Shutdown has closed its connection, and in a test
 // that runs the App inside testing/synctest, synctest reports its goroutine
