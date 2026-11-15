@@ -9,11 +9,34 @@ description: >-
 # new one is saved, the job keeps only its newest run's cache. Runs on main
 # can overlap, and an older run that finishes last must not delete a newer
 # run's cache, so the newest is found by run id and attempt rather than
-# assumed to be this run's. That keeps one cache per job on main, inside
-# GitHub's 10 GB per-repository limit alongside CodeQL's, even while a run is
-# saving: deleting them all at the end of the run would hold two caches per
-# job until then. A job's caches are those whose key is its own without the
-# last three parts; see restore-go-cache.
+# assumed to be this run's. Deleting them all at the end of the run instead
+# would hold two caches per job until then. A job's caches are those whose
+# key is its own without the last three parts; see restore-go-cache.
+#
+# One cache per job is not on its own what keeps main inside GitHub's 10 GB
+# per-repository cache limit. When the repository's caches add up to more,
+# GitHub evicts the least recently used, and a job whose cache it evicted
+# compiles from cold until the next push to main. Every module has a Lint
+# and test job with a cache, so the caches are kept small:
+#
+#   - The module zips are deleted from Go's module cache before it is saved.
+#     Go compiles from the extracted modules beside them, and checks them
+#     against go.sum with the .ziphash files that stay, so a zip is needed
+#     only to download or verify a module again, which CI never does. The
+#     zips are compressed already, so they were most of a module cache's
+#     saved size, while the extracted modules compress well.
+#   - build.yaml compiles without DWARF, which nothing in CI reads.
+#   - A Lint and test job's golangci-lint compiles with -race, as its tests
+#     do, so they share one compile of every package rather than two.
+#   - One job vets both the testcontainers and the functional tests, which
+#     compile nearly the same packages, so they have one cache, not two.
+#   - CodeQL saves its cache with this action too, so it has one cache, on
+#     main, rather than setup-go's, which a pull request saves under its own
+#     ref whenever it changes go.sum.
+#
+# Without those, main's caches came to about 18 GB, and GitHub evicted a
+# third of what each push to main saved within minutes. A module or a job
+# added to CI adds a cache to the total.
 
 inputs:
   key:
@@ -26,6 +49,15 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Delete the module zips
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      shell: bash
+      run: |
+        download="$(go env GOMODCACHE)/cache/download"
+        if [[ -d $download ]]; then
+          find "$download" -type f -name '*.zip' -delete
+        fi
+
     - if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
