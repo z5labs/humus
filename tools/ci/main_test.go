@@ -190,3 +190,49 @@ func TestRelease_prints_each_problem_on_a_line_of_its_own_and_exits_1(t *testing
 	require.Contains(t, stderr, "ci release: a/go.mod declares module example.com/a, want github.com/z5labs/humus/a")
 	require.Contains(t, stderr, "ci release: b/go.mod declares module example.com/b, want github.com/z5labs/humus/b")
 }
+
+func TestAffected_with_no_base_prints_every_module(t *testing.T) {
+	repo(t)
+	st, stdout, stderr := runCI(t, "affected")
+	require.Equal(t, 0, st.Code(), stderr)
+	require.Equal(t, ".\ngrpc\n", stdout)
+	require.Equal(t, "ci affected: no base to compare HEAD with, so every module is affected\n", stderr)
+
+	st, stdout, _ = runCI(t, "affected", "--base", "")
+	require.Equal(t, 0, st.Code())
+	require.Equal(t, ".\ngrpc\n", stdout)
+}
+
+func TestAffected_prints_the_modules_the_change_from_base_affects(t *testing.T) {
+	dir := repo(t)
+	gittest.Append(t, dir, "grpc/p.go", "\n")
+	gittest.Write(t, dir, "docs/content.md", "docs\n")
+	gittest.Commit(t, dir, "change")
+
+	st, stdout, stderr := runCI(t, "affected", "--base", "HEAD^")
+	require.Equal(t, 0, st.Code(), stderr)
+	require.Equal(t, "grpc\n", stdout)
+	require.Equal(t, "ci affected: grpc: grpc/p.go\n", stderr)
+
+	st, stdout, stderr = runCI(t, "affected", "--base", "HEAD")
+	require.Equal(t, 0, st.Code(), stderr)
+	require.Empty(t, stdout, "no change affects nothing")
+	require.Empty(t, stderr)
+}
+
+func TestAffected_fails_when_it_cannot_decide(t *testing.T) {
+	repo(t)
+	st, stdout, stderr := runCI(t, "affected", "--base", "no-such-revision")
+	require.Equal(t, 1, st.Code())
+	require.Empty(t, stdout)
+	require.Contains(t, stderr, "ci affected: git diff")
+}
+
+func TestAffected_takes_only_a_base(t *testing.T) {
+	for _, args := range [][]string{{"--base"}, {"HEAD"}, {"--base", "HEAD", "extra"}, {"--head", "HEAD"}} {
+		st, stdout, stderr := runCI(t, append([]string{"affected"}, args...)...)
+		require.Equal(t, 2, st.Code(), args)
+		require.Empty(t, stdout, args)
+		require.Contains(t, stderr, "usage: ci affected [--base <rev>]", args)
+	}
+}

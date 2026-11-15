@@ -19,6 +19,18 @@
 // directories too. The modules under tools/ are listed like any other, so CI
 // lints and tests them.
 //
+//	ci affected [--base <rev>]
+//
+// ci affected prints, one per line and in the order ci modules prints them,
+// the directory of every module ci modules lists that the change from the
+// commit <rev> to HEAD affects, as package affected decides, and on stderr
+// the changed file that affects each. With no --base, or an empty one, there
+// is no change to compare, and every module is affected. It exits 0 when it
+// decided, whatever it decided, 1 when it could not, such as when git cannot
+// list the change's files or go list fails in a module, and 2 on a usage
+// error. CI runs a module's container and kind jobs only when the module is
+// printed, and every one of them when ci affected exits non-zero.
+//
 //	ci coverage-gate MIN PACKAGES PROFILE
 //
 // ci coverage-gate fails when any package listed in the file PACKAGES, one
@@ -64,6 +76,7 @@ import (
 
 	"github.com/z5labs/bedrock"
 
+	"github.com/z5labs/humus/tools/ci/affected"
 	"github.com/z5labs/humus/tools/ci/coverage"
 	"github.com/z5labs/humus/tools/ci/modules"
 	"github.com/z5labs/humus/tools/ci/release"
@@ -74,6 +87,7 @@ func main() {
 }
 
 const usage = `usage: ci modules
+       ci affected [--base <rev>]
        ci coverage-gate MIN PACKAGES PROFILE
        ci release [--bump | --dry-run | --list] [--commit <rev>] [--remote <name>] <version>
 `
@@ -86,6 +100,8 @@ func ci(ctx context.Context, p bedrock.Process) bedrock.ExitStatus {
 	switch p.Args[1] {
 	case "modules":
 		return modulesCommand(ctx, p, p.Args[2:])
+	case "affected":
+		return affectedCommand(ctx, p, p.Args[2:])
 	case "coverage-gate":
 		return coverageGateCommand(p, p.Args[2:])
 	case "release":
@@ -113,6 +129,33 @@ func modulesCommand(ctx context.Context, p bedrock.Process, args []string) bedro
 	}
 	for _, dir := range l.Dirs {
 		say(p.Stdout, "%s\n", dir)
+	}
+	return bedrock.Exit(0)
+}
+
+func affectedCommand(ctx context.Context, p bedrock.Process, args []string) bedrock.ExitStatus {
+	var base string
+	switch {
+	case len(args) == 0:
+	case len(args) == 2 && args[0] == "--base":
+		base = args[1]
+	default:
+		say(p.Stderr, "%s\n", "usage: ci affected [--base <rev>]")
+		return bedrock.ExitWithCause(2, errors.New("ci affected takes only --base <rev>"))
+	}
+	l, err := affected.Run(ctx, ".", base, nil)
+	if err != nil {
+		printErr(p.Stderr, "ci affected", err)
+		return bedrock.ExitWithCause(1, err)
+	}
+	if base == "" {
+		say(p.Stderr, "ci affected: no base to compare HEAD with, so every module is affected\n")
+	}
+	for _, a := range l {
+		if a.Because != "" {
+			say(p.Stderr, "ci affected: %s: %s\n", a.Dir, a.Because)
+		}
+		say(p.Stdout, "%s\n", a.Dir)
 	}
 	return bedrock.Exit(0)
 }
