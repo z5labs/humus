@@ -6,8 +6,6 @@
 package openapi
 
 import (
-	"cmp"
-	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -15,9 +13,9 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
-	"unicode/utf8"
+
+	"github.com/z5labs/humus/internal/param"
 )
 
 // ParamValue is the type of a parameter's value.
@@ -376,13 +374,7 @@ type paramSpec[T ParamValue] struct {
 	name        string
 	description string
 	example     *T
-	enum        []T
-	pattern     *regexp.Regexp
-	patternSet  bool
-	minLength   *int
-	maxLength   *int
-	minimum     *T
-	maximum     *T
+	constraints param.Constraints[T]
 	required    bool
 	def         *T
 }
@@ -402,33 +394,33 @@ func (s paramSpec[T]) withExample(v T) paramSpec[T] {
 }
 
 func (s paramSpec[T]) withEnum(values []T) paramSpec[T] {
-	s.enum = slices.Clone(values)
+	s.constraints.Enum = slices.Clone(values)
 	return s
 }
 
 func (s paramSpec[T]) withPattern(re *regexp.Regexp) paramSpec[T] {
-	s.pattern = re
-	s.patternSet = true
+	s.constraints.Pattern = re
+	s.constraints.PatternSet = true
 	return s
 }
 
 func (s paramSpec[T]) withMinLength(n int) paramSpec[T] {
-	s.minLength = &n
+	s.constraints.MinLength = &n
 	return s
 }
 
 func (s paramSpec[T]) withMaxLength(n int) paramSpec[T] {
-	s.maxLength = &n
+	s.constraints.MaxLength = &n
 	return s
 }
 
 func (s paramSpec[T]) withMinimum(v T) paramSpec[T] {
-	s.minimum = &v
+	s.constraints.Minimum = &v
 	return s
 }
 
 func (s paramSpec[T]) withMaximum(v T) paramSpec[T] {
-	s.maximum = &v
+	s.constraints.Maximum = &v
 	return s
 }
 
@@ -452,45 +444,22 @@ func (s paramSpec[T]) checkNamed(what, typeName string) []error {
 }
 
 // check returns the mistakes in s's constraints: a constraint that doesn't
-// fit T, and a Default or an Example that breaks another constraint.
+// fit T, a value the document can't hold, and a Default or an Example that
+// breaks another constraint.
 func (s paramSpec[T]) check() []error {
-	typ := reflect.TypeFor[T]()
-	var errs []error
-	if !isString(typ) {
-		for _, c := range []struct {
-			name string
-			set  bool
-		}{{"Pattern", s.patternSet}, {"MinLength", s.minLength != nil}, {"MaxLength", s.maxLength != nil}} {
-			if c.set {
-				errs = append(errs, fmt.Errorf("%s needs a string type, but its type is %s", c.name, typ))
-			}
-		}
-	}
-	if !isNumber(typ) {
-		for _, c := range []struct {
-			name string
-			set  bool
-		}{{"Minimum", s.minimum != nil}, {"Maximum", s.maximum != nil}} {
-			if c.set {
-				errs = append(errs, fmt.Errorf("%s needs a number type, but its type is %s", c.name, typ))
-			}
-		}
-	}
-	if s.patternSet && s.pattern == nil {
-		errs = append(errs, errors.New("its Pattern is nil"))
-	}
+	errs := s.constraints.Check()
 	for _, v := range s.values() {
 		if f := reflect.ValueOf(v.value); f.Kind() == reflect.Float64 && (math.IsNaN(f.Float()) || math.IsInf(f.Float(), 0)) {
-			errs = append(errs, fmt.Errorf("its %s is %s, which the document can't hold as a JSON number", v.name, formatValue(v.value)))
+			errs = append(errs, fmt.Errorf("its %s is %s, which the document can't hold as a JSON number", v.name, param.Quote(v.value)))
 		}
 	}
 	if s.def != nil {
-		if err := s.validate(*s.def); err != nil {
+		if err := s.constraints.Validate(*s.def); err != nil {
 			errs = append(errs, fmt.Errorf("its Default: %w", err))
 		}
 	}
 	if s.example != nil {
-		if err := s.validate(*s.example); err != nil {
+		if err := s.constraints.Validate(*s.example); err != nil {
 			errs = append(errs, fmt.Errorf("its Example: %w", err))
 		}
 	}
@@ -501,7 +470,8 @@ func (s paramSpec[T]) check() []error {
 // description, whether it is required, its example, and a schema of its
 // type and its constraints.
 func (s paramSpec[T]) document(in string, required bool) paramDoc {
-	schema := paramSchema{MinLength: s.minLength, MaxLength: s.maxLength}
+	c := s.constraints
+	schema := paramSchema{MinLength: c.MinLength, MaxLength: c.MaxLength}
 	switch reflect.TypeFor[T]().Kind() {
 	case reflect.String:
 		schema.Type = "string"
@@ -514,17 +484,17 @@ func (s paramSpec[T]) document(in string, required bool) paramDoc {
 	default: // reflect.Float64, the last type ParamValue allows
 		schema.Type, schema.Format = "number", "double"
 	}
-	for _, v := range s.enum {
+	for _, v := range c.Enum {
 		schema.Enum = append(schema.Enum, jsonValue(v))
 	}
-	if s.pattern != nil {
-		schema.Pattern = s.pattern.String()
+	if c.Pattern != nil {
+		schema.Pattern = c.Pattern.String()
 	}
-	if s.minimum != nil {
-		schema.Minimum = jsonValue(*s.minimum)
+	if c.Minimum != nil {
+		schema.Minimum = jsonValue(*c.Minimum)
 	}
-	if s.maximum != nil {
-		schema.Maximum = jsonValue(*s.maximum)
+	if c.Maximum != nil {
+		schema.Maximum = jsonValue(*c.Maximum)
 	}
 	if s.def != nil {
 		schema.Default = jsonValue(*s.def)
@@ -563,13 +533,13 @@ type namedValue[T ParamValue] struct {
 // Example, and its bounds.
 func (s paramSpec[T]) values() []namedValue[T] {
 	var vs []namedValue[T]
-	for _, v := range s.enum {
+	for _, v := range s.constraints.Enum {
 		vs = append(vs, namedValue[T]{"Enum value", v})
 	}
 	for _, p := range []struct {
 		name string
 		v    *T
-	}{{"Default", s.def}, {"Example", s.example}, {"Minimum", s.minimum}, {"Maximum", s.maximum}} {
+	}{{"Default", s.def}, {"Example", s.example}, {"Minimum", s.constraints.Minimum}, {"Maximum", s.constraints.Maximum}} {
 		if p.v != nil {
 			vs = append(vs, namedValue[T]{p.name, *p.v})
 		}
@@ -597,111 +567,9 @@ func (s paramSpec[T]) read(what string, values []string) (any, error) {
 // parseValue parses raw as a T, and checks it against s's constraints. Its
 // error names the parameter what.
 func (s paramSpec[T]) parseValue(what, raw string) (T, error) {
-	v, err := parseValue[T](raw)
-	if err == nil {
-		err = s.validate(v)
-	}
+	v, err := s.constraints.Parse(raw)
 	if err != nil {
 		return v, fmt.Errorf("%s: %w", what, err)
-	}
-	return v, nil
-}
-
-// validate checks v against s's constraints. A constraint that doesn't fit
-// T is check's to report, so it is skipped here.
-func (s paramSpec[T]) validate(v T) error {
-	if len(s.enum) > 0 && !slices.Contains(s.enum, v) {
-		quoted := make([]string, len(s.enum))
-		for i, e := range s.enum {
-			quoted[i] = formatValue(e)
-		}
-		return fmt.Errorf("%s isn't one of %s", formatValue(v), strings.Join(quoted, ", "))
-	}
-	typ := reflect.TypeFor[T]()
-	if isString(typ) {
-		str := reflect.ValueOf(v).String()
-		n := utf8.RuneCountInString(str)
-		switch {
-		case s.pattern != nil && !s.pattern.MatchString(str):
-			return fmt.Errorf("%q doesn't match the pattern %s", str, s.pattern)
-		case s.minLength != nil && n < *s.minLength:
-			return fmt.Errorf("%q is shorter than %d characters", str, *s.minLength)
-		case s.maxLength != nil && n > *s.maxLength:
-			return fmt.Errorf("%q is longer than %d characters", str, *s.maxLength)
-		}
-	}
-	if isNumber(typ) {
-		switch {
-		case s.minimum != nil && compareNumbers(v, *s.minimum) < 0:
-			return fmt.Errorf("%s is less than the minimum, %s", formatValue(v), formatValue(*s.minimum))
-		case s.maximum != nil && compareNumbers(v, *s.maximum) > 0:
-			return fmt.Errorf("%s is greater than the maximum, %s", formatValue(v), formatValue(*s.maximum))
-		}
-	}
-	return nil
-}
-
-func isString(typ reflect.Type) bool { return typ.Kind() == reflect.String }
-
-func isNumber(typ reflect.Type) bool {
-	switch typ.Kind() {
-	case reflect.Int, reflect.Int64, reflect.Float64:
-		return true
-	default:
-		return false
-	}
-}
-
-// compareNumbers compares a and b, of a number type.
-func compareNumbers[T ParamValue](a, b T) int {
-	ra, rb := reflect.ValueOf(a), reflect.ValueOf(b)
-	if ra.Kind() == reflect.Float64 {
-		return cmp.Compare(ra.Float(), rb.Float())
-	}
-	return cmp.Compare(ra.Int(), rb.Int())
-}
-
-// formatValue formats v as its underlying type would print, a string
-// quoted, so a named type's String method doesn't change an error's text.
-func formatValue[T ParamValue](v T) string {
-	rv := reflect.ValueOf(v)
-	switch rv.Kind() {
-	case reflect.String:
-		return strconv.Quote(rv.String())
-	case reflect.Bool:
-		return strconv.FormatBool(rv.Bool())
-	case reflect.Int, reflect.Int64:
-		return strconv.FormatInt(rv.Int(), 10)
-	default: // reflect.Float64, the last type ParamValue allows
-		return strconv.FormatFloat(rv.Float(), 'g', -1, 64)
-	}
-}
-
-// parseValue parses s as a T.
-func parseValue[T ParamValue](s string) (T, error) {
-	var v T
-	rv := reflect.ValueOf(&v).Elem()
-	switch rv.Kind() {
-	case reflect.String:
-		rv.SetString(s)
-	case reflect.Bool:
-		b, err := strconv.ParseBool(s)
-		if err != nil {
-			return v, fmt.Errorf("%q isn't a bool", s)
-		}
-		rv.SetBool(b)
-	case reflect.Int, reflect.Int64:
-		n, err := strconv.ParseInt(s, 10, rv.Type().Bits())
-		if err != nil {
-			return v, fmt.Errorf("%q isn't an integer of %d bits", s, rv.Type().Bits())
-		}
-		rv.SetInt(n)
-	default: // reflect.Float64, the last type ParamValue allows
-		f, err := strconv.ParseFloat(s, 64)
-		if err != nil {
-			return v, fmt.Errorf("%q isn't a number", s)
-		}
-		rv.SetFloat(f)
 	}
 	return v, nil
 }
