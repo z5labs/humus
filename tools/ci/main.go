@@ -19,17 +19,22 @@
 // directories too. The modules under tools/ are listed like any other, so CI
 // lints and tests them.
 //
-//	ci affected [--base <rev>]
+//	ci affected [--base <rev>] [--json]
 //
 // ci affected prints, one per line and in the order ci modules prints them,
 // the directory of every module ci modules lists that the change from the
 // commit <rev> to HEAD affects, as package affected decides, and on stderr
 // the changed file that affects each. With no --base, or an empty one, there
-// is no change to compare, and every module is affected. It exits 0 when it
-// decided, whatever it decided, 1 when it could not, such as when git cannot
-// list the change's files or go list fails in a module, and 2 on a usage
-// error. CI runs a module's container and kind jobs only when the module is
-// printed, and every one of them when ci affected exits non-zero.
+// is no change to compare, and every module is affected. With --json it
+// prints instead one JSON object, of arrays of those directories in the same
+// order: modules, the modules the change affects; lint, the modules whose
+// lint and unit tests run; and, for each tag of affected.Tags, vet_<tag>, the
+// modules whose tests behind the tag are vetted. On stderr it then says too
+// why each module of lint that the change doesn't affect is there. It exits 0
+// when it decided, whatever it decided, 1 when it could not, such as when git
+// cannot list the change's files or go list fails in a module, and 2 on a
+// usage error. CI runs a module's jobs only when the module is printed, and
+// every one of them when ci affected exits non-zero.
 //
 //	ci coverage-gate MIN PACKAGES PROFILE
 //
@@ -67,10 +72,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -87,7 +94,7 @@ func main() {
 }
 
 const usage = `usage: ci modules
-       ci affected [--base <rev>]
+       ci affected [--base <rev>] [--json]
        ci coverage-gate MIN PACKAGES PROFILE
        ci release [--bump | --dry-run | --list] [--commit <rev>] [--remote <name>] <version>
 `
@@ -135,15 +142,20 @@ func modulesCommand(ctx context.Context, p bedrock.Process, args []string) bedro
 
 func affectedCommand(ctx context.Context, p bedrock.Process, args []string) bedrock.ExitStatus {
 	var base string
-	switch {
-	case len(args) == 0:
-	case len(args) == 2 && args[0] == "--base":
-		base = args[1]
-	default:
-		say(p.Stderr, "%s\n", "usage: ci affected [--base <rev>]")
-		return bedrock.ExitWithCause(2, errors.New("ci affected takes only --base <rev>"))
+	baseSet, asJSON := false, false
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--base" && !baseSet && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-"):
+			i++
+			base, baseSet = args[i], true
+		case args[i] == "--json" && !asJSON:
+			asJSON = true
+		default:
+			say(p.Stderr, "%s\n", "usage: ci affected [--base <rev>] [--json]")
+			return bedrock.ExitWithCause(2, errors.New("ci affected takes only --base <rev> and --json"))
+		}
 	}
-	l, err := affected.Run(ctx, ".", base, nil)
+	plan, err := affected.Run(ctx, ".", base, nil)
 	if err != nil {
 		printErr(p.Stderr, "ci affected", err)
 		return bedrock.ExitWithCause(1, err)
@@ -151,13 +163,43 @@ func affectedCommand(ctx context.Context, p bedrock.Process, args []string) bedr
 	if base == "" {
 		say(p.Stderr, "ci affected: no base to compare HEAD with, so every module is affected\n")
 	}
-	for _, a := range l {
+	for _, a := range plan.Affected {
 		if a.Because != "" {
 			say(p.Stderr, "ci affected: %s: %s\n", a.Dir, a.Because)
 		}
-		say(p.Stdout, "%s\n", a.Dir)
 	}
+	if !asJSON {
+		for _, a := range plan.Affected {
+			say(p.Stdout, "%s\n", a.Dir)
+		}
+		return bedrock.Exit(0)
+	}
+	out := map[string][]string{"modules": dirs(plan.Affected), "lint": dirs(plan.Linted)}
+	for _, a := range plan.Linted {
+		if !slices.ContainsFunc(plan.Affected, func(b affected.Affected) bool { return b.Dir == a.Dir }) {
+			say(p.Stderr, "ci affected: %s: lint and unit tests only: %s\n", a.Dir, a.Because)
+		}
+	}
+	for tag, ds := range plan.Vetted {
+		out["vet_"+tag] = ds
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		printErr(p.Stderr, "ci affected", err)
+		return bedrock.ExitWithCause(1, err)
+	}
+	say(p.Stdout, "%s\n", b)
 	return bedrock.Exit(0)
+}
+
+// dirs returns the directory of each of l, as an empty array rather than
+// none when l is empty.
+func dirs(l []affected.Affected) []string {
+	out := make([]string, len(l))
+	for i, a := range l {
+		out[i] = a.Dir
+	}
+	return out
 }
 
 func coverageGateCommand(p bedrock.Process, args []string) bedrock.ExitStatus {

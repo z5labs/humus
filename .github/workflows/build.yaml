@@ -47,19 +47,21 @@ env:
 jobs:
   # The default branch's ruleset requires four checks: Build, Kafka
   # (testcontainers), RabbitMQ (testcontainers) and Kubernetes
-  # (testcontainers). Build is the job at the end of this
-  # file, which passes only when every job before it passed, so the jobs it
-  # waits on can be added, split or renamed without changing the ruleset.
+  # (testcontainers). Build is the job after Scripts, which passes only when
+  # every job it waits on that ran passed, so the jobs it waits on can be
+  # added, split or renamed without changing the ruleset.
   #
   # `./...` does not descend into a nested module, so each module that
   # ci modules lists is linted and unit tested on its own, in a job of its
   # own in the Lint and test matrix, and every module's job runs at the same
-  # time. A module added to the repository is in the list, and so in the
-  # matrix, with no change here. No matrix fails fast, so one run reports
-  # every failure. ci is the repository's CI tooling, a Go program in the
-  # module under tools/ci that CI runs with go -C tools/ci run .; that module
-  # is in the list too, so its job lints it, tests it and gates its coverage
-  # like any other's.
+  # time. On a pull request or a merge queue entry the matrix holds only the
+  # modules the change affects, as Affected modules decides, and on a push to
+  # main every module. A module added to the repository is in the list, and
+  # so in the matrix, with no change here. No matrix fails fast, so one run
+  # reports every failure. ci is the repository's CI tooling, a Go program in
+  # the module under tools/ci that CI runs with go -C tools/ci run .; that
+  # module is in the list too, so its job lints it, tests it and gates its
+  # coverage like any other's.
   #
   # No job builds every module: go test and golangci-lint both fail on a type
   # error, in a package without tests too, and every main package without
@@ -109,16 +111,97 @@ jobs:
             key: ${{ steps.go-cache.outputs.key }}
             path: ${{ steps.go-cache.outputs.path }}
 
+  # On a pull request or a merge queue entry, every job but Modules, Affected
+  # modules, Scripts and Build runs only for the modules the change affects,
+  # and a job whose modules it doesn't affect is skipped. ci affected
+  # decides, as package affected in tools/ci describes: a change affects a
+  # module when it touches a file of the module's own directory, such as its
+  # Go files, its Dockerfile, its deploy/ directory or its WireMock mappings;
+  # a file a package it builds from in another module of the repository is
+  # compiled or embeds from, such as humus's own packages through its
+  # replace; or the go.mod or go.sum of a module of the repository in its
+  # build list. A change to this file, to .github/actions/ or to tools/ci
+  # affects every module. A change to .golangci.yaml runs every module's Lint
+  # and test job, and affects no module otherwise. Its --json output says
+  # which modules each job runs for: modules, those the change affects, which
+  # the jobs that test one module each run for, as their if names; lint,
+  # those the Lint and test matrix holds; and vet_testcontainers and
+  # vet_functional, those the change affects with tests behind that tag,
+  # which Vet the tagged tests vets.
+  #
+  # The change is the pull request's against its base, or the merge queue
+  # entry's against the commit it is queued on, so this job fetches the
+  # history, without its files. A push to main has no base, so every module
+  # is affected: every module is linted and built, and every job runs and
+  # saves its cache. When this job fails, nothing was decided, and every job
+  # runs, for every module Modules lists. Each job's if names the modules it
+  # tests, so a job added for another module needs an if like theirs and no
+  # change to ci.
+  #
+  # A module the change doesn't affect was linted and tested when the change
+  # that last affected it merged, so Build passing means every module the
+  # change affects passed. A skipped check counts as passing, so a required
+  # check this job skips keeps no pull request out of the merge queue or out
+  # of main, and the ruleset needs no change.
+  affected:
+    name: Affected modules
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    outputs:
+      modules: ${{ steps.affected.outputs.modules }}
+      lint: ${{ steps.affected.outputs.lint }}
+      vet_testcontainers: ${{ steps.affected.outputs.vet_testcontainers }}
+      vet_functional: ${{ steps.affected.outputs.vet_functional }}
+    steps:
+        - name: Checkout
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+          with:
+            fetch-depth: 0
+            filter: blob:none
+
+        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+          with:
+            go-version: '1.27.4'
+            cache: false
+
+        - id: go-cache
+          uses: ./.github/actions/restore-go-cache
+          with:
+            name: affected
+
+        - name: List the affected modules
+          id: affected
+          env:
+            BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          run: |
+            plan=$(go -C tools/ci run . affected --base "$BASE" --json)
+            jq . <<<"$plan"
+            jq -r 'to_entries[] | "\(.key)=\(.value | tojson)"' <<<"$plan" >> "$GITHUB_OUTPUT"
+
+        - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
+          uses: ./.github/actions/save-go-cache
+          with:
+            key: ${{ steps.go-cache.outputs.key }}
+            path: ${{ steps.go-cache.outputs.path }}
+
   # A module's lint and its unit tests share a job, so they share its setup
   # and its one cache, which holds golangci-lint's cache beside Go's. The
   # tests and the coverage gate, ci coverage-gate, run whether lint passed or
   # not, so one run reports both. A package's coverage comes only from its own module's
   # tests, so each module's job gates its own packages, and between them the
-  # gate still covers every package outside example/. On a push to main the
-  # tests and ci are only built, for the cache, and nothing is gated.
+  # gate still covers every package outside example/ whenever a change
+  # affects its module. On a push to main the tests and ci are only built,
+  # for the cache, and nothing is gated.
   lint-and-test:
     name: Lint and test (${{ matrix.module }})
-    needs: modules
+    # It runs for the modules of Affected modules' lint, or for every module
+    # when Affected modules failed, and is skipped when there are none.
+    needs:
+      - modules
+      - affected
+    if: ${{ !cancelled() && needs.modules.result == 'success' && (needs.affected.result != 'success' || needs.affected.outputs.lint != '[]') }}
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -126,7 +209,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: ${{ fromJSON(needs.modules.outputs.modules) }}
+        module: ${{ fromJSON(needs.affected.result == 'success' && needs.affected.outputs.lint || needs.modules.outputs.modules) }}
     env:
       MODULE: ${{ matrix.module }}
     steps:
@@ -191,14 +274,20 @@ jobs:
   # The tests behind the testcontainers tag run in the testcontainers jobs
   # below, and those behind the functional tag against a deployment, such as
   # a walkthrough's on kind, so here they are only compiled and vetted,
-  # without starting a container. Every module under example/ that ci
-  # modules lists is vetted with each tag, so a new example needs no change
-  # here. Both tags are vetted in one job, so they share one cache: they
-  # compile nearly the same packages, and two caches of them would each be
-  # as big as this one.
+  # without starting a container. Each tag's tests are vetted in every
+  # module the change affects that has a Go file behind the tag, as Affected
+  # modules' vet_testcontainers and vet_functional say, so a new module needs
+  # no change here. When Affected modules failed, every module Modules lists
+  # is vetted with each tag, and when the change affects no module with
+  # tagged tests, the job is skipped. Both tags are vetted in one job, so
+  # they share one cache: they compile nearly the same packages, and two
+  # caches of them would each be as big as this one.
   vet:
     name: Vet the tagged tests
-    needs: modules
+    needs:
+      - modules
+      - affected
+    if: ${{ !cancelled() && needs.modules.result == 'success' && (needs.affected.result != 'success' || needs.affected.outputs.vet_testcontainers != '[]' || needs.affected.outputs.vet_functional != '[]') }}
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -219,14 +308,10 @@ jobs:
 
         - name: Vet the testcontainers tests
           env:
-            MODULES: ${{ needs.modules.outputs.modules }}
+            MODULES: ${{ needs.affected.result == 'success' && needs.affected.outputs.vet_testcontainers || needs.modules.outputs.modules }}
           run: |
             failed=0
-            go -C queue/kafka vet -tags testcontainers ./... || failed=1
-            go -C queue/rabbitmq vet -tags testcontainers ./... || failed=1
-            go -C kube vet -tags testcontainers ./... || failed=1
-            go -C tools/flaky vet -tags testcontainers ./... || failed=1
-            for module in $(jq -r '.[] | select(startswith("example/"))' <<<"$MODULES"); do
+            for module in $(jq -r '.[]' <<<"$MODULES"); do
               echo "::group::go vet -tags testcontainers ($module)"
               go -C "$module" vet -tags testcontainers ./... || failed=1
               echo "::endgroup::"
@@ -238,10 +323,10 @@ jobs:
         - name: Vet the functional tests
           if: ${{ !cancelled() && steps.go-cache.outcome == 'success' }}
           env:
-            MODULES: ${{ needs.modules.outputs.modules }}
+            MODULES: ${{ needs.affected.result == 'success' && needs.affected.outputs.vet_functional || needs.modules.outputs.modules }}
           run: |
             failed=0
-            for module in $(jq -r '.[] | select(startswith("example/"))' <<<"$MODULES"); do
+            for module in $(jq -r '.[]' <<<"$MODULES"); do
               echo "::group::go vet -tags functional ($module)"
               go -C "$module" vet -tags functional ./... || failed=1
               echo "::endgroup::"
@@ -260,6 +345,10 @@ jobs:
   # here rather than with the unit tests.
   conformance:
     name: Conformance
+    # It runs when the change affects the root module, as Affected modules
+    # decides.
+    needs: affected
+    if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"."')) }}
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -308,11 +397,16 @@ jobs:
           run: .claude/hooks/cloud-setup_test.sh
 
   # The check the ruleset requires. It runs whatever happened to the jobs it
-  # needs, and passes only when every one of them succeeded: a job that
-  # failed, was cancelled or was skipped fails it. A skipped required check
-  # counts as passing, so in a pull request or the merge queue this job never
-  # skips itself. Nothing requires it on a push to main, which tests nothing
-  # and skips Scripts, so a push skips it.
+  # needs, and passes only when every one of them that ran succeeded: a job
+  # that failed or was cancelled fails it, and one skipped because the change
+  # affects none of its modules, as Affected modules decides, doesn't. Each
+  # of those jobs runs unless Modules failed, which fails this job too, or
+  # the change doesn't affect its modules; when Affected modules failed, they
+  # all run. So when the change affects no module, this job still reports,
+  # and passes when Modules and Scripts did. A skipped required check counts
+  # as passing, so in a pull request or the merge queue this job never skips
+  # itself. Nothing requires it on a push to main, which tests nothing and
+  # skips Scripts, so a push skips it.
   build:
     name: Build
     needs:
@@ -330,81 +424,23 @@ jobs:
             NEEDS: ${{ toJSON(needs) }}
           run: |
             jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$NEEDS"
-            jq -e 'all(.[]; .result == "success")' <<<"$NEEDS" >/dev/null
+            jq -e 'all(.[]; .result == "success" or .result == "skipped")' <<<"$NEEDS" >/dev/null
 
   # The container and kind jobs below that the ruleset doesn't require, those
-  # of the walkthroughs, flaky and the migration guides, each run only when
-  # the change affects a module they test, and are skipped otherwise. ci
-  # affected decides, as package affected in tools/ci describes: a change
-  # affects a module when it touches a file of the module's own directory,
-  # such as its Go files, its Dockerfile, its deploy/ directory or its WireMock
-  # mappings; a file a package it builds from in another module of the
-  # repository is compiled or embeds from, such as humus's own packages
-  # through its replace; or the go.mod or go.sum of a module of the
-  # repository in its build list. A change to this file, to .github/actions/
-  # or to tools/ci affects every module. The change is the pull request's
-  # against its base, or the merge queue entry's against the commit it is
-  # queued on, so this job fetches the history, without its files. A push to
-  # main has no base, so every module is affected and every job runs, and
-  # saves its cache. When this job fails, nothing was decided, and every job
-  # runs too. Each job's if names the modules it tests, so a job added for
-  # another module needs an if like theirs and no change to ci. Kafka,
-  # RabbitMQ and Kubernetes (testcontainers) are required checks, so they
-  # always run, as Build and the jobs it waits on do.
-  #
-  # Those jobs also start only once every job Build waits on has finished,
-  # so each one needs Affected modules and the same jobs Build needs, and a
-  # job added to Build's needs belongs in theirs too. The account runs at
-  # most 20 jobs at a time, and the Lint and test jobs start only after
-  # Modules, so a job with no needs but Affected modules would take a runner
-  # first, and when other runs are using the runners too, Build's Lint and
-  # test jobs would queue behind every one of them. Waiting on Build's jobs
-  # puts the checks the ruleset requires first, and the results of these
-  # jobs come later. Their if checks !cancelled() rather than success(), so
-  # they still run when one of Build's jobs failed, and one run still reports
-  # every failure, but not when the run was cancelled. A push to main skips
-  # Scripts, and these jobs run all the same, and save their caches. Kafka,
-  # RabbitMQ and Kubernetes (testcontainers) need nothing, so they start with
-  # the run, as Build's jobs do.
-  affected:
-    name: Affected modules
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      contents: read
-    outputs:
-      modules: ${{ steps.affected.outputs.modules }}
-    steps:
-        - name: Checkout
-          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-          with:
-            fetch-depth: 0
-            filter: blob:none
-
-        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
-          with:
-            go-version: '1.27.4'
-            cache: false
-
-        - id: go-cache
-          uses: ./.github/actions/restore-go-cache
-          with:
-            name: affected
-
-        - name: List the affected modules
-          id: affected
-          env:
-            BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          run: |
-            affected=$(go -C tools/ci run . affected --base "$BASE")
-            echo "$affected"
-            echo "modules=$(jq -cnR '[inputs | select(. != "")]' <<<"$affected")" >> "$GITHUB_OUTPUT"
-
-        - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
-          uses: ./.github/actions/save-go-cache
-          with:
-            key: ${{ steps.go-cache.outputs.key }}
-            path: ${{ steps.go-cache.outputs.path }}
+  # of the walkthroughs, flaky and the migration guides, start only once
+  # every job Build waits on has finished, so each one needs Affected modules
+  # and the same jobs Build needs, and a job added to Build's needs belongs
+  # in theirs too. The account runs at most 20 jobs at a time, and the Lint
+  # and test jobs start only after Modules and Affected modules, so a job
+  # with no needs but Affected modules would take a runner first, and when
+  # other runs are using the runners too, Build's Lint and test jobs would
+  # queue behind every one of them. Waiting on Build's jobs puts the checks
+  # the ruleset requires first, and the results of these jobs come later.
+  # Their if checks !cancelled() rather than success(), so they still run
+  # when one of Build's jobs failed or was skipped because the change didn't
+  # affect its modules, and one run still reports every failure, but not when
+  # the run was cancelled. A push to main skips Scripts, and these jobs run
+  # all the same, and save their caches.
 
   # The tests behind the testcontainers build tag run Kafka in a container
   # and open real sockets, so they run here rather than with the unit tests:
@@ -412,6 +448,9 @@ jobs:
   # gate, and this job is a required check of its own.
   kafka-testcontainers:
     name: Kafka (testcontainers)
+    # It runs when the change affects queue/kafka, as Affected modules decides.
+    needs: affected
+    if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"queue/kafka"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -447,6 +486,9 @@ jobs:
   # broker, so these are the only tests of queue/rabbitmq that reach one.
   rabbitmq-testcontainers:
     name: RabbitMQ (testcontainers)
+    # It runs when the change affects queue/rabbitmq, as Affected modules decides.
+    needs: affected
+    if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"queue/rabbitmq"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -484,6 +526,9 @@ jobs:
   # and how long k3s took to start, pulling its image included.
   kube-testcontainers:
     name: Kubernetes (testcontainers)
+    # It runs when the change affects kube, as Affected modules decides.
+    needs: affected
+    if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"kube"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

@@ -4,20 +4,25 @@
 // https://opensource.org/licenses/MIT
 
 // Package affected decides which of a repository's Go modules a change
-// affects, so that CI runs a module's container and kind jobs only when the
-// change touches something they test.
+// affects, so that CI lints, tests and vets a module, and runs its container
+// and kind jobs, only when the change touches something they test.
 //
 // A change affects a module when it touches any of these:
 //
 //   - a file of the module's own directory, outside every module nested in
 //     it, such as its Go files, its Dockerfile, its deploy/ directory or its
-//     WireMock mappings
+//     WireMock mappings, other than a file of Lint
 //   - a file a package the module builds from is compiled or embeds from, in
 //     another module of the repository, such as humus's own packages through
 //     the module's replace
 //   - the go.mod or go.sum of a module of the repository in the module's
 //     build list
 //   - a file of Always, which affects every module
+//
+// A module's lint and unit tests also run when the change touches a file of
+// Lint, which configures the lint of every module but affects nothing else.
+// A module's tests behind a tag of Tags are vetted when the change affects
+// the module and a Go file of its own packages is behind that tag.
 package affected
 
 import (
@@ -26,7 +31,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/build/constraint"
 	"io"
+	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
@@ -47,8 +54,14 @@ var Always = []string{
 	"tools/ci/",
 }
 
+// Lint holds the files a change to which runs the lint and unit tests of
+// every module, and affects no module, the one whose directory holds them
+// included: golangci-lint's configuration.
+var Lint = []string{".golangci.yaml"}
+
 // Tags are the build tags a module's packages are listed with, so that what
-// its tests behind those tags build from counts too.
+// its tests behind those tags build from counts too, and the tags whose tests
+// CI vets.
 var Tags = []string{"testcontainers", "functional"}
 
 // Module is a module of the repository, and what of the repository it builds
@@ -64,6 +77,9 @@ type Module struct {
 	// module's build list, such as one its go.mod replaces a requirement
 	// with.
 	Requires []string
+	// Tags are the tags of Tags that a Go file of the module's own packages
+	// is behind: its //go:build line names the tag, other than under a !.
+	Tags []string
 }
 
 // Package is a package of the repository a module builds from.
@@ -83,6 +99,21 @@ type Affected struct {
 	Because string
 }
 
+// Plan is what CI runs for a change, module by module.
+type Plan struct {
+	// Affected are the modules the change affects, as Select decides. CI
+	// runs a module's container and kind jobs, and its conformance tests,
+	// only when it is here.
+	Affected []Affected
+	// Linted are the modules whose lint and unit tests run: every module
+	// the change affects, and every module when it touches a file of Lint.
+	Linted []Affected
+	// Vetted holds, for each tag of Tags, the directory of every module of
+	// Affected that has a Go file behind the tag, as Module.Tags says, in
+	// the order of Affected.
+	Vetted map[string][]string
+}
+
 // Select returns every module of mods that a change to the files changed
 // affects, in the order of mods. changed are slash-separated paths from the
 // repository's root. owners are the directories of every module of the
@@ -90,10 +121,48 @@ type Affected struct {
 // the module a file belongs to: the one whose directory is the longest that
 // holds it.
 func Select(mods []Module, owners []string, changed []string) []Affected {
+	return pick(mods, changed, func(m Module, file string) bool { return affects(m, owners, file) })
+}
+
+// Decide returns the Plan for a change to the files changed, as Select takes
+// them.
+func Decide(mods []Module, owners []string, changed []string) Plan {
+	return plan(mods, Select(mods, owners, changed), pick(mods, changed, func(m Module, file string) bool {
+		return affects(m, owners, file) || slices.Contains(Lint, file)
+	}))
+}
+
+// Everything returns the Plan when there is no change to compare, so every
+// module is affected.
+func Everything(mods []Module) Plan {
+	all := make([]Affected, len(mods))
+	for i, m := range mods {
+		all[i] = Affected{Dir: m.Dir}
+	}
+	return plan(mods, all, all)
+}
+
+func plan(mods []Module, affected, linted []Affected) Plan {
+	p := Plan{Affected: affected, Linted: linted, Vetted: make(map[string][]string, len(Tags))}
+	for _, tag := range Tags {
+		p.Vetted[tag] = []string{}
+	}
+	for _, a := range affected {
+		i := slices.IndexFunc(mods, func(m Module) bool { return m.Dir == a.Dir })
+		for _, tag := range mods[i].Tags {
+			p.Vetted[tag] = append(p.Vetted[tag], a.Dir)
+		}
+	}
+	return p
+}
+
+// pick returns every module of mods that one of the files changed affects,
+// as affects decides, with the first such file, in the order of mods.
+func pick(mods []Module, changed []string, affects func(Module, string) bool) []Affected {
 	var out []Affected
 	for _, m := range mods {
 		for _, file := range changed {
-			if affects(m, owners, file) {
+			if affects(m, file) {
 				out = append(out, Affected{Dir: m.Dir, Because: file})
 				break
 			}
@@ -105,6 +174,9 @@ func Select(mods []Module, owners []string, changed []string) []Affected {
 func affects(m Module, owners []string, file string) bool {
 	if always(file) {
 		return true
+	}
+	if slices.Contains(Lint, file) {
+		return false
 	}
 	owner := owner(owners, file)
 	if owner == m.Dir {
@@ -215,7 +287,9 @@ func modulesOwner(owners []string, dir string) string {
 // Load lists what of the repository at root the module in dir, a directory
 // from root, builds from: the packages of the repository's other modules in
 // go list -deps -test of its packages with Tags, and the repository's other
-// modules in go list -m all.
+// modules in go list -m all. It reads the //go:build line of every Go file of
+// the module's own packages and their tests, those go list ignores included,
+// for the module's Tags.
 //
 // env is the environment of go, as in exec.Cmd: nil is this process's.
 func Load(ctx context.Context, root, dir string, env []string) (Module, error) {
@@ -236,20 +310,37 @@ func Load(ctx context.Context, root, dir string, env []string) (Module, error) {
 	}
 
 	out, err = run(ctx, moduleDir, env, "go", "list", "-deps", "-test", "-tags", strings.Join(Tags, ","),
-		"-json=Dir,Module,EmbedPatterns", "./...")
+		"-json=Dir,Module,EmbedPatterns,GoFiles,TestGoFiles,XTestGoFiles,IgnoredGoFiles", "./...")
 	if err != nil {
 		return Module{}, fmt.Errorf("go list -deps in %s: %w", dir, err)
 	}
+	var files []string
 	err = decode(out, func(v struct {
 		Dir           string
 		Module        *struct{ Dir string }
 		EmbedPatterns []string
+		GoFiles       []string
+		TestGoFiles   []string
+		XTestGoFiles  []string
+		// A file behind one tag of Tags and not another, such as
+		// testcontainers && !functional, is ignored with both.
+		IgnoredGoFiles []string
 	}) {
 		if v.Module == nil {
 			return
 		}
 		mod, ok := within(root, v.Module.Dir)
-		if !ok || mod == dir {
+		if !ok {
+			return
+		}
+		if mod == dir {
+			for _, f := range slices.Concat(v.GoFiles, v.TestGoFiles, v.XTestGoFiles, v.IgnoredGoFiles) {
+				// A test binary's generated main is in the build cache,
+				// named by its absolute path.
+				if !filepath.IsAbs(f) {
+					files = append(files, filepath.Join(v.Dir, f))
+				}
+			}
 			return
 		}
 		d, ok := within(root, v.Dir)
@@ -264,7 +355,66 @@ func Load(ctx context.Context, root, dir string, env []string) (Module, error) {
 	slices.Sort(m.Requires)
 	m.Requires = slices.Compact(m.Requires)
 	slices.SortFunc(m.Packages, func(a, b Package) int { return strings.Compare(a.Dir, b.Dir) })
+
+	slices.Sort(files)
+	var tags []string
+	for _, f := range slices.Compact(files) {
+		t, err := buildTags(f)
+		if err != nil {
+			return Module{}, fmt.Errorf("reading the build constraint of %s: %w", f, err)
+		}
+		tags = append(tags, t...)
+	}
+	for _, tag := range Tags {
+		if slices.Contains(tags, tag) {
+			m.Tags = append(m.Tags, tag)
+		}
+	}
 	return m, nil
+}
+
+// buildTags returns the tags the //go:build line of the Go file name names,
+// other than under a !, or none when it has no //go:build line. The line is
+// among the comments and blank lines before the file's first other line, as
+// the go command reads it.
+func buildTags(name string) ([]string, error) {
+	b, err := os.ReadFile(name)
+	if err != nil {
+		return nil, err
+	}
+	for line := range strings.SplitSeq(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "//") {
+			return nil, nil
+		}
+		if constraint.IsGoBuild(line) {
+			expr, err := constraint.Parse(line)
+			if err != nil {
+				return nil, err
+			}
+			var tags []string
+			named(expr, &tags)
+			return tags, nil
+		}
+	}
+	return nil, nil
+}
+
+// named appends to tags every tag expr names, other than under a !.
+func named(expr constraint.Expr, tags *[]string) {
+	switch e := expr.(type) {
+	case *constraint.TagExpr:
+		*tags = append(*tags, e.Tag)
+	case *constraint.AndExpr:
+		named(e.X, tags)
+		named(e.Y, tags)
+	case *constraint.OrExpr:
+		named(e.X, tags)
+		named(e.Y, tags)
+	}
 }
 
 // within returns dir, an absolute path, as a slash-separated path from root,
@@ -315,18 +465,19 @@ func Changed(ctx context.Context, root, base string, env []string) ([]string, er
 	return files, nil
 }
 
-// Run decides which modules of the git repository that holds dir the change
-// from the commit base to HEAD affects, in the order of modules.List. With no
-// base there is no change to compare, so every module is affected. It lists
-// what every module builds from whether or not it has a base, so a run with
-// none, such as a push to main's, still downloads what a run with one needs.
+// Run decides the Plan for the change from the commit base to HEAD in the git
+// repository that holds dir, its modules in the order of modules.List. With no
+// base there is no change to compare, so every module is affected, as
+// Everything decides. It lists what every module builds from whether or not
+// it has a base, so a run with none, such as a push to main's, still
+// downloads what a run with one needs.
 //
 // env is the environment of git and go, as in exec.Cmd: nil is this
 // process's.
-func Run(ctx context.Context, dir, base string, env []string) ([]Affected, error) {
+func Run(ctx context.Context, dir, base string, env []string) (Plan, error) {
 	l, err := modules.List(ctx, dir, env)
 	if err != nil {
-		return nil, err
+		return Plan{}, err
 	}
 	mods := make([]Module, len(l.Dirs))
 	errs := make([]error, len(l.Dirs))
@@ -341,20 +492,16 @@ func Run(ctx context.Context, dir, base string, env []string) ([]Affected, error
 	}
 	wg.Wait()
 	if err := errors.Join(errs...); err != nil {
-		return nil, err
+		return Plan{}, err
 	}
 	if base == "" {
-		out := make([]Affected, len(mods))
-		for i, m := range mods {
-			out[i] = Affected{Dir: m.Dir}
-		}
-		return out, nil
+		return Everything(mods), nil
 	}
 	changed, err := Changed(ctx, l.Root, base, env)
 	if err != nil {
-		return nil, err
+		return Plan{}, err
 	}
-	return Select(mods, slices.Concat(l.Dirs, l.Empty), changed), nil
+	return Decide(mods, slices.Concat(l.Dirs, l.Empty), changed), nil
 }
 
 func run(ctx context.Context, dir string, env []string, name string, args ...string) ([]byte, error) {
