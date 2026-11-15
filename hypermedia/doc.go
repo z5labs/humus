@@ -74,6 +74,28 @@
 // The route names the request's span, such as "PUT /contacts/{contactId}",
 // whatever handlers above the Site pass on a copy of the request.
 //
+// # Failures
+//
+// A handler's w has net/http's semantics: each WriteHeader, Write and
+// Flush goes straight to the response, and nothing is held. So any
+// template engine, a library's own helpers, and [http.ServeFileFS] write
+// as they would on net/http, and a body with no Content-Type is sniffed.
+// The Site watches only whether the response has started.
+//
+// Before it starts, a handler's error or panic gets the ErrorPage, without
+// the headers and cookies the handler set, and with those set above the
+// Site. After it starts, the response is the handler's: an error ends it
+// as written, and a panic aborts it. A handler whose render can fail
+// halfway renders into a buffer first. A panic with [http.ErrAbortHandler]
+// passes through, so a handler can abort a stream on purpose.
+//
+// Every error but a [RequestError] is recorded, whatever status the page
+// writes, and every panic but http.ErrAbortHandler: as an exception event
+// on the request's span, its status set to Error, and one ERROR record in
+// the request's context, through the logger
+// github.com/z5labs/humus/hypermedia. The Site adds no instrument or
+// attribute of its own.
+//
 // # Building never panics
 //
 // A path or a parameter isn't checked as it is built, whatever its

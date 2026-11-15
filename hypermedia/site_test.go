@@ -19,6 +19,7 @@ import (
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/hypermedia"
+	"github.com/z5labs/humus/telemetry"
 )
 
 // site is a Site under test, which records each error its ErrorPage
@@ -34,7 +35,7 @@ type site struct {
 func newSite(t *testing.T, routes ...hypermedia.Route) *site {
 	t.Helper()
 	s := &site{t: t}
-	h, err := hypermedia.NewSite(&humus.Setup{}, func(w http.ResponseWriter, _ *http.Request, err error) error {
+	h, err := hypermedia.NewSite(&humus.Setup{Telemetry: telemetry.Noop()}, func(w http.ResponseWriter, _ *http.Request, err error) error {
 		s.errs = append(s.errs, err)
 		status := http.StatusInternalServerError
 		if re, ok := errors.AsType[*hypermedia.RequestError](err); ok {
@@ -127,9 +128,16 @@ func TestNewSite_returns_one_error_naming_every_mistake(t *testing.T) {
 	}
 }
 
+func TestNewSite_reports_a_nil_Setup_beside_valid_routes(t *testing.T) {
+	_, err := hypermedia.NewSite(nil, func(http.ResponseWriter, *http.Request, error) error { return nil }, []hypermedia.Route{
+		hypermedia.NewRoute(http.MethodGet, contact, says("one")),
+	})
+	require.EqualError(t, err, "hypermedia: NewSite: s is nil")
+}
+
 func TestNewSite_checks_a_path_once_for_its_routes(t *testing.T) {
 	bad := hypermedia.Root().Lit("")
-	_, err := hypermedia.NewSite(&humus.Setup{}, func(http.ResponseWriter, *http.Request, error) error { return nil }, []hypermedia.Route{
+	_, err := hypermedia.NewSite(&humus.Setup{Telemetry: telemetry.Noop()}, func(http.ResponseWriter, *http.Request, error) error { return nil }, []hypermedia.Route{
 		hypermedia.NewRoute(http.MethodGet, bad, says("")),
 		hypermedia.NewRoute(http.MethodPost, bad, says("")),
 	})
@@ -139,7 +147,7 @@ func TestNewSite_checks_a_path_once_for_its_routes(t *testing.T) {
 func TestNewSite_checks_the_path_of_each_route_that_shares_a_pattern(t *testing.T) {
 	id := hypermedia.Root().Lit("contacts").Param(hypermedia.PathParam[string]("id"))
 	badID := hypermedia.Root().Lit("contacts").Param(hypermedia.PathParam[int]("id").Pattern(regexp.MustCompile(`^\d+$`)))
-	_, err := hypermedia.NewSite(&humus.Setup{}, func(http.ResponseWriter, *http.Request, error) error { return nil }, []hypermedia.Route{
+	_, err := hypermedia.NewSite(&humus.Setup{Telemetry: telemetry.Noop()}, func(http.ResponseWriter, *http.Request, error) error { return nil }, []hypermedia.Route{
 		hypermedia.NewRoute(http.MethodGet, id, says("")),
 		hypermedia.NewRoute(http.MethodPut, badID, says("")),
 	})
@@ -149,7 +157,7 @@ func TestNewSite_checks_the_path_of_each_route_that_shares_a_pattern(t *testing.
 func TestNewSite_reports_routes_a_ServeMux_cant_tell_apart(t *testing.T) {
 	a := hypermedia.PathParam[string]("a")
 	k := hypermedia.PathParam[string]("k")
-	_, err := hypermedia.NewSite(&humus.Setup{}, func(http.ResponseWriter, *http.Request, error) error { return nil }, []hypermedia.Route{
+	_, err := hypermedia.NewSite(&humus.Setup{Telemetry: telemetry.Noop()}, func(http.ResponseWriter, *http.Request, error) error { return nil }, []hypermedia.Route{
 		hypermedia.NewRoute(http.MethodGet, hypermedia.Root().Lit("c").Param(a), says("")),
 		hypermedia.NewRoute(http.MethodGet, hypermedia.Root().Param(k).Lit("d"), says("")),
 	})
@@ -485,7 +493,7 @@ func TestSite_answers_a_handlers_error_with_the_ErrorPage(t *testing.T) {
 	gone := &hypermedia.RequestError{Status: http.StatusNotFound, Err: errors.New("contact 7 doesn't exist")}
 	failed := errors.New("the database is down")
 	var contact ID
-	h, err := hypermedia.NewSite(&humus.Setup{}, func(w http.ResponseWriter, r *http.Request, err error) error {
+	h, err := hypermedia.NewSite(&humus.Setup{Telemetry: telemetry.Noop()}, func(w http.ResponseWriter, r *http.Request, err error) error {
 		contact = hypermedia.ParamFrom(r, ContactID)
 		status := http.StatusInternalServerError
 		if re, ok := errors.AsType[*hypermedia.RequestError](err); ok {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/hypermedia"
+	"github.com/z5labs/humus/telemetry"
 )
 
 // contactPage writes the contact whose ID is in the path, which the Site
@@ -41,7 +42,7 @@ func errorPage(w http.ResponseWriter, _ *http.Request, err error) error {
 // NewSite serves routes on Paths, and answers a path or a method none of
 // them serves with the end user's error page.
 func ExampleNewSite() {
-	site, err := hypermedia.NewSite(&humus.Setup{}, errorPage, []hypermedia.Route{
+	site, err := hypermedia.NewSite(&humus.Setup{Telemetry: telemetry.Noop()}, errorPage, []hypermedia.Route{
 		hypermedia.NewRoute(http.MethodGet, One, contactPage),
 		hypermedia.NewRoute(http.MethodPut, One, contactPage),
 	})
@@ -67,7 +68,7 @@ func ExampleNewSite() {
 
 // NewSite names every mistake in its routes in one error.
 func ExampleNewSite_mistakes() {
-	_, err := hypermedia.NewSite(&humus.Setup{}, errorPage, []hypermedia.Route{
+	_, err := hypermedia.NewSite(&humus.Setup{Telemetry: telemetry.Noop()}, errorPage, []hypermedia.Route{
 		hypermedia.NewRoute("GET POST", List, contactPage),
 		hypermedia.NewRoute(http.MethodGet, One, contactPage),
 		hypermedia.NewRoute(http.MethodGet, List.Param(hypermedia.PathParam[ID]("id")), contactPage),
