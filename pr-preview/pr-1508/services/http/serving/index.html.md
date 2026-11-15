@@ -345,9 +345,9 @@ and writes its events with
 
 ```go
 // feed returns a feed's handler: an event stream of the quotes it receives,
-// with a keep-alive comment every 15s, until the Service's Shutdown begins
-// or the client goes away. In the end user's Init, writeTimeout is the
-// httpserver.Settings' WriteTimeout.
+// with a keep-alive comment every 15s, until quotes is closed, the Service's
+// Shutdown begins or the client goes away. In the end user's Init,
+// writeTimeout is the httpserver.Settings' WriteTimeout.
 func feed(quotes <-chan quote, writeTimeout time.Duration) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -363,7 +363,10 @@ func feed(quotes <-chan quote, writeTimeout time.Duration) http.HandlerFunc {
 				return
 			case <-r.Context().Done():
 				return
-			case q := <-quotes:
+			case q, ok := <-quotes:
+				if !ok {
+					return
+				}
 				if err := stream.Send(sse.Event{Name: "quote", Data: q.Price, ID: q.Seq}); err != nil {
 					return
 				}
@@ -406,8 +409,10 @@ func feed(quotes <-chan quote, writeTimeout time.Duration) http.HandlerFunc {
   event-stream support, so an event stream beside an API is a plain handler
   that uses `sse`. An openapi operation whose encoder streams watches
   `ShuttingDown` through the value its handler returns.
-- **A stream is one span,** which lasts as long as the stream, so stream
-  routes stay out of latency alerts.
+- **A stream is one span,** which lasts as long as the stream, and so does
+  its `http.server.request.duration`. Nothing leaves them out, so the end
+  user's latency alerts filter stream routes out by
+  [their route](#the-span-and-the-metrics).
 
 The design is in
 [Proposal: Hypermedia UIs](https://github.com/z5labs/humus/discussions/1454).
