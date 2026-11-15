@@ -20,8 +20,8 @@ import (
 )
 
 // TestPackage_exports_only_its_API checks the package's own source, test
-// files excluded: it exports its paths, parameters and links, and nothing
-// else.
+// files excluded: it exports its paths, parameters and links, its routes
+// and its Site, and nothing else.
 func TestPackage_exports_only_its_API(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	require.NoError(t, err)
@@ -50,7 +50,11 @@ func TestPackage_exports_only_its_API(t *testing.T) {
 				if index, ok := recv.(*ast.IndexExpr); ok {
 					recv = index.X
 				}
-				exported = append(exported, recv.(*ast.Ident).Name+"."+d.Name.Name)
+				// A method of an unexported type, such as an
+				// http.Handler's, isn't part of the package's API.
+				if recvName := recv.(*ast.Ident).Name; ast.IsExported(recvName) {
+					exported = append(exported, recvName+"."+d.Name.Name)
+				}
 			case *ast.GenDecl:
 				for _, spec := range d.Specs {
 					switch s := spec.(type) {
@@ -72,6 +76,11 @@ func TestPackage_exports_only_its_API(t *testing.T) {
 	sort.Strings(exported)
 	require.Equal(t, []string{
 		"Arg",
+		"ErrorPage",
+		"Handler",
+		"NewRoute",
+		"NewSite",
+		"ParamFrom",
 		"ParamValue",
 		"Path",
 		"Path.Lit",
@@ -88,9 +97,16 @@ func TestPackage_exports_only_its_API(t *testing.T) {
 		"PathParameter.MinLength",
 		"PathParameter.Minimum",
 		"PathParameter.Pattern",
+		"QueryFrom",
 		"QueryParam",
 		"QueryParameter",
+		"RequestError",
+		"RequestError.Error",
+		"RequestError.Unwrap",
 		"Root",
+		"Route",
+		"Site",
+		"Site.ServeHTTP",
 		"URL",
 		"URL.String",
 		"URL.With",

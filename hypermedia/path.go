@@ -237,3 +237,103 @@ func (u URL) String() string {
 	}
 	return b.String()
 }
+
+// check returns every mistake in p's segments: a literal a path can't
+// have, a parameter name that isn't an ASCII Go identifier, a parameter
+// that appears twice, a constraint that doesn't fit its parameter's type,
+// and a Rest that isn't p's last segment.
+func (p Path) check() []error {
+	var errs []error
+	seen := make(map[string]bool)
+	for i, seg := range p.segs {
+		if seg.param == nil {
+			if err := checkLiteral(seg.lit); err != nil {
+				errs = append(errs, err)
+			}
+			continue
+		}
+		name := seg.param.name
+		if seg.param.rest && i != len(p.segs)-1 {
+			errs = append(errs, fmt.Errorf("path parameter %q is a Rest, but isn't the path's last segment", name))
+		}
+		if !isIdentifier(name) {
+			errs = append(errs, fmt.Errorf("path parameter %q isn't an ASCII Go identifier", name))
+			continue
+		}
+		if seen[name] {
+			errs = append(errs, fmt.Errorf("path parameter %q appears more than once", name))
+			continue
+		}
+		seen[name] = true
+		errs = append(errs, seg.param.check()...)
+	}
+	return errs
+}
+
+// template returns p's pattern with its parameters' names left out, such
+// as "/contacts/{}", so two paths that differ only in their names have
+// one template.
+func (p Path) template() string {
+	var b strings.Builder
+	for _, seg := range p.segs {
+		b.WriteByte('/')
+		switch {
+		case seg.param == nil:
+			b.WriteString(seg.lit)
+		case seg.param.rest:
+			b.WriteString("{...}")
+		default:
+			b.WriteString("{}")
+		}
+	}
+	return b.String()
+}
+
+// muxPattern returns p's path as an http.ServeMux pattern. The root is
+// "/{$}", since "/" is a prefix of every path to a ServeMux.
+func (p Path) muxPattern() string {
+	if len(p.segs) == 0 {
+		return "/{$}"
+	}
+	return p.String()
+}
+
+// checkLiteral reports a literal that would need escaping, or that a
+// client would resolve away.
+func checkLiteral(s string) error {
+	switch s {
+	case "":
+		return fmt.Errorf("a literal is empty")
+	case ".", "..":
+		return fmt.Errorf("literal %q is a dot segment", s)
+	}
+	for _, r := range s {
+		if !isUnreserved(r) {
+			return fmt.Errorf("literal %q holds %q, but a literal holds only letters, digits, \"-\", \".\", \"_\" and \"~\"", s, r)
+		}
+	}
+	return nil
+}
+
+// isUnreserved reports whether r is an unreserved character of RFC 3986.
+func isUnreserved(r rune) bool {
+	return isLetter(r) || isDigit(r) || r == '-' || r == '.' || r == '_' || r == '~'
+}
+
+// isIdentifier reports whether s is an ASCII Go identifier, as an
+// http.ServeMux wildcard's name is.
+func isIdentifier(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		if !isLetter(r) && r != '_' && (i == 0 || !isDigit(r)) {
+			return false
+		}
+	}
+	return true
+}
+
+func isLetter(r rune) bool { return 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' }
+
+func isDigit(r rune) bool { return '0' <= r && r <= '9' }

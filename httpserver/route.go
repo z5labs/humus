@@ -15,10 +15,10 @@ import (
 // span, and sets http.route on its metrics, from the Pattern of the request
 // it passes nameRoute once nameRoute returns.
 //
-// It sets that Pattern to the route an openapi API recorded, whatever
-// handlers between them passed on a copy of the request. With none
-// recorded, it sets the Pattern its own copy was given, as by an
-// http.ServeMux below it.
+// It sets that Pattern to the route an openapi API or a hypermedia Site
+// recorded, whatever handlers between them passed on a copy of the
+// request. With none recorded, it sets the Pattern its own copy was given,
+// as by an http.ServeMux below it.
 type nameRoute struct {
 	next http.Handler
 }

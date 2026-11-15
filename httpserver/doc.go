@@ -155,10 +155,11 @@
 //
 // The pattern is the one set on the request the handler is given, or on the
 // copy of it the Service passes on when it strips a failure scenario. An
-// openapi API's route names the span whatever handlers above it pass on a
-// copy of the request, such as http.MaxBytesHandler, http.TimeoutHandler or
-// auth's handler. auth's handler also keeps a pattern set on the copy it
-// passes on, as by a ServeMux below it.
+// openapi API's route, or a hypermedia Site's, names the span whatever
+// handlers above it pass on a copy of the request, such as
+// http.MaxBytesHandler, http.TimeoutHandler or auth's handler. auth's
+// handler also keeps a pattern set on the copy it passes on, as by a
+// ServeMux below it.
 //
 // Each request also records OpenTelemetry's HTTP server metrics, such as
 // http.server.request.duration, on the Setup's MeterProvider. Their

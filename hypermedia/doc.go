@@ -43,6 +43,37 @@
 //	Page = hypermedia.QueryParam[int]("page")
 //	href := List.URL().With(Page, 2).String() // /contacts?page=2
 //
+// # Routes and the Site
+//
+// A [Route] is one method on one [Path], and its [Handler]. [NewSite]
+// serves routes on an [http.ServeMux], and checks every path and route
+// first, returning one error that names every mistake:
+//
+//	site, err := hypermedia.NewSite(s, errorPage, []hypermedia.Route{
+//		hypermedia.NewRoute(http.MethodGet, List, list),
+//		hypermedia.NewRoute(http.MethodGet, Edit, edit),
+//		hypermedia.NewRoute(http.MethodPut, One, update),
+//		hypermedia.NewRoute("QUERY", List, search),
+//	})
+//
+// A GET route also serves HEAD, and a method may be any token, such as
+// QUERY. A request reaches its route's handler with its path values
+// already parsed as their types and checked against their constraints, and
+// [ParamFrom] returns them. [QueryFrom] reads a query parameter, with the
+// same QueryParameter that [URL.With] writes in a link.
+//
+// A browser never sees ServeMux's plain-text 404 or 405. A path no route
+// serves, or whose value doesn't parse or breaks a constraint, gets the
+// end user's [ErrorPage] with a [RequestError] of Status 404, as no such
+// page exists: /contacts/0 under Minimum(1) is a 404. A method its path
+// doesn't have gets the ErrorPage with a *RequestError of Status 405, and
+// Allow already set on w. Allow lists the methods of the routes that match
+// the path and whose values parse, so beside /contacts/{contactId}, which
+// takes an ID, /contacts/changes allows only its own methods.
+//
+// The route names the request's span, such as "PUT /contacts/{contactId}",
+// whatever handlers above the Site pass on a copy of the request.
+//
 // # Building never panics
 //
 // A path or a parameter isn't checked as it is built, whatever its

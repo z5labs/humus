@@ -3,8 +3,8 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-// Package httproute carries the route an openapi API finds back up to
-// httpserver, which names the request's span after it.
+// Package httproute carries the route an openapi API or a hypermedia Site
+// finds back up to httpserver, which names the request's span after it.
 //
 // otelhttp names the span, and sets http.route on its metrics, from its own
 // request once the handler returns. A handler that sets Request.Pattern sets
