@@ -136,6 +136,16 @@ func TestNewSite_checks_a_path_once_for_its_routes(t *testing.T) {
 	require.EqualError(t, err, "hypermedia: NewSite: path /: a literal is empty")
 }
 
+func TestNewSite_checks_the_path_of_each_route_that_shares_a_pattern(t *testing.T) {
+	id := hypermedia.Root().Lit("contacts").Param(hypermedia.PathParam[string]("id"))
+	badID := hypermedia.Root().Lit("contacts").Param(hypermedia.PathParam[int]("id").Pattern(regexp.MustCompile(`^\d+$`)))
+	_, err := hypermedia.NewSite(&humus.Setup{}, func(http.ResponseWriter, *http.Request, error) error { return nil }, []hypermedia.Route{
+		hypermedia.NewRoute(http.MethodGet, id, says("")),
+		hypermedia.NewRoute(http.MethodPut, badID, says("")),
+	})
+	require.EqualError(t, err, `hypermedia: NewSite: path /contacts/{id}: path parameter "id": Pattern needs a string type, but its type is int`)
+}
+
 func TestNewSite_reports_routes_a_ServeMux_cant_tell_apart(t *testing.T) {
 	a := hypermedia.PathParam[string]("a")
 	k := hypermedia.PathParam[string]("k")

@@ -87,7 +87,8 @@ func NewSite(s *humus.Setup, errorPage ErrorPage, routes []Route) (*Site, error)
 		fail("errorPage is nil")
 	}
 
-	checked := make(map[string]bool)     // the paths checked, by pattern
+	checked := make(map[string]bool)     // the paths seen, by pattern
+	reported := make(map[string]bool)    // the paths' mistakes reported
 	templates := make(map[string]string) // the first path of each template
 	seen := make(map[string]bool)        // the routes, by name
 	methods := make(map[string]bool)
@@ -106,11 +107,18 @@ func NewSite(s *humus.Setup, errorPage ErrorPage, routes []Route) (*Site, error)
 			fail("route %s: its Handler is nil", name)
 		}
 		path := r.path.String()
+		// Two routes' paths can share a pattern but not their parameters'
+		// types or constraints, so each route's path is checked, and a
+		// mistake two of them share is reported once.
+		for _, err := range r.path.check() {
+			err = fmt.Errorf("path %s: %w", path, err)
+			if !reported[err.Error()] {
+				reported[err.Error()] = true
+				errs = append(errs, err)
+			}
+		}
 		if !checked[path] {
 			checked[path] = true
-			for _, err := range r.path.check() {
-				fail("path %s: %w", path, err)
-			}
 			tmpl := r.path.template()
 			if first, ok := templates[tmpl]; ok {
 				fail("paths %s and %s differ only in their parameters' names", first, path)
