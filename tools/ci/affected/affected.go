@@ -159,7 +159,9 @@ var compiled = []string{
 // owns reports whether file, which belongs to the module owner, is one the
 // package is compiled or embeds from: a source file of its directory other
 // than a test's, or a file one of its //go:embed patterns names, itself or
-// by a directory that holds it. A file the change deletes matches the same
+// by a directory that holds it, as go:embed does: a directory leaves out the
+// files of it whose names, or a directory's of theirs, begin with . or _,
+// unless the pattern begins with all:. A file the change deletes matches the same
 // way, so deleting one is a change to the package too.
 func (p Package) owns(owners []string, owner, file string) bool {
 	if owner != modulesOwner(owners, p.Dir) {
@@ -179,11 +181,23 @@ func (p Package) owns(owners []string, owner, file string) bool {
 		return false
 	}
 	for _, pattern := range p.Embeds {
-		pattern = strings.TrimPrefix(pattern, "all:")
+		pattern, all := strings.CutPrefix(pattern, "all:")
 		for name := rel; name != "."; name = path.Dir(name) {
-			if matched, _ := path.Match(pattern, name); matched {
+			if matched, _ := path.Match(pattern, name); matched && (name == rel || all || !hidden(strings.TrimPrefix(rel, name+"/"))) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// hidden reports whether a name of rel's begins with . or _, which a
+// //go:embed pattern naming a directory that holds rel leaves out, unless
+// the pattern begins with all:.
+func hidden(rel string) bool {
+	for name := range strings.SplitSeq(rel, "/") {
+		if strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") {
+			return true
 		}
 	}
 	return false

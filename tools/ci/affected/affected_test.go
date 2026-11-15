@@ -127,7 +127,7 @@ func TestSelect_a_file_a_package_embeds_affects_a_module_it_builds_from(t *testi
 	m := affected.Module{
 		Dir: "example/kube/databases",
 		Packages: []affected.Package{
-			{Dir: "kube", Embeds: []string{"migrations/*.sql", "static", "all:hidden", "one.txt"}},
+			{Dir: "kube", Embeds: []string{"migrations/*.sql", "static", "all:hidden", "one.txt", ".named", "static/.keep"}},
 			{Dir: ".", Embeds: []string{"banner.txt"}},
 		},
 	}
@@ -135,13 +135,18 @@ func TestSelect_a_file_a_package_embeds_affects_a_module_it_builds_from(t *testi
 		"kube/migrations/0001.sql",
 		"kube/static/css/site.css",
 		"kube/hidden/.keep",
+		"kube/hidden/_drafts/a.txt",
 		"kube/one.txt",
+		"kube/.named",
+		"kube/static/.keep",
 		"banner.txt",
 	} {
 		require.Equal(t, []string{m.Dir}, selected(t, []affected.Module{m}, file), file)
 	}
 	for _, file := range []string{
 		"kube/migrations/notes.md",
+		"kube/static/_drafts/site.css",
+		"kube/static/css/.cache",
 		"kube/statically.txt",
 		"kube/two.txt",
 		"README.md",
