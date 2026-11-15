@@ -1,0 +1,16 @@
+{{define "page"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Contacts</title>
+<meta name="htmx-config" content='{"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"422","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
+<script src="{{asset "htmx.min.js"}}"></script>
+<script src="{{asset "sse.min.js"}}"></script>
+</head>
+<body>
+<h1>Contacts</h1>
+<div hx-ext="sse" sse-connect="{{.FeedURL}}" sse-swap="changed" hx-swap="none"></div>
+{{range .Rows}}{{if .Editing}}{{template "edit" .}}{{else}}{{template "row" .}}{{end}}
+{{end}}</body>
+</html>
+{{end}}
