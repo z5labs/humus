@@ -83,10 +83,7 @@ func NewService(s *humus.Setup, settings Settings, h http.Handler) (*Service, er
 		otelhttp.WithPropagators(s.Telemetry.Propagator),
 	)
 
-	// The server listens on settings.Addr, and registers the listener's
-	// close with s.OnStop. Its error log and its "listening" record go
-	// through logger, so they keep this package's scope.
-	srv, err := server.New(s, "httpserver", settings.Addr, &http.Server{
+	hs := &http.Server{
 		Handler:           instrumented,
 		TLSConfig:         cfg,
 		ReadHeaderTimeout: settings.ReadHeaderTimeout,
@@ -95,7 +92,13 @@ func NewService(s *humus.Setup, settings Settings, h http.Handler) (*Service, er
 		IdleTimeout:       settings.IdleTimeout,
 		MaxHeaderBytes:    settings.MaxHeaderBytes,
 		Protocols:         &protocols,
-	}, logger)
+	}
+	watchShutdown(hs)
+
+	// The server listens on settings.Addr, and registers the listener's
+	// close with s.OnStop. Its error log and its "listening" record go
+	// through logger, so they keep this package's scope.
+	srv, err := server.New(s, "httpserver", settings.Addr, hs, logger)
 	if err != nil {
 		return nil, fmt.Errorf("httpserver: NewService: %w", err)
 	}
@@ -153,8 +156,9 @@ func (svc *Service) Serve(ctx context.Context) error {
 	return svc.srv.Serve(ctx)
 }
 
-// Shutdown stops accepting connections, closes idle ones and waits for
-// in-flight requests to finish. If ctx is done first, or is done already, it
+// Shutdown stops accepting connections, closes the channel [ShuttingDown]
+// returns for the Service's requests, closes idle connections and waits
+// for in-flight requests to finish. If ctx is done first, or is done already, it
 // closes every connection at once, which cancels the context of each
 // in-flight request, and returns an error that wraps ctx's error. Calling it
 // again returns nil.
