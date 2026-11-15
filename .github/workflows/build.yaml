@@ -12,7 +12,6 @@ on:
       - 'example/*/*/Dockerfile*'
       - 'example/*/*/deploy/**'
       - 'example/*/*/proto/**'
-      - '.github/scripts/**'
       - '.claude/hooks/**'
       - '.github/workflows/build.yaml'
   pull_request:
@@ -28,11 +27,14 @@ jobs:
   # waits on can be added, split or renamed without changing the ruleset.
   #
   # `./...` does not descend into a nested module, so each module that
-  # go-modules.sh lists is linted and unit tested on its own, in a job of its
+  # ci modules lists is linted and unit tested on its own, in a job of its
   # own in the Lint and test matrix, and every module's job runs at the same
   # time. A module added to the repository is in the list, and so in the
   # matrix, with no change here. No matrix fails fast, so one run reports
-  # every failure.
+  # every failure. ci is the repository's CI tooling, a Go program in the
+  # module under tools/ci that CI runs with go -C tools/ci run .; that module
+  # is in the list too, so its job lints it, tests it and gates its coverage
+  # like any other's.
   #
   # No job builds every module: go test and golangci-lint both fail on a type
   # error, in a package without tests too, and every main package without
@@ -71,7 +73,7 @@ jobs:
         - name: List modules
           id: list
           run: |
-            modules=$(.github/scripts/go-modules.sh)
+            modules=$(go -C tools/ci run . modules)
             test -n "$modules"
             echo "$modules"
             echo "modules=$(jq -cnR '[inputs]' <<<"$modules")" >> "$GITHUB_OUTPUT"
@@ -84,8 +86,8 @@ jobs:
 
   # A module's lint and its unit tests share a job, so they share its setup
   # and its one cache, which holds golangci-lint's cache beside Go's. The
-  # tests and the coverage gate run whether lint passed or not, so one run
-  # reports both. A package's coverage comes only from its own module's
+  # tests and the coverage gate, ci coverage-gate, run whether lint passed or
+  # not, so one run reports both. A package's coverage comes only from its own module's
   # tests, so each module's job gates its own packages, and between them the
   # gate still covers every package outside example/.
   lint-and-test:
@@ -146,7 +148,7 @@ jobs:
 
         - name: Require 80% statement coverage of every library package
           if: ${{ !cancelled() && steps.go-cache.outcome == 'success' }}
-          run: .github/scripts/coverage-gate.sh 80 "$RUNNER_TEMP/packages.txt" "$RUNNER_TEMP/coverage.out"
+          run: go -C tools/ci run . coverage-gate 80 "$RUNNER_TEMP/packages.txt" "$RUNNER_TEMP/coverage.out"
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache
@@ -156,7 +158,7 @@ jobs:
 
   # The tests behind the testcontainers tag run in the testcontainers jobs
   # below, so here they are only compiled and vetted, without starting a
-  # container. Every module under example/ that go-modules.sh lists is
+  # container. Every module under example/ that ci modules lists is
   # vetted with the tag, so a new example needs no change here. Vet the
   # functional tests vets the examples with the functional tag.
   vet-testcontainers:
@@ -204,7 +206,7 @@ jobs:
 
   # The tests behind the functional tag run against a deployment, such as a
   # walkthrough's on kind, so here they are only compiled and vetted. Every
-  # module under example/ that go-modules.sh lists is vetted, so a new
+  # module under example/ that ci modules lists is vetted, so a new
   # example needs no change here.
   vet-functional:
     name: Vet the functional tests
@@ -287,23 +289,9 @@ jobs:
         - name: Checkout
           uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-        # The release script runs go mod edit, and its tests run go list.
-        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
-          with:
-            go-version: '1.27.4'
-            cache: false
-
-        - name: Test the coverage gate
-          run: .github/scripts/coverage-gate_test.sh
-
-        - name: Test the release script
-          if: ${{ !cancelled() }}
-          run: .github/scripts/release-modules_test.sh
-
         # The hook reads golangci-lint's pin from this file, so a change here
         # that it can no longer read fails this step.
         - name: Test the golangci-lint install hook
-          if: ${{ !cancelled() }}
           run: .claude/hooks/install-golangci-lint_test.sh
 
         - name: Test the cloud environment setup script

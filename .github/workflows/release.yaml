@@ -29,7 +29,7 @@ name: Release
 # install or require, such as the go get lines in the README and on the docs
 # site's Getting started page, so the docs in the tree the release's tags
 # point at name that release. That covers a doc added later with no change
-# here: release-modules.sh finds them in every tracked Markdown file, at a
+# here: ci release finds them in every tracked Markdown file, at a
 # version or at a branch such as main, and leaves a placeholder that names no
 # version, such as vX.Y.Z, as it is. A pre-release changes none of them, so
 # the docs keep naming the latest release.
@@ -42,7 +42,7 @@ name: Release
 # or Actions > Release > Run workflow. Nothing else is done by hand:
 #
 #   1. Bump. It checks the version and main with a dry run (below), then runs
-#      .github/scripts/release-modules.sh --bump, which sets every requirement
+#      ci release --bump, which sets every requirement
 #      between humus modules to the version, every requirement an example or a
 #      tool has on one, although those are never tagged, and, unless the version
 #      is a pre-release, every humus version the docs name. If that changes
@@ -51,7 +51,7 @@ name: Release
 #      request from that branch, waits for every check on it to pass, and merges
 #      it through the merge queue. The merge commit is the release commit. If
 #      nothing changes, main itself is.
-#   2. Tag. At the release commit, release-modules.sh creates <version> for the
+#   2. Tag. At the release commit, ci release creates <version> for the
 #      root module and <dir>/<version> for every nested module, in one atomic
 #      push, so a failure leaves no partial set.
 #   3. Resolve. For each module, a new module outside the repository, requiring
@@ -65,7 +65,7 @@ name: Release
 #      promotes a pre-release by hand. Edit the notes afterwards if they need
 #      more.
 #
-# What is checked. Before any tag is created, release-modules.sh refuses a
+# What is checked. Before any tag is created, ci release refuses a
 # version that is not a Go module version (such as 0.16.0, v0.16 or
 # v0.16.0+build), a major version of 2 or more (those need /vN module paths
 # first), a nested module whose path is not its directory under
@@ -79,16 +79,21 @@ name: Release
 # _, any module with no Go files of its own, such as the Hugo module under
 # docs/, and every module under example/ or tools/, which is never tagged.
 #
+# The release is made by ci release, a command of ci, the repository's CI
+# tooling, which is the Go program in the module under tools/ci. Every step
+# below runs it with go -C tools/ci run . from the repository's root.
+#
 # Dry run. To see what a release of any commit would do, without changing
 # anything, run from a clone:
 #
-#   .github/scripts/release-modules.sh --dry-run --commit origin/main v0.16.0
+#   go -C tools/ci run . release --dry-run --commit origin/main v0.16.0
 #
 # It makes every check and prints the requirements the bump would set, in the
 # examples' and tools' go.mod files too, each doc line it would change, and
-# the tags that would be created. To set them in a working tree, as
-# the bump does: .github/scripts/release-modules.sh --bump v0.16.0. The tests
-# for the script are .github/scripts/release-modules_test.sh, run by Build.
+# the tags that would be created. To set them in a working tree, as the bump
+# does: go -C tools/ci run . release --bump v0.16.0. Its tests are those of
+# package release, under tools/ci, which Build's Lint and test job for
+# tools/ci runs.
 #
 # When a run fails, every completed step stays done and a new run of the same
 # version picks up where it stopped:
@@ -200,7 +205,7 @@ jobs:
       # --list checks the version, and the module paths at main, without
       # touching the remote, so nothing below sees a malformed version.
       - name: Check the version
-        run: .github/scripts/release-modules.sh --list "$VERSION"
+        run: go -C tools/ci run . release --list "$VERSION"
 
       # A version whose root tag already exists was bumped and tagged by an
       # earlier run, so this run resumes from the commit that tag points to.
@@ -215,19 +220,19 @@ jobs:
           if [ -n "$commit" ]; then
             echo "$VERSION is already tagged at $commit; releasing that commit"
             git fetch --quiet --depth 1 origin "$commit"
-            .github/scripts/release-modules.sh --dry-run --commit "$commit" "$VERSION"
+            go -C tools/ci run . release --dry-run --commit "$commit" "$VERSION"
           fi
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
 
       - name: Dry run
         if: steps.tagged.outputs.commit == ''
-        run: .github/scripts/release-modules.sh --dry-run "$VERSION"
+        run: go -C tools/ci run . release --dry-run "$VERSION"
 
       - name: Set the version between modules and in the docs
         id: bump
         if: steps.tagged.outputs.commit == ''
         run: |
-          .github/scripts/release-modules.sh --bump "$VERSION"
+          go -C tools/ci run . release --bump "$VERSION"
           if git diff --quiet; then
             echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           fi
@@ -235,7 +240,7 @@ jobs:
       # The bump commit is made through GitHub's API, not with git, so that
       # GitHub signs it as the App (see One-time setup). The tree GitHub builds
       # must be the one git writes from the working tree, which shows the
-      # commit changes exactly the files release-modules.sh --bump changed.
+      # commit changes exactly the files ci release --bump changed.
       # The branch moves straight to the new commit, never through main:
       # GitHub marks a pull request whose head is already on main as merged.
       - name: Open the bump pull request
@@ -266,7 +271,7 @@ jobs:
           tree=$(jq -n --arg base "$(git rev-parse 'HEAD^{tree}')" --argjson tree "$entries" '{base_tree: $base, tree: $tree}' |
             gh api "repos/$REPO/git/trees" --input - --jq .sha)
           if [ "$tree" != "$want" ]; then
-            echo "::error title=Bump tree differs::GitHub built the tree $tree for the bump, but release-modules.sh --bump left the tree $want"
+            echo "::error title=Bump tree differs::GitHub built the tree $tree for the bump, but ci release --bump left the tree $want"
             exit 1
           fi
 
@@ -413,8 +418,13 @@ jobs:
         with:
           ref: ${{ needs.bump.outputs.commit }}
 
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.27.4'
+          cache: false
+
       - name: Tag every module
-        run: .github/scripts/release-modules.sh --commit "$COMMIT" "$VERSION"
+        run: go -C tools/ci run . release --commit "$COMMIT" "$VERSION"
 
   resolve:
     name: Resolve modules
@@ -444,7 +454,7 @@ jobs:
           GOPROXY: https://proxy.golang.org
           GOFLAGS: ''
         run: |
-          .github/scripts/release-modules.sh --list "$VERSION" > "$RUNNER_TEMP/modules.txt"
+          go -C tools/ci run . release --list "$VERSION" > "$RUNNER_TEMP/modules.txt"
           failed=0
           while read -r module; do
             echo "::group::$module@$VERSION"

@@ -30,6 +30,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/z5labs/humus/tools/ci/modules"
 )
 
 // Unit is the level of the untagged tests.
@@ -171,18 +173,17 @@ func GoVersion(ctx context.Context, root string, env []string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
-// Modules returns the directory of every module that the repository's
-// .github/scripts/go-modules.sh lists, as CI's matrices do.
+// Modules returns the directory of every module that modules.List lists,
+// as CI's matrices do.
 func Modules(ctx context.Context, root string, env []string) ([]string, error) {
-	out, err := command(ctx, root, env, filepath.Join(root, ".github", "scripts", "go-modules.sh"))
+	l, err := modules.List(ctx, root, env)
 	if err != nil {
 		return nil, err
 	}
-	modules := strings.Fields(out)
-	if len(modules) == 0 {
-		return nil, fmt.Errorf("go-modules.sh listed no modules in %s", root)
+	if len(l.Dirs) == 0 {
+		return nil, fmt.Errorf("no module with a Go package in %s", root)
 	}
-	return modules, nil
+	return l.Dirs, nil
 }
 
 // Packages returns the packages with test files at each of levels, in the
