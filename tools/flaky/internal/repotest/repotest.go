@@ -21,8 +21,8 @@ import (
 )
 
 // New returns the directory of a new git repository holding a copy of
-// testdata/repo, the repository's real .github/scripts/go-modules.sh, and a
-// .github/workflows/build.yaml that sets goVersion, such as 1.27.2.
+// testdata/repo and a .github/workflows/build.yaml that sets goVersion, such
+// as 1.27.2.
 func New(t *testing.T, goVersion string) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
@@ -31,10 +31,6 @@ func New(t *testing.T, goVersion string) string {
 	dir := filepath.Join(t.TempDir(), "repo")
 	require.NoError(t, os.CopyFS(dir, os.DirFS(filepath.Join(flaky, "testdata", "repo"))))
 
-	script, err := os.ReadFile(filepath.Join(flaky, "..", "..", ".github", "scripts", "go-modules.sh"))
-	require.NoError(t, err)
-	Write(t, dir, ".github/scripts/go-modules.sh", string(script))
-	require.NoError(t, os.Chmod(filepath.Join(dir, ".github", "scripts", "go-modules.sh"), 0o755))
 	Write(t, dir, ".github/workflows/build.yaml", "jobs:\n  test:\n    steps:\n      - uses: actions/setup-go@v7\n        with:\n          go-version: '"+goVersion+"'\n")
 
 	Git(t, dir, "init", "-q", "-b", "main")

@@ -17,7 +17,7 @@ import (
 
 func TestNew_copies_testdata_repo_into_a_git_repository(t *testing.T) {
 	dir := repotest.New(t, "1.27.2")
-	for _, name := range []string{".git", "go.mod", "b/go.mod", ".github/scripts/go-modules.sh", ".github/workflows/build.yaml"} {
+	for _, name := range []string{".git", "go.mod", "b/go.mod", ".github/workflows/build.yaml"} {
 		_, err := os.Stat(filepath.Join(dir, filepath.FromSlash(name)))
 		require.NoError(t, err, name)
 	}

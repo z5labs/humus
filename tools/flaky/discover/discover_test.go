@@ -29,7 +29,7 @@ func dirs(pkgs []discover.Package) []string {
 	return out
 }
 
-func TestModules_lists_what_go_modules_sh_lists(t *testing.T) {
+func TestModules_lists_what_ci_modules_lists(t *testing.T) {
 	repo := repotest.New(t, "1.27.2")
 	childEnv := env.Child(bedrock.OSEnvironment{})
 	modules, err := discover.Modules(t.Context(), repo, childEnv)
@@ -44,9 +44,18 @@ func TestModules_lists_what_go_modules_sh_lists(t *testing.T) {
 	require.Equal(t, []string{".", "b", "c"}, modules, "a module added is found, with no change to flaky")
 }
 
-func TestModules_fails_without_go_modules_sh(t *testing.T) {
+func TestModules_fails_outside_a_git_repository(t *testing.T) {
 	_, err := discover.Modules(t.Context(), t.TempDir(), env.Child(bedrock.OSEnvironment{}))
-	require.ErrorContains(t, err, "go-modules.sh")
+	require.ErrorContains(t, err, "git rev-parse --show-toplevel")
+}
+
+func TestModules_fails_without_a_module_with_a_package(t *testing.T) {
+	repo := t.TempDir()
+	repotest.Git(t, repo, "init", "-q", "-b", "main")
+	repotest.Write(t, repo, "docs/go.mod", "module example.com/repo/docs\n\ngo 1.27.0\n")
+	repotest.Commit(t, repo)
+	_, err := discover.Modules(t.Context(), repo, env.Child(bedrock.OSEnvironment{}))
+	require.ErrorContains(t, err, "no module with a Go package")
 }
 
 func TestLevels_finds_the_unit_level_and_one_for_each_build_tag_the_tracked_test_files_use(t *testing.T) {

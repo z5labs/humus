@@ -39,7 +39,6 @@
       "Bash(rg*)",
       "Bash(find*)",
       "Bash(diff*)",
-      "Bash(.github/scripts/go-modules.sh*)",
       "Bash(go -C*)",
       "Bash(go build*)",
       "Bash(go test*)",
