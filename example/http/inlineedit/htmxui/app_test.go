@@ -199,6 +199,7 @@ func open(t *testing.T, c *http.Client, target string) feed {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
+	require.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
 
 	events := make(chan string, 16)
 	ended := make(chan feedEnd, 1)

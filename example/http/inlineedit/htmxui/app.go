@@ -211,6 +211,7 @@ func (ui UI) save(w http.ResponseWriter, r *http.Request) error {
 func (ui UI) changes(w http.ResponseWriter, r *http.Request) error {
 	changed, unsubscribe := ui.Store.Subscribe()
 	defer unsubscribe()
+	w.Header().Set("Cache-Control", "no-store")
 	stream, err := sse.NewStream(w, ui.WriteTimeout)
 	if err != nil {
 		return err
