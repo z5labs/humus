@@ -14,7 +14,6 @@
 //		w.Header().Set("Cache-Control", "no-store")
 //		stream, err := sse.NewStream(w, 10*time.Second)
 //		if err != nil {
-//			http.Error(w, "streaming isn't supported", http.StatusInternalServerError)
 //			return
 //		}
 //		for {
