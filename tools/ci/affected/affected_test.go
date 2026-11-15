@@ -306,7 +306,7 @@ func TestEverything_lints_every_module_and_vets_every_one_with_tagged_files(t *t
 
 // repository returns a repository with a root module, whose packages are p,
 // which has a file behind !functional, q, which embeds a file, and r, which
-// nothing imports; a module ex, which replaces the root module and imports
+// nothing imports and has a test behind testcontainers && !functional; a module ex, which replaces the root module and imports
 // p, and q only in a test behind the testcontainers tag, and has a file
 // behind functional; and a module other, which nothing requires.
 func repository(t *testing.T) string {
@@ -318,6 +318,7 @@ func repository(t *testing.T) string {
 	gittest.Write(t, repo, "q/q.go", "package q\n\nimport _ \"embed\"\n\n//go:embed data.txt\nvar Data string\n")
 	gittest.Write(t, repo, "q/data.txt", "data\n")
 	gittest.Write(t, repo, "r/r.go", "package r\n")
+	gittest.Write(t, repo, "r/r_test.go", "//go:build testcontainers && !functional\n\npackage r\n")
 	gittest.Write(t, repo, "ex/go.mod", "module example.com/repo/ex\n\ngo 1.27.0\n\nrequire example.com/repo v0.0.0\n\nreplace example.com/repo => ../\n")
 	gittest.Write(t, repo, "ex/main.go", "package main\n\nimport _ \"example.com/repo/p\"\n\nfunc main() {}\n")
 	gittest.Write(t, repo, "ex/main_test.go", "//go:build testcontainers\n\npackage main\n\nimport _ \"example.com/repo/q\"\n")
@@ -349,8 +350,8 @@ func TestLoad_lists_the_packages_and_modules_of_the_repository_a_module_builds_f
 
 	m, err = affected.Load(t.Context(), root, ".", gittest.Env())
 	require.NoError(t, err)
-	require.Equal(t, affected.Module{Dir: "."}, m,
-		"a module's own packages are its directory's files, and a tag under a ! is not one its files are behind")
+	require.Equal(t, affected.Module{Dir: ".", Tags: []string{"testcontainers"}}, m,
+		"a module's own packages are its directory's files; a file go list ignores with both tags counts, and a tag under a ! is not one its files are behind")
 }
 
 func TestLoad_fails_when_go_list_fails(t *testing.T) {
@@ -397,7 +398,7 @@ func TestRun_with_no_base_affects_every_module(t *testing.T) {
 	require.Equal(t, affected.Plan{
 		Affected: all,
 		Linted:   all,
-		Vetted:   map[string][]string{"testcontainers": {"ex"}, "functional": {"ex"}},
+		Vetted:   map[string][]string{"testcontainers": {".", "ex"}, "functional": {"ex"}},
 	}, got)
 }
 
@@ -459,7 +460,7 @@ func TestRun_plans_lint_and_vet_from_the_change(t *testing.T) {
 			{Dir: "ex", Because: ".golangci.yaml"},
 			{Dir: "other", Because: ".golangci.yaml"},
 		},
-		Vetted: map[string][]string{"testcontainers": {"ex"}, "functional": {"ex"}},
+		Vetted: map[string][]string{"testcontainers": {".", "ex"}, "functional": {"ex"}},
 	}, got)
 }
 

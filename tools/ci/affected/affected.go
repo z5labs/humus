@@ -288,7 +288,8 @@ func modulesOwner(owners []string, dir string) string {
 // from root, builds from: the packages of the repository's other modules in
 // go list -deps -test of its packages with Tags, and the repository's other
 // modules in go list -m all. It reads the //go:build line of every Go file of
-// the module's own packages and their tests, for the module's Tags.
+// the module's own packages and their tests, those go list ignores included,
+// for the module's Tags.
 //
 // env is the environment of go, as in exec.Cmd: nil is this process's.
 func Load(ctx context.Context, root, dir string, env []string) (Module, error) {
@@ -309,7 +310,7 @@ func Load(ctx context.Context, root, dir string, env []string) (Module, error) {
 	}
 
 	out, err = run(ctx, moduleDir, env, "go", "list", "-deps", "-test", "-tags", strings.Join(Tags, ","),
-		"-json=Dir,Module,EmbedPatterns,GoFiles,TestGoFiles,XTestGoFiles", "./...")
+		"-json=Dir,Module,EmbedPatterns,GoFiles,TestGoFiles,XTestGoFiles,IgnoredGoFiles", "./...")
 	if err != nil {
 		return Module{}, fmt.Errorf("go list -deps in %s: %w", dir, err)
 	}
@@ -321,6 +322,9 @@ func Load(ctx context.Context, root, dir string, env []string) (Module, error) {
 		GoFiles       []string
 		TestGoFiles   []string
 		XTestGoFiles  []string
+		// A file behind one tag of Tags and not another, such as
+		// testcontainers && !functional, is ignored with both.
+		IgnoredGoFiles []string
 	}) {
 		if v.Module == nil {
 			return
@@ -330,7 +334,7 @@ func Load(ctx context.Context, root, dir string, env []string) (Module, error) {
 			return
 		}
 		if mod == dir {
-			for _, f := range slices.Concat(v.GoFiles, v.TestGoFiles, v.XTestGoFiles) {
+			for _, f := range slices.Concat(v.GoFiles, v.TestGoFiles, v.XTestGoFiles, v.IgnoredGoFiles) {
 				// A test binary's generated main is in the build cache,
 				// named by its absolute path.
 				if !filepath.IsAbs(f) {

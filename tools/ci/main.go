@@ -145,7 +145,7 @@ func affectedCommand(ctx context.Context, p bedrock.Process, args []string) bedr
 	baseSet, asJSON := false, false
 	for i := 0; i < len(args); i++ {
 		switch {
-		case args[i] == "--base" && !baseSet && i+1 < len(args):
+		case args[i] == "--base" && !baseSet && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-"):
 			i++
 			base, baseSet = args[i], true
 		case args[i] == "--json" && !asJSON:

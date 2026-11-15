@@ -265,7 +265,7 @@ func TestAffected_json_prints_what_each_job_runs_for(t *testing.T) {
 func TestAffected_takes_only_a_base_and_json(t *testing.T) {
 	for _, args := range [][]string{
 		{"--base"}, {"HEAD"}, {"--base", "HEAD", "extra"}, {"--head", "HEAD"},
-		{"--base", "HEAD", "--base", "HEAD"}, {"--json", "--json"}, {"--json", "--base"},
+		{"--base", "HEAD", "--base", "HEAD"}, {"--json", "--json"}, {"--json", "--base"}, {"--base", "--json"},
 	} {
 		st, stdout, stderr := runCI(t, append([]string{"affected"}, args...)...)
 		require.Equal(t, 2, st.Code(), args)
