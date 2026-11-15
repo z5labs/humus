@@ -19,6 +19,24 @@ on:
       - "main"
   merge_group:
 
+# A push to main runs no tests. The ruleset requires the merge queue, and the
+# queue merges an entry by moving main to the commit the entry's run tested,
+# so a push run's tests would only test that same commit again. The push run
+# is still the only run that saves the Go caches, through save-go-cache: a
+# cache a merge queue run saved would belong to its gh-readonly-queue/main/...
+# branch, which no other run can restore. So on a push GO_EXEC is true, and
+# every go test and go run in a job that saves a cache takes -exec="$GO_EXEC":
+# it builds and vets everything it would, then runs true in place of each
+# binary, so no test runs, no coverage is gated and no container starts, and
+# the job still saves what its pull request and merge queue runs restore. On
+# any other event GO_EXEC is empty, and an empty -exec runs each binary as
+# usual. A step that fills no cache, such as one building an image or
+# bringing a kind cluster up, doesn't run on a push. Lint and vet do, to fill
+# golangci-lint's cache and Go's. An admin can bypass the ruleset and push to
+# main directly, and such a push goes untested.
+env:
+  GO_EXEC: ${{ github.event_name == 'push' && 'true' || '' }}
+
 jobs:
   # The default branch's ruleset requires four checks: Build, Kafka
   # (testcontainers), RabbitMQ (testcontainers) and Kubernetes
@@ -89,7 +107,8 @@ jobs:
   # tests and the coverage gate, ci coverage-gate, run whether lint passed or
   # not, so one run reports both. A package's coverage comes only from its own module's
   # tests, so each module's job gates its own packages, and between them the
-  # gate still covers every package outside example/.
+  # gate still covers every package outside example/. On a push to main the
+  # tests and ci are only built, for the cache, and nothing is gated.
   lint-and-test:
     name: Lint and test (${{ matrix.module }})
     needs: modules
@@ -135,11 +154,11 @@ jobs:
         - name: Test
           if: ${{ !cancelled() && steps.go-cache.outcome == 'success' }}
           run: |
-            go -C "$MODULE" test -count=1 -race -cover \
+            go -C "$MODULE" test -exec="$GO_EXEC" -count=1 -race -cover \
               -coverprofile="$RUNNER_TEMP/coverage.out" ./...
 
         - name: List the packages the coverage gate covers
-          if: ${{ !cancelled() && steps.go-cache.outcome == 'success' }}
+          if: ${{ !cancelled() && steps.go-cache.outcome == 'success' && github.event_name != 'push' }}
           run: |
             examples="$(go list -m)/example"
             go -C "$MODULE" list ./... > "$RUNNER_TEMP/module-packages.txt"
@@ -148,7 +167,7 @@ jobs:
 
         - name: Require 80% statement coverage of every library package
           if: ${{ !cancelled() && steps.go-cache.outcome == 'success' }}
-          run: go -C tools/ci run . coverage-gate 80 "$RUNNER_TEMP/packages.txt" "$RUNNER_TEMP/coverage.out"
+          run: go -C tools/ci run -exec="$GO_EXEC" . coverage-gate 80 "$RUNNER_TEMP/packages.txt" "$RUNNER_TEMP/coverage.out"
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache
@@ -272,7 +291,7 @@ jobs:
             name: conformance
 
         - name: Conformance
-          run: go test -count=1 -race -tags conformance -run '^TestConformance_' ./humustest/ ./telemetry/
+          run: go test -exec="$GO_EXEC" -count=1 -race -tags conformance -run '^TestConformance_' ./humustest/ ./telemetry/
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache
@@ -280,8 +299,10 @@ jobs:
             key: ${{ steps.go-cache.outputs.key }}
             path: ${{ steps.go-cache.outputs.path }}
 
+  # Scripts saves no cache, so a push to main doesn't run it.
   scripts:
     name: Scripts
+    if: ${{ github.event_name != 'push' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -301,7 +322,9 @@ jobs:
   # The check the ruleset requires. It runs whatever happened to the jobs it
   # needs, and passes only when every one of them succeeded: a job that
   # failed, was cancelled or was skipped fails it. A skipped required check
-  # counts as passing, so this job never skips itself.
+  # counts as passing, so in a pull request or the merge queue this job never
+  # skips itself. Nothing requires it on a push to main, which tests nothing
+  # and skips Scripts, so a push skips it.
   build:
     name: Build
     needs:
@@ -311,7 +334,7 @@ jobs:
       - vet-functional
       - conformance
       - scripts
-    if: ${{ always() }}
+    if: ${{ always() && github.event_name != 'push' }}
     runs-on: ubuntu-latest
     permissions: {}
     steps:
@@ -348,7 +371,7 @@ jobs:
             name: kafka-testcontainers
 
         - name: Test
-          run: go -C queue/kafka test -count=1 -race -tags testcontainers ./...
+          run: go -C queue/kafka test -exec="$GO_EXEC" -count=1 -race -tags testcontainers ./...
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache
@@ -383,7 +406,7 @@ jobs:
             name: rabbitmq-testcontainers
 
         - name: Test
-          run: go -C queue/rabbitmq test -count=1 -race -tags testcontainers ./...
+          run: go -C queue/rabbitmq test -exec="$GO_EXEC" -count=1 -race -tags testcontainers ./...
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache
@@ -420,7 +443,7 @@ jobs:
             name: kube-testcontainers
 
         - name: Test
-          run: go -C kube test -count=1 -race -v -tags testcontainers ./...
+          run: go -C kube test -exec="$GO_EXEC" -count=1 -race -v -tags testcontainers ./...
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache
@@ -455,7 +478,7 @@ jobs:
             name: shoppingcart-testcontainers
 
         - name: Test
-          run: go -C example/http/shoppingcart test -count=1 -race -tags testcontainers ./...
+          run: go -C example/http/shoppingcart test -exec="$GO_EXEC" -count=1 -race -tags testcontainers ./...
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache
@@ -491,7 +514,7 @@ jobs:
             name: flaky-testcontainers
 
         - name: Test
-          run: go -C tools/flaky test -count=1 -race -tags testcontainers ./...
+          run: go -C tools/flaky test -exec="$GO_EXEC" -count=1 -race -tags testcontainers ./...
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache
@@ -536,19 +559,27 @@ jobs:
             name: shoppingcart-kind
 
         - name: Build the image
+          if: ${{ github.event_name != 'push' }}
           run: docker build --file example/http/shoppingcart/Dockerfile --tag shoppingcart .
 
         - name: Render the kustomization
+          if: ${{ github.event_name != 'push' }}
           run: kubectl kustomize example/http/shoppingcart/deploy/base
 
         - name: Bring the shoppingcart up on kind
+          if: ${{ github.event_name != 'push' }}
           run: example/http/shoppingcart/deploy/kind/up.sh
 
+        # up.sh runs carttoken through go run, so a push to main builds it.
+        - name: Build carttoken for the cache
+          if: ${{ github.event_name == 'push' }}
+          run: go -C example/http/shoppingcart run -exec="$GO_EXEC" ./cmd/carttoken
+
         - name: Run the functional tests against kind
-          run: go -C example/http/shoppingcart test -count=1 -race -tags functional ./functional/
+          run: go -C example/http/shoppingcart test -exec="$GO_EXEC" -count=1 -race -tags functional ./functional/
 
         - name: Show the shoppingcart namespace
-          if: ${{ failure() }}
+          if: ${{ failure() && github.event_name != 'push' }}
           run: |
             kubectl --namespace shoppingcart get all
             kubectl --namespace shoppingcart describe pods
@@ -589,7 +620,7 @@ jobs:
             name: billing-testcontainers
 
         - name: Test
-          run: go -C example/job/billing test -count=1 -race -tags testcontainers ./...
+          run: go -C example/job/billing test -exec="$GO_EXEC" -count=1 -race -tags testcontainers ./...
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache
@@ -631,15 +662,19 @@ jobs:
             name: billing-kind
 
         - name: Build the image
+          if: ${{ github.event_name != 'push' }}
           run: docker build --file example/job/billing/Dockerfile --tag billing .
 
         - name: Render the kustomization
+          if: ${{ github.event_name != 'push' }}
           run: kubectl kustomize example/job/billing/deploy
 
         - name: Bring the billing job up on kind
+          if: ${{ github.event_name != 'push' }}
           run: example/job/billing/deploy/kind/up.sh
 
         - name: Run one Job from the CronJob's template
+          if: ${{ github.event_name != 'push' }}
           run: |
             kubectl --namespace billing create job billing-kind --from=cronjob/billing
             kubectl --namespace billing wait --for=condition=Complete --timeout=5m job/billing-kind
@@ -652,10 +687,10 @@ jobs:
             fi
 
         - name: Run the functional tests against kind
-          run: go -C example/job/billing test -count=1 -race -tags functional ./functional/
+          run: go -C example/job/billing test -exec="$GO_EXEC" -count=1 -race -tags functional ./functional/
 
         - name: Show the billing namespace
-          if: ${{ failure() }}
+          if: ${{ failure() && github.event_name != 'push' }}
           run: |
             kubectl --namespace billing get all
             kubectl --namespace billing describe pods
@@ -693,7 +728,7 @@ jobs:
             name: orderstatus-testcontainers
 
         - name: Test
-          run: go -C example/kafka/orderstatus test -count=1 -race -tags testcontainers ./...
+          run: go -C example/kafka/orderstatus test -exec="$GO_EXEC" -count=1 -race -tags testcontainers ./...
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache
@@ -737,22 +772,26 @@ jobs:
             name: orderstatus-kind
 
         - name: Build the image
+          if: ${{ github.event_name != 'push' }}
           run: docker build --file example/kafka/orderstatus/Dockerfile --tag orderstatus .
 
         - name: Render the kustomization
+          if: ${{ github.event_name != 'push' }}
           run: kubectl kustomize example/kafka/orderstatus/deploy/base
 
         - name: Bring the order status processor up on kind
+          if: ${{ github.event_name != 'push' }}
           run: example/kafka/orderstatus/deploy/kind/up.sh
 
         - name: Wait for the order status processor's Deployment
+          if: ${{ github.event_name != 'push' }}
           run: kubectl --namespace orderstatus rollout status deployment/orderstatus --timeout 5m
 
         - name: Run the shared cases against kind
-          run: go -C example/kafka/orderstatus test -count=1 -race -tags functional ./functional/
+          run: go -C example/kafka/orderstatus test -exec="$GO_EXEC" -count=1 -race -tags functional ./functional/
 
         - name: Show the orderstatus namespace
-          if: ${{ failure() }}
+          if: ${{ failure() && github.event_name != 'push' }}
           run: |
             kubectl --namespace orderstatus get all
             kubectl --namespace orderstatus describe pods
@@ -794,7 +833,7 @@ jobs:
             name: mailer-testcontainers
 
         - name: Test
-          run: go -C example/rabbitmq/mailer test -count=1 -race -tags testcontainers ./...
+          run: go -C example/rabbitmq/mailer test -exec="$GO_EXEC" -count=1 -race -tags testcontainers ./...
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache
@@ -833,22 +872,26 @@ jobs:
             name: mailer-kind
 
         - name: Build the image
+          if: ${{ github.event_name != 'push' }}
           run: docker build --file example/rabbitmq/mailer/Dockerfile --tag mailer .
 
         - name: Render the kustomization
+          if: ${{ github.event_name != 'push' }}
           run: kubectl kustomize example/rabbitmq/mailer/deploy/base
 
         - name: Bring the mailer up on kind
+          if: ${{ github.event_name != 'push' }}
           run: example/rabbitmq/mailer/deploy/kind/up.sh
 
         - name: Wait for the mailer's Deployment
+          if: ${{ github.event_name != 'push' }}
           run: kubectl --namespace mailer rollout status deployment/mailer --timeout 5m
 
         - name: Run the shared cases against kind
-          run: go -C example/rabbitmq/mailer test -count=1 -race -tags functional ./functional/
+          run: go -C example/rabbitmq/mailer test -exec="$GO_EXEC" -count=1 -race -tags functional ./functional/
 
         - name: Show the mailer namespace
-          if: ${{ failure() }}
+          if: ${{ failure() && github.event_name != 'push' }}
           run: |
             kubectl --namespace mailer get all
             kubectl --namespace mailer describe pods
@@ -892,8 +935,8 @@ jobs:
         - name: Test
           run: |
             failed=0
-            go -C example/rabbitmq/watermill/start test -count=1 -race -tags testcontainers ./... || failed=1
-            go -C example/rabbitmq/watermill/humus test -count=1 -race -tags testcontainers ./... || failed=1
+            go -C example/rabbitmq/watermill/start test -exec="$GO_EXEC" -count=1 -race -tags testcontainers ./... || failed=1
+            go -C example/rabbitmq/watermill/humus test -exec="$GO_EXEC" -count=1 -race -tags testcontainers ./... || failed=1
             exit "$failed"
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
@@ -932,8 +975,8 @@ jobs:
         - name: Test
           run: |
             failed=0
-            go -C example/kube/kubebuilder/start test -count=1 -race -tags testcontainers ./... || failed=1
-            go -C example/kube/kubebuilder/humus test -count=1 -race -tags testcontainers ./... || failed=1
+            go -C example/kube/kubebuilder/start test -exec="$GO_EXEC" -count=1 -race -tags testcontainers ./... || failed=1
+            go -C example/kube/kubebuilder/humus test -exec="$GO_EXEC" -count=1 -race -tags testcontainers ./... || failed=1
             exit "$failed"
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
@@ -967,7 +1010,7 @@ jobs:
             name: databases-testcontainers
 
         - name: Test
-          run: go -C example/kube/databases test -count=1 -race -tags testcontainers ./...
+          run: go -C example/kube/databases test -exec="$GO_EXEC" -count=1 -race -tags testcontainers ./...
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache
@@ -1015,25 +1058,30 @@ jobs:
             name: databases-kind
 
         - name: Build the image
+          if: ${{ github.event_name != 'push' }}
           run: docker build --file example/kube/databases/Dockerfile --tag databases .
 
         - name: Render the kustomization
+          if: ${{ github.event_name != 'push' }}
           run: kubectl kustomize example/kube/databases/deploy
 
         - name: Bring the databases controller up on kind
+          if: ${{ github.event_name != 'push' }}
           run: example/kube/databases/deploy/kind/up.sh
 
         - name: Wait for the databases controller's Deployment
+          if: ${{ github.event_name != 'push' }}
           run: kubectl --namespace databases rollout status deployment/databases --timeout 5m
 
         - name: Check the Database beside up.sh against the CRD
+          if: ${{ github.event_name != 'push' }}
           run: kubectl apply --dry-run=server --namespace default --filename example/kube/databases/deploy/kind/database.yaml
 
         - name: Run the shared cases against kind
-          run: go -C example/kube/databases test -count=1 -race -tags functional ./functional/
+          run: go -C example/kube/databases test -exec="$GO_EXEC" -count=1 -race -tags functional ./functional/
 
         - name: Show the databases namespace
-          if: ${{ failure() }}
+          if: ${{ failure() && github.event_name != 'push' }}
           run: |
             kubectl --namespace databases get all
             kubectl --namespace databases describe pods
@@ -1068,6 +1116,7 @@ jobs:
           uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
         - name: Checkout main
+          if: ${{ github.event_name != 'push' }}
           uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
           with:
             ref: main
@@ -1085,19 +1134,22 @@ jobs:
             name: wallet-testcontainers
 
         - name: Test
-          run: go -C example/grpc/wallet test -count=1 -race -tags testcontainers ./...
+          run: go -C example/grpc/wallet test -exec="$GO_EXEC" -count=1 -race -tags testcontainers ./...
 
         - name: Install buf
+          if: ${{ github.event_name != 'push' }}
           uses: bufbuild/buf-action@37ac33d8960807670a6e9719080e885197b09cc6 # v1.7.0
           with:
             version: 1.74.0
             setup_only: true
 
         - name: Lint the contract
+          if: ${{ github.event_name != 'push' }}
           working-directory: example/grpc/wallet/proto
           run: buf lint
 
         - name: Check the contract for breaking changes against main
+          if: ${{ github.event_name != 'push' }}
           working-directory: example/grpc/wallet/proto
           run: |
             against="$GITHUB_WORKSPACE/main/example/grpc/wallet/proto"
@@ -1108,6 +1160,7 @@ jobs:
             buf breaking --against "$against"
 
         - name: Generate the contract
+          if: ${{ github.event_name != 'push' }}
           working-directory: example/grpc/wallet/proto
           run: |
             buf generate
@@ -1116,6 +1169,15 @@ jobs:
               echo "::error::buf generate changed the checked-in code; run it in example/grpc/wallet/proto and commit the result"
               exit 1
             fi
+
+        # buf generate runs its plugins through go tool, so a push to main
+        # builds them; go tool -n builds a tool and prints its path.
+        - name: Build buf generate's plugins for the cache
+          if: ${{ github.event_name == 'push' }}
+          working-directory: example/grpc/wallet/proto
+          run: |
+            go tool -n protoc-gen-go
+            go tool -n protoc-gen-go-grpc
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache
@@ -1164,19 +1226,27 @@ jobs:
             name: wallet-kind
 
         - name: Build the image
+          if: ${{ github.event_name != 'push' }}
           run: docker build --file example/grpc/wallet/Dockerfile --tag wallet .
 
         - name: Render the kustomization
+          if: ${{ github.event_name != 'push' }}
           run: kubectl kustomize example/grpc/wallet/deploy/base
 
         - name: Bring the wallet and the ledger up on kind
+          if: ${{ github.event_name != 'push' }}
           run: example/grpc/wallet/deploy/kind/up.sh
 
+        # up.sh runs walletctl through go run, so a push to main builds it.
+        - name: Build walletctl for the cache
+          if: ${{ github.event_name == 'push' }}
+          run: go -C example/grpc/wallet run -exec="$GO_EXEC" ./cmd/walletctl
+
         - name: Run the functional tests against kind
-          run: go -C example/grpc/wallet test -count=1 -race -tags functional ./functional/
+          run: go -C example/grpc/wallet test -exec="$GO_EXEC" -count=1 -race -tags functional ./functional/
 
         - name: Show the wallet namespace
-          if: ${{ failure() }}
+          if: ${{ failure() && github.event_name != 'push' }}
           run: |
             kubectl --namespace wallet get all
             kubectl --namespace wallet describe pods
