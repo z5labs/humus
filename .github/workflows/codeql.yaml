@@ -8,6 +8,9 @@ on:
       - '**.go'
       - 'go.mod'
       - 'go.sum'
+      # A push that changes how the job's Go cache is filled saves it again.
+      - '.github/workflows/codeql.yaml'
+      - '.github/actions/**'
 
   pull_request:
     branches:
@@ -22,8 +25,9 @@ jobs:
     name: Analyze
     runs-on: ${{ (matrix.language == 'swift' && 'macos-latest') || 'ubuntu-latest' }}
     timeout-minutes: ${{ (matrix.language == 'swift' && 120) || 360 }}
+    # actions: write lets save-go-cache delete the job's older caches.
     permissions:
-      actions: read
+      actions: write
       contents: read
       security-events: write
 
@@ -40,6 +44,15 @@ jobs:
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
       with:
         go-version: '1.27.4'
+        cache: false
+
+    # The Go cache is CI's, restored from the one this job last saved on
+    # main, rather than setup-go's, which a pull request that changes go.sum
+    # saves under its own ref. See save-go-cache.
+    - id: go-cache
+      uses: ./.github/actions/restore-go-cache
+      with:
+        name: codeql
 
     - name: Initialize CodeQL
       uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
@@ -50,3 +63,9 @@ jobs:
       uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
       with:
         category: "/language:${{matrix.language}}"
+
+    - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
+      uses: ./.github/actions/save-go-cache
+      with:
+        key: ${{ steps.go-cache.outputs.key }}
+        path: ${{ steps.go-cache.outputs.path }}

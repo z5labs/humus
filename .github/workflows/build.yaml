@@ -14,6 +14,7 @@ on:
       - 'example/*/*/proto/**'
       - '.claude/hooks/**'
       - '.github/workflows/build.yaml'
+      - '.github/actions/**'
   pull_request:
     branches:
       - "main"
@@ -34,8 +35,14 @@ on:
 # bringing a kind cluster up, doesn't run on a push. Lint and vet do, to fill
 # golangci-lint's cache and Go's. An admin can bypass the ruleset and push to
 # main directly, and such a push goes untested.
+#
+# Every go command compiles without DWARF, through GOFLAGS, to keep the Go
+# caches inside GitHub's cache limit; see save-go-cache. Nothing in CI reads
+# DWARF: a failed test, a panic and a race report print their files and
+# lines from the binary's own line table.
 env:
   GO_EXEC: ${{ github.event_name == 'push' && 'true' || '' }}
+  GOFLAGS: -gcflags=all=-dwarf=false
 
 jobs:
   # The default branch's ruleset requires four checks: Build, Kafka
@@ -144,8 +151,14 @@ jobs:
             install-only: true
             skip-cache: true
 
+        # golangci-lint compiles the packages it loads, and with -race it
+        # compiles them as Test does, so the two share every package in the
+        # job's cache rather than each compiling a copy of its own. No
+        # package in the repository builds differently under the race tag.
         - name: Lint
           working-directory: ${{ matrix.module }}
+          env:
+            GOFLAGS: ${{ env.GOFLAGS }} -race
           run: golangci-lint run
 
         # The cache step runs only when checkout and setup-go succeeded, so
@@ -176,12 +189,15 @@ jobs:
             path: ${{ steps.go-cache.outputs.path }}
 
   # The tests behind the testcontainers tag run in the testcontainers jobs
-  # below, so here they are only compiled and vetted, without starting a
-  # container. Every module under example/ that ci modules lists is
-  # vetted with the tag, so a new example needs no change here. Vet the
-  # functional tests vets the examples with the functional tag.
-  vet-testcontainers:
-    name: Vet the testcontainers tests
+  # below, and those behind the functional tag against a deployment, such as
+  # a walkthrough's on kind, so here they are only compiled and vetted,
+  # without starting a container. Every module under example/ that ci
+  # modules lists is vetted with each tag, so a new example needs no change
+  # here. Both tags are vetted in one job, so they share one cache: they
+  # compile nearly the same packages, and two caches of them would each be
+  # as big as this one.
+  vet:
+    name: Vet the tagged tests
     needs: modules
     runs-on: ubuntu-latest
     permissions:
@@ -199,9 +215,9 @@ jobs:
         - id: go-cache
           uses: ./.github/actions/restore-go-cache
           with:
-            name: vet-testcontainers
+            name: vet
 
-        - name: Vet
+        - name: Vet the testcontainers tests
           env:
             MODULES: ${{ needs.modules.outputs.modules }}
           run: |
@@ -217,38 +233,10 @@ jobs:
             done
             exit "$failed"
 
-        - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
-          uses: ./.github/actions/save-go-cache
-          with:
-            key: ${{ steps.go-cache.outputs.key }}
-            path: ${{ steps.go-cache.outputs.path }}
-
-  # The tests behind the functional tag run against a deployment, such as a
-  # walkthrough's on kind, so here they are only compiled and vetted. Every
-  # module under example/ that ci modules lists is vetted, so a new
-  # example needs no change here.
-  vet-functional:
-    name: Vet the functional tests
-    needs: modules
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      contents: read
-    steps:
-        - name: Checkout
-          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
-          with:
-            go-version: '1.27.4'
-            cache: false
-
-        - id: go-cache
-          uses: ./.github/actions/restore-go-cache
-          with:
-            name: vet-functional
-
-        - name: Vet
+        # It runs whether the testcontainers tests' vet passed or not, so one
+        # run reports both.
+        - name: Vet the functional tests
+          if: ${{ !cancelled() && steps.go-cache.outcome == 'success' }}
           env:
             MODULES: ${{ needs.modules.outputs.modules }}
           run: |
@@ -330,8 +318,7 @@ jobs:
     needs:
       - modules
       - lint-and-test
-      - vet-testcontainers
-      - vet-functional
+      - vet
       - conformance
       - scripts
     if: ${{ always() && github.event_name != 'push' }}
@@ -529,7 +516,7 @@ jobs:
   # run its Stores and migrate, and the shared cases against both services
   # on humus.OSHost(), against PostgreSQL and WireMock in containers. The
   # ruleset doesn't require this job, and Build doesn't wait on it; Vet the
-  # testcontainers tests vets them.
+  # tagged tests vets them.
   shoppingcart-testcontainers:
     name: Shoppingcart walkthrough (testcontainers)
     # It runs when the change affects example/http/shoppingcart, as Affected
@@ -538,8 +525,7 @@ jobs:
       - affected
       - modules
       - lint-and-test
-      - vet-testcontainers
-      - vet-functional
+      - vet
       - conformance
       - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/http/shoppingcart"')) }}
@@ -576,7 +562,7 @@ jobs:
   # org.testcontainers to the cores it keeps back from its runs. They also
   # bring a kind cluster up, and check that flaky pins its node container to
   # the cores of its lane. The ruleset doesn't require this job, and Build
-  # doesn't wait on it; Vet the testcontainers tests vets them.
+  # doesn't wait on it; Vet the tagged tests vets them.
   flaky-testcontainers:
     name: flaky (testcontainers)
     # It runs when the change affects tools/flaky, as Affected modules decides.
@@ -584,8 +570,7 @@ jobs:
       - affected
       - modules
       - lint-and-test
-      - vet-testcontainers
-      - vet-functional
+      - vet
       - conformance
       - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"tools/flaky"')) }}
@@ -630,7 +615,7 @@ jobs:
   # and signing tokens with the key it made, and find an add's trace across
   # both services, its records, both services' metrics by pod, and the
   # Deployments' replicas and restarts in the LGTM stack. The ruleset doesn't
-  # require this job, and Build doesn't wait on it; Vet the functional tests
+  # require this job, and Build doesn't wait on it; Vet the tagged tests
   # vets them.
   shoppingcart-kind:
     name: Shoppingcart walkthrough (kind)
@@ -640,8 +625,7 @@ jobs:
       - affected
       - modules
       - lint-and-test
-      - vet-testcontainers
-      - vet-functional
+      - vet
       - conformance
       - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/http/shoppingcart"')) }}
@@ -703,7 +687,7 @@ jobs:
 
   # The billing walkthrough's tests behind the testcontainers build tag run
   # against PostgreSQL in a container. The ruleset doesn't require this job,
-  # and Build doesn't wait on it; Vet the testcontainers tests vets them.
+  # and Build doesn't wait on it; Vet the tagged tests vets them.
   billing-testcontainers:
     name: Billing walkthrough (testcontainers)
     # It runs when the change affects example/job/billing, as Affected modules
@@ -712,8 +696,7 @@ jobs:
       - affected
       - modules
       - lint-and-test
-      - vet-testcontainers
-      - vet-functional
+      - vet
       - conformance
       - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/job/billing"')) }}
@@ -756,7 +739,7 @@ jobs:
   # as it is, failing a bad setting by its pod failure policy, and a run whose
   # trace, records and metrics have to reach Tempo, Loki and Mimir. The
   # ruleset doesn't require this job, and Build doesn't wait on it; Vet the
-  # functional tests vets them.
+  # tagged tests vets them.
   billing-kind:
     name: Billing walkthrough (kind)
     # It runs when the change affects example/job/billing, as Affected modules
@@ -765,8 +748,7 @@ jobs:
       - affected
       - modules
       - lint-and-test
-      - vet-testcontainers
-      - vet-functional
+      - vet
       - conformance
       - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/job/billing"')) }}
@@ -833,7 +815,7 @@ jobs:
 
   # The order status walkthrough's tests behind the testcontainers build tag
   # run against PostgreSQL in a container. The ruleset doesn't require this
-  # job, and Build doesn't wait on it; Vet the testcontainers tests vets them.
+  # job, and Build doesn't wait on it; Vet the tagged tests vets them.
   orderstatus-testcontainers:
     name: Order status walkthrough (testcontainers)
     # It runs when the change affects example/kafka/orderstatus, as Affected
@@ -842,8 +824,7 @@ jobs:
       - affected
       - modules
       - lint-and-test
-      - vet-testcontainers
-      - vet-functional
+      - vet
       - conformance
       - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/kafka/orderstatus"')) }}
@@ -888,7 +869,7 @@ jobs:
   # and the containers' restarts in the LGTM stack. They also show that
   # Grafana loaded the alert rules and the dashboard, and that each rule
   # evaluates without error. The ruleset doesn't require this job, and Build
-  # doesn't wait on it; Vet the functional tests vets them.
+  # doesn't wait on it; Vet the tagged tests vets them.
   orderstatus-kind:
     name: Order status walkthrough (kind)
     # It runs when the change affects example/kafka/orderstatus, as Affected
@@ -897,8 +878,7 @@ jobs:
       - affected
       - modules
       - lint-and-test
-      - vet-testcontainers
-      - vet-functional
+      - vet
       - conformance
       - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/kafka/orderstatus"')) }}
@@ -960,7 +940,7 @@ jobs:
   # The mailer walkthrough's tests behind the testcontainers build tag run
   # the shared cases against RabbitMQ and WireMock in containers. The ruleset
   # doesn't require this job, and Build doesn't wait on it; Vet the
-  # testcontainers tests vets them.
+  # tagged tests vets them.
   mailer-testcontainers:
     name: Mailer walkthrough (testcontainers)
     # It runs when the change affects example/rabbitmq/mailer, as Affected
@@ -969,8 +949,7 @@ jobs:
       - affected
       - modules
       - lint-and-test
-      - vet-testcontainers
-      - vet-functional
+      - vet
       - conformance
       - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/rabbitmq/mailer"')) }}
@@ -1010,7 +989,7 @@ jobs:
   # tests behind the functional tag then run the shared cases against it, and
   # find a request's trace, logs and metrics in the overlay's LGTM stack. The
   # ruleset doesn't require this job, and Build doesn't wait on it; Vet the
-  # functional tests vets them.
+  # tagged tests vets them.
   mailer-kind:
     name: Mailer walkthrough (kind)
     # It runs when the change affects example/rabbitmq/mailer, as Affected
@@ -1019,8 +998,7 @@ jobs:
       - affected
       - modules
       - lint-and-test
-      - vet-testcontainers
-      - vet-functional
+      - vet
       - conformance
       - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/rabbitmq/mailer"')) }}
@@ -1082,7 +1060,7 @@ jobs:
   # from and the humus service it ends with, each case against RabbitMQ in a
   # container of its own, and the humus service's retries and dead letters
   # against its definitions file. The ruleset doesn't require this job, and
-  # Build doesn't wait on it; Vet the testcontainers tests vets them.
+  # Build doesn't wait on it; Vet the tagged tests vets them.
   watermill-rabbitmq-testcontainers:
     name: Watermill RabbitMQ migration guide (testcontainers)
     # It runs when the change affects example/rabbitmq/watermill/start or
@@ -1091,8 +1069,7 @@ jobs:
       - affected
       - modules
       - lint-and-test
-      - vet-testcontainers
-      - vet-functional
+      - vet
       - conformance
       - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/rabbitmq/watermill/start"') || contains(needs.affected.outputs.modules, '"example/rabbitmq/watermill/humus"')) }}
@@ -1133,7 +1110,7 @@ jobs:
   # and the humus controller it ends with, each against k3s in a container
   # of its own, with its CRD and its RBAC from its config directory. The
   # ruleset doesn't require this job, and Build doesn't wait on it; Vet the
-  # testcontainers tests vets them.
+  # tagged tests vets them.
   kubebuilder-testcontainers:
     name: kubebuilder migration guide (testcontainers)
     # It runs when the change affects example/kube/kubebuilder/start or
@@ -1142,8 +1119,7 @@ jobs:
       - affected
       - modules
       - lint-and-test
-      - vet-testcontainers
-      - vet-functional
+      - vet
       - conformance
       - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/kube/kubebuilder/start"') || contains(needs.affected.outputs.modules, '"example/kube/kubebuilder/humus"')) }}
@@ -1181,7 +1157,7 @@ jobs:
 
   # The databases walkthrough's tests behind the testcontainers build tag run
   # against k3s and PostgreSQL in containers. The ruleset doesn't require this
-  # job, and Build doesn't wait on it; Vet the testcontainers tests vets them.
+  # job, and Build doesn't wait on it; Vet the tagged tests vets them.
   databases-testcontainers:
     name: Databases walkthrough (testcontainers)
     # It runs when the change affects example/kube/databases, as Affected
@@ -1190,8 +1166,7 @@ jobs:
       - affected
       - modules
       - lint-and-test
-      - vet-testcontainers
-      - vet-functional
+      - vet
       - conformance
       - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/kube/databases"')) }}
@@ -1240,7 +1215,7 @@ jobs:
   # LGTM stack. They also show that Grafana loaded the alert rules and the
   # dashboard, that Mimir holds every series the rules read, and that each
   # rule evaluates without error. The ruleset doesn't require this job, and
-  # Build doesn't wait on it; Vet the functional tests vets them.
+  # Build doesn't wait on it; Vet the tagged tests vets them.
   databases-kind:
     name: Databases walkthrough (kind)
     # It runs when the change affects example/kube/databases, as Affected
@@ -1249,8 +1224,7 @@ jobs:
       - affected
       - modules
       - lint-and-test
-      - vet-testcontainers
-      - vet-functional
+      - vet
       - conformance
       - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/kube/databases"')) }}
@@ -1318,7 +1292,7 @@ jobs:
   # in. buf generate runs protoc-gen-go and protoc-gen-go-grpc as go tools,
   # so the module's go.mod pins them. A main with no contract yet has nothing
   # to break, so the breaking check says so and passes. The ruleset doesn't
-  # require this job, and Build doesn't wait on it; Vet the testcontainers
+  # require this job, and Build doesn't wait on it; Vet the tagged
   # tests vets them.
   wallet-testcontainers:
     name: Wallet walkthrough (testcontainers)
@@ -1328,8 +1302,7 @@ jobs:
       - affected
       - modules
       - lint-and-test
-      - vet-testcontainers
-      - vet-functional
+      - vet
       - conformance
       - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/grpc/wallet"')) }}
@@ -1430,7 +1403,7 @@ jobs:
   # every alert rule and the dashboard, and that after the ledger's breaker
   # opens Mimir holds every series the rules read and each rule evaluates
   # without error. The ruleset doesn't require this job, and Build doesn't
-  # wait on it; Vet the functional tests vets them.
+  # wait on it; Vet the tagged tests vets them.
   wallet-kind:
     name: Wallet walkthrough (kind)
     # It runs when the change affects example/grpc/wallet, as Affected modules
@@ -1439,8 +1412,7 @@ jobs:
       - affected
       - modules
       - lint-and-test
-      - vet-testcontainers
-      - vet-functional
+      - vet
       - conformance
       - scripts
     if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/grpc/wallet"')) }}

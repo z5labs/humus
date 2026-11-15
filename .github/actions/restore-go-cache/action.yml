@@ -13,6 +13,11 @@ description: >-
 # A key is go-cache/<name>/<os>-<arch>/<go version>/<run id>-<attempt>.
 # save-go-cache finds a job's caches by what comes before the last three
 # parts, so a name may hold / but no two jobs may share a name.
+#
+# save-go-cache deletes the module zips from the Go module cache before it
+# saves it, to keep main's caches inside GitHub's 10 GB cache limit; see its
+# comment for how they stay inside it. Go doesn't need them to compile, and
+# downloads any module the cache doesn't have, zip and all, as usual.
 
 inputs:
   name:
