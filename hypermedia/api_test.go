@@ -21,7 +21,7 @@ import (
 
 // TestPackage_exports_only_its_API checks the package's own source, test
 // files excluded: it exports its paths, parameters and links, its routes
-// and its Site, and nothing else.
+// and its Site, its forms, and nothing else.
 func TestPackage_exports_only_its_API(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	require.NoError(t, err)
@@ -75,11 +75,31 @@ func TestPackage_exports_only_its_API(t *testing.T) {
 	}
 	sort.Strings(exported)
 	require.Equal(t, []string{
+		"AnyField",
 		"Arg",
 		"ErrorPage",
+		"Field",
+		"FieldError",
+		"FieldError.Error",
+		"FieldFrom",
+		"Form",
+		"Form.Problem",
+		"Form.Raw",
+		"Form.Valid",
+		"FormField",
+		"FormField.Enum",
+		"FormField.MaxLength",
+		"FormField.Maximum",
+		"FormField.MinLength",
+		"FormField.Minimum",
+		"FormField.Pattern",
+		"FormField.Required",
 		"Handler",
+		"Malformed",
+		"Missing",
 		"NewRoute",
 		"NewSite",
+		"NotInEnum",
 		"ParamFrom",
 		"ParamValue",
 		"Path",
@@ -97,16 +117,24 @@ func TestPackage_exports_only_its_API(t *testing.T) {
 		"PathParameter.MinLength",
 		"PathParameter.Minimum",
 		"PathParameter.Pattern",
+		"PatternMismatch",
 		"QueryFrom",
 		"QueryParam",
 		"QueryParameter",
+		"ReadForm",
+		"Repeated",
 		"RequestError",
 		"RequestError.Error",
 		"RequestError.Unwrap",
 		"Root",
 		"Route",
+		"Rule",
 		"Site",
 		"Site.ServeHTTP",
+		"TooLarge",
+		"TooLong",
+		"TooShort",
+		"TooSmall",
 		"URL",
 		"URL.String",
 		"URL.With",
@@ -165,6 +193,24 @@ var _ = one.URL(hypermedia.Arg(contactID, n))`,
 		"a Minimum of another type": {
 			body: `var _ = contactID.Minimum("1")`,
 			want: `cannot use "1"`,
+		},
+		"a form field of its type": {
+			body: `var age = hypermedia.Field[ID]("age").Required().Minimum(18).Enum(18, 21)
+func read(f *hypermedia.Form) ID { return hypermedia.FieldFrom(f, age) }`,
+		},
+		"a form field's Minimum of another type": {
+			body: `var _ = hypermedia.Field[ID]("age").Minimum("18")`,
+			want: `cannot use "18"`,
+		},
+		"a form field's value read as another type": {
+			body: `var age = hypermedia.Field[ID]("age")
+func read(f *hypermedia.Form) int { return hypermedia.FieldFrom(f, age) }`,
+			want: "cannot use hypermedia.FieldFrom(f, age)",
+		},
+		"an AnyField that isn't a FormField": {
+			body: `type mine struct{}
+var _ hypermedia.AnyField = mine{}`,
+			want: "does not implement hypermedia.AnyField",
 		},
 	}
 	imp := importer.ForCompiler(token.NewFileSet(), "source", nil)

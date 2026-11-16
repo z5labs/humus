@@ -96,12 +96,74 @@
 // github.com/z5labs/humus/hypermedia. The Site adds no instrument or
 // attribute of its own.
 //
+// # Forms
+//
+// A [FormField] is a field of a form, declared once as a Go value, with
+// its constraints, as a path parameter is:
+//
+//	var (
+//		Name  = hypermedia.Field[string]("name").Required().MaxLength(100)
+//		Email = hypermedia.Field[string]("email").Required().Pattern(emailRE)
+//		Age   = hypermedia.Field[int]("age").Minimum(18)
+//		VIP   = hypermedia.Field[bool]("vip")
+//	)
+//
+// [ReadForm] reads a request's body as a form, urlencoded or multipart,
+// whatever its method, so a QUERY's body is read as a POST's is. A form
+// already parsed, as by method-override middleware, is read from
+// r.PostForm. Only the body is read: a value in the URL's query isn't a
+// form field. It checks every field, so a form with several problems
+// reports each one:
+//
+//	form, err := hypermedia.ReadForm(r, Name, Email, Age, VIP)
+//	if err != nil {
+//		return err
+//	}
+//	if !form.Valid() {
+//		w.WriteHeader(http.StatusUnprocessableEntity)
+//		return editForm.Execute(w, form)
+//	}
+//	c := Contact{Name: hypermedia.FieldFrom(form, Name), Age: hypermedia.FieldFrom(form, Age)}
+//
+// A field's value is parsed as its type: a string, bool, int, int64 or
+// float64 type, named types included. A bool is true when the client sent
+// it, as a checked checkbox sends "on", and false when it didn't. A field
+// sent empty is one not sent, as HTML's required treats an empty control.
+//
+// A field with a problem has a [FieldError], from [Form.Problem], naming
+// the [Rule] it broke and the constraint's value as its Limit, and
+// [Form.Raw] returns what the client sent, so the form is re-rendered as
+// it was. The rules, and their Limits, are:
+//   - [Repeated], a field sent more than once, with no Limit;
+//   - [Missing], a Required field not sent, or sent empty, with no Limit;
+//   - [Malformed], a value that doesn't parse as its type, with no Limit;
+//   - [NotInEnum], with the Enum's values;
+//   - [PatternMismatch], with the Pattern;
+//   - [TooShort] and [TooLong], with the MinLength or MaxLength;
+//   - [TooSmall] and [TooLarge], with the Minimum or Maximum.
+//
+// A value breaks the first of them it fails, in that order, and an
+// optional field not sent breaks none. The messages are the end user's:
+// a FieldError's text is for a log, not for a page.
+//
+// A multipart body's file parts are skipped, and no part of the body is
+// written to disk, so an upload is never spilled outside humus.Host. An
+// end user who takes uploads streams them with r.MultipartReader(). The
+// body's limit is the end user's, set with [http.MaxBytesHandler]: a body
+// over it is a [RequestError] of Status 413, and a body that isn't a form
+// is one of 415, so the Site answers both with the ErrorPage, and records
+// neither. A form with problems is an answer, not a failure, so ReadForm
+// records nothing either.
+//
 // # Building never panics
 //
-// A path or a parameter isn't checked as it is built, whatever its
-// literals, names or constraints, so a path declared as a package-level
-// variable never panics while its package initializes. Each method returns
-// a copy with one more segment or constraint, and leaves the value it was
-// called on unchanged, so two paths built from one prefix, or two
-// parameters from one declaration, don't change each other.
+// A path, a parameter or a form field isn't checked as it is built,
+// whatever its literals, names or constraints, so one declared as a
+// package-level variable never panics while its package initializes.
+// NewSite checks paths and parameters, and ReadForm checks its fields,
+// returning an error that names a constraint that doesn't fit its type.
+// Each method returns a copy with one more segment or constraint, and
+// leaves the value it was called on unchanged, so two paths built from one
+// prefix, or two parameters or fields from one declaration, don't change
+// each other.
 package hypermedia
