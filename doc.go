@@ -137,6 +137,13 @@
 // reflects from Go types, and reconciling their objects, or those of
 // Kubernetes' own kinds, with leader election on a Lease, documented at
 // https://z5labs.github.io/humus/services/kubernetes/.
+// The hypermedia and sse packages, a new feature too, have landed:
+// hypermedia serves the pages, fragments and actions of a hypermedia-driven
+// UI from routes on typed paths, which also build its links, and answers
+// every 404, 405 and failure before a response starts with the end user's
+// error page, and sse writes the Server-Sent Events of a feed that ends
+// once httpserver.ShuttingDown is closed, documented at
+// https://z5labs.github.io/humus/services/http/hypermedia/.
 // The other runtime packages come back through their own proposals.
 //
 // The plan is in the charter, Proposal: humus on the bedrock process model:

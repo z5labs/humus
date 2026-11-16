@@ -43,6 +43,14 @@ const (
 	gettingStartedExample = "job/hello"
 )
 
+// hypermediaPage is the docs site's page on serving a hypermedia UI, and
+// hypermediaExample the path under example/ of the example whose code it
+// quotes.
+const (
+	hypermediaPage    = docsContent + "/services/http/hypermedia.md"
+	hypermediaExample = "http/inlineedit"
+)
+
 // readme is the repository's README. Its service is the Getting started
 // page's, so its samples are taken from the same example.
 const readme = "README.md"
@@ -56,7 +64,10 @@ const readme = "README.md"
 // follows the same rule for the guide's own code under example/<type>/<name>/,
 // so the framework's code it quotes is checked as well as humus's. The Getting
 // started page follows the same rule for the service it builds, under
-// example/job/hello/, and so does the README, whose service is the same one. A
+// example/job/hello/, and so does the README, whose service is the same one.
+// The hypermedia UI page, services/http/hypermedia.md, follows it for the
+// example whose code it quotes, under example/http/inlineedit/, so the client
+// libraries' code it shows is checked as well as humus's. A
 // Go sample on any other page must appear, line for line, in a _test.go file
 // of this module, so it is taken from a test or a tested example. Files under
 // hidden directories and node_modules are not read for either rule.
@@ -390,6 +401,8 @@ func TestSampleProblems(t *testing.T) {
 		"example/http/echo/humus/app.go":             {Data: []byte("func Init() {\n\thttpserver.NewService(e)\n}\n")},
 		"example/http/echo/cases/cases_test.go":      {Data: []byte("func TestCart(t *testing.T) {\n\tt.Log(\"only in the guide's test\")\n}\n")},
 		"example/http/echo/humus/deploy/app.yaml":    {Data: []byte("kind: Deployment\nmetadata:\n  name: carts\n")},
+		"example/http/inlineedit/ui/app.go":          {Data: []byte("func Init() {\n\thypermedia.NewSite(s, errorPage, routes)\n}\n")},
+		"example/http/inlineedit/ui/app_test.go":     {Data: []byte("func TestInit(t *testing.T) {\n\tt.Log(\"only in the UI's test\")\n}\n")},
 	}
 
 	const (
@@ -452,6 +465,15 @@ func TestSampleProblems(t *testing.T) {
 		{"the migrating section's index keeps the feature pages' rule", migrating + "/_index.md", "go", []string{"t.Log(\"ok\")"}, false},
 		{"a guide's service type group keeps the feature pages' rule", migrating + "/http/_index.md", "go", []string{"t.Log(\"ok\")"}, false},
 		{"go from a guide on its service type group's page", migrating + "/http/_index.md", "go", []string{"httpserver.NewService(e)"}, true},
+		{"go from the example on the hypermedia page", hypermediaPage, "go", []string{"func Init() {", "\thypermedia.NewSite(s, errorPage, routes)", "}"}, false},
+		{"go from the example's test on the hypermedia page", hypermediaPage, "go", []string{"t.Log(\"only in the UI's test\")"}, false},
+		{"go the example does not hold on the hypermedia page", hypermediaPage, "go", []string{"hypermedia.NewSite(s, nil, nil)"}, true},
+		{"go from a test outside example on the hypermedia page", hypermediaPage, "go", []string{"t.Log(\"ok\")"}, true},
+		{"go from a walkthrough on the hypermedia page", hypermediaPage, "go", []string{"humus.Main(app.Init)"}, true},
+		{"go from a guide on the hypermedia page", hypermediaPage, "go", []string{"httpserver.NewService(e)"}, true},
+		{"sh is unchecked on the hypermedia page", hypermediaPage, "sh", []string{"go run ./ui"}, false},
+		{"go from the hypermedia page's example on a feature page", feature, "go", []string{"hypermedia.NewSite(s, errorPage, routes)"}, true},
+		{"go from the hypermedia page's example on another page of its section", docsContent + "/services/http/serving.md", "go", []string{"hypermedia.NewSite(s, errorPage, routes)"}, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -490,6 +512,7 @@ func TestSampleProblems_missing_example(t *testing.T) {
 	}{
 		{"a walkthrough", walkthroughs + "/job/billing/step.md"},
 		{"a migration guide", migrating + "/http/echo.md"},
+		{"the hypermedia page", hypermediaPage},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -639,12 +662,16 @@ func sampleProblems(repo fs.FS) ([]string, error) {
 
 // exampleName returns the path, <type>/<name>, under example/ of the example
 // whose files the samples on page are taken from: the Getting started page's
-// service, which is the README's too, the walkthrough page's example, or the
-// migration guide's code. It returns "" for any other page, whose Go samples
-// are taken from the _test.go files of this module.
+// service, which is the README's too, the hypermedia UI page's example, the
+// walkthrough page's example, or the migration guide's code. It returns ""
+// for any other page, whose Go samples are taken from the _test.go files of
+// this module.
 func exampleName(page string) string {
 	if page == gettingStarted || page == readme {
 		return gettingStartedExample
+	}
+	if page == hypermediaPage {
+		return hypermediaExample
 	}
 	if name := guideName(page); name != "" {
 		return name

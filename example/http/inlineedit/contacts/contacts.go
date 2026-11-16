@@ -182,6 +182,19 @@ func ErrorPage(w http.ResponseWriter, r *http.Request, err error) error {
 	return errorTmpl.Execute(w, http.StatusText(status))
 }
 
+func MethodOverride(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			switch m := r.PostFormValue("_method"); m {
+			case http.MethodPut, http.MethodPatch, http.MethodDelete:
+				r = r.WithContext(r.Context())
+				r.Method = m
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func Assets(fsys fs.FS) hypermedia.Handler {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		name := hypermedia.ParamFrom(r, Asset)

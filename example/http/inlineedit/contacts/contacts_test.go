@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"testing/synctest"
@@ -164,4 +166,53 @@ func TestPaths_build_their_links(t *testing.T) {
 	require.Equal(t, "/contacts/7/edit", contacts.Edit.URL(id).String())
 	require.Equal(t, "/contacts/changes", contacts.Changes.URL().String())
 	require.Equal(t, "/static/htmx.min.js", contacts.Static.URL(hypermedia.Arg(contacts.Asset, "htmx.min.js")).String())
+}
+
+func TestMethodOverride_routes_a_POST_by_its_method_field(t *testing.T) {
+	store := contacts.NewStore()
+	save := func(w http.ResponseWriter, r *http.Request) error {
+		c, err := store.Get(hypermedia.ParamFrom(r, contacts.ContactID))
+		if err != nil {
+			return err
+		}
+		c.Name = r.PostFormValue("name")
+		store.Put(c)
+		w.WriteHeader(http.StatusNoContent)
+		return nil
+	}
+	site, err := hypermedia.NewSite(&humus.Setup{Telemetry: telemetry.Noop()}, contacts.ErrorPage, []hypermedia.Route{
+		hypermedia.NewRoute(http.MethodPut, contacts.One, save),
+	})
+	require.NoError(t, err)
+	handler := http.NewCrossOriginProtection().Handler(contacts.MethodOverride(site))
+
+	cases := []struct {
+		name   string
+		method string
+		form   url.Values
+		site   string
+		want   int
+		saved  string
+	}{
+		{name: "a POST with _method PUT is a PUT", method: http.MethodPost, form: url.Values{"_method": {"PUT"}, "name": {"Joseph"}}, site: "same-origin", want: http.StatusNoContent, saved: "Joseph"},
+		{name: "a POST with no _method stays a POST", method: http.MethodPost, form: url.Values{"name": {"Jo"}}, site: "same-origin", want: http.StatusMethodNotAllowed, saved: "Joe Smith"},
+		{name: "a POST with _method GET stays a POST", method: http.MethodPost, form: url.Values{"_method": {"GET"}, "name": {"Jo"}}, site: "same-origin", want: http.StatusMethodNotAllowed, saved: "Joe Smith"},
+		{name: "a POST with _method in lower case stays a POST", method: http.MethodPost, form: url.Values{"_method": {"put"}, "name": {"Jo"}}, site: "same-origin", want: http.StatusMethodNotAllowed, saved: "Joe Smith"},
+		{name: "a PATCH with _method PUT stays a PATCH", method: http.MethodPatch, form: url.Values{"_method": {"PUT"}, "name": {"Jo"}}, site: "same-origin", want: http.StatusMethodNotAllowed, saved: "Joe Smith"},
+		{name: "a cross-site POST with _method PUT is refused", method: http.MethodPost, form: url.Values{"_method": {"PUT"}, "name": {"Mallory"}}, site: "cross-site", want: http.StatusForbidden, saved: "Joe Smith"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			store.Put(contacts.Contact{ID: 1, Name: "Joe Smith", Email: "joe@example.com"})
+			r := httptest.NewRequest(c.method, "/contacts/1", strings.NewReader(c.form.Encode()))
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			r.Header.Set("Sec-Fetch-Site", c.site)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, r)
+			require.Equal(t, c.want, w.Code)
+			saved, err := store.Get(1)
+			require.NoError(t, err)
+			require.Equal(t, c.saved, saved.Name)
+		})
+	}
 }
