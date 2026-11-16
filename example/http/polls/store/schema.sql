@@ -24,3 +24,12 @@ CREATE TABLE votes (
 );
 
 CREATE INDEX votes_by_option ON votes (poll_id, option_id);
+
+CREATE FUNCTION notify_vote() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    PERFORM pg_notify('votes', NEW.poll_id::text);
+    RETURN NULL;
+END
+$$;
+
+CREATE TRIGGER votes_notify AFTER INSERT ON votes FOR EACH ROW EXECUTE FUNCTION notify_vote();
