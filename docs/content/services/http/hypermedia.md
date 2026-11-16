@@ -110,8 +110,13 @@ func ErrorPage(w http.ResponseWriter, r *http.Request, err error) error {
 `RequestError` is recorded, whatever status the page writes, and every panic
 but `http.ErrAbortHandler`: as an exception event on the request's span, its
 status set to Error, and one ERROR record through the logger
-`github.com/z5labs/humus/hypermedia`. A 404 or a 422 the end user answers on
-purpose is an answer, not a failure, and records nothing. The error page's
+`github.com/z5labs/humus/hypermedia`. An error that comes once the client has
+gone away, its request's context done or a write failing on its lost
+connection, goes on the span alone, with no record, so a closed tab isn't
+logged as the server's failure. A write the server itself refused is logged
+whatever the context, and so is every panic. A 404 or a 422 the end user
+answers on purpose is an answer, not a failure, and records nothing. The
+error page's
 own error or panic is recorded as `error page failed`, and the Site then
 answers a bare 500 if the page wrote nothing. The Site adds no instrument or
 attribute of its own.
@@ -182,8 +187,9 @@ only whether the response has started:
   cookie meant for a success doesn't ride on it. Headers set above the Site,
   such as a middleware's `Vary`, are kept.
 - **After it starts, the response is the handler's.** An error ends it as
-  written, and is recorded. A panic aborts it, so the client sees a network
-  error rather than a page that looks whole.
+  written, and is recorded unless it is a `RequestError`, which the Site
+  never records. A panic aborts it, so the client sees a network error rather
+  than a page that looks whole.
 
 **A render that can fail halfway renders into a buffer first.** Then a
 template's error comes before the first write, and gets the error page, and
