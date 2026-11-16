@@ -649,6 +649,49 @@ jobs:
             key: ${{ steps.go-cache.outputs.key }}
             path: ${{ steps.go-cache.outputs.path }}
 
+  # The polls walkthrough's tests behind the testcontainers build tag run its
+  # Store against PostgreSQL in a container. The ruleset doesn't require this
+  # job, and Build doesn't wait on it; Vet the tagged tests vets them.
+  polls-testcontainers:
+    name: Polls walkthrough (testcontainers)
+    # It runs when the change affects example/http/polls, as Affected modules
+    # decides.
+    needs:
+      - affected
+      - modules
+      - lint-and-test
+      - vet
+      - conformance
+      - scripts
+    if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/http/polls"')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: write
+      contents: read
+    steps:
+        - name: Checkout
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+          with:
+            go-version: '1.27.4'
+            cache: false
+
+        - id: go-cache
+          uses: ./.github/actions/restore-go-cache
+          with:
+            name: polls-testcontainers
+
+        - name: Test
+          run: go -C example/http/polls test -exec="$GO_EXEC" -count=1 -race -tags testcontainers ./...
+
+        - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
+          uses: ./.github/actions/save-go-cache
+          with:
+            key: ${{ steps.go-cache.outputs.key }}
+            path: ${{ steps.go-cache.outputs.path }}
+
   # flaky's tests behind the testcontainers build tag start containers on the
   # runner's Docker, and check that flaky pins each one labelled
   # org.testcontainers to the cores it keeps back from its runs. They also
