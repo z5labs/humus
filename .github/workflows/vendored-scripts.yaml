@@ -1,0 +1,85 @@
+name: Vendored scripts
+
+# example/http/inlineedit vendors htmx, htmx-ext-sse and Datastar, and
+# declares each one's version in its vendored_test.go. Renovate bumps those
+# versions through the customManagers rule in renovate.json, but it can only
+# rewrite the version, not download the file the new version names. So when a
+# pull request changes that declaration, this job downloads each script again
+# with the test's -update flag and pushes the files to the pull request's
+# branch, so the bump brings its files and main never holds one version's
+# file under another version. Without that commit, the test fails the
+# pull request's checks, naming the file.
+#
+# The push uses the backlog App's installation token, not GITHUB_TOKEN:
+# GitHub starts no workflow run for a push GITHUB_TOKEN makes, so CI would
+# never run on the commit that fixes the files. Once the App has committed to
+# a Renovate branch, Renovate treats the branch as modified and stops
+# rebasing it, as it does for any commit it didn't make.
+#
+# Pull requests from forks get no secrets and no write access, so they're
+# skipped. A fork that bumps a version gets its own failing test instead.
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - example/http/inlineedit/vendored_test.go
+      - .github/workflows/vendored-scripts.yaml
+
+concurrency:
+  group: vendored-scripts-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  download:
+    name: Download vendored scripts
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.27.4'
+          cache: false
+
+      - name: Download each script at its version
+        run: go -C example/http/inlineedit test -count=1 -run '^TestVendored_scripts_are_their_versions_files$' . -update
+
+      - name: Check for changed files
+        id: diff
+        run: |
+          git status --porcelain -- example/http/inlineedit
+          if [[ -n $(git status --porcelain -- example/http/inlineedit) ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Mint a GitHub App installation token
+        id: app-token
+        if: steps.diff.outputs.changed == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
+        with:
+          app-id: ${{ secrets.BACKLOG_APP_ID }}
+          private-key: ${{ secrets.BACKLOG_APP_KEY }}
+
+      - name: Push the downloaded scripts
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          id=$(gh api "users/$APP_SLUG%5Bbot%5D" --jq .id)
+          git config user.name "$APP_SLUG[bot]"
+          git config user.email "$id+$APP_SLUG[bot]@users.noreply.github.com"
+          git add -- example/http/inlineedit
+          git commit -m "chore(example): download inlineedit's vendored scripts at their versions"
+          git push "https://x-access-token:$GH_TOKEN@github.com/$REPO.git" "HEAD:refs/heads/$BRANCH"
