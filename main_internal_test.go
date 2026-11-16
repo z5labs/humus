@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/bedrocktest"
+	"github.com/z5labs/bedrock/host"
 
 	"github.com/z5labs/humus/fault"
 	"github.com/z5labs/humus/internal/defaults"
@@ -76,8 +77,9 @@ func TestMainApp_has_Mains_defaults(t *testing.T) {
 	app := mainApp(noInit)
 
 	require.Equal(t, funcPointer(net.Listen), funcPointer(app.Host.Listen), "Host.Listen is OSHost's")
+	require.Equal(t, funcPointer(net.ListenPacket), funcPointer(app.Host.ListenPacket), "Host.ListenPacket is OSHost's")
 	require.NotNil(t, app.Host.Dial, "Host.Dial is OSHost's")
-	require.Equal(t, osFS{}, app.Host.FS, "Host.FS is OSHost's")
+	require.Equal(t, host.OSFS{}, app.Host.FS, "Host.FS is OSHost's")
 	require.Equal(t, 20*time.Second, app.ShutdownGracePeriod)
 	require.Nil(t, app.Drain, "Main has no drain")
 	require.Nil(t, app.Faults, "Main has no failure injection")
@@ -101,7 +103,7 @@ func TestMainApp_applies_opts_in_order_after_the_defaults(t *testing.T) {
 			order = append(order, name+"@"+a.ShutdownGracePeriod.String())
 		}
 	}
-	h := Host{FS: osFS{}}
+	h := Host{FS: host.OSFS{}}
 
 	app := mainApp(noInit,
 		record("first"),

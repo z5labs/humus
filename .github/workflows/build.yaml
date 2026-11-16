@@ -339,10 +339,11 @@ jobs:
             key: ${{ steps.go-cache.outputs.key }}
             path: ${{ steps.go-cache.outputs.path }}
 
-  # The loopback half of humustest's conformance test opens real sockets on
-  # 127.0.0.1 and 127.0.0.2, and telemetry's sets OTEL_* variables in the
-  # real environment, so both are behind the conformance build tag and run
-  # here rather than with the unit tests.
+  # telemetry's conformance test sets OTEL_* variables in the real
+  # environment, so it is behind the conformance build tag and runs here
+  # rather than with the unit tests. humustest's Host is built on bedrock's
+  # hosttest, whose conformance tables hold its network and filesystem to
+  # the real machine's, and run in bedrock's CI.
   conformance:
     name: Conformance
     # It runs when the change affects the root module, as Affected modules
@@ -368,7 +369,7 @@ jobs:
             name: conformance
 
         - name: Conformance
-          run: go test -exec="$GO_EXEC" -count=1 -race -tags conformance -run '^TestConformance_' ./humustest/ ./telemetry/
+          run: go test -exec="$GO_EXEC" -count=1 -race -tags conformance -run '^TestConformance_' ./telemetry/
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache
