@@ -5,14 +5,17 @@ go 1.27.0
 replace github.com/z5labs/humus => ../../..
 
 require (
+	github.com/starfederation/datastar-go v1.2.2
 	github.com/stretchr/testify v1.12.1
-	github.com/z5labs/bedrock v0.25.0
+	github.com/z5labs/bedrock v0.26.0
 	github.com/z5labs/humus v0.16.0
 	go.opentelemetry.io/otel/log v1.47.0
 	go.opentelemetry.io/otel/sdk/log v1.47.0
 )
 
 require (
+	github.com/CAFxX/httpcompression v0.0.9 // indirect
+	github.com/andybalholm/brotli v1.2.7 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
@@ -20,7 +23,9 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.33.0 // indirect
-	github.com/z5labs/bedrock/fit v0.25.0 // indirect
+	github.com/klauspost/compress v1.20.2 // indirect
+	github.com/valyala/bytebufferpool v1.0.0 // indirect
+	github.com/z5labs/bedrock/fit v0.26.0 // indirect
 	github.com/z5labs/bedrock/host v0.26.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0 // indirect

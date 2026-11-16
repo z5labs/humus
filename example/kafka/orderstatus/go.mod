@@ -16,9 +16,9 @@ require (
 	github.com/twmb/franz-go/pkg/kadm v1.20.0
 	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261109062748-d6ea02a174bc
 	github.com/twmb/franz-go/pkg/kmsg v1.15.1
-	github.com/z5labs/bedrock v0.25.0
-	github.com/z5labs/bedrock/fit v0.25.0
-	github.com/z5labs/bedrock/retry v0.25.0
+	github.com/z5labs/bedrock v0.26.0
+	github.com/z5labs/bedrock/fit v0.26.0
+	github.com/z5labs/bedrock/retry v0.26.0
 	github.com/z5labs/humus v0.16.0
 	github.com/z5labs/humus/queue/kafka v0.16.0
 	go.opentelemetry.io/otel v1.47.0
@@ -74,7 +74,7 @@ require (
 	github.com/tklauser/numcpus v0.12.0 // indirect
 	github.com/twmb/franz-go/plugin/kotel v1.7.1 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
-	github.com/z5labs/bedrock/circuit v0.25.0 // indirect
+	github.com/z5labs/bedrock/circuit v0.26.0 // indirect
 	github.com/z5labs/bedrock/host v0.26.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0 // indirect
