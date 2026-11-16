@@ -20,7 +20,8 @@
 //   - a file of Always, which affects every module
 //
 // A module's lint and unit tests also run when the change touches a file of
-// Lint, which configures the lint of every module but affects nothing else.
+// Lint, which configures the lint of every module but affects nothing else,
+// or a file Reads says the module's unit tests read.
 // A module's tests behind a tag of Tags are vetted when the change affects
 // the module and a Go file of its own packages is behind that tag.
 package affected
@@ -58,6 +59,17 @@ var Always = []string{
 // every module, and affects no module, the one whose directory holds them
 // included: golangci-lint's configuration.
 var Lint = []string{".golangci.yaml"}
+
+// Reads holds, for a module whose unit tests read files of the repository
+// besides those it builds from, a test of each file they read: a change to
+// one runs the module's lint and unit tests, and affects no module.
+// example/http/inlineedit's tests read every Go file outside example/ and
+// docs/ for a hypermedia library's name.
+var Reads = map[string]func(file string) bool{
+	"example/http/inlineedit": func(file string) bool {
+		return path.Ext(file) == ".go" && !strings.HasPrefix(file, "example/") && !strings.HasPrefix(file, "docs/")
+	},
+}
 
 // Tags are the build tags a module's packages are listed with, so that what
 // its tests behind those tags build from counts too, and the tags whose tests
@@ -106,7 +118,8 @@ type Plan struct {
 	// only when it is here.
 	Affected []Affected
 	// Linted are the modules whose lint and unit tests run: every module
-	// the change affects, and every module when it touches a file of Lint.
+	// the change affects, every module when it touches a file of Lint, and
+	// every module whose unit tests read a file it touches, as Reads says.
 	Linted []Affected
 	// Vetted holds, for each tag of Tags, the directory of every module of
 	// Affected that has a Go file behind the tag, as Module.Tags says, in
@@ -128,7 +141,7 @@ func Select(mods []Module, owners []string, changed []string) []Affected {
 // them.
 func Decide(mods []Module, owners []string, changed []string) Plan {
 	return plan(mods, Select(mods, owners, changed), pick(mods, changed, func(m Module, file string) bool {
-		return affects(m, owners, file) || slices.Contains(Lint, file)
+		return affects(m, owners, file) || slices.Contains(Lint, file) || Reads[m.Dir] != nil && Reads[m.Dir](file)
 	}))
 }
 

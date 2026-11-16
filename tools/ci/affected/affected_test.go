@@ -265,6 +265,20 @@ func TestDecide_a_file_of_Lint_lints_every_module_and_affects_none(t *testing.T)
 	}, got)
 }
 
+func TestDecide_a_file_a_modules_unit_tests_read_lints_it_and_affects_none(t *testing.T) {
+	inlineedit := affected.Module{Dir: "example/http/inlineedit", Packages: []affected.Package{{Dir: "hypermedia"}}, Requires: []string{"."}}
+	mods := []affected.Module{root, kafka, inlineedit}
+	for _, file := range []string{"queue/kafka/consumer_test.go", "kube/testdata/mistakes/ok.go", "tools/flaky/main.go", "doc.go"} {
+		got := affected.Decide(mods, owners, []string{file})
+		require.Contains(t, got.Linted, affected.Affected{Dir: "example/http/inlineedit", Because: file}, file)
+		require.NotContains(t, got.Affected, affected.Affected{Dir: "example/http/inlineedit", Because: file}, file)
+	}
+	for _, file := range []string{"example/http/shoppingcart/app.go", "docs/content/docs.go", "queue/kafka/README.md", "kube/go.mod"} {
+		got := affected.Decide(mods, owners, []string{file})
+		require.NotContains(t, got.Linted, affected.Affected{Dir: "example/http/inlineedit", Because: file}, file)
+	}
+}
+
 func TestDecide_no_change_runs_nothing(t *testing.T) {
 	for _, changed := range [][]string{nil, {"docs/content/walkthroughs/databases.md"}} {
 		got := affected.Decide(tagged, owners, changed)
