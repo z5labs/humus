@@ -15,6 +15,8 @@ import (
 	"slices"
 	"strings"
 
+	"go.opentelemetry.io/otel/log"
+
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/internal/httproute"
 	"github.com/z5labs/humus/internal/param"
@@ -43,14 +45,20 @@ func (r Route) name() string {
 }
 
 // ErrorPage answers every error the Site answers: a path no route serves,
-// a method its path doesn't have, and a handler's error. The Site answers
-// a path or a method with a *RequestError.
+// a method its path doesn't have, and a handler's error or panic before
+// its response started. The Site answers a path or a method with a
+// *RequestError, and a panic with an error that doesn't carry the panic's
+// value. Every error but a *RequestError is recorded, whatever status the
+// page writes. Its own error or panic is recorded as "error page failed".
+// The Site then answers a bare 500 if the page wrote nothing, and
+// otherwise ends the response as a handler's would.
 type ErrorPage func(w http.ResponseWriter, r *http.Request, err error) error
 
 // Site serves its routes on an http.ServeMux. It is an http.Handler.
 type Site struct {
 	mux       *http.ServeMux
 	errorPage ErrorPage
+	logger    log.Logger
 
 	// methods are the methods of the Site's routes, HEAD among them when
 	// a GET is, in the order Allow lists them.
@@ -75,6 +83,9 @@ type Site struct {
 //     /contacts/{id} and /contacts/{contactId};
 //   - two routes an http.ServeMux can't tell apart, such as
 //     GET /contacts/{id}/edit and GET /{kind}/7/edit.
+//
+// The Site logs through s.Telemetry's LoggerProvider, with the logger name
+// "github.com/z5labs/humus/hypermedia".
 func NewSite(s *humus.Setup, errorPage ErrorPage, routes []Route) (*Site, error) {
 	var errs []error
 	fail := func(format string, args ...any) {
@@ -138,7 +149,11 @@ func NewSite(s *humus.Setup, errorPage ErrorPage, routes []Route) (*Site, error)
 		return nil, fmt.Errorf("hypermedia: NewSite: %w", errors.Join(errs...))
 	}
 
-	site := &Site{mux: http.NewServeMux(), errorPage: errorPage}
+	site := &Site{
+		mux:       http.NewServeMux(),
+		errorPage: errorPage,
+		logger:    s.Telemetry.LoggerProvider.Logger(loggerName),
+	}
 	for _, r := range valid {
 		if err := site.handle(r.method+" "+r.path.muxPattern(), &route{site: site, Route: r}); err != nil {
 			fail("route %s: %w", r.name(), err)
@@ -179,8 +194,29 @@ func (s *Site) handle(pattern string, h http.Handler) (err error) {
 //     constraint, gets a *RequestError of Status 404;
 //   - a method its path doesn't have gets a *RequestError of Status 405,
 //     with Allow already set on w. Allow lists the methods of the routes
-//     that match the path and whose values parse;
-//   - a handler's error is passed on as it is.
+//     that match the path and whose values parse.
+//
+// The handler's w has net/http's semantics: each call goes straight to the
+// response, and nothing is held. The response starts at its first Write,
+// Flush, ReadFrom or Hijack, or at a WriteHeader of 101 or of 200 and
+// above. The Site sees only whether it has started:
+//   - an error or a panic before it starts: the headers the handler set
+//     are dropped, those set above the Site are kept, ErrorPage answers,
+//     and it is recorded as "request failed", or "handler panicked" with
+//     its stack. A *RequestError gets the ErrorPage, and isn't recorded;
+//   - an error after it starts, other than a *RequestError, is recorded as
+//     "response failed", unless the client went away. The response ends
+//     as written;
+//   - a panic after it starts is recorded, and aborts the response;
+//   - a panic with http.ErrAbortHandler passes through, unrecorded, and
+//     ErrorPage doesn't answer it.
+//
+// A record is an exception event on the request's span, the span's status
+// set to Error, and one ERROR record in the request's context, with
+// http.request.method, http.route, and error.type and exception.message,
+// or a panic's exception.type, exception.message and exception.stacktrace.
+// When the client went away, an error goes on the span alone. httpserver
+// records no "handler panicked" of its own for a panic the Site recovered.
 //
 // The route names the request's span, such as "PUT /contacts/{contactId}",
 // whatever handlers above the Site pass on a copy of r, such as
@@ -188,11 +224,15 @@ func (s *Site) handle(pattern string, h http.Handler) (err error) {
 func (s *Site) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	st := &state{request: r}
 	routed := r.WithContext(context.WithValue(r.Context(), stateKey{}, st))
+	// The route is recorded in a deferred call, so a response the handler
+	// aborts still names its span.
+	defer func() {
+		if st.pattern != "" {
+			r.Pattern = st.pattern
+			httproute.Record(r.Context(), st.pattern)
+		}
+	}()
 	s.mux.ServeHTTP(w, routed)
-	if st.pattern != "" {
-		r.Pattern = st.pattern
-		httproute.Record(r.Context(), st.pattern)
-	}
 }
 
 // unmatched serves the requests no route matches, and the probes of
@@ -212,17 +252,17 @@ func (s *Site) unmatched(w http.ResponseWriter, r *http.Request) {
 func (s *Site) answerUnmatched(w http.ResponseWriter, r *http.Request, paramErr *RequestError) {
 	if allow := s.allowed(r); len(allow) > 0 {
 		w.Header().Set("Allow", strings.Join(allow, ", "))
-		_ = s.errorPage(w, r, &RequestError{
+		s.answer(w, r, "", &RequestError{
 			Status: http.StatusMethodNotAllowed,
 			Err:    fmt.Errorf("%s isn't a method of %s, which allows %s", r.Method, r.URL.EscapedPath(), strings.Join(allow, ", ")),
 		})
 		return
 	}
 	if paramErr != nil {
-		_ = s.errorPage(w, r, paramErr)
+		s.answer(w, r, "", paramErr)
 		return
 	}
-	_ = s.errorPage(w, r, &RequestError{
+	s.answer(w, r, "", &RequestError{
 		Status: http.StatusNotFound,
 		Err:    fmt.Errorf("no route serves %s", r.URL.EscapedPath()),
 	})
@@ -295,9 +335,7 @@ func (rt *route) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r = r.WithContext(context.WithValue(r.Context(), valuesKey{}, &routeValues{pattern: st.pattern, values: values}))
-	if err := rt.h(w, r); err != nil {
-		_ = rt.site.errorPage(w, r, err)
-	}
+	rt.site.serve(w, r, rt)
 }
 
 // discard is the http.ResponseWriter of a probe, which nothing reads.
