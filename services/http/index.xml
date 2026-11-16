@@ -48,4 +48,5 @@ a list of contacts edited in place, with a live feed of every saved row. It
 serves the same UI twice: &lt;code&gt;htmxui&lt;/code&gt; with htmx, and &lt;code&gt;datastarui&lt;/code&gt; with Datastar.
 Both share the
 &lt;a href="https://github.com/z5labs/humus/blob/main/example/http/inlineedit/contacts/contacts.go"&gt;&lt;code&gt;contacts&lt;/code&gt;&lt;/a&gt;
-package: the paths, the store, the checks, the error page and the assets.&lt;/p&gt;</description></item></channel></rss>
+package: the paths, the form&amp;rsquo;s fields, the store, the error page and the
+assets.&lt;/p&gt;</description></item></channel></rss>

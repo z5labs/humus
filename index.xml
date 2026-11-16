@@ -414,7 +414,8 @@ a list of contacts edited in place, with a live feed of every saved row. It
 serves the same UI twice: &lt;code&gt;htmxui&lt;/code&gt; with htmx, and &lt;code&gt;datastarui&lt;/code&gt; with Datastar.
 Both share the
 &lt;a href="https://github.com/z5labs/humus/blob/main/example/http/inlineedit/contacts/contacts.go"&gt;&lt;code&gt;contacts&lt;/code&gt;&lt;/a&gt;
-package: the paths, the store, the checks, the error page and the assets.&lt;/p&gt;</description></item><item><title>Talking to PostgreSQL</title><link>https://z5labs.github.io/humus/walkthroughs/kube/databases/postgres/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/kube/databases/postgres/</guid><description>&lt;p&gt;The &lt;code&gt;postgres&lt;/code&gt; package provisions and drops a &lt;code&gt;Database&lt;/code&gt;&amp;rsquo;s role and
+package: the paths, the form&amp;rsquo;s fields, the store, the error page and the
+assets.&lt;/p&gt;</description></item><item><title>Talking to PostgreSQL</title><link>https://z5labs.github.io/humus/walkthroughs/kube/databases/postgres/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/kube/databases/postgres/</guid><description>&lt;p&gt;The &lt;code&gt;postgres&lt;/code&gt; package provisions and drops a &lt;code&gt;Database&lt;/code&gt;&amp;rsquo;s role and
 database, through one admin connection to the server.&lt;/p&gt;
 &lt;h2 id="the-admin-interface"&gt;The admin interface&lt;/h2&gt;
 &lt;p&gt;The Reconciler and its finalizer call PostgreSQL through an interface, so

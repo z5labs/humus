@@ -14,11 +14,13 @@ a list of contacts edited in place, with a live feed of every saved row. It
 serves the same UI twice: `htmxui` with htmx, and `datastarui` with Datastar.
 Both share the
 [`contacts`](https://github.com/z5labs/humus/blob/main/example/http/inlineedit/contacts/contacts.go)
-package: the paths, the store, the checks, the error page and the assets.
+package: the paths, the form's fields, the store, the error page and the
+assets.
 
 The design is in
 [Proposal: Hypermedia UIs](https://github.com/z5labs/humus/discussions/1454),
-with its [revision 2](https://github.com/z5labs/humus/discussions/1454#discussioncomment-19621172).
+with its [revision 2](https://github.com/z5labs/humus/discussions/1454#discussioncomment-19621172)
+and [revision 3](https://github.com/z5labs/humus/discussions/1454#discussioncomment-19621325).
 
 ## The Site
 
@@ -161,6 +163,87 @@ A handler reads the same parameter back, parsed and checked, with
   `hypermedia.QueryFrom`. It gets the zero value when the query doesn't have
   it, and a `RequestError` of Status 400, which the error page answers, when
   it doesn't parse or appears twice.
+
+## Forms
+
+**A form's fields are declared once,** as
+[`hypermedia.Field`](https://pkg.go.dev/github.com/z5labs/humus/hypermedia#Field)
+values with `Required` and the constraints the form's rules need, so both
+UIs read the same form:
+
+```go
+var (
+	Name  = hypermedia.Field[string]("name").Required().Pattern(regexp.MustCompile(`\S`))
+	Email = hypermedia.Field[string]("email").Required().Pattern(regexp.MustCompile(`^[^@\s]+@[^@\s]+$`))
+)
+```
+
+A handler reads the body with
+[`ReadForm`](https://pkg.go.dev/github.com/z5labs/humus/hypermedia#ReadForm),
+and each value with `FieldFrom`, parsed and checked. htmxui's `save`:
+
+```go
+func (ui UI) save(w http.ResponseWriter, r *http.Request) error {
+	c, err := ui.Store.Get(hypermedia.ParamFrom(r, contacts.ContactID))
+	if err != nil {
+		return err
+	}
+	form, err := hypermedia.ReadForm(r, contacts.Name, contacts.Email)
+	if err != nil {
+		return err
+	}
+	if !form.Valid() {
+		return render(w, http.StatusUnprocessableEntity, "edit", editRow(c, form.Raw(contacts.Name), form.Raw(contacts.Email), contacts.ProblemsIn(form)))
+	}
+	c.Name = hypermedia.FieldFrom(form, contacts.Name)
+	c.Email = hypermedia.FieldFrom(form, contacts.Email)
+	ui.Store.Put(c)
+	w.Header().Set("HX-Trigger", "contactSaved")
+	return render(w, http.StatusOK, "row", viewRow(c))
+}
+```
+
+**A problem is the form's, not an error.** A field that breaks a rule, such
+as `Missing` or `PatternMismatch`, has a `Problem`, whose `Rule` gets a
+message the end user writes. `Raw` gives the value the client sent, to
+re-render:
+
+```go
+"name": {
+	hypermedia.Repeated:        "Enter one name.",
+	hypermedia.Missing:         "Enter a name.",
+	hypermedia.PatternMismatch: "Enter a name.",
+},
+```
+
+```go
+func ProblemsIn(form *hypermedia.Form) Problems {
+	problems := make(Problems)
+	for _, field := range []hypermedia.AnyField{Name, Email} {
+		if p := form.Problem(field); p != nil {
+			problems[p.Field] = messages[p.Field][p.Rule]
+		}
+	}
+	return problems
+}
+```
+
+The status a form with problems gets is the library's: a 422 for htmx, and a
+200 patch for Datastar, as [Your library decides](#your-library-decides)
+shows.
+
+- **Any method's form body is read,** a PUT's or a QUERY's as a POST's,
+  urlencoded or multipart. A form that method-override middleware already
+  parsed, as [Unpoly's method override](#unpolys-method-override) does, is
+  read from `r.PostForm`.
+- **A checkbox is a bool field,** true when present.
+- **File parts are skipped.** Nothing is written to disk, so an upload is
+  streamed with `r.MultipartReader()` and never spilled outside `humus.Host`.
+- **A body ReadForm can't read gets the error page.** One over
+  `http.MaxBytesHandler`'s limit is a 413, and one that isn't a form a 415.
+  Each is a `RequestError`, so `save` returns it and nothing is recorded.
+- **A field sent twice is `Repeated`.** A checkbox group's or a
+  `<select multiple>`'s values are read from `r.PostForm[name]`.
 
 ## When the error page answers
 
@@ -385,24 +468,8 @@ func isHTMX(w http.ResponseWriter, r *http.Request) bool {
 ```
 
 A saved row answers with its fragment, and an `HX-Trigger` header for any
-listener on the page. A row with problems answers its form again with a 422:
-
-```go
-func (ui UI) save(w http.ResponseWriter, r *http.Request) error {
-	c, err := ui.Store.Get(hypermedia.ParamFrom(r, contacts.ContactID))
-	if err != nil {
-		return err
-	}
-	name, email := r.PostFormValue("name"), r.PostFormValue("email")
-	if problems := contacts.Validate(name, email); len(problems) > 0 {
-		return render(w, http.StatusUnprocessableEntity, "edit", editRow(c, name, email, problems))
-	}
-	c.Name, c.Email = name, email
-	ui.Store.Put(c)
-	w.Header().Set("HX-Trigger", "contactSaved")
-	return render(w, http.StatusOK, "row", viewRow(c))
-}
-```
+listener on the page, as htmxui's `save` in [Forms](#forms) does. A form with
+problems answers again with a 422.
 
 htmx swaps no 4xx by default, so the page's `responseHandling` swaps a 422,
 and the rows swap themselves in place:
@@ -452,6 +519,14 @@ func (ui UI) patch(w http.ResponseWriter, name string, data any) error {
 		return err
 	}
 	return stream.Send(e)
+}
+```
+
+A form with problems is a 200 patch of the form, in datastarui's `save`:
+
+```go
+if !form.Valid() {
+	return ui.patch(w, "edit", editRow(c, form.Raw(contacts.Name), form.Raw(contacts.Email), contacts.ProblemsIn(form)))
 }
 ```
 
