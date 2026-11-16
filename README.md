@@ -68,6 +68,11 @@ service, and that service's code.
 | RabbitMQ | [RabbitMQ](https://z5labs.github.io/humus/services/rabbitmq/) | [Mailer](https://z5labs.github.io/humus/walkthroughs/rabbitmq/mailer/) | [`example/rabbitmq/mailer`](example/rabbitmq/mailer) |
 | Kubernetes | [Kubernetes controllers](https://z5labs.github.io/humus/services/kubernetes/) | [Databases controller](https://z5labs.github.io/humus/walkthroughs/kube/databases/) | [`example/kube/databases`](example/kube/databases) |
 
+An HTTP service can serve a hypermedia UI too, with the `hypermedia` and
+`sse` packages, as
+[Serving a hypermedia UI](https://z5labs.github.io/humus/services/http/hypermedia/)
+shows with the code of [`example/http/inlineedit`](example/http/inlineedit).
+
 ## Documentation
 
 [Getting started](https://z5labs.github.io/humus/getting-started/) takes you

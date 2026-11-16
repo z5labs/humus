@@ -7,7 +7,8 @@ description: >
   requirements and scopes, opening a path with auth.Disabled(), the three
   places they are enforced, openapi.Security, auth.NewHandler and
   grpcauth.Interceptors, the answers and WWW-Authenticate challenges, probes
-  left open over HTTP and gRPC, verifying JWTs with auth/jwt on a
+  left open over HTTP and gRPC, browser sessions on a cookie behind
+  http.CrossOriginProtection, verifying JWTs with auth/jwt on a
   RemoteKeySet or a KeySet of one's own, answering a *jwt.KeySetError, what
   humus records, and how to test all of it.
 type: docs
@@ -496,6 +497,85 @@ open. How it stays open depends on where the probes are served:
 
 [Health]({{< relref "/fundamentals/health#exposing-the-probes" >}}) shows both wirings of
 each protocol, and which fits the pod.
+
+## Browser sessions
+
+A browser authenticates with a cookie, which it sends with every request to
+the site, so a page, a fragment and a form's action are all authenticated
+the same way. `auth.APIKeyCookie` reads the cookie, and its verify function
+looks the session up in the end user's store:
+
+```go
+session := auth.APIKeyCookie("session", "__Host-session", func(_ context.Context, id string) (string, error) {
+	name, ok := sessions.Name(id)
+	if !ok {
+		return "", auth.ErrUnauthenticated // no such session, or it ended
+	}
+	return name, nil
+})
+```
+
+The end user's sign-in sets the cookie with `http.SetCookie`, once the
+password checks out. The `__Host-` prefix makes the browser refuse the cookie
+unless it is `Secure`, has `Path` `/` and names no `Domain`, so no other
+host's page can set it. `HttpOnly` keeps it from the page's scripts:
+
+```go
+http.SetCookie(w, &http.Cookie{
+	Name:     "__Host-session",
+	Value:    sessions.Start(name),
+	Path:     "/",
+	Secure:   true,
+	HttpOnly: true,
+	SameSite: http.SameSiteLaxMode,
+})
+http.Redirect(w, r, "/", http.StatusSeeOther)
+```
+
+A browser that isn't signed in is sent to sign in, rather than shown a 401,
+by its `Unauthenticated` answer. An API key has no HTTP challenge, so the
+answer carries no `WWW-Authenticate`:
+
+```go
+answers := auth.Answers{
+	Unauthenticated: http.RedirectHandler("/sign-in", http.StatusSeeOther),
+	Forbidden: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+	}),
+	Failed: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "try again later", http.StatusServiceUnavailable)
+	}),
+}
+```
+
+**A cookie rides on every request, a forged one included,** so the browser
+sends it with a form another site posts to this one. `http.CrossOriginProtection`
+around the whole mux refuses those: a request whose method isn't GET, HEAD or
+OPTIONS gets a 403 when its `Sec-Fetch-Site` or its `Origin` says it came
+from another origin. It needs no token, so the end user's pages carry none:
+
+```go
+mux := http.NewServeMux()
+mux.Handle("GET /{$}", homePage)
+mux.Handle("GET /sign-in", signInForm)
+mux.Handle("POST /sign-in", signIn)
+mux.Handle("POST /sign-out", signOutAction)
+
+settings := httpserver.DefaultSettings()
+settings.Addr = ":8443"
+settings.TLS = tlsConfig
+svc, err := httpserver.NewService(s, settings, http.NewCrossOriginProtection().Handler(mux))
+```
+
+`homePage` and `signOutAction` are `auth.NewHandler`s requiring the session,
+and the sign-in is open. A GET is never checked, so a change of state is a
+POST, a PUT or a DELETE. `SameSite: Lax` keeps the cookie off another site's
+POST as well, in a browser that honours it.
+
+The session store and the sign-in itself are the end user's: humus has no
+session store, no login flow and no OIDC relying party. A
+[hypermedia UI]({{< relref "/services/http/hypermedia" >}}) serves its pages behind the same
+`http.CrossOriginProtection`.
 
 ## Verifying JWTs
 
