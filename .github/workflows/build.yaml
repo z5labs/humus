@@ -602,6 +602,52 @@ jobs:
             key: ${{ steps.go-cache.outputs.key }}
             path: ${{ steps.go-cache.outputs.path }}
 
+  # The inlineedit example's tests behind the testcontainers build tag run
+  # each UI on humus.OSHost(), and drive it in two tabs of headless-shell, a
+  # real Chrome in a container, which runs htmx's and Datastar's own
+  # JavaScript. Build doesn't need this job and the ruleset doesn't require
+  # it, so a Chrome flake doesn't block a merge; Vet the tagged tests vets
+  # them.
+  inlineedit-testcontainers:
+    name: Inline edit example (testcontainers)
+    # It runs when the change affects example/http/inlineedit, as Affected
+    # modules decides.
+    needs:
+      - affected
+      - modules
+      - lint-and-test
+      - vet
+      - conformance
+      - scripts
+    if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/http/inlineedit"')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: write
+      contents: read
+    steps:
+        - name: Checkout
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+          with:
+            go-version: '1.27.4'
+            cache: false
+
+        - id: go-cache
+          uses: ./.github/actions/restore-go-cache
+          with:
+            name: inlineedit-testcontainers
+
+        - name: Test
+          run: go -C example/http/inlineedit test -exec="$GO_EXEC" -count=1 -race -tags testcontainers ./...
+
+        - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
+          uses: ./.github/actions/save-go-cache
+          with:
+            key: ${{ steps.go-cache.outputs.key }}
+            path: ${{ steps.go-cache.outputs.path }}
+
   # flaky's tests behind the testcontainers build tag start containers on the
   # runner's Docker, and check that flaky pins each one labelled
   # org.testcontainers to the cores it keeps back from its runs. They also

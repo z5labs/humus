@@ -94,13 +94,14 @@
   ],
   "customManagers": [
     {
-      "description": "example/http/inlineedit's vendored_test.go declares the version of each script the example vendors: htmx and htmx-ext-sse from npm, and Datastar, which no longer publishes to npm, from its GitHub tags. A bump changes only the version. The Vendored scripts workflow then downloads the new version's files into the same pull request, and the test fails until it has",
+      "description": "example/http/inlineedit's vendored_test.go declares the version of each script the example vendors: htmx and htmx-ext-sse from npm, and Datastar, which no longer publishes to npm, from its GitHub tags. A bump changes only the version. The Vendored scripts workflow then downloads the new version's files into the same pull request, and the test fails until it has. Its internal/chrometest declares the chromedp/headless-shell image the Chrome test runs, in the same form with a digest after the version, and a bump changes both",
       "customType": "regex",
       "managerFilePatterns": [
-        "/^example/http/inlineedit/vendored_test\\.go$/"
+        "/^example/http/inlineedit/vendored_test\\.go$/",
+        "/^example/http/inlineedit/internal/chrometest/chrometest\\.go$/"
       ],
       "matchStrings": [
-        "datasource: \"(?<datasource>[^\"]+)\", depName: \"(?<depName>[^\"]+)\", version: \"(?<currentValue>[^\"]+)\""
+        "datasource: \"(?<datasource>[^\"]+)\", depName: \"(?<depName>[^\"]+)\", version: \"(?<currentValue>[^\"]+)\"(?:, digest: \"(?<currentDigest>sha256:[0-9a-f]+)\")?"
       ]
     }
   ],
