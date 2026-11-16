@@ -36,7 +36,7 @@ type script struct {
 }
 
 var scripts = []script{
-	{path: "htmxui/static/htmx.min.js", datasource: "npm", depName: "htmx.org", version: "2.0.11", file: "dist/htmx.min.js"},
+	{path: "htmxui/static/htmx.min.js", datasource: "npm", depName: "htmx.org", version: "2.0.10", file: "dist/htmx.min.js"},
 	{path: "htmxui/static/sse.min.js", datasource: "npm", depName: "htmx-ext-sse", version: "2.2.4", file: "dist/sse.min.js"},
 	{path: "datastarui/static/datastar.js", datasource: "github-tags", depName: "starfederation/datastar", version: "v1.0.5", file: "bundles/datastar.js"},
 }
