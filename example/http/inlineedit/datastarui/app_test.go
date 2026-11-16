@@ -50,17 +50,22 @@ func TestInit_datastar_edits_a_row_in_place_and_aborts_its_feed_at_shutdown(t *t
 
 		changes := open(t, c, base+"/contacts/changes")
 
-		bad := send(t, c, http.MethodPut, base+"/contacts/1", url.Values{"name": {""}, "email": {"joe"}}, datastar)
+		bad := send(t, c, http.MethodPut, base+"/contacts/1", url.Values{"name": {"  "}, "email": {"joe"}}, datastar)
 		require.Equal(t, http.StatusOK, bad.status, "Datastar processes only a 200")
 		require.Equal(t, "text/event-stream", bad.header.Get("Content-Type"))
 		require.True(t, strings.HasPrefix(bad.body, "event: datastar-patch-elements\ndata: elements <form id=\"contact-1\""), "body = %q", bad.body)
 		require.Contains(t, bad.body, "Enter a name.")
 		require.Contains(t, bad.body, "Enter an email address.")
+		require.Contains(t, bad.body, `<input name="name" value="  ">`, "the form keeps the values sent")
 		require.Contains(t, bad.body, `<input name="email" value="joe">`, "the form keeps the values sent")
 		require.Contains(t, bad.body, `<form id="contact-1" data-on:submit="@put('\/contacts\/1', {contentType: 'form'})">`, "html/template escapes the URL as a JavaScript string")
 		for _, line := range strings.Split(strings.TrimSuffix(bad.body, "\n\n"), "\n")[1:] {
 			require.True(t, strings.HasPrefix(line, "data: elements "), "line = %q", line)
 		}
+
+		notForm := sendBody(t, c, http.MethodPut, base+"/contacts/1", "application/json", `{"name":"Joe","email":"joe@example.com"}`, datastar)
+		require.Equal(t, http.StatusUnsupportedMediaType, notForm.status)
+		require.Contains(t, notForm.body, "<h1>Unsupported Media Type</h1>")
 
 		good := send(t, c, http.MethodPut, base+"/contacts/1", url.Values{"name": {"Joe"}, "email": {"joe@example.com"}}, datastar)
 		require.Equal(t, http.StatusOK, good.status)
@@ -135,7 +140,7 @@ func TestInit_datastar_edits_a_row_in_place_and_aborts_its_feed_at_shutdown(t *t
 		for _, name := range []string{"GET /contacts", "GET /contacts/{contactId}/edit", "PUT /contacts/{contactId}"} {
 			require.True(t, names[name], "no span named %q among %v", name, names)
 		}
-		require.Empty(t, errorRecords(tel), "a 403, a 404 and an aborted feed are answers, not failures")
+		require.Empty(t, errorRecords(tel), "a 415, a 403, a 404 and an aborted feed are answers, not failures")
 	})
 }
 
@@ -159,14 +164,23 @@ type response struct {
 
 func send(t *testing.T, c *http.Client, method, target string, form url.Values, header map[string]string) response {
 	t.Helper()
-	var body io.Reader
-	if form != nil {
-		body = strings.NewReader(form.Encode())
+	if form == nil {
+		return do(t, c, method, target, "", nil, header)
 	}
+	return do(t, c, method, target, "application/x-www-form-urlencoded", strings.NewReader(form.Encode()), header)
+}
+
+func sendBody(t *testing.T, c *http.Client, method, target, contentType, body string, header map[string]string) response {
+	t.Helper()
+	return do(t, c, method, target, contentType, strings.NewReader(body), header)
+}
+
+func do(t *testing.T, c *http.Client, method, target, contentType string, body io.Reader, header map[string]string) response {
+	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), method, target, body)
 	require.NoError(t, err)
-	if form != nil {
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
 	for k, v := range header {
 		req.Header.Set(k, v)

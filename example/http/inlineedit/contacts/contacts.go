@@ -3,7 +3,7 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-// Package contacts is what inlineedit's UIs share: their paths, their store, their checks, their error page and their assets.
+// Package contacts is what inlineedit's UIs share: their paths, their form's fields, their store, their error page and their assets.
 package contacts
 
 import (
@@ -13,9 +13,8 @@ import (
 	"io/fs"
 	"maps"
 	"net/http"
-	"net/mail"
+	"regexp"
 	"slices"
-	"strings"
 	"sync"
 
 	"github.com/z5labs/humus/hypermedia"
@@ -39,15 +38,32 @@ type Contact struct {
 	Email string
 }
 
+var (
+	Name  = hypermedia.Field[string]("name").Required().Pattern(regexp.MustCompile(`\S`))
+	Email = hypermedia.Field[string]("email").Required().Pattern(regexp.MustCompile(`^[^@\s]+@[^@\s]+$`))
+)
+
 type Problems map[string]string
 
-func Validate(name, email string) Problems {
+var messages = map[string]map[hypermedia.Rule]string{
+	"name": {
+		hypermedia.Repeated:        "Enter one name.",
+		hypermedia.Missing:         "Enter a name.",
+		hypermedia.PatternMismatch: "Enter a name.",
+	},
+	"email": {
+		hypermedia.Repeated:        "Enter one email address.",
+		hypermedia.Missing:         "Enter an email address.",
+		hypermedia.PatternMismatch: "Enter an email address.",
+	},
+}
+
+func ProblemsIn(form *hypermedia.Form) Problems {
 	problems := make(Problems)
-	if strings.TrimSpace(name) == "" {
-		problems["name"] = "Enter a name."
-	}
-	if addr, err := mail.ParseAddress(email); err != nil || addr.Address != email {
-		problems["email"] = "Enter an email address."
+	for _, field := range []hypermedia.AnyField{Name, Email} {
+		if p := form.Problem(field); p != nil {
+			problems[p.Field] = messages[p.Field][p.Rule]
+		}
 	}
 	return problems
 }

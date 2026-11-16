@@ -198,11 +198,15 @@ func (ui UI) save(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	name, email := r.PostFormValue("name"), r.PostFormValue("email")
-	if problems := contacts.Validate(name, email); len(problems) > 0 {
-		return render(w, http.StatusUnprocessableEntity, "edit", editRow(c, name, email, problems))
+	form, err := hypermedia.ReadForm(r, contacts.Name, contacts.Email)
+	if err != nil {
+		return err
 	}
-	c.Name, c.Email = name, email
+	if !form.Valid() {
+		return render(w, http.StatusUnprocessableEntity, "edit", editRow(c, form.Raw(contacts.Name), form.Raw(contacts.Email), contacts.ProblemsIn(form)))
+	}
+	c.Name = hypermedia.FieldFrom(form, contacts.Name)
+	c.Email = hypermedia.FieldFrom(form, contacts.Email)
 	ui.Store.Put(c)
 	w.Header().Set("HX-Trigger", "contactSaved")
 	return render(w, http.StatusOK, "row", viewRow(c))

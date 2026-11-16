@@ -24,22 +24,32 @@ import (
 	"github.com/z5labs/humus/telemetry"
 )
 
-func TestValidate(t *testing.T) {
+func TestProblemsIn(t *testing.T) {
 	cases := []struct {
-		name, email string
-		want        contacts.Problems
+		name string
+		form url.Values
+		want contacts.Problems
 	}{
-		{name: "Joe", email: "joe@example.com", want: contacts.Problems{}},
-		{name: "", email: "joe@example.com", want: contacts.Problems{"name": "Enter a name."}},
-		{name: "  ", email: "joe@example.com", want: contacts.Problems{"name": "Enter a name."}},
-		{name: "Joe", email: "", want: contacts.Problems{"email": "Enter an email address."}},
-		{name: "Joe", email: "joe", want: contacts.Problems{"email": "Enter an email address."}},
-		{name: "Joe", email: "Joe <joe@example.com>", want: contacts.Problems{"email": "Enter an email address."}},
-		{name: "", email: "joe", want: contacts.Problems{"name": "Enter a name.", "email": "Enter an email address."}},
+		{name: "a name and an email address", form: url.Values{"name": {"Joe"}, "email": {"joe@example.com"}}, want: contacts.Problems{}},
+		{name: "no name", form: url.Values{"email": {"joe@example.com"}}, want: contacts.Problems{"name": "Enter a name."}},
+		{name: "an empty name", form: url.Values{"name": {""}, "email": {"joe@example.com"}}, want: contacts.Problems{"name": "Enter a name."}},
+		{name: "a blank name", form: url.Values{"name": {"  "}, "email": {"joe@example.com"}}, want: contacts.Problems{"name": "Enter a name."}},
+		{name: "two names", form: url.Values{"name": {"Joe", "Jo"}, "email": {"joe@example.com"}}, want: contacts.Problems{"name": "Enter one name."}},
+		{name: "an empty email address", form: url.Values{"name": {"Joe"}, "email": {""}}, want: contacts.Problems{"email": "Enter an email address."}},
+		{name: "no @", form: url.Values{"name": {"Joe"}, "email": {"joe"}}, want: contacts.Problems{"email": "Enter an email address."}},
+		{name: "nothing after the @", form: url.Values{"name": {"Joe"}, "email": {"joe@"}}, want: contacts.Problems{"email": "Enter an email address."}},
+		{name: "a display name", form: url.Values{"name": {"Joe"}, "email": {"Joe <joe@example.com>"}}, want: contacts.Problems{"email": "Enter an email address."}},
+		{name: "two email addresses", form: url.Values{"name": {"Joe"}, "email": {"joe@example.com", "jo@example.com"}}, want: contacts.Problems{"email": "Enter one email address."}},
+		{name: "both", form: url.Values{"name": {""}, "email": {"joe"}}, want: contacts.Problems{"name": "Enter a name.", "email": "Enter an email address."}},
 	}
 	for _, c := range cases {
-		t.Run(fmt.Sprintf("%q %q", c.name, c.email), func(t *testing.T) {
-			require.Equal(t, c.want, contacts.Validate(c.name, c.email))
+		t.Run(c.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPut, "/contacts/1", strings.NewReader(c.form.Encode()))
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			form, err := hypermedia.ReadForm(r, contacts.Name, contacts.Email)
+			require.NoError(t, err)
+			require.Equal(t, c.want, contacts.ProblemsIn(form))
+			require.Equal(t, len(c.want) == 0, form.Valid())
 		})
 	}
 }
@@ -175,7 +185,11 @@ func TestMethodOverride_routes_a_POST_by_its_method_field(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		c.Name = r.PostFormValue("name")
+		form, err := hypermedia.ReadForm(r, contacts.Name)
+		if err != nil {
+			return err
+		}
+		c.Name = hypermedia.FieldFrom(form, contacts.Name)
 		store.Put(c)
 		w.WriteHeader(http.StatusNoContent)
 		return nil

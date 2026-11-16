@@ -50,11 +50,16 @@ func TestInit_htmx_edits_a_row_in_place_and_ends_its_feed_at_shutdown(t *testing
 
 		changes := open(t, c, base+"/contacts/changes")
 
-		bad := send(t, c, http.MethodPut, base+"/contacts/1", url.Values{"name": {""}, "email": {"joe"}}, htmx)
+		bad := send(t, c, http.MethodPut, base+"/contacts/1", url.Values{"name": {"  "}, "email": {"joe"}}, htmx)
 		require.Equal(t, http.StatusUnprocessableEntity, bad.status)
 		require.Contains(t, bad.body, "Enter a name.")
 		require.Contains(t, bad.body, "Enter an email address.")
+		require.Contains(t, bad.body, `<input name="name" value="  ">`, "the form keeps the values sent")
 		require.Contains(t, bad.body, `<input name="email" value="joe">`, "the form keeps the values sent")
+
+		notForm := sendBody(t, c, http.MethodPut, base+"/contacts/1", "application/json", `{"name":"Joe","email":"joe@example.com"}`, htmx)
+		require.Equal(t, http.StatusUnsupportedMediaType, notForm.status)
+		require.Contains(t, notForm.body, "<h1>Unsupported Media Type</h1>")
 
 		good := send(t, c, http.MethodPut, base+"/contacts/1", url.Values{"name": {"Joe"}, "email": {"joe@example.com"}}, htmx)
 		require.Equal(t, http.StatusOK, good.status)
@@ -129,7 +134,7 @@ func TestInit_htmx_edits_a_row_in_place_and_ends_its_feed_at_shutdown(t *testing
 		for _, name := range []string{"GET /contacts/changes", "GET /contacts/{contactId}", "PUT /contacts/{contactId}"} {
 			require.True(t, names[name], "no span named %q among %v", name, names)
 		}
-		require.Empty(t, errorRecords(tel), "a 422, a 403 and a 404 are answers, not failures")
+		require.Empty(t, errorRecords(tel), "a 422, a 415, a 403 and a 404 are answers, not failures")
 	})
 }
 
@@ -153,14 +158,23 @@ type response struct {
 
 func send(t *testing.T, c *http.Client, method, target string, form url.Values, header map[string]string) response {
 	t.Helper()
-	var body io.Reader
-	if form != nil {
-		body = strings.NewReader(form.Encode())
+	if form == nil {
+		return do(t, c, method, target, "", nil, header)
 	}
+	return do(t, c, method, target, "application/x-www-form-urlencoded", strings.NewReader(form.Encode()), header)
+}
+
+func sendBody(t *testing.T, c *http.Client, method, target, contentType, body string, header map[string]string) response {
+	t.Helper()
+	return do(t, c, method, target, contentType, strings.NewReader(body), header)
+}
+
+func do(t *testing.T, c *http.Client, method, target, contentType string, body io.Reader, header map[string]string) response {
+	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), method, target, body)
 	require.NoError(t, err)
-	if form != nil {
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
 	for k, v := range header {
 		req.Header.Set(k, v)
