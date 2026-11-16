@@ -10,7 +10,7 @@ replace (
 require (
 	github.com/danielgtaylor/huma/v2 v2.40.0
 	github.com/stretchr/testify v1.12.1
-	github.com/z5labs/bedrock v0.25.0
+	github.com/z5labs/bedrock v0.26.0
 	github.com/z5labs/humus v0.16.0
 	github.com/z5labs/humus/example/http/huma/cases v0.0.0-00010101000000-000000000000
 )
@@ -23,7 +23,7 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.33.0 // indirect
-	github.com/z5labs/bedrock/fit v0.25.0 // indirect
+	github.com/z5labs/bedrock/fit v0.26.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0 // indirect
 	go.opentelemetry.io/otel v1.47.0 // indirect
