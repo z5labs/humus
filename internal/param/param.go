@@ -91,12 +91,37 @@ func (c Constraints[T]) Parse(raw string) (T, error) {
 // Validate checks v against c. A constraint that doesn't fit T is Check's
 // to report, so it is skipped here.
 func (c Constraints[T]) Validate(v T) error {
+	_, _, err := c.Broken(v)
+	return err
+}
+
+// Constraint names one of the constraints of Constraints.
+type Constraint int
+
+// The constraints a value can break, in the order Broken checks them.
+const (
+	None Constraint = iota
+	Enum
+	Pattern
+	MinLength
+	MaxLength
+	Minimum
+	Maximum
+)
+
+// Broken returns the first constraint of c that v breaks, in the order of
+// Constraint's values, the constraint's value, and why. It returns None,
+// nil and nil for a v that breaks none. The constraint's value is the
+// Enum's values as a []T, the Pattern as a *regexp.Regexp, a MinLength or
+// MaxLength as an int, and a Minimum or Maximum as a T. A constraint that
+// doesn't fit T is Check's to report, so it is skipped here.
+func (c Constraints[T]) Broken(v T) (Constraint, any, error) {
 	if len(c.Enum) > 0 && !slices.Contains(c.Enum, v) {
 		quoted := make([]string, len(c.Enum))
 		for i, e := range c.Enum {
 			quoted[i] = Quote(e)
 		}
-		return fmt.Errorf("%s isn't one of %s", Quote(v), strings.Join(quoted, ", "))
+		return Enum, slices.Clone(c.Enum), fmt.Errorf("%s isn't one of %s", Quote(v), strings.Join(quoted, ", "))
 	}
 	typ := reflect.TypeFor[T]()
 	if isString(typ) {
@@ -104,22 +129,22 @@ func (c Constraints[T]) Validate(v T) error {
 		n := utf8.RuneCountInString(str)
 		switch {
 		case c.Pattern != nil && !c.Pattern.MatchString(str):
-			return fmt.Errorf("%q doesn't match the pattern %s", str, c.Pattern)
+			return Pattern, c.Pattern, fmt.Errorf("%q doesn't match the pattern %s", str, c.Pattern)
 		case c.MinLength != nil && n < *c.MinLength:
-			return fmt.Errorf("%q is shorter than %d characters", str, *c.MinLength)
+			return MinLength, *c.MinLength, fmt.Errorf("%q is shorter than %d characters", str, *c.MinLength)
 		case c.MaxLength != nil && n > *c.MaxLength:
-			return fmt.Errorf("%q is longer than %d characters", str, *c.MaxLength)
+			return MaxLength, *c.MaxLength, fmt.Errorf("%q is longer than %d characters", str, *c.MaxLength)
 		}
 	}
 	if isNumber(typ) {
 		switch {
 		case c.Minimum != nil && compareNumbers(v, *c.Minimum) < 0:
-			return fmt.Errorf("%s is less than the minimum, %s", Quote(v), Quote(*c.Minimum))
+			return Minimum, *c.Minimum, fmt.Errorf("%s is less than the minimum, %s", Quote(v), Quote(*c.Minimum))
 		case c.Maximum != nil && compareNumbers(v, *c.Maximum) > 0:
-			return fmt.Errorf("%s is greater than the maximum, %s", Quote(v), Quote(*c.Maximum))
+			return Maximum, *c.Maximum, fmt.Errorf("%s is greater than the maximum, %s", Quote(v), Quote(*c.Maximum))
 		}
 	}
-	return nil
+	return None, nil, nil
 }
 
 // Parse parses s as a T. Its error doesn't name the parameter.

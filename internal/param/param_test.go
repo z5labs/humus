@@ -214,3 +214,39 @@ func messages(errs []error) []string {
 	}
 	return ms
 }
+
+func TestConstraints_Broken_names_the_constraint_and_its_value(t *testing.T) {
+	re := regexp.MustCompile(`^[a-z]+$`)
+	word := param.Constraints[include]{Enum: []include{"ab", "abcdef", "A"}, Pattern: re, PatternSet: true, MinLength: ptr(2), MaxLength: ptr(5)}
+	limit := param.Constraints[page]{Minimum: ptr[page](1), Maximum: ptr[page](10)}
+
+	c, l, err := word.Broken("zz")
+	require.Equal(t, param.Enum, c)
+	require.Equal(t, []include{"ab", "abcdef", "A"}, l)
+	require.EqualError(t, err, `"zz" isn't one of "ab", "abcdef", "A"`)
+
+	c, l, _ = word.Broken("A")
+	require.Equal(t, param.Pattern, c, "Pattern comes after Enum")
+	require.Same(t, re, l)
+
+	c, l, _ = param.Constraints[string]{MinLength: ptr(2), MaxLength: ptr(5)}.Broken("a")
+	require.Equal(t, param.MinLength, c)
+	require.Equal(t, 2, l)
+
+	c, l, _ = word.Broken("abcdef")
+	require.Equal(t, param.MaxLength, c)
+	require.Equal(t, 5, l)
+
+	c, l, _ = limit.Broken(0)
+	require.Equal(t, param.Minimum, c)
+	require.Equal(t, page(1), l)
+
+	c, l, _ = limit.Broken(11)
+	require.Equal(t, param.Maximum, c)
+	require.Equal(t, page(10), l)
+
+	c, l, err = limit.Broken(5)
+	require.Equal(t, param.None, c)
+	require.Nil(t, l)
+	require.NoError(t, err)
+}
