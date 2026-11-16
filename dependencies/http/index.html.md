@@ -779,7 +779,7 @@ the host the client's `BaseURL` names, so the client's verification passes.
 The end user's whole App then runs against it, with the end user's own
 `Init` above, and the environment production gives it. The test writes the
 App's certificate and the dependency's CA into the Host's filesystem with
-`humustest.WithFiles`, and names them with `humustest.WithEnv`, as
+`hosttest.WithFiles`, and names them with `humustest.WithEnv`, as
 [Giving the App its certificate](/humus/services/http/serving/#giving-the-app-its-certificate)
 describes. `keyPairPEM` and `caPEM` are helpers of the test file that
 PEM-encode them: `keyPairPEM` a certificate's chain and private key, and
@@ -791,7 +791,7 @@ dependency's CA too:
 synctest.Test(t, func(t *testing.T) {
 	ca := humustest.NewCA(t)
 	orders := ca.Issue(t, "orders")
-	h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+	h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 		"tls.pem":         keyPairPEM(t, orders),
 		"payments-ca.pem": caPEM(orders),
 	}))
