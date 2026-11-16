@@ -35,4 +35,17 @@ as its revisions
 &lt;a href="https://github.com/z5labs/humus/discussions/760#discussioncomment-19010983"&gt;3&lt;/a&gt;,
 &lt;a href="https://github.com/z5labs/humus/discussions/760#discussioncomment-19011032"&gt;4&lt;/a&gt;
 and &lt;a href="https://github.com/z5labs/humus/discussions/760#discussioncomment-19011110"&gt;5&lt;/a&gt;
-amend it.&lt;/p&gt;</description></item></channel></rss>
+amend it.&lt;/p&gt;</description></item><item><title>Serving a hypermedia UI</title><link>https://z5labs.github.io/humus/services/http/hypermedia/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/services/http/hypermedia/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/hypermedia"&gt;&lt;code&gt;hypermedia&lt;/code&gt;&lt;/a&gt;
+package serves the pages, fragments and actions of a hypermedia-driven UI, as
+the &lt;code&gt;http.Handler&lt;/code&gt; that &lt;a href="https://z5labs.github.io/humus/services/http/serving/"&gt;&lt;code&gt;httpserver&lt;/code&gt;&lt;/a&gt;
+serves. The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/sse"&gt;&lt;code&gt;sse&lt;/code&gt;&lt;/a&gt; package
+writes its event streams. Neither knows a client library: the headers,
+attributes, events and status codes a library reads are the end user&amp;rsquo;s, and
+&lt;a href="#your-library-decides"&gt;Your library decides&lt;/a&gt; shows them.&lt;/p&gt;
+&lt;p&gt;The code on this page is
+&lt;a href="https://github.com/z5labs/humus/tree/main/example/http/inlineedit"&gt;&lt;code&gt;example/http/inlineedit&lt;/code&gt;&lt;/a&gt;,
+a list of contacts edited in place, with a live feed of every saved row. It
+serves the same UI twice: &lt;code&gt;htmxui&lt;/code&gt; with htmx, and &lt;code&gt;datastarui&lt;/code&gt; with Datastar.
+Both share the
+&lt;a href="https://github.com/z5labs/humus/blob/main/example/http/inlineedit/contacts/contacts.go"&gt;&lt;code&gt;contacts&lt;/code&gt;&lt;/a&gt;
+package: the paths, the store, the checks, the error page and the assets.&lt;/p&gt;</description></item></channel></rss>

@@ -1019,4 +1019,4 @@ The tests do the same, with a password generated for each test, so what a
 test runs doesn't depend on the environment or the home directory of the
 machine it runs on.
 
-Next: [gRPC](/humus/services/grpc/)
+Next: [Serving a hypermedia UI](/humus/services/http/hypermedia/)
