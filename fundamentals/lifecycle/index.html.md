@@ -372,12 +372,26 @@ that misbehaves, from the same manifest that sets
 ## Host
 
 A [`Host`](https://pkg.go.dev/github.com/z5labs/humus#Host) is what humus
-hands an App beyond its process: `Listen`, `Dial` and a filesystem, `FS`. Every
-field is required. Under `humus.Main` an App runs on `humus.OSHost()`, which is
-`net.Listen`, a `net.Dialer`'s `DialContext`, and an `FS` that calls package
-`os` directly. In a test it runs on a Host whose listeners, dialler and
-filesystem the test controls, so that a whole App runs without touching the
-real host.
+hands an App beyond its process: the network and the filesystem. It is
+bedrock's [`host.Host`](https://pkg.go.dev/github.com/z5labs/bedrock/host),
+as `host.Host[humus.FS]`, so its fields are bedrock's: `Listen`,
+`ListenPacket`, `Dial` and a filesystem, `FS`. Every field is required.
+Under `humus.Main` an App runs on `humus.OSHost()`, which is the Host of the
+real machine, bedrock's `host.OS()`. In a test it runs on a Host whose
+network and filesystem the test controls, so that a whole App runs without
+touching the real host.
+
+An App listens over TCP with `Listen`, which returns a `net.Listener`, and
+over UDP with `ListenPacket`, which returns a `net.PacketConn`, because UDP
+has no listener. It dials either with `Dial`, which over `"udp"` returns a
+connected socket: one that sends only to the address it dialled, and takes
+datagrams only from it.
+
+`humus.FS` is sealed: it embeds bedrock's `host.FS`, which has an unexported
+method, so a type is a `humus.FS` only if it embeds `host.OSFS`, hosttest's
+`*FS`, `host.FS` or `humus.FS`. A test that needs a filesystem call to fail,
+as on a full disk, embeds the `FS` and overrides the method that fails, as
+[Testing](/humus/fundamentals/testing/#files) shows.
 
 `Host` is meant for user code as well as for humus. Hand `Host.Dial` to a
 client that takes a dial function, such as pgx's `DialFunc`, and open files
@@ -399,8 +413,8 @@ follow absolute symbolic links even when it is rooted at `/`, and paths on a
 real host routinely pass through them.
 
 What it costs a test: the rule is that it opens no file outside its own
-temporary directory; it cannot make a write fail with a full disk, so code
-that needs that test puts an `io.Writer` seam in its own code; and file
+temporary directory; a call that fails, as on a full disk, comes from an `FS`
+of the test's own that embeds the Host's and overrides that method; and file
 modification times are real under `synctest`, so code that compares
 `ModTime()` with `time.Now()` needs `Chtimes` in its tests.
 
