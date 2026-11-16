@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/remote"
@@ -61,7 +62,14 @@ const (
 	stepLimit    = 15 * time.Second
 )
 
-func Run(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error), requestHeader string) {
+type UI struct {
+	RequestHeader   string
+	FormReady       string
+	BeforeEdit      string
+	BeforeFirstSave string
+}
+
+func Run(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error), ui UI) {
 	ca := humustest.NewCA(t)
 	cert := ca.Issue(t, testcontainers.HostInternal, "127.0.0.1")
 	addr := freeAddr(t)
@@ -102,20 +110,21 @@ func Run(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service
 	}
 
 	require.NoError(t, chromedp.Do(a,
+		eval(ui.BeforeEdit),
 		chromedp.Click(chromedp.CSS("div#contact-1 button")),
 		chromedp.WaitVisible(chromedp.CSS(`form#contact-1 input[name="name"]`)),
 		fill(`form#contact-1 input[name="name"]`, ""),
 		fill(`form#contact-1 input[name="email"]`, "joe"),
-		chromedp.Click(chromedp.CSS(`form#contact-1 button[type="submit"]`)),
 	))
+	save(t, a, ui, ui.BeforeFirstSave)
 	waitText(t, a, "form#contact-1", "Enter a name.")
 	waitText(t, a, "form#contact-1", "Enter an email address.")
 
 	require.NoError(t, chromedp.Do(a,
 		fill(`form#contact-1 input[name="name"]`, "Joe"),
 		fill(`form#contact-1 input[name="email"]`, "joe@example.com"),
-		chromedp.Click(chromedp.CSS(`form#contact-1 button[type="submit"]`)),
 	))
+	save(t, a, ui, "")
 	require.Equal(t, "Joe joe@example.com", waitText(t, a, "div#contact-1 .text", "Joe joe@example.com"), "tab A's row is back in place of the form")
 	require.Equal(t, "Joe joe@example.com", waitText(t, b, "div#contact-1 .text", "Joe joe@example.com"), "tab B's row, from its feed alone")
 	require.Empty(t, tabB.requests(http.MethodPut), "tab B sent no PUT")
@@ -124,8 +133,10 @@ func Run(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service
 	require.Len(t, puts, 2, "a save with problems and a good save")
 	for _, r := range puts {
 		require.Equal(t, base+"/contacts/1", r.URL)
-		require.Equal(t, "true", header(r.Headers, requestHeader), "set by the library: %v", r.Headers)
+		require.Equal(t, "true", header(r.Headers, ui.RequestHeader), "set by the library: %v", r.Headers)
 	}
+	require.Equal(t, []string{base + "/contacts"}, tabA.navigations(), "tab A stays on /contacts")
+	require.Equal(t, []string{base + "/contacts"}, tabB.navigations(), "tab B stays on /contacts")
 	require.Empty(t, tabA.thrown(), "tab A threw")
 	require.Empty(t, tabB.thrown(), "tab B threw")
 	require.True(t, tabA.feedStillOpen() && tabB.feedStillOpen(), "both tabs' feeds are open at SIGTERM")
@@ -220,6 +231,7 @@ func startHeadlessShell(t *testing.T, cert *humustest.Certificate, port string) 
 type tab struct {
 	mu         sync.Mutex
 	sent       []*network.Request
+	navigated  []string
 	exceptions []string
 	feed       network.RequestID
 	feedEnded  bool
@@ -239,6 +251,10 @@ func (tb *tab) record(ev any) {
 	switch ev := ev.(type) {
 	case *network.EventRequestWillBeSent:
 		tb.sent = append(tb.sent, ev.Request)
+	case *page.EventFrameNavigated:
+		if ev.Frame.ParentID == "" {
+			tb.navigated = append(tb.navigated, ev.Frame.URL)
+		}
 	case *network.EventResponseReceived:
 		path, _, _ := strings.Cut(ev.Response.URL, "?")
 		if tb.feed == "" && strings.HasSuffix(path, "/contacts/changes") && ev.Response.Status == http.StatusOK {
@@ -278,6 +294,12 @@ func (tb *tab) requests(method string) []*network.Request {
 	return out
 }
 
+func (tb *tab) navigations() []string {
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+	return append([]string(nil), tb.navigated...)
+}
+
 func (tb *tab) thrown() []string {
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
@@ -296,6 +318,30 @@ func header(h network.Headers, name string) string {
 func fill(sel, value string) chromedp.Action[chromedp.Void] {
 	return chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
 		_, err := chromedp.Evaluate[bool](fmt.Sprintf(`(document.querySelector(%q).value = %q) !== null`, sel, value))(ctx, t)
+		return err
+	})
+}
+
+func save(t *testing.T, ctx context.Context, ui UI, before string) {
+	t.Helper()
+	if ui.FormReady != "" {
+		wctx, cancel := context.WithTimeout(ctx, stepLimit)
+		defer cancel()
+		_, err := chromedp.Run(wctx, chromedp.Poll[bool](fmt.Sprintf(`(form => form !== null && (%s))(document.querySelector("form#contact-1"))`, ui.FormReady)))
+		require.NoError(t, err, "waiting for the library to take form#contact-1's submit")
+	}
+	require.NoError(t, chromedp.Do(ctx,
+		eval(before),
+		chromedp.Click(chromedp.CSS(`form#contact-1 button[type="submit"]`)),
+	))
+}
+
+func eval(script string) chromedp.Action[chromedp.Void] {
+	return chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+		if script == "" {
+			return nil
+		}
+		_, err := chromedp.Evaluate[bool](fmt.Sprintf(`(() => { %s; return true })()`, script))(ctx, t)
 		return err
 	})
 }

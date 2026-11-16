@@ -14,5 +14,5 @@ import (
 )
 
 func TestInit_datastar_edits_a_row_in_place_in_Chrome_and_ends_its_feed_at_shutdown(t *testing.T) {
-	chrometest.Run(t, Init, "Datastar-Request")
+	chrometest.Run(t, Init, chrometest.UI{RequestHeader: "Datastar-Request"})
 }
