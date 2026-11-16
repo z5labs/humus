@@ -960,7 +960,7 @@ service, whose `UnaryCall` answers with the username `carts`.
 The end user's whole App then runs against it, with the end user's own
 `Init` above, through `grpcservertest.Start`, and the environment production
 gives it. The test writes the App's certificate and the dependency's CA into
-the Host's filesystem with `humustest.WithFiles`, and names them with
+the Host's filesystem with `hosttest.WithFiles`, and names them with
 `humustest.WithEnv`, as
 [Giving the App its certificate]({{< relref "/services/grpc/serving#giving-the-app-its-certificate" >}})
 describes. `pemFile` and `caPEM` are helpers of the test file that
@@ -973,7 +973,7 @@ CA too:
 synctest.Test(t, func(t *testing.T) {
 	ca := humustest.NewCA(t)
 	orders := ca.Issue(t, "orders")
-	h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+	h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 		"tls.pem":      pemFile(t, orders),
 		"carts-ca.pem": caPEM(orders),
 	}))

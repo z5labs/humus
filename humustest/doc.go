@@ -65,45 +65,27 @@
 // host and block where synctest can't see. Build the Host, and a CA,
 // inside the bubble that uses them, with the bubble's t.
 //
-// # Names
+// # The network and the files
 //
-// The rules of the network follow a real one. A name and port can be held
-// once, and a listener on every name (an empty host, 0.0.0.0 or ::)
-// conflicts with any other listener on its port. Names are compared as
-// written and never resolved, so localhost and 127.0.0.1 are different
-// names: a client dials the name a Service listens on, or the Service
-// listens on every name, as ":8080" does above.
+// A [Host] is built on a [github.com/z5labs/bedrock/host/hosttest.Host],
+// and hosttest's package documentation gives the rules of its network and
+// its filesystem: the names and ports a listener or a socket can hold,
+// TCP connections and UDP datagrams, and the files in the test's directory.
+// In short:
 //
-// # Waiting for a listener
-//
-// [Host.Dial] refuses rather than waits. A Dial with no listener fails at
-// once with ECONNREFUSED, as a real dial does, because a test that dials
-// before the App listens has dialled too early, and waiting would hide
-// that, or turn it into a synctest deadlock report that doesn't name the
-// cause. A test waits for the listener itself, before it dials, in one of
-// two ways:
-//
-//   - Inside a synctest bubble, synctest.Wait, which returns once every
-//     goroutine in the bubble is blocked, including the App blocked in
-//     Accept.
-//   - Anywhere, <-h.Listening(address), which waits for one particular
-//     listener, like bedrocktest's Process.Notified. [Host.Listening] also
-//     works outside a bubble.
-//
-// # Files
-//
-// The filesystem is real. [NewHost] takes a directory from t.TempDir(),
-// which is removed when the test ends, and [WithFiles] writes the files a
-// test sets up before the App starts. [Host.FS] opens files with an
-// os.Root on that directory, so ".." and symlinks can't leave it, and
-// [Host.Path] gives the absolute path of a file in it to put in a setting.
-//
-// Real files are what let libraries that need an *os.File or a path keep
-// working in a test, and they cost two things. A test can't inject an I/O
-// error, such as a full disk, so code that needs that test puts an
-// io.Writer seam in its own code. And a file's ModTime is real even inside
-// a synctest bubble, whose clock is fake, so code that compares ModTime
-// with time.Now needs os.Chtimes in its tests.
+//   - Names are compared as written and never resolved, so localhost and
+//     127.0.0.1 are different names: a client dials the name a Service
+//     listens on, or the Service listens on every name, as ":8080" does
+//     above.
+//   - [Host.Dial] refuses rather than waits, so a test waits for the
+//     listener before it dials: inside a synctest bubble with
+//     synctest.Wait, and anywhere with <-h.Listening(address), which waits
+//     for one TCP listener, like bedrocktest's Process.Notified.
+//   - The filesystem is real, in a directory from t.TempDir() and confined
+//     to it with os.Root.
+//     [github.com/z5labs/bedrock/host/hosttest.WithFiles] writes the files
+//     a test sets up before the App starts, [Host.FS] opens them, and
+//     [Host.Path] gives the absolute path of one to put in a setting.
 //
 // # TLS
 //
@@ -112,16 +94,13 @@
 // it issues with [CA.Issue] has a new random key and serial number, and
 // each [Certificate.PKCS12] bundle a new random password, so no secret is
 // ever written into a repository. A server serves [Certificate.TLS], or
-// reads the PKCS#12 bundle from a file written with [WithFiles], and a
-// client trusts the CA through [CA.Pool].
+// reads the PKCS#12 bundle from a file written with
+// [github.com/z5labs/bedrock/host/hosttest.WithFiles], and a client trusts
+// the CA through [CA.Pool].
 //
-// A connection on the network buffers up to 256 KiB in each direction, as
-// a real socket does, so a Write returns once its bytes are buffered, not
-// once the peer reads them, and waits only while the buffer is full. So a
-// TLS connection closes as it does on a real socket: its close_notify
-// alert is buffered like any other write, and Close doesn't wait for a
-// peer that isn't reading unless the buffer is full, whatever happens to
-// the connection's write deadline meanwhile.
+// A TCP connection on the network buffers its writes as a real socket
+// does, so a TLS connection closes as it does on a real socket; hosttest's
+// package documentation says how.
 //
 // # Services
 //

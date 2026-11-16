@@ -16,6 +16,7 @@ import (
 	"testing/synctest"
 
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/host/hosttest"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/httpserver"
@@ -48,7 +49,7 @@ func TestInit_calls_payments_for_each_request(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
 		orders := ca.Issue(t, "orders")
-		h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 			"tls.pem":         keyPairPEM(t, orders),
 			"payments-ca.pem": caPEM(orders),
 		}))

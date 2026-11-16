@@ -11,13 +11,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"syscall"
 	"testing"
 
+	"github.com/z5labs/bedrock/host/hosttest"
 	"software.sslmate.com/src/go-pkcs12"
 
+	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/humustest"
 )
 
@@ -164,15 +167,54 @@ func ExampleHost_Listening() {
 	// hello from every name
 }
 
-// WithFiles writes the files a test sets up into the Host's directory
-// before the App starts, and Path gives the absolute OS path of one, to
-// put in a setting. The Host's FS opens it there, and refuses a path that
-// leaves the directory.
-func ExampleWithFiles() {
+// ListenPacket binds a UDP socket on the Host's network, and Dial over
+// "udp" returns a socket connected to it. A datagram arrives whole at the
+// socket that holds its address, and comes from the dialled socket.
+func ExampleHost_ListenPacket() {
 	t := new(exampleTB)
 	defer t.runCleanups()
 
-	h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+	h := humustest.NewHost(t)
+	pc, err := h.ListenPacket("udp", "dns:53")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = pc.Close() }()
+
+	conn, err := h.Dial(context.Background(), "udp", "dns:53")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := io.WriteString(conn, "ping"); err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	b := make([]byte, 64)
+	n, from, err := pc.ReadFrom(b)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println(string(b[:n]))
+	fmt.Println("from the dialled socket:", from.String() == conn.LocalAddr().String())
+	// Output:
+	// ping
+	// from the dialled socket: true
+}
+
+// hosttest.WithFiles writes the files a test sets up into the Host's
+// directory before the App starts, and Path gives the absolute OS path of
+// one, to put in a setting. The Host's FS opens it there, and refuses a
+// path that leaves the directory.
+func ExampleHost_Path() {
+	t := new(exampleTB)
+	defer t.runCleanups()
+
+	h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 		"etc/app/greeting.txt": []byte("hello from a real file"),
 	}))
 	path := h.Path("etc/app/greeting.txt")
@@ -197,6 +239,36 @@ func ExampleWithFiles() {
 	// absolute: true
 	// hello from a real file
 	// outside the directory refused: true
+}
+
+// fullDisk is a humus.FS whose OpenFile fails as on a full disk. It embeds
+// the FS it wraps, so every other method is that FS's.
+type fullDisk struct {
+	humus.FS
+}
+
+func (fullDisk) OpenFile(name string, _ int, _ os.FileMode) (*os.File, error) {
+	return nil, &fs.PathError{Op: "open", Path: name, Err: syscall.ENOSPC}
+}
+
+// A test makes a filesystem call fail by embedding the Host's FS in a type
+// of its own and overriding the method that fails. The App runs on a Host
+// whose FS is that type.
+func ExampleHost_FS() {
+	t := new(exampleTB)
+	defer t.runCleanups()
+
+	h := humustest.NewHost(t)
+	hh := h.Host()
+	hh.FS = fullDisk{FS: hh.FS}
+
+	_, err := hh.FS.OpenFile(h.Path("out.txt"), os.O_CREATE|os.O_WRONLY, 0o600)
+	fmt.Println("disk full:", errors.Is(err, syscall.ENOSPC))
+	_, err = hh.FS.Stat(h.Path("out.txt"))
+	fmt.Println("nothing written:", errors.Is(err, fs.ErrNotExist))
+	// Output:
+	// disk full: true
+	// nothing written: true
 }
 
 // NewCA generates a certificate authority for one test, and Issue a
@@ -248,15 +320,15 @@ func ExampleNewCA() {
 
 // PKCS12 encodes a certificate and its key as a bundle for a file, with a
 // new random password on every call. A test writes the bundle with
-// WithFiles and passes the password in a setting, so no key or password is
-// ever written into a repository.
+// hosttest.WithFiles and passes the password in a setting, so no key or
+// password is ever written into a repository.
 func ExampleCertificate_PKCS12() {
 	t := new(exampleTB)
 	defer t.runCleanups()
 
 	ca := humustest.NewCA(t)
 	bundle, password := ca.Issue(t, "api.internal").PKCS12(t)
-	h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+	h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 		"etc/tls/server.p12": bundle,
 	}))
 

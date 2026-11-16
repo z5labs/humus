@@ -42,13 +42,13 @@
 // certificate, from which variable and in which encoding, is the end user's
 // decision, so Start couldn't hand it one. The test makes a humustest.CA,
 // issues a certificate, and gives it to the App the way production does: it
-// writes the certificate into the Host's filesystem with humustest.WithFiles,
+// writes the certificate into the Host's filesystem with hosttest.WithFiles,
 // and sets the variables that name the file, and any password, with
 // humustest.WithEnv. A PKCS#12 bundle, for example:
 //
 //	ca := humustest.NewCA(t)
 //	bundle, password := ca.Issue(t, "localhost").PKCS12(t)
-//	h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{"tls.p12": bundle}))
+//	h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{"tls.p12": bundle}))
 //
 //	p, status := httpservertest.Start(t, Init,
 //		humustest.WithApp(humus.WithHost(h.Host())),

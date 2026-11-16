@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/bedrocktest"
+	"github.com/z5labs/bedrock/host/hosttest"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/httpserver/httpservertest"
@@ -57,7 +58,7 @@ func keyPairPEM(t *testing.T, c *humustest.Certificate) []byte {
 func startOrders(t *testing.T) *ordersApp {
 	t.Helper()
 	ca := humustest.NewCA(t)
-	h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{"tls.pem": keyPairPEM(t, ca.Issue(t, "localhost"))}))
+	h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{"tls.pem": keyPairPEM(t, ca.Issue(t, "localhost"))}))
 	p, status := httpservertest.Start(t, Init,
 		humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
 		humustest.WithEnv(map[string]string{"ADDR": ":8443", "TLS_PEM_FILE": "tls.pem"}),

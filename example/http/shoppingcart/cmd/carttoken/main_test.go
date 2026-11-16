@@ -30,6 +30,7 @@ import (
 	jose "github.com/go-jose/go-jose/v4"
 	josejwt "github.com/go-jose/go-jose/v4/jwt"
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/host/hosttest"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/auth"
@@ -53,7 +54,7 @@ type run struct {
 
 func start(t *testing.T, files map[string][]byte, build telemetry.Builder, args ...string) run {
 	t.Helper()
-	h := humustest.NewHost(t, humustest.WithFiles(files))
+	h := humustest.NewHost(t, hosttest.WithFiles(files))
 	for i, arg := range args {
 		if _, ok := files[arg]; ok {
 			args[i] = h.Path(arg)

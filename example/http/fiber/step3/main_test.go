@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/bedrocktest"
+	"github.com/z5labs/bedrock/host/hosttest"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/example/http/fiber/cases"
@@ -121,7 +122,7 @@ func start(t *testing.T, tel telemetry.Builder) service {
 	t.Helper()
 	ca := humustest.NewCA(t)
 	certPEM, keyPEM := pemPair(t, ca.Issue(t, "localhost"))
-	h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+	h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 		"tls/tls.crt": certPEM,
 		"tls/tls.key": keyPEM,
 	}))

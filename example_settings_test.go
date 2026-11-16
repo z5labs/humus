@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/z5labs/bedrock/config"
+	"github.com/z5labs/bedrock/host/hosttest"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/humustest"
@@ -150,7 +151,7 @@ func runGreeter(env map[string]string, files map[string][]byte) {
 	t := new(exampleTB)
 	defer t.runCleanups()
 
-	h := humustest.NewHost(t, humustest.WithFiles(files))
+	h := humustest.NewHost(t, hosttest.WithFiles(files))
 	tel := humustest.NewTelemetry()
 	p, status := humustest.Start(t, GreeterInit,
 		humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),

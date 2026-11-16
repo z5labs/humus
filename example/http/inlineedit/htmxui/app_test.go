@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/host/hosttest"
 	"go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
@@ -31,7 +32,7 @@ import (
 func TestInit_htmx_edits_a_row_in_place_and_ends_its_feed_at_shutdown(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
-		h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 			"tls.pem": pemFile(t, ca.Issue(t, "contacts.internal")),
 		}))
 		tel := humustest.NewTelemetry()

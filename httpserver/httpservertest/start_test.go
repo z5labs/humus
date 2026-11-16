@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/host/hosttest"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/httpserver"
@@ -122,7 +123,7 @@ func TestInit_serves_with_a_certificate_from_a_PKCS12_file(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
 		bundle, password := ca.Issue(t, "localhost").PKCS12(t)
-		h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{"tls.p12": bundle}))
+		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{"tls.p12": bundle}))
 
 		p, status := httpservertest.Start(t, InitPKCS12,
 			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
@@ -150,7 +151,7 @@ func TestInit_serves_with_a_certificate_from_a_PKCS12_file(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			ca := humustest.NewCA(t)
 			bundle, password := ca.Issue(t, "localhost").PKCS12(t)
-			h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{"tls.p12": bundle}))
+			h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{"tls.p12": bundle}))
 
 			_, status := httpservertest.Start(t, InitPKCS12,
 				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),

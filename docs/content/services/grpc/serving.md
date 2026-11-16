@@ -821,7 +821,7 @@ SIGTERM, in no real time at all.
 certificate, from which variable and in which encoding, is the end user's
 decision. The test gives it one the way production does. It issues a
 certificate from its CA for the name it dials, writes it into the Host's
-filesystem with `humustest.WithFiles`, and sets the variables that name the
+filesystem with `hosttest.WithFiles`, and sets the variables that name the
 file and its password with `humustest.WithEnv`. For the `Init` that reads the
 PKCS#12 bundle [above](#the-certificate), the tests do it with a helper:
 
@@ -832,7 +832,7 @@ PKCS#12 bundle [above](#the-certificate), the tests do it with a helper:
 func p12Env(t *testing.T, ca *humustest.CA, addr string) (*humustest.Host, map[string]string) {
 	t.Helper()
 	bundle, password := ca.Issue(t, "carts").PKCS12(t)
-	h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{"tls.p12": bundle}))
+	h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{"tls.p12": bundle}))
 	return h, map[string]string{
 		"GRPC_ADDR":             addr,
 		"GRPC_TLS_P12_FILE":     "tls.p12",

@@ -23,6 +23,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
+	"github.com/z5labs/bedrock/host/hosttest"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/z5labs/humus"
@@ -56,7 +57,7 @@ func newTarget(t *testing.T, files map[string][]byte) *target {
 		"secrets/probes.pem":    pemOf(t, ca.Issue(t, "localhost")),
 	}
 	maps.Copy(all, files)
-	h := humustest.NewHost(t, humustest.WithFiles(all))
+	h := humustest.NewHost(t, hosttest.WithFiles(all))
 
 	probes := h.HTTPClient()
 	probes.Transport.(*http.Transport).TLSClientConfig = &tls.Config{RootCAs: ca.Pool()}

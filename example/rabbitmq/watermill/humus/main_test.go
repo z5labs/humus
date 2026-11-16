@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/host/hosttest"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/humustest"
@@ -83,7 +84,7 @@ func TestInit_waits_for_the_broker_alive_but_not_ready(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
 		certPEM, keyPEM := pemPair(t, ca.Issue(t, "localhost"))
-		h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 			"tls/tls.crt": certPEM,
 			"tls/tls.key": keyPEM,
 		}))

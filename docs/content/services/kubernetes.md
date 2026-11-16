@@ -1821,7 +1821,7 @@ set.
 
 `inPod` and `fromKubeconfig` run inside `synctest`, against an API server of
 the test's own on humustest's Host, with a CA from `humustest.NewCA`: the
-service account's files written with `humustest.WithFiles`, the token file
+service account's files written with `hosttest.WithFiles`, the token file
 rewritten to show a rotation picked up within a minute, and a kubeconfig
 written with `clientcmd.Write`. `Init` runs inside `synctest` as far as it
 goes without a cluster: with its variables unset it exits 78, naming each

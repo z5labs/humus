@@ -12,6 +12,7 @@ require (
 	github.com/labstack/echo/v5 v5.4.6
 	github.com/stretchr/testify v1.12.1
 	github.com/z5labs/bedrock v0.26.0
+	github.com/z5labs/bedrock/host v0.26.0
 	github.com/z5labs/humus v0.16.0
 	github.com/z5labs/humus/example/http/echo/cases v0.0.0-00010101000000-000000000000
 )

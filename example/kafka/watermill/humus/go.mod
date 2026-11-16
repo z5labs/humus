@@ -14,6 +14,7 @@ require (
 	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261109062748-d6ea02a174bc
 	github.com/twmb/franz-go/pkg/kmsg v1.15.1
 	github.com/z5labs/bedrock v0.26.0
+	github.com/z5labs/bedrock/host v0.26.0
 	github.com/z5labs/humus v0.16.0
 	github.com/z5labs/humus/example/kafka/watermill/cases v0.0.0-00010101000000-000000000000
 	github.com/z5labs/humus/queue/kafka v0.16.0

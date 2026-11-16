@@ -18,6 +18,7 @@ import (
 	"testing/synctest"
 
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/host/hosttest"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -46,7 +47,7 @@ func encode(t *testing.T, c *humustest.Certificate) []byte {
 
 func newHost(t *testing.T, c *humustest.Certificate) *humustest.Host {
 	t.Helper()
-	return humustest.NewHost(t, humustest.WithFiles(map[string][]byte{pemFile: encode(t, c)}))
+	return humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{pemFile: encode(t, c)}))
 }
 
 func config(t *testing.T, h *humustest.Host) *tls.Config {
@@ -229,7 +230,7 @@ func TestConfig(t *testing.T) {
 	t.Run("it fails when the file holds no private key", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			ca := humustest.NewCA(t)
-			h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{pemFile: certificates(t, ca.Issue(t, serverName))}))
+			h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{pemFile: certificates(t, ca.Issue(t, serverName))}))
 
 			_, err := certfile.Config(h.FS(), h.Path(pemFile))
 			require.ErrorContains(t, err, h.Path(pemFile))
@@ -240,7 +241,7 @@ func TestConfig(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			ca := humustest.NewCA(t)
 			mismatched := append(certificates(t, ca.Issue(t, serverName)), key(t, ca.Issue(t, serverName))...)
-			h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{pemFile: mismatched}))
+			h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{pemFile: mismatched}))
 
 			_, err := certfile.Config(h.FS(), h.Path(pemFile))
 			require.ErrorContains(t, err, h.Path(pemFile))

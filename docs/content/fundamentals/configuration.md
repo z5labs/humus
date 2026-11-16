@@ -333,7 +333,7 @@ files the settings name. One of the root package's
 runs the App above this way:
 
 ```go
-h := humustest.NewHost(t, humustest.WithFiles(files))
+h := humustest.NewHost(t, hosttest.WithFiles(files))
 tel := humustest.NewTelemetry()
 p, status := humustest.Start(t, GreeterInit,
 	humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
