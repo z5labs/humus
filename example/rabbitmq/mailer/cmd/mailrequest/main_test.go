@@ -12,6 +12,7 @@ import (
 	"testing/synctest"
 
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/host/hosttest"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/humustest"
@@ -34,7 +35,7 @@ func start(t *testing.T, files map[string][]byte, env map[string]string, build t
 		"certs/rabbitmq-ca.pem":     []byte("not a certificate"),
 	}
 	maps.Copy(all, files)
-	h := humustest.NewHost(t, humustest.WithFiles(all))
+	h := humustest.NewHost(t, hosttest.WithFiles(all))
 
 	merged := map[string]string{
 		"RABBITMQ_ADDR":          "rabbitmq.internal:5671",

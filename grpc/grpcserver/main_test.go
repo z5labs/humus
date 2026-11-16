@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/host/hosttest"
 	testpb "google.golang.org/grpc/interop/grpc_testing"
 
 	"github.com/z5labs/humus"
@@ -114,7 +115,7 @@ func TestInit_without_an_address_or_a_certificate_exits_78(t *testing.T) {
 func p12Env(t *testing.T, ca *humustest.CA, addr string) (*humustest.Host, map[string]string) {
 	t.Helper()
 	bundle, password := ca.Issue(t, "carts").PKCS12(t)
-	h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{"tls.p12": bundle}))
+	h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{"tls.p12": bundle}))
 	return h, map[string]string{
 		"GRPC_ADDR":             addr,
 		"GRPC_TLS_P12_FILE":     "tls.p12",

@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/host/hosttest"
 
 	"github.com/z5labs/humus/example/rabbitmq/mailer/internal/certfile"
 	"github.com/z5labs/humus/humustest"
@@ -39,7 +40,7 @@ func encode(t *testing.T, c *humustest.Certificate) (certPEM, keyPEM []byte) {
 func newHost(t *testing.T, c *humustest.Certificate) *humustest.Host {
 	t.Helper()
 	certPEM, keyPEM := encode(t, c)
-	return humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+	return humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 		certFile: certPEM,
 		keyFile:  keyPEM,
 	}))
@@ -136,7 +137,7 @@ func TestConfig(t *testing.T) {
 	t.Run("it fails when a file is missing", func(t *testing.T) {
 		ca := humustest.NewCA(t)
 		certPEM, _ := encode(t, ca.Issue(t, serverName))
-		h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{certFile: certPEM}))
+		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{certFile: certPEM}))
 
 		_, err := certfile.Config(h.FS(), h.Path(certFile), h.Path(keyFile))
 		require.ErrorIs(t, err, os.ErrNotExist)
@@ -146,7 +147,7 @@ func TestConfig(t *testing.T) {
 		ca := humustest.NewCA(t)
 		certPEM, _ := encode(t, ca.Issue(t, serverName))
 		_, keyPEM := encode(t, ca.Issue(t, serverName))
-		h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{certFile: certPEM, keyFile: keyPEM}))
+		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{certFile: certPEM, keyFile: keyPEM}))
 
 		_, err := certfile.Config(h.FS(), h.Path(certFile), h.Path(keyFile))
 		require.ErrorContains(t, err, h.Path(certFile))

@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/config"
+	"github.com/z5labs/bedrock/host/hosttest"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/humustest"
@@ -176,7 +177,7 @@ func TestSecureInit_presents_its_client_certificate_to_the_broker(t *testing.T) 
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
 		caPEM, certPEM := pemFiles(t, ca.Issue(t, "orders-consumer").TLS())
-		h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 			"etc/rabbitmq/ca.pem":   caPEM,
 			"etc/rabbitmq/cert.pem": certPEM,
 		}))
@@ -235,7 +236,7 @@ func TestSecureInit_presents_its_client_certificate_to_the_broker(t *testing.T) 
 
 func TestSecureInit_without_the_client_certificate_exits_78(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 			"etc/rabbitmq/ca.pem": []byte("not a certificate"),
 		}))
 		_, status := humustest.Start(t, secureInit,

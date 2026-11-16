@@ -770,14 +770,14 @@ up, or 7s after with
 its certificate, from which variable and in which encoding, is the end
 user's decision. The test gives it one the way production does. It issues a
 certificate from its CA, writes it into the Host's filesystem with
-`humustest.WithFiles`, and sets the variables that name the file, and any
+`hosttest.WithFiles`, and sets the variables that name the file, and any
 password, with `humustest.WithEnv`. For an `Init` that reads the PKCS#12
 bundle [above](#the-certificate):
 
 ```go
 ca := humustest.NewCA(t)
 bundle, password := ca.Issue(t, "localhost").PKCS12(t)
-h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{"tls.p12": bundle}))
+h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{"tls.p12": bundle}))
 
 p, status := httpservertest.Start(t, InitPKCS12,
 	humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),

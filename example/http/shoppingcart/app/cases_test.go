@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/bedrocktest"
+	"github.com/z5labs/bedrock/host/hosttest"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/example/http/shoppingcart/cases"
@@ -76,7 +77,7 @@ func startShoppingcartWith(t *testing.T, cartEnv map[string]string, cartTelemetr
 	cartCert, cartKey := pemPair(t, ca.Issue(t, "localhost"))
 	clientCert, clientKey := pemPair(t, ca.Issue(t, "shoppingcart"))
 	catalogCert, catalogKey := pemPair(t, ca.Issue(t, "catalog.internal"))
-	h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+	h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 		"cart/tls.crt":         cartCert,
 		"cart/tls.key":         cartKey,
 		"cart/database-url":    []byte("postgres://carts:" + rand.Text() + "@" + dbHost + "/carts?sslmode=disable\n"),

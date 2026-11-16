@@ -15,6 +15,7 @@ import (
 	"testing/synctest"
 
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/host/hosttest"
 	testpb "google.golang.org/grpc/interop/grpc_testing"
 
 	"github.com/z5labs/humus"
@@ -85,7 +86,7 @@ func TestInit_calls_carts_for_each_RPC(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
 		orders := ca.Issue(t, "orders")
-		h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 			"tls.pem":      pemFile(t, orders),
 			"carts-ca.pem": caPEM(orders),
 		}))

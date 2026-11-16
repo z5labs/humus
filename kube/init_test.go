@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/fit"
+	"github.com/z5labs/bedrock/host/hosttest"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -85,7 +86,7 @@ func TestInPod_reaches_the_API_server_with_the_service_accounts_token(t *testing
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
 		first, second := newToken(), newToken()
-		h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 			"serviceaccount/ca.crt": caPEM(t, ca),
 			"serviceaccount/token":  []byte(first + "\n"),
 		}))
@@ -124,7 +125,7 @@ func TestInPod_reaches_the_API_server_with_the_service_accounts_token(t *testing
 func TestInPod_brackets_an_IPv6_host(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 			"serviceaccount/ca.crt": caPEM(t, humustest.NewCA(t)),
 		}))
 		conn, err := inPod(t.Context(), podSetup(t, h, map[string]string{
@@ -175,7 +176,7 @@ func TestFromKubeconfig_reaches_the_API_server_with_the_client_certificate(t *te
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
-		h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 			"home/.kube/config": kubeconfig(t, ca, "https://"+server),
 		}))
 		var (
@@ -228,7 +229,7 @@ func TestFromKubeconfig_reports_what_it_lacks(t *testing.T) {
 	ca := humustest.NewCA(t)
 	noContext, err := clientcmd.Write(clientcmdapi.Config{CurrentContext: "dev"})
 	require.NoError(t, err)
-	h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+	h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 		"no-context": noContext,
 		"valid":      kubeconfig(t, ca, "https://"+server),
 	}))

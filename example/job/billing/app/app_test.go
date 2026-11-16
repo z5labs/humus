@@ -27,6 +27,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
+	"github.com/z5labs/bedrock/host/hosttest"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/example/job/billing/billing"
@@ -180,7 +181,7 @@ func newJob(t *testing.T, accounts ...string) *target {
 		key:      rand.Text(),
 		password: rand.Text(),
 	}
-	j.host = humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+	j.host = humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 		"secrets/database-url": []byte("postgres://billing:" + j.password + "@db.internal:5432/billing?sslmode=disable\n"),
 		"secrets/api-key":      []byte(j.key + "\n"),
 		"payments-ca.pem":      pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: chain[len(chain)-1]}),

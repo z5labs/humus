@@ -137,7 +137,7 @@ func TestNewHost_applies_hosttests_options(t *testing.T) {
 	h := humustest.NewHost(t,
 		record,
 		hosttest.WithFiles(map[string][]byte{"a.txt": []byte("a")}),
-		humustest.WithFiles(map[string][]byte{"b.txt": []byte("b")}),
+		hosttest.WithFiles(map[string][]byte{"b.txt": []byte("b")}),
 		record,
 	)
 

@@ -12,6 +12,7 @@ require (
 	github.com/gofiber/fiber/v3 v3.7.0
 	github.com/stretchr/testify v1.12.1
 	github.com/z5labs/bedrock v0.26.0
+	github.com/z5labs/bedrock/host v0.26.0
 	github.com/z5labs/humus v0.16.0
 	github.com/z5labs/humus/example/http/fiber/cases v0.0.0-00010101000000-000000000000
 )
@@ -42,7 +43,6 @@ require (
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.78.0 // indirect
 	github.com/z5labs/bedrock/fit v0.26.0 // indirect
-	github.com/z5labs/bedrock/host v0.26.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0 // indirect
 	go.opentelemetry.io/otel v1.47.0 // indirect
