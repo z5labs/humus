@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock/config"
 	"github.com/z5labs/bedrock/fit"
+	"github.com/z5labs/bedrock/host/hosttest"
 	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/propagation"
 
@@ -145,7 +146,7 @@ func TestInit_trusts_the_mesh_and_forwards_to_payments(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
 		orders := ca.Issue(t, "orders")
-		h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 			"tls.pem": keyPairPEM(t, orders),
 			"ca.pem":  caPEM(orders),
 		}))

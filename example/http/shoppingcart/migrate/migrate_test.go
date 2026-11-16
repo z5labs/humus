@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
+	"github.com/z5labs/bedrock/host/hosttest"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/example/http/shoppingcart/migrate"
@@ -32,7 +33,7 @@ type target struct {
 func newTarget(t *testing.T) *target {
 	t.Helper()
 	tg := &target{password: rand.Text()}
-	tg.host = humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+	tg.host = humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 		"secrets/database-url": []byte("postgres://carts_owner:" + tg.password + "@db.internal:5432/carts?sslmode=disable\n"),
 		"secrets/bad-url":      []byte("postgres://carts_owner:" + tg.password + "@db.internal:port/carts"),
 	}))

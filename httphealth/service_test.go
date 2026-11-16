@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/host/hosttest"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
@@ -703,7 +704,7 @@ func pemFile(t *testing.T, c *humustest.Certificate) []byte {
 func TestInit_serves_the_probes_next_to_a_worker(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
-		h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 			"tls.pem": pemFile(t, ca.Issue(t, "localhost")),
 		}))
 		p, status := humustest.Start(t, Init,

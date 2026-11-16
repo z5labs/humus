@@ -477,7 +477,7 @@ filesystem, starts it next to the dependency, and calls it:
 ```go
 ca := humustest.NewCA(t)
 orders := ca.Issue(t, "orders")
-h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 	"tls.pem":      pemFile(t, orders),
 	"carts-ca.pem": caPEM(orders),
 }))
@@ -514,13 +514,13 @@ same way, next to an `httpserver` App.
 ## Files
 
 The filesystem is real. `NewHost` takes a directory from `t.TempDir()`, which
-is removed when the test ends, and `WithFiles` writes the files a test sets up
+is removed when the test ends, and `hosttest.WithFiles` writes the files a test sets up
 before the App starts. `Host.FS` opens files with an `os.Root` on that
 directory, so `..` and symbolic links can't leave it, and `Host.Path` gives
 the absolute path of a file in it to put in a setting:
 
 ```go
-h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 	"etc/app/greeting.txt": []byte("hello from a real file"),
 }))
 path := h.Path("etc/app/greeting.txt")
@@ -569,7 +569,7 @@ a new random password. So no secret is ever written into the repository, and
 nothing is shared between tests.
 
 This App reads its certificate from a PKCS#12 bundle, through its Host, and
-serves HTTPS. The test writes the bundle with `WithFiles`, passes its path and
+serves HTTPS. The test writes the bundle with `hosttest.WithFiles`, passes its path and
 password in settings, set with `humustest.WithEnv`, and trusts the CA through
 `ca.Pool()`:
 
@@ -578,7 +578,7 @@ func TestApp_Run_HTTPS_with_a_PKCS12_bundle_from_NewCA(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
 		bundle, password := ca.Issue(t, "api.internal").PKCS12(t)
-		h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 			"etc/tls/server.p12": bundle,
 		}))
 		hello := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

@@ -25,6 +25,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/kmsg"
+	"github.com/z5labs/bedrock/host/hosttest"
 	"go.opentelemetry.io/otel/metric/noop"
 
 	"github.com/z5labs/humus"
@@ -66,7 +67,7 @@ func newCLI(t *testing.T, files map[string][]byte) *cli {
 		"secrets/kafka-client.pem": pemOf(t, client),
 	}
 	maps.Copy(all, files)
-	h := humustest.NewHost(t, humustest.WithFiles(all))
+	h := humustest.NewHost(t, hosttest.WithFiles(all))
 	return &cli{
 		h:  h,
 		ca: ca,

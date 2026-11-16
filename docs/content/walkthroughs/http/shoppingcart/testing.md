@@ -314,7 +314,7 @@ Both Apps run on one humustest Host, beside the identity provider, with
 their certificates and secrets as the Host's files:
 
 ```go
-	h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+	h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 		"cart/tls.crt":         cartCert,
 		"cart/tls.key":         cartKey,
 		"cart/database-url":    []byte("postgres://carts:" + rand.Text() + "@" + dbHost + "/carts?sslmode=disable\n"),

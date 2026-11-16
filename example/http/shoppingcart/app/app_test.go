@@ -32,6 +32,7 @@ import (
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/bedrocktest"
 	"github.com/z5labs/bedrock/circuit"
+	"github.com/z5labs/bedrock/host/hosttest"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/example/http/shoppingcart/database"
@@ -85,7 +86,7 @@ func newFixture(t *testing.T) fixture {
 		"catalog/tls.key": clientKey,
 	}
 	return fixture{
-		h:          humustest.NewHost(t, humustest.WithFiles(files)),
+		h:          humustest.NewHost(t, hosttest.WithFiles(files)),
 		ca:         ca,
 		idpCert:    idpCert,
 		dbPassword: password,
@@ -744,7 +745,7 @@ func TestInit_with_a_bad_secret_file_exits_78(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
 				if tc.file != "" {
-					f.h = humustest.NewHost(t, humustest.WithFiles(f.files), humustest.WithFiles(map[string][]byte{tc.value: []byte(tc.file)}))
+					f.h = humustest.NewHost(t, hosttest.WithFiles(f.files), hosttest.WithFiles(map[string][]byte{tc.value: []byte(tc.file)}))
 				}
 				f.env[tc.name] = tc.value
 

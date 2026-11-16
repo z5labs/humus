@@ -17,6 +17,7 @@ import (
 
 	"github.com/starfederation/datastar-go/datastar"
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/host/hosttest"
 
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/bedrocktest"
@@ -41,7 +42,7 @@ type sdkApp struct {
 func startSDK(t *testing.T, routes ...hypermedia.Route) sdkApp {
 	t.Helper()
 	ca := humustest.NewCA(t)
-	h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+	h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 		"tls.pem": pemFile(t, ca.Issue(t, "sdk.internal")),
 	}))
 	tel := humustest.NewTelemetry()

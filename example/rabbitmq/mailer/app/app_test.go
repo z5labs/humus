@@ -22,6 +22,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
+	"github.com/z5labs/bedrock/host/hosttest"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/example/rabbitmq/mailer/app"
@@ -52,7 +53,7 @@ func newMailer(t *testing.T, files map[string][]byte) *mailer {
 		"certs/provider-ca.pem":     caPEM(t, ca),
 	}
 	maps.Copy(all, files)
-	h := humustest.NewHost(t, humustest.WithFiles(all))
+	h := humustest.NewHost(t, hosttest.WithFiles(all))
 
 	client := h.HTTPClient()
 	client.Transport.(*http.Transport).TLSClientConfig = &tls.Config{RootCAs: ca.Pool()}

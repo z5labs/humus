@@ -37,6 +37,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/bedrocktest"
+	"github.com/z5labs/bedrock/host/hosttest"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -87,7 +88,7 @@ func newFixture(t *testing.T, files map[string][]byte) *fixture {
 		"client.pem": pemOf(t, client),
 	}
 	maps.Copy(all, files)
-	return &fixture{h: humustest.NewHost(t, humustest.WithFiles(all)), ca: ca, client: client, files: all}
+	return &fixture{h: humustest.NewHost(t, hosttest.WithFiles(all)), ca: ca, client: client, files: all}
 }
 
 func (f *fixture) args(args []string) []string {

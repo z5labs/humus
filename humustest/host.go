@@ -31,11 +31,6 @@ func NewHost(t testing.TB, opts ...hosttest.Option) *Host {
 	return &Host{h: hosttest.New(t, opts...)}
 }
 
-// WithFiles is hosttest.WithFiles.
-func WithFiles(files map[string][]byte) hosttest.Option {
-	return hosttest.WithFiles(files)
-}
-
 // Host returns the humus.Host to run an App on, like bedrocktest's
 // Process.Process: the Host's Listen, ListenPacket, Dial and FS.
 func (h *Host) Host() humus.Host {

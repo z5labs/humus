@@ -82,9 +82,10 @@
 //     synctest.Wait, and anywhere with <-h.Listening(address), which waits
 //     for one TCP listener, like bedrocktest's Process.Notified.
 //   - The filesystem is real, in a directory from t.TempDir() and confined
-//     to it with os.Root. [WithFiles] writes the files a test sets up
-//     before the App starts, [Host.FS] opens them, and [Host.Path] gives
-//     the absolute path of one to put in a setting.
+//     to it with os.Root.
+//     [github.com/z5labs/bedrock/host/hosttest.WithFiles] writes the files
+//     a test sets up before the App starts, [Host.FS] opens them, and
+//     [Host.Path] gives the absolute path of one to put in a setting.
 //
 // # TLS
 //
@@ -93,8 +94,9 @@
 // it issues with [CA.Issue] has a new random key and serial number, and
 // each [Certificate.PKCS12] bundle a new random password, so no secret is
 // ever written into a repository. A server serves [Certificate.TLS], or
-// reads the PKCS#12 bundle from a file written with [WithFiles], and a
-// client trusts the CA through [CA.Pool].
+// reads the PKCS#12 bundle from a file written with
+// [github.com/z5labs/bedrock/host/hosttest.WithFiles], and a client trusts
+// the CA through [CA.Pool].
 //
 // A TCP connection on the network buffers its writes as a real socket
 // does, so a TLS connection closes as it does on a real socket; hosttest's

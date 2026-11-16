@@ -36,12 +36,12 @@
 //
 // Start makes no CA and no certificate. The test gives the App its
 // certificate the way production does: it writes the certificate's file to
-// the Host with humustest.WithFiles, and names it, and its password, in the
+// the Host with hosttest.WithFiles, and names it, and its password, in the
 // environment the end user's Init sources, with humustest.WithEnv:
 //
 //	ca := humustest.NewCA(t)
 //	bundle, password := ca.Issue(t, "carts").PKCS12(t)
-//	h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{"tls.p12": bundle}))
+//	h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{"tls.p12": bundle}))
 //
 //	p, exit := grpcservertest.Start(t, app.Init,
 //		humustest.WithApp(humus.WithHost(h.Host())),

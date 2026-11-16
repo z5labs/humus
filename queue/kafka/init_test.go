@@ -24,6 +24,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/sasl/scram"
 	"github.com/z5labs/bedrock/config"
+	"github.com/z5labs/bedrock/host/hosttest"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/humustest"
@@ -170,7 +171,7 @@ func TestSecureInit_consumes_over_mTLS_with_SASL(t *testing.T) {
 		server := ca.Issue(t, "127.0.0.1")
 		client := ca.Issue(t, "orders-consumer")
 		caPEM, certPEM := pemFiles(t, client.TLS())
-		h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 			"etc/kafka/ca.pem":     caPEM,
 			"etc/kafka/client.pem": certPEM,
 		}))
@@ -227,7 +228,7 @@ func TestSecureInit_consumes_over_mTLS_with_SASL(t *testing.T) {
 
 func TestSecureInit_without_the_client_certificate_exits_78(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 			"etc/kafka/ca.pem": []byte("not a certificate"),
 		}))
 		_, status := humustest.Start(t, secureInit,

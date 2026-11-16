@@ -22,6 +22,7 @@ import (
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/bedrocktest"
 	"github.com/z5labs/bedrock/config"
+	"github.com/z5labs/bedrock/host/hosttest"
 	"software.sslmate.com/src/go-pkcs12"
 
 	"github.com/z5labs/humus"
@@ -464,7 +465,7 @@ func TestApp_Run_HTTPS_with_a_PKCS12_bundle_from_NewCA(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
 		bundle, password := ca.Issue(t, "api.internal").PKCS12(t)
-		h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 			"etc/tls/server.p12": bundle,
 		}))
 		hello := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -517,7 +518,7 @@ func TestApp_Run_HTTPS_a_wrong_password_exits_1_with_the_cause(t *testing.T) {
 		ca := humustest.NewCA(t)
 		bundle, _ := ca.Issue(t, "api.internal").PKCS12(t)
 		_, wrong := ca.Issue(t, "api.internal").PKCS12(t)
-		h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 			"etc/tls/server.p12": bundle,
 		}))
 		app := humus.App{

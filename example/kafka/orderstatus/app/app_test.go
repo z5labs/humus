@@ -39,6 +39,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/kmsg"
 	"github.com/z5labs/bedrock"
+	"github.com/z5labs/bedrock/host/hosttest"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/z5labs/humus"
@@ -142,7 +143,7 @@ func newProcessor(t *testing.T, files map[string][]byte) *processor {
 		"secrets/probes.pem":        pemOf(t, ca.Issue(t, "localhost")),
 	}
 	maps.Copy(all, files)
-	h := humustest.NewHost(t, humustest.WithFiles(all))
+	h := humustest.NewHost(t, hosttest.WithFiles(all))
 
 	probes := h.HTTPClient()
 	probes.Transport.(*http.Transport).TLSClientConfig = &tls.Config{RootCAs: ca.Pool()}

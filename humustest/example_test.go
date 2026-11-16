@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/z5labs/bedrock/host/hosttest"
 	"software.sslmate.com/src/go-pkcs12"
 
 	"github.com/z5labs/humus/humustest"
@@ -164,15 +165,15 @@ func ExampleHost_Listening() {
 	// hello from every name
 }
 
-// WithFiles writes the files a test sets up into the Host's directory
-// before the App starts, and Path gives the absolute OS path of one, to
-// put in a setting. The Host's FS opens it there, and refuses a path that
-// leaves the directory.
-func ExampleWithFiles() {
+// hosttest.WithFiles writes the files a test sets up into the Host's
+// directory before the App starts, and Path gives the absolute OS path of
+// one, to put in a setting. The Host's FS opens it there, and refuses a
+// path that leaves the directory.
+func ExampleHost_Path() {
 	t := new(exampleTB)
 	defer t.runCleanups()
 
-	h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+	h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 		"etc/app/greeting.txt": []byte("hello from a real file"),
 	}))
 	path := h.Path("etc/app/greeting.txt")
@@ -248,15 +249,15 @@ func ExampleNewCA() {
 
 // PKCS12 encodes a certificate and its key as a bundle for a file, with a
 // new random password on every call. A test writes the bundle with
-// WithFiles and passes the password in a setting, so no key or password is
-// ever written into a repository.
+// hosttest.WithFiles and passes the password in a setting, so no key or
+// password is ever written into a repository.
 func ExampleCertificate_PKCS12() {
 	t := new(exampleTB)
 	defer t.runCleanups()
 
 	ca := humustest.NewCA(t)
 	bundle, password := ca.Issue(t, "api.internal").PKCS12(t)
-	h := humustest.NewHost(t, humustest.WithFiles(map[string][]byte{
+	h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 		"etc/tls/server.p12": bundle,
 	}))
 
