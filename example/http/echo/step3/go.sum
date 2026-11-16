@@ -55,12 +55,12 @@ github.com/yudai/gojsondiff v1.0.0 h1:27cbfqXLVEJ1o8I6v3y9lg8Ydm53EKqHXAOMxEGlCO
 github.com/yudai/gojsondiff v1.0.0/go.mod h1:AY32+k2cwILAkW1fbgxQ5mUmMiZFgLIV+FBNExI05xg=
 github.com/yudai/golcs v0.0.0-20170316035057-ecda9a501e82 h1:BHyfKlQyqbsFN5p3IfnEUduWvb9is428/nNb5L3U01M=
 github.com/yudai/golcs v0.0.0-20170316035057-ecda9a501e82/go.mod h1:lgjkn3NuSvDfVJdfcVVdX+jpBxNmX4rDAzaS45IcYoM=
-github.com/z5labs/bedrock v0.25.0 h1:9wu6xQubi5hpADw37Gk7kcAkardBhSUhbejE0aKGBpw=
-github.com/z5labs/bedrock v0.25.0/go.mod h1:6pbhUnkSk+avSoVi+BM91cBlRiN7UVsxA7txQnC/TTA=
+github.com/z5labs/bedrock v0.26.0 h1:fBvAoWOfbwJtpuczW56tdGlkHaDU6yi7GIpaQdy23qA=
+github.com/z5labs/bedrock v0.26.0/go.mod h1:bMeSxckUgRsByN4ZuG9zGqQG7gqCyHfNPezdRns2qX0=
 github.com/z5labs/bedrock/circuit v0.25.0 h1:IBKrbQ0t9xJrvd1pzQSDMtMWdnwoH2FTbaDNCxqesV4=
 github.com/z5labs/bedrock/circuit v0.25.0/go.mod h1:2yujEj/etrHSXJwrc6AQVEwlQ+MX/3GT27WtHzL5Qu4=
-github.com/z5labs/bedrock/fit v0.25.0 h1:h8t15snj4OXBfmztmOWeAGrqeEsu0GMgfcjMBZJAsaM=
-github.com/z5labs/bedrock/fit v0.25.0/go.mod h1:HpbItTmS7lsVgjCEra4U19uFNqMmlcY2Ir2noT+dnZk=
+github.com/z5labs/bedrock/fit v0.26.0 h1:5ajB3rM9JSqhHRRTwTHoKWksn3SgYiI0WsadM73V8ZQ=
+github.com/z5labs/bedrock/fit v0.26.0/go.mod h1:Dqxudo3OJdclbClZ1LlIZK7+/6uw+mi0X4k7VSQdDpo=
 github.com/z5labs/bedrock/retry v0.25.0 h1:K1NaNIktrTLUK9m3tLoGB9F6pHicS3ulBMYgwswKvq4=
 github.com/z5labs/bedrock/retry v0.25.0/go.mod h1:KlmokXk6A+kBkw2DlNf3eBDHpnQD09HiHv6sMdX+V6Y=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
