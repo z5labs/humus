@@ -301,7 +301,13 @@ A test of an App value it builds itself, rather than of the end user's
 
 ## The network
 
-The Host's network follows the rules of a real one.
+humustest's Host is bedrock's
+[hosttest](https://pkg.go.dev/github.com/z5labs/bedrock/host/hosttest), and
+its network follows hosttest's rules, which follow a real network's. The
+rules for [names](https://pkg.go.dev/github.com/z5labs/bedrock/host/hosttest#hdr-Names),
+[TCP connections](https://pkg.go.dev/github.com/z5labs/bedrock/host/hosttest#hdr-TCP_connections)
+and [UDP](https://pkg.go.dev/github.com/z5labs/bedrock/host/hosttest#hdr-UDP)
+are in its docs. In short:
 
 - **A name and port can be held once.** A listener on every name, an empty
   host, `0.0.0.0` or `::`, conflicts with any other listener on its port.
@@ -309,6 +315,10 @@ The Host's network follows the rules of a real one.
 - **Names are compared as written** and never resolved. `localhost` and
   `127.0.0.1` are different names, so a client dials the name a Service
   listens on, or the Service listens on every name, as `:8080` does above.
+- **UDP has ports of its own**, apart from TCP's, and binds by the same
+  rules. `ListenPacket` binds a socket, and `Dial` over `"udp"` returns a
+  socket connected to it. A datagram arrives whole and in order at the
+  socket that holds its address, and is dropped when no socket does.
 
 ```go
 h := humustest.NewHost(t)
@@ -346,6 +356,42 @@ fmt.Println("127.0.0.1:8080 refused:", errors.Is(err, syscall.ECONNREFUSED))
 // Output:
 // hello from localhost:8080
 // 127.0.0.1:8080 refused: true
+```
+
+Over UDP, the socket that `ListenPacket` binds takes the datagram the dialled
+socket writes:
+
+```go
+h := humustest.NewHost(t)
+pc, err := h.ListenPacket("udp", "dns:53")
+if err != nil {
+	fmt.Println(err)
+	return
+}
+defer func() { _ = pc.Close() }()
+
+conn, err := h.Dial(context.Background(), "udp", "dns:53")
+if err != nil {
+	fmt.Println(err)
+	return
+}
+defer func() { _ = conn.Close() }()
+if _, err := io.WriteString(conn, "ping"); err != nil {
+	fmt.Println(err)
+	return
+}
+
+b := make([]byte, 64)
+n, from, err := pc.ReadFrom(b)
+if err != nil {
+	fmt.Println(err)
+	return
+}
+fmt.Println(string(b[:n]))
+fmt.Println("from the dialled socket:", from.String() == conn.LocalAddr().String())
+// Output:
+// ping
+// from the dialled socket: true
 ```
 
 ### Waiting for a listener
@@ -411,6 +457,12 @@ fmt.Println(string(b))
 // before Listen, refused: true
 // hello from every name
 ```
+
+`Listening` waits for TCP listeners only. A UDP socket is bound once
+`ListenPacket` returns, so a test whose App binds one waits with
+`synctest.Wait()`, which returns once the App is blocked reading the socket,
+before it sends. A datagram sent before then is dropped, as on a real
+network.
 
 ### Resolvers inside synctest
 
@@ -551,11 +603,48 @@ Real files are what let libraries that need an `*os.File` or a path, such as
 SQLite drivers, archive libraries and programs started with `os/exec`, keep
 working in a test. They cost two things:
 
-- **No injected I/O errors.** A test can't make a write fail with a full disk.
-  Code that needs that test puts an `io.Writer` seam in its own code.
+- **An I/O error comes from an `FS` of the test's own.** The filesystem alone
+  can't fail a call, as a full disk does. A test that needs one embeds the
+  `FS` in a type of its own, overrides the method that fails, and runs the
+  App on a Host whose `FS` is that type, as
+  [hosttest's docs](https://pkg.go.dev/github.com/z5labs/bedrock/host/hosttest#hdr-Files)
+  describe.
 - **Real `ModTime`, even inside `synctest`.** A bubble's clock is fake, and a
   file's modification time is not, so code that compares `ModTime()` with
   `time.Now()` needs `os.Chtimes` in its tests.
+
+Here `OpenFile` fails as on a full disk, and every other method is the
+Host's:
+
+```go
+// fullDisk is a humus.FS whose OpenFile fails as on a full disk. It embeds
+// the FS it wraps, so every other method is that FS's.
+type fullDisk struct {
+	humus.FS
+}
+
+func (fullDisk) OpenFile(name string, _ int, _ os.FileMode) (*os.File, error) {
+	return nil, &fs.PathError{Op: "open", Path: name, Err: syscall.ENOSPC}
+}
+```
+
+```go
+h := humustest.NewHost(t)
+hh := h.Host()
+hh.FS = fullDisk{FS: hh.FS}
+
+_, err := hh.FS.OpenFile(h.Path("out.txt"), os.O_CREATE|os.O_WRONLY, 0o600)
+fmt.Println("disk full:", errors.Is(err, syscall.ENOSPC))
+_, err = hh.FS.Stat(h.Path("out.txt"))
+fmt.Println("nothing written:", errors.Is(err, fs.ErrNotExist))
+// Output:
+// disk full: true
+// nothing written: true
+```
+
+`humus.FS` is sealed, so a type is one only if it embeds an `FS`, as
+`fullDisk` does, and the
+[App lifecycle]({{< relref "/fundamentals/lifecycle#host" >}}) names which.
 
 [The App lifecycle]({{< relref "/fundamentals/lifecycle#why-fs-hands-out-osfile" >}})
 explains why `FS` hands out `*os.File`.
