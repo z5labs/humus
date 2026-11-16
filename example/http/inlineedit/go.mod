@@ -7,6 +7,7 @@ replace github.com/z5labs/humus => ../../..
 require (
 	github.com/chromedp/cdproto v0.160.1
 	github.com/chromedp/chromedp v0.23.1
+	github.com/moby/moby/api v1.56.1
 	github.com/starfederation/datastar-go v1.2.2
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.45.0
@@ -46,7 +47,6 @@ require (
 	github.com/magiconair/properties v1.18.12 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/go-archive v0.3.3 // indirect
-	github.com/moby/moby/api v1.56.1 // indirect
 	github.com/moby/moby/client v0.6.2 // indirect
 	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/moby/sys/sequential v0.7.0 // indirect

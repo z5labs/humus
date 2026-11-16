@@ -31,6 +31,7 @@ import (
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/remote"
+	"github.com/moby/moby/api/types/container"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -84,7 +85,7 @@ func Run(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service
 	t.Cleanup(cancelB)
 
 	base := "https://" + net.JoinHostPort(testcontainers.HostInternal, port)
-	tabA, tabB := watch(a), watch(b)
+	tabA, tabB := watch(t, a), watch(t, b)
 	for _, tab := range []struct {
 		ctx context.Context
 		*tab
@@ -195,6 +196,9 @@ func startHeadlessShell(t *testing.T, cert *humustest.Certificate, port string) 
 	c, err := testcontainers.Run(t.Context(), headlessShell.String(),
 		testcontainers.WithExposedPorts(devtoolsPort),
 		testcontainers.WithHostPortAccess(hostPort),
+		testcontainers.WithHostConfigModifier(func(hc *container.HostConfig) {
+			hc.Sysctls = map[string]string{"net.ipv6.conf.all.disable_ipv6": "1"}
+		}),
 		testcontainers.WithCmd(
 			"--disable-dev-shm-usage",
 			"--user-data-dir=/tmp/profile",
@@ -222,72 +226,35 @@ type tab struct {
 	feedOpen   chan struct{}
 }
 
-func watch(ctx context.Context) *tab {
+func watch(t *testing.T, ctx context.Context) *tab {
+	t.Helper()
 	tb := &tab{feedOpen: make(chan struct{})}
-	requests := chromedp.Events(ctx, network.RequestWillBeSent)
-	responses := chromedp.Events(ctx, network.ResponseReceived)
-	finished := chromedp.Events(ctx, network.LoadingFinished)
-	failed := chromedp.Events(ctx, network.LoadingFailed)
-	exceptions := chromedp.Events(ctx, runtime.ExceptionThrown)
-	go func() {
-		for ev, err := range requests {
-			if err != nil {
-				return
-			}
-			tb.mu.Lock()
-			tb.sent = append(tb.sent, ev.Request)
-			tb.mu.Unlock()
-		}
-	}()
-	go func() {
-		for ev, err := range responses {
-			if err != nil {
-				return
-			}
-			path, _, _ := strings.Cut(ev.Response.URL, "?")
-			if !strings.HasSuffix(path, "/contacts/changes") || ev.Response.Status != http.StatusOK {
-				continue
-			}
-			tb.mu.Lock()
-			if tb.feed == "" {
-				tb.feed = ev.RequestID
-				close(tb.feedOpen)
-			}
-			tb.mu.Unlock()
-		}
-	}()
-	go func() {
-		for ev, err := range finished {
-			if err != nil {
-				return
-			}
-			tb.ended(ev.RequestID)
-		}
-	}()
-	go func() {
-		for ev, err := range failed {
-			if err != nil {
-				return
-			}
-			tb.ended(ev.RequestID)
-		}
-	}()
-	go func() {
-		for ev, err := range exceptions {
-			if err != nil {
-				return
-			}
-			tb.mu.Lock()
-			tb.exceptions = append(tb.exceptions, (&chromedp.ExceptionError{ExceptionDetails: ev.ExceptionDetails}).Error())
-			tb.mu.Unlock()
-		}
-	}()
+	require.NoError(t, chromedp.Listen(ctx, tb.record))
 	return tb
 }
 
-func (tb *tab) ended(id network.RequestID) {
+func (tb *tab) record(ev any) {
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
+	switch ev := ev.(type) {
+	case *network.EventRequestWillBeSent:
+		tb.sent = append(tb.sent, ev.Request)
+	case *network.EventResponseReceived:
+		path, _, _ := strings.Cut(ev.Response.URL, "?")
+		if tb.feed == "" && strings.HasSuffix(path, "/contacts/changes") && ev.Response.Status == http.StatusOK {
+			tb.feed = ev.RequestID
+			close(tb.feedOpen)
+		}
+	case *network.EventLoadingFinished:
+		tb.ended(ev.RequestID)
+	case *network.EventLoadingFailed:
+		tb.ended(ev.RequestID)
+	case *runtime.EventExceptionThrown:
+		tb.exceptions = append(tb.exceptions, (&chromedp.ExceptionError{ExceptionDetails: ev.ExceptionDetails}).Error())
+	}
+}
+
+func (tb *tab) ended(id network.RequestID) {
 	if id == tb.feed {
 		tb.feedEnded = true
 	}
