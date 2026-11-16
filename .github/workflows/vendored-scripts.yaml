@@ -1,0 +1,145 @@
+name: Vendored scripts
+
+# example/http/inlineedit vendors htmx, htmx-ext-sse and Datastar, and
+# declares each one's version in its vendored_test.go. Renovate bumps those
+# versions through the customManagers rule in renovate.json, but it can only
+# rewrite the version, not download the file the new version names. So when a
+# pull request changes that declaration, the download job downloads each
+# script again with the test's -update flag, and the commit job commits the
+# files to the pull request's branch. The bump brings its files, and main
+# never holds one version's file under another version. Without that commit,
+# the test fails the pull request's checks, naming the file.
+#
+# The download job runs the pull request's code, and a Renovate pull request
+# can bring new versions of the Go modules that code compiles, so it gets no
+# secrets and a read-only token. It hands the commit job nothing but the
+# files it changed, as an artifact. The commit job checks out nothing and
+# runs no code from the pull request. It accepts only files in the two
+# static directories the scripts are vendored to.
+#
+# The commit job commits with the backlog App's installation token, not
+# GITHUB_TOKEN: GitHub starts no workflow run for a push GITHUB_TOKEN makes,
+# so CI would never run on the commit that fixes the files. The ruleset on
+# main accepts only commits with a verified signature, and a commit made with
+# git in the runner has none, so the commit is made the way the Release
+# workflow makes its bump commit: through GitHub's REST API (git/trees and
+# git/commits), which GitHub signs as the App. The branch only moves forward:
+# if it moved while this ran, the update is refused, and the run for the new
+# head does the work. Once the App has committed to a Renovate branch,
+# Renovate treats the branch as modified and stops rebasing it, as it does for
+# any commit it didn't make.
+#
+# Pull requests from forks get no secrets and no write access, so they're
+# skipped. A fork that bumps a version gets its own failing test instead.
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - example/http/inlineedit/vendored_test.go
+      - .github/workflows/vendored-scripts.yaml
+
+concurrency:
+  group: vendored-scripts-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  download:
+    name: Download vendored scripts
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.27.4'
+          cache: false
+
+      - name: Download each script at its version
+        run: go -C example/http/inlineedit test -count=1 -run '^TestVendored_scripts_are_their_versions_files$' . -update
+
+      - name: Collect the changed scripts
+        id: diff
+        run: |
+          out="$RUNNER_TEMP/vendored"
+          mkdir -p "$out"
+          git diff --name-only -- example/http/inlineedit/htmxui/static example/http/inlineedit/datastarui/static > "$RUNNER_TEMP/changed.txt"
+          cat "$RUNNER_TEMP/changed.txt"
+          while read -r file; do
+            mkdir -p "$out/$(dirname "$file")"
+            cp -- "$file" "$out/$file"
+          done < "$RUNNER_TEMP/changed.txt"
+          if [ -s "$RUNNER_TEMP/changed.txt" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.diff.outputs.changed == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vendored-scripts
+          path: ${{ runner.temp }}/vendored
+          retention-days: 1
+
+  commit:
+    name: Commit vendored scripts
+    needs: download
+    if: needs.download.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vendored-scripts
+          path: ${{ runner.temp }}/vendored
+
+      - name: Mint a GitHub App installation token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
+        with:
+          app-id: ${{ secrets.BACKLOG_APP_ID }}
+          private-key: ${{ secrets.BACKLOG_APP_KEY }}
+
+      - name: Commit the downloaded scripts
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        working-directory: ${{ runner.temp }}/vendored
+        run: |
+          entries='[]'
+          while IFS= read -r -d '' file; do
+            file="${file#./}"
+            if ! [[ $file =~ ^example/http/inlineedit/(htmxui|datastarui)/static/[^/]+$ ]]; then
+              echo "::error title=Not a vendored script::the download job changed $file, which isn't in a vendored scripts directory"
+              exit 1
+            fi
+            entries=$(jq --arg path "$file" --rawfile content "$file" \
+              '. + [{path: $path, mode: "100644", type: "blob", content: $content}]' <<< "$entries")
+          done < <(find . -type f -print0)
+
+          base=$(gh api "repos/$REPO/git/commits/$HEAD" --jq .tree.sha)
+          tree=$(jq -n --arg base "$base" --argjson tree "$entries" '{base_tree: $base, tree: $tree}' |
+            gh api "repos/$REPO/git/trees" --input - --jq .sha)
+
+          read -r commit verified reason < <(
+            gh api "repos/$REPO/git/commits" \
+              -f message="chore(example): download inlineedit's vendored scripts at their versions" \
+              -f tree="$tree" -f "parents[]=$HEAD" \
+              --jq '[.sha, .verification.verified, .verification.reason] | @tsv'
+          )
+          if [ "$verified" != true ]; then
+            echo "::error title=Commit not signed::GitHub did not sign the commit $commit (${reason:-no verification reported}), and main accepts only signed commits"
+            exit 1
+          fi
+          gh api --method PATCH "repos/$REPO/git/refs/heads/$BRANCH" -f sha="$commit" -F force=false --silent
+          echo "$BRANCH is at $commit, signed by GitHub"

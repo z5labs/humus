@@ -99,7 +99,7 @@ func TestInit_datastar_edits_a_row_in_place_and_aborts_its_feed_at_shutdown(t *t
 		script := send(t, c, http.MethodGet, base+"/static/datastar.js", nil, nil)
 		require.Equal(t, http.StatusOK, script.status)
 		require.Equal(t, "text/javascript; charset=utf-8", script.header.Get("Content-Type"))
-		require.True(t, strings.HasPrefix(script.body, "// Datastar v1.0.5\n"), "the vendored Datastar is v1.0.5")
+		require.True(t, strings.HasPrefix(script.body, "// Datastar v"), "body = %.40q", script.body)
 
 		for _, target := range []string{"/nowhere", "/contacts/0/edit", "/contacts/99/edit", "/static/nothing.js", "/static/"} {
 			r := send(t, c, http.MethodGet, base+target, nil, nil)
