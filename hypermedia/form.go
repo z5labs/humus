@@ -273,13 +273,15 @@ func (e *FieldError) Error() string {
 //
 // Only the body is read: a value in r's URL query isn't a form field. A
 // form already parsed, as by method-override middleware, is read from
-// r.PostForm, unless it is empty on a method other than POST, PUT and
-// PATCH, as r.ParseForm leaves it without reading the body. Otherwise
-// ReadForm reads the body itself, and leaves the form in r.PostForm, as
-// r.ParseForm would, so r.PostFormValue and a second ReadForm read it
-// again.
+// r.PostForm. An empty r.PostForm is a form already parsed only after
+// r.ParseMultipartForm, or after r.ParseForm on a urlencoded POST, PUT or
+// PATCH: on any other request r.ParseForm leaves it empty without reading
+// the body. Otherwise ReadForm reads the body itself, and leaves the form
+// in r.PostForm, as r.ParseForm would, so r.PostFormValue and a second
+// ReadForm read it again.
 //
-// A multipart body's file parts are skipped, and no part of it is written
+// A multipart body's file parts, those whose Content-Disposition has a
+// filename, even an empty one, are skipped, and no part of it is written
 // to disk, so an upload is never spilled outside humus.Host. An end user
 // who takes uploads streams them with r.MultipartReader instead.
 //
@@ -313,7 +315,7 @@ func ReadForm(r *http.Request, fields ...AnyField) (*Form, error) {
 	var errs []error
 	seen := make(map[string]bool)
 	for i, field := range fields {
-		if field == nil {
+		if isNil(field) {
 			errs = append(errs, fmt.Errorf("field %d is nil", i))
 			continue
 		}
@@ -346,11 +348,21 @@ func ReadForm(r *http.Request, fields ...AnyField) (*Form, error) {
 	return form, nil
 }
 
+// isNil reports whether field is nil, or a nil *FormField, whose
+// formField would dereference it.
+func isNil(field AnyField) bool {
+	if field == nil {
+		return true
+	}
+	rv := reflect.ValueOf(field)
+	return rv.Kind() == reflect.Pointer && rv.IsNil()
+}
+
 // formValues returns the form in r's body, from r.PostForm when it is
 // already parsed, and otherwise read from the body, and left in
 // r.PostForm.
 func formValues(r *http.Request) (url.Values, error) {
-	if r.PostForm != nil && (len(r.PostForm) > 0 || parsesBody(r.Method)) {
+	if parsed(r) {
 		return r.PostForm, nil
 	}
 	ct := r.Header.Get("Content-Type")
@@ -381,10 +393,21 @@ func formValues(r *http.Request) (url.Values, error) {
 	return values, nil
 }
 
-// parsesBody reports whether r.ParseForm reads the body of a request of
-// method.
-func parsesBody(method string) bool {
-	return method == http.MethodPost || method == http.MethodPut || method == http.MethodPatch
+// parsed reports whether r.PostForm holds r's form, already parsed. An
+// empty one does only when its body was read: by r.ParseMultipartForm, or
+// by r.ParseForm, which reads only a urlencoded body, and only of a POST,
+// PUT or PATCH. Otherwise r.ParseForm leaves it empty without reading the
+// body.
+func parsed(r *http.Request) bool {
+	switch {
+	case r.PostForm == nil:
+		return false
+	case len(r.PostForm) > 0, r.MultipartForm != nil:
+		return true
+	}
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	return err == nil && mediaType == "application/x-www-form-urlencoded" &&
+		(r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch)
 }
 
 // readURLEncoded reads body as an application/x-www-form-urlencoded form.
@@ -419,7 +442,7 @@ func readMultipart(body io.Reader, boundary string) (url.Values, error) {
 			return nil, bodyError(err)
 		}
 		name := part.FormName()
-		if name == "" || part.FileName() != "" {
+		if name == "" || isFile(part) {
 			// NextPart reads past what is left of the part.
 			continue
 		}
@@ -429,6 +452,17 @@ func readMultipart(body io.Reader, boundary string) (url.Values, error) {
 		}
 		values.Add(name, string(b))
 	}
+}
+
+// isFile reports whether p is a file part: its Content-Disposition has a
+// filename, even an empty one, as a file input with no file chosen sends.
+func isFile(p *multipart.Part) bool {
+	_, params, err := mime.ParseMediaType(p.Header.Get("Content-Disposition"))
+	if err != nil {
+		return false
+	}
+	_, ok := params["filename"]
+	return ok
 }
 
 // bodyError returns err, from reading a form's body, as a *RequestError:
@@ -491,7 +525,7 @@ func FieldFrom[T ParamValue](f *Form, field FormField[T]) T {
 // ReadForm wasn't given it, or was given a field of its name and another
 // type.
 func (f *Form) entry(op string, field AnyField) formEntry {
-	if field == nil {
+	if isNil(field) {
 		panic(fmt.Sprintf("hypermedia: %s: the field is nil", op))
 	}
 	spec := field.formField()

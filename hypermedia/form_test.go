@@ -12,6 +12,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"net/url"
 	"os"
 	"regexp"
@@ -349,6 +350,39 @@ func TestReadForm_reads_a_form_already_parsed_from_PostForm(t *testing.T) {
 		require.Equal(t, "Grace", hypermedia.FieldFrom(form, name))
 	})
 
+	t.Run("left empty by ParseForm on a multipart POST, whose body it doesn't read", func(t *testing.T) {
+		r := multipartRequest(t, http.MethodPost, "/contacts", part{name: "name", value: "Ada"})
+		require.NoError(t, r.ParseForm())
+		require.Empty(t, r.PostForm)
+		form := readForm(t, r, name)
+		require.Equal(t, "Ada", hypermedia.FieldFrom(form, name))
+	})
+
+	t.Run("left empty by ParseForm on a POST that isn't a form", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodPost, "/contacts", strings.NewReader(`{"name":"Ada"}`))
+		r.Header.Set("Content-Type", "application/json")
+		require.NoError(t, r.ParseForm())
+		require.Empty(t, r.PostForm)
+		_, err := hypermedia.ReadForm(r, name)
+		require.Equal(t, http.StatusUnsupportedMediaType, requestErrorOf(t, err).Status)
+	})
+
+	t.Run("left empty by ParseForm on an empty urlencoded POST", func(t *testing.T) {
+		r := urlencoded(http.MethodPost, "/contacts", "")
+		require.NoError(t, r.ParseForm())
+		r.Body = io.NopCloser(iotest.ErrReader(errors.New("the body was already read")))
+		form := readForm(t, r, name)
+		require.Equal(t, hypermedia.Missing, form.Problem(name).Rule)
+	})
+
+	t.Run("left empty by ParseMultipartForm", func(t *testing.T) {
+		r := multipartRequest(t, http.MethodPost, "/contacts", part{name: "avatar", file: "a.png", value: "png"})
+		require.NoError(t, r.ParseMultipartForm(1<<20))
+		require.Empty(t, r.PostForm)
+		form := readForm(t, r, name)
+		require.Equal(t, hypermedia.Missing, form.Problem(name).Rule)
+	})
+
 	t.Run("left empty by ParseForm on a QUERY, whose body it doesn't read", func(t *testing.T) {
 		r := urlencoded("QUERY", "/contacts", "name=Ada")
 		require.NoError(t, r.ParseForm())
@@ -386,6 +420,26 @@ func TestReadForm_skips_an_upload_and_writes_nothing_to_disk(t *testing.T) {
 	require.Empty(t, form.Raw(avatar), "a file part isn't a field's value")
 	require.Nil(t, r.MultipartForm, "the file isn't kept")
 	require.Equal(t, url.Values{"name": {"Ada"}, "age": {"36"}}, r.PostForm)
+
+	t.Run("a file input with no file chosen", func(t *testing.T) {
+		var b bytes.Buffer
+		mw := multipart.NewWriter(&b)
+		require.NoError(t, mw.WriteField("name", "Ada"))
+		w, err := mw.CreatePart(textproto.MIMEHeader{
+			"Content-Disposition": {`form-data; name="avatar"; filename=""`},
+			"Content-Type":        {"application/octet-stream"},
+		})
+		require.NoError(t, err)
+		_, err = io.WriteString(w, "")
+		require.NoError(t, err)
+		require.NoError(t, mw.Close())
+		r := httptest.NewRequest(http.MethodPost, "/contacts", &b)
+		r.Header.Set("Content-Type", mw.FormDataContentType())
+
+		form := readForm(t, r, name, avatar.Required())
+		require.Equal(t, hypermedia.Missing, form.Problem(avatar).Rule, "the part is a file, skipped, not an empty value")
+		require.Equal(t, url.Values{"name": {"Ada"}}, r.PostForm)
+	})
 
 	entries, err := os.ReadDir(tmp)
 	require.NoError(t, err)
@@ -483,6 +537,7 @@ func TestReadForm_reports_a_mistake_in_its_fields_before_reading_the_body(t *tes
 		hypermedia.Field[string]("email"),
 		hypermedia.Field[int]("email"),
 		nil,
+		(*hypermedia.FormField[string])(nil),
 	)
 	require.Error(t, err)
 	_, isRequestError := errors.AsType[*hypermedia.RequestError](err)
@@ -497,6 +552,7 @@ func TestReadForm_reports_a_mistake_in_its_fields_before_reading_the_body(t *tes
 		"a form field's name is empty",
 		`form field "email" is given more than once`,
 		"field 7 is nil",
+		"field 8 is nil",
 	} {
 		require.ErrorContains(t, err, want)
 	}
@@ -514,6 +570,7 @@ func TestForm_panics_for_a_field_ReadForm_wasnt_given(t *testing.T) {
 	require.PanicsWithValue(t, `hypermedia: FieldFrom("age"): ReadForm wasn't given form field "age"`, func() { hypermedia.FieldFrom(form, other) })
 	require.PanicsWithValue(t, `hypermedia: FieldFrom("name"): ReadForm was given form field "name" of type string, but the field has type int`, func() { hypermedia.FieldFrom(form, retyped) })
 	require.PanicsWithValue(t, `hypermedia: Raw: the field is nil`, func() { form.Raw(nil) })
+	require.PanicsWithValue(t, `hypermedia: Raw: the field is nil`, func() { form.Raw((*hypermedia.FormField[string])(nil)) })
 
 	require.Equal(t, "Ada", form.Raw(name.Required().MaxLength(9)), "a field is its name and type, not its constraints")
 }
