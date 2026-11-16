@@ -1,0 +1,14 @@
+{{define "page"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Contacts</title>
+<script type="module" src="{{asset "datastar.js"}}"></script>
+</head>
+<body>
+<h1>Contacts</h1>
+<div data-init="@get('{{.FeedURL}}', {openWhenHidden: true})"></div>
+{{range .Rows}}{{if .Editing}}{{template "edit" .}}{{else}}{{template "row" .}}{{end}}
+{{end}}</body>
+</html>
+{{end}}
