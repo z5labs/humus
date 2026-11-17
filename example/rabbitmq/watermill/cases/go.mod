@@ -3,7 +3,7 @@ module github.com/z5labs/humus/example/rabbitmq/watermill/cases
 go 1.27.0
 
 require (
-	github.com/rabbitmq/amqp091-go v1.16.0
+	github.com/rabbitmq/amqp091-go v1.17.0
 	github.com/stretchr/testify v1.12.1
 )
 
