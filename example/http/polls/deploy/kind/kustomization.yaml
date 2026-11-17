@@ -5,6 +5,7 @@ resources:
   - namespace.yaml
   - ../base
   - postgres.yaml
+  - headless-shell.yaml
 configMapGenerator:
   - name: polls
     behavior: merge

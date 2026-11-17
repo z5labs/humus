@@ -5,6 +5,8 @@ go 1.27.0
 replace github.com/z5labs/humus => ../../..
 
 require (
+	github.com/chromedp/cdproto v0.160.3
+	github.com/chromedp/chromedp v0.23.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.13.0
 	github.com/stretchr/testify v1.12.1
@@ -38,6 +40,7 @@ require (
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/ebitengine/purego v0.11.3 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
+	github.com/go-json-experiment/json v0.0.0-20260213210345-44df1a37e875 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect

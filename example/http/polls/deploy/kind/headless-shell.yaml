@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: headless-shell
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: headless-shell
+  template:
+    metadata:
+      labels:
+        app: headless-shell
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: headless-shell
+          image: docker.io/chromedp/headless-shell:158.0.8127.37@sha256:8c574e39f0db5c1d9efe7c472c6e0fcfc1d91ac0be70eb1dead0f2d52cf104cc
+          args:
+            - --disable-dev-shm-usage
+            - --user-data-dir=/tmp/profile
+            - --ignore-certificate-errors-spki-list=$(CA_SPKI)
+          env:
+            - name: HOME
+              value: /tmp
+            - name: CA_SPKI
+              valueFrom:
+                configMapKeyRef:
+                  name: headless-shell
+                  key: ca-spki
+          ports:
+            - name: devtools
+              containerPort: 9222
+          readinessProbe:
+            httpGet:
+              path: /json/version
+              port: devtools
+            periodSeconds: 2
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

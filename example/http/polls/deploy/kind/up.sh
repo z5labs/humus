@@ -42,11 +42,13 @@ service_names() {
 }
 
 issue polls polls serverAuth "$(service_names polls), DNS:localhost, IP:127.0.0.1"
+cat "$tmp/ca.crt" >>"$tmp/polls.crt"
 issue postgres postgres serverAuth "$(service_names postgres)"
 issue cases cases clientAuth
 
 printf 'postgres://polls:%s@postgres:5432/polls?sslmode=verify-full&sslrootcert=/etc/polls/postgres-ca/ca.crt' "$polls_password" >"$tmp/polls-url"
 printf '%s' "$postgres_password" >"$tmp/postgres-password"
+openssl x509 -in "$tmp/ca.crt" -noout -pubkey | openssl pkey -pubin -outform DER | openssl dgst -sha256 -binary | openssl base64 -A >"$tmp/ca-spki"
 
 k() {
   kubectl --context "kind-$cluster" --namespace "$namespace" "$@"
@@ -77,6 +79,8 @@ tls() {
   secret postgres --from-file=password="$tmp/postgres-password"
   echo ---
   tls postgres-tls postgres
+  echo ---
+  kubectl create configmap headless-shell --namespace "$namespace" --dry-run=client -o yaml --from-file=ca-spki="$tmp/ca-spki"
 } >"$tmp/polls.yaml"
 
 kind load docker-image polls --name "$cluster"
@@ -104,5 +108,6 @@ GRANT SELECT, INSERT ON polls, options, votes TO polls;
 SQL
 } | k exec -i deployment/postgres -- psql -v ON_ERROR_STOP=1 -U postgres -d postgres
 
-k rollout restart deployment/polls
+k rollout restart deployment/polls deployment/headless-shell
 k rollout status deployment/polls --timeout 5m
+k rollout status deployment/headless-shell --timeout 5m

@@ -703,6 +703,11 @@ jobs:
   # cases against it, the failure injection cases included, through a
   # kubectl port-forward to each of its two pods, trusting the CA up.sh
   # generated and presenting the cases' client certificate from its Secret.
+  # After them, the browser cases drive headless-shell, a real Chrome in the
+  # kind overlay that reaches the service by its Service's name and trusts
+  # that CA, through a kubectl port-forward to its DevTools port: a vote in
+  # one browser reaches another, a form's problems are shown in place, and an
+  # open page keeps updating through a rollout restart of the Deployment.
   # The ruleset doesn't require this job, and Build doesn't wait on it; Vet
   # the tagged tests vets them.
   polls-kind:
@@ -748,8 +753,11 @@ jobs:
           if: ${{ github.event_name != 'push' }}
           run: example/http/polls/deploy/kind/up.sh
 
-        - name: Run the functional tests against kind
-          run: go -C example/http/polls test -exec="$GO_EXEC" -count=1 -race -tags functional ./functional/
+        - name: Run the shared cases against kind
+          run: go -C example/http/polls test -exec="$GO_EXEC" -count=1 -race -tags functional -run '^TestPolls_passes_the_shared_cases_' ./functional/
+
+        - name: Run the browser cases against kind
+          run: go -C example/http/polls test -exec="$GO_EXEC" -count=1 -race -tags functional -run '^TestPolls_runs_its_htmx_in_headless_Chrome_' ./functional/
 
         - name: Show the polls namespace
           if: ${{ failure() && github.event_name != 'push' }}
