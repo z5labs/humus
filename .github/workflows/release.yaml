@@ -268,7 +268,10 @@ jobs:
               entries=$(jq --arg path "$file" '. + [{path: $path, mode: "100644", type: "blob", sha: null}]' <<< "$entries")
             fi
           done < "$RUNNER_TEMP/bump-files.txt"
-          tree=$(jq -n --arg base "$(git rev-parse 'HEAD^{tree}')" --argjson tree "$entries" '{base_tree: $base, tree: $tree}' |
+          # The entries hold every changed file's content, so they reach jq on
+          # stdin: as an argument they would be refused once they pass the
+          # kernel's 128 KiB limit on one argument, as v0.17.0's were.
+          tree=$(jq --arg base "$(git rev-parse 'HEAD^{tree}')" '{base_tree: $base, tree: .}' <<< "$entries" |
             gh api "repos/$REPO/git/trees" --input - --jq .sha)
           if [ "$tree" != "$want" ]; then
             echo "::error title=Bump tree differs::GitHub built the tree $tree for the bump, but ci release --bump left the tree $want"
