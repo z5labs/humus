@@ -8,14 +8,16 @@ package store
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/log"
 )
 
 const (
@@ -23,6 +25,8 @@ const (
 	reconnectDelay = time.Second
 	closeTimeout   = 5 * time.Second
 )
+
+var errNotListening = errors.New("not listening for votes")
 
 type listenConn interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
@@ -33,27 +37,29 @@ type listenConn interface {
 type Listener struct {
 	connect func(context.Context) (listenConn, error)
 	poll    func(context.Context, uuid.UUID) (Poll, error)
-	log     *slog.Logger
+	log     log.Logger
+
+	listening atomic.Bool
 
 	mu   sync.Mutex
 	subs map[uuid.UUID]map[chan Poll]struct{}
 }
 
-func NewListener(cfg *pgx.ConnConfig, s *Store, log *slog.Logger) *Listener {
+func NewListener(cfg *pgx.ConnConfig, s *Store, logger log.Logger) *Listener {
 	return newListener(func(ctx context.Context) (listenConn, error) {
 		conn, err := pgx.ConnectConfig(ctx, cfg)
 		if err != nil {
 			return nil, err
 		}
 		return conn, nil
-	}, s.Poll, log)
+	}, s.Poll, logger)
 }
 
-func newListener(connect func(context.Context) (listenConn, error), poll func(context.Context, uuid.UUID) (Poll, error), log *slog.Logger) *Listener {
+func newListener(connect func(context.Context) (listenConn, error), poll func(context.Context, uuid.UUID) (Poll, error), logger log.Logger) *Listener {
 	return &Listener{
 		connect: connect,
 		poll:    poll,
-		log:     log,
+		log:     logger,
 		subs:    make(map[uuid.UUID]map[chan Poll]struct{}),
 	}
 }
@@ -85,11 +91,12 @@ func (l *Listener) Run(ctx context.Context) {
 	logged := false
 	for {
 		err := l.listen(ctx, func() { logged = false })
+		l.listening.Store(false)
 		if ctx.Err() != nil {
 			return
 		}
 		if !logged {
-			l.log.ErrorContext(ctx, "listening for votes failed", slog.Any("error", err))
+			l.emit(ctx, log.SeverityError, "ERROR", "listening for votes failed", err)
 			logged = true
 		}
 		select {
@@ -98,6 +105,13 @@ func (l *Listener) Run(ctx context.Context) {
 		case <-time.After(reconnectDelay):
 		}
 	}
+}
+
+func (l *Listener) Listening(context.Context) error {
+	if !l.listening.Load() {
+		return errNotListening
+	}
+	return nil
 }
 
 func (l *Listener) listen(ctx context.Context, listening func()) error {
@@ -114,6 +128,7 @@ func (l *Listener) listen(ctx context.Context, listening func()) error {
 	if _, err := conn.Exec(ctx, "LISTEN "+votesChannel); err != nil {
 		return err
 	}
+	l.listening.Store(true)
 	for _, id := range l.subscribed() {
 		if err := l.refresh(ctx, id); err != nil {
 			return err
@@ -128,13 +143,24 @@ func (l *Listener) listen(ctx context.Context, listening func()) error {
 		}
 		id, err := uuid.Parse(n.Payload)
 		if err != nil {
-			l.log.WarnContext(ctx, "a vote's notification names no poll", slog.String("payload", n.Payload))
+			l.emit(ctx, log.SeverityWarn, "WARN", "a vote's notification names no poll", nil, attribute.String("payload", n.Payload))
 			continue
 		}
 		if err := l.refresh(ctx, id); err != nil {
 			return err
 		}
 	}
+}
+
+func (l *Listener) emit(ctx context.Context, severity log.Severity, text, body string, err error, attrs ...attribute.KeyValue) {
+	var r log.Record
+	r.SetTimestamp(time.Now())
+	r.SetSeverity(severity)
+	r.SetSeverityText(text)
+	r.SetBody(attribute.StringValue(body))
+	r.SetErr(err)
+	r.AddAttributes(attrs...)
+	l.log.Emit(context.WithoutCancel(ctx), r)
 }
 
 func (l *Listener) subscribed() []uuid.UUID {

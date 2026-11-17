@@ -10,7 +10,6 @@ package store_test
 import (
 	"context"
 	"crypto/rand"
-	"log/slog"
 	"net"
 	"strings"
 	"sync"
@@ -19,6 +18,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/log/embedded"
 
 	"github.com/z5labs/humus/example/http/polls/store"
 )
@@ -26,27 +27,24 @@ import (
 const wait = 30 * time.Second
 
 type logRecords struct {
+	embedded.Logger
+
 	mu sync.Mutex
-	rs []slog.Record
+	rs []log.Record
 }
 
-func (r *logRecords) Enabled(context.Context, slog.Level) bool { return true }
+func (r *logRecords) Enabled(context.Context, log.EnabledParameters) bool { return true }
 
-func (r *logRecords) Handle(_ context.Context, rec slog.Record) error {
+func (r *logRecords) Emit(_ context.Context, rec log.Record) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.rs = append(r.rs, rec.Clone())
-	return nil
 }
 
-func (r *logRecords) WithAttrs([]slog.Attr) slog.Handler { return r }
-
-func (r *logRecords) WithGroup(string) slog.Handler { return r }
-
-func (r *logRecords) all() []slog.Record {
+func (r *logRecords) all() []log.Record {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]slog.Record(nil), r.rs...)
+	return append([]log.Record(nil), r.rs...)
 }
 
 type listener struct {
@@ -72,7 +70,7 @@ func (p polls) listener(t *testing.T) *listener {
 		}
 		return dial(ctx, network, addr)
 	}
-	l.Listener = store.NewListener(cfg, p.store, slog.New(l.logs))
+	l.Listener = store.NewListener(cfg, p.store, l.logs)
 	return l
 }
 
@@ -216,17 +214,9 @@ func TestListener_whose_backend_is_terminated_connects_again_and_misses_no_vote(
 
 	rs := l.logs.all()
 	require.Len(t, rs, 1, "the loss is one log record")
-	require.Equal(t, slog.LevelError, rs[0].Level)
-	var logged error
-	rs[0].Attrs(func(a slog.Attr) bool {
-		if a.Key == "error" {
-			logged, _ = a.Value.Any().(error)
-		}
-		return true
-	})
-	require.Error(t, logged)
+	require.Equal(t, log.SeverityError, rs[0].Severity())
+	require.Error(t, rs[0].Err())
 
 	require.NoError(t, p.store.Vote(ctx, poll.ID, poll.Options[1].ID, "bob"))
 	require.Equal(t, []int64{1, 1}, receive(t, results))
 }
-
