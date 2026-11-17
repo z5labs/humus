@@ -66,5 +66,5 @@ example/http/polls/
 
 These pages build the schema and the store, the listener that reaches every
 replica, and the Site, then the pages that create a poll, vote, and show
-live results, then `Init` and `main`, and end by testing it and deploying
-it.
+live results, then `Init` and `main`. Then they test it, deploy it, and
+observe it, and end with the checklist it meets.
