@@ -15,7 +15,7 @@ import (
 func TestScriptURL_changes_with_the_scripts_content(t *testing.T) {
 	urls := make(map[string]bool)
 	for _, content := range []string{"htmx 2.0.11", "htmx 2.0.12", "htmx 2.0.12 "} {
-		u, err := build(fstest.MapFS{"htmx.min.js": {Data: []byte(content)}}, templates)
+		u, err := build(nil, fstest.MapFS{"htmx.min.js": {Data: []byte(content)}}, templates)
 		require.NoError(t, err)
 		url, err := u.scriptURL("htmx.min.js")
 		require.NoError(t, err)
@@ -26,7 +26,7 @@ func TestScriptURL_changes_with_the_scripts_content(t *testing.T) {
 }
 
 func TestScriptURL_is_an_error_for_a_name_that_isnt_a_script(t *testing.T) {
-	u, err := New()
+	u, err := New(nil)
 	require.NoError(t, err)
 	_, err = u.scriptURL("nothing.js")
 	require.ErrorContains(t, err, `"nothing.js" isn't a script`)

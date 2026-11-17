@@ -1,0 +1,6 @@
+{{define "main"}}<h1>Polls</h1>
+{{template "form" .Form}}{{end}}{{define "form"}}<form id="new-poll" method="post" action="{{.Action}}" hx-post="{{.Action}}" hx-swap="outerHTML">
+{{template "field" .Question}}
+{{range .Options}}{{template "field" .}}
+{{end}}<button type="submit">Create the poll</button>
+</form>{{end}}{{define "field"}}<p><label>{{.Label}} <input name="{{.Name}}" value="{{.Value}}" maxlength="{{.MaxLength}}"{{if .Required}} required{{end}}></label>{{with .Problem}} <span class="problem">{{.}}</span>{{end}}</p>{{end}}{{template "layout" .}}

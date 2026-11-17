@@ -1,0 +1,5 @@
+{{define "main"}}<h1>{{.Question}}</h1>
+<ul id="options">
+{{range .Options}}<li><span class="option">{{.Text}}</span> <span class="votes">{{.Votes}}</span></li>
+{{end}}</ul>
+<p><a href="{{.HomeURL}}">Create another poll</a></p>{{end}}{{template "layout" .}}

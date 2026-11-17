@@ -291,3 +291,15 @@ func TestStore_the_database_refuses_another_polls_option_and_a_second_vote(t *te
 	require.Equal(t, []int64{1, 0}, p.counts(t, poll.ID))
 	require.Equal(t, []int64{0, 0}, p.counts(t, other.ID))
 }
+
+func TestStore_a_second_vote_is_refused_before_its_option_is_checked(t *testing.T) {
+	p := newPolls(t)
+	ctx := t.Context()
+	poll := p.create(t, "Tabs or spaces?", "Tabs", "Spaces")
+	other := p.create(t, "Vim or Emacs?", "Vim", "Emacs")
+
+	require.NoError(t, p.store.Vote(ctx, poll.ID, poll.Options[0].ID, "alice"))
+	err := p.store.Vote(ctx, poll.ID, other.Options[0].ID, "alice")
+	require.ErrorIs(t, err, store.ErrAlreadyVoted)
+	require.NotErrorIs(t, err, store.ErrNotAnOption)
+}

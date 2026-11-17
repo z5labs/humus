@@ -25,6 +25,7 @@ import (
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/example/http/polls/store"
+	"github.com/z5labs/humus/example/http/polls/store/storetest"
 	"github.com/z5labs/humus/example/http/polls/ui"
 	"github.com/z5labs/humus/httpserver"
 	"github.com/z5labs/humus/httpserver/httpservertest"
@@ -32,7 +33,44 @@ import (
 	"github.com/z5labs/humus/hypermedia"
 )
 
-const csp = "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+const (
+	csp  = "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+	base = "https://polls.internal:8443"
+)
+
+func start(t *testing.T, polls ui.Store) (*http.Client, func()) {
+	t.Helper()
+	ca := humustest.NewCA(t)
+	cert := ca.Issue(t, "polls.internal")
+	h := humustest.NewHost(t)
+	p, status := httpservertest.Start(t, func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+		u, err := ui.New(polls)
+		if err != nil {
+			return nil, err
+		}
+		site, err := u.Site(s)
+		if err != nil {
+			return nil, err
+		}
+		settings := httpserver.DefaultSettings()
+		settings.Addr = "polls.internal:8443"
+		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
+		svc, err := httpserver.NewService(s, settings, site)
+		if err != nil {
+			return nil, err
+		}
+		return []humus.Service{svc}, nil
+	}, humustest.WithApp(humus.WithHost(h.Host())))
+	<-h.Listening("polls.internal:8443")
+	c := httpservertest.NewClient(h, ca.Pool())
+	return c, func() {
+		t.Helper()
+		<-p.Notified(syscall.SIGTERM)
+		p.Signal(syscall.SIGTERM)
+		st := <-status
+		require.Zero(t, st.Code(), "%v", st.Cause())
+	}
+}
 
 type script struct {
 	name string
@@ -50,30 +88,7 @@ func readScript(t *testing.T, name string) script {
 
 func TestSite_serves_each_script_at_its_content_hashed_URL_under_the_CSP(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		ca := humustest.NewCA(t)
-		cert := ca.Issue(t, "polls.internal")
-		h := humustest.NewHost(t)
-		p, status := httpservertest.Start(t, func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-			u, err := ui.New()
-			if err != nil {
-				return nil, err
-			}
-			site, err := u.Site(s)
-			if err != nil {
-				return nil, err
-			}
-			settings := httpserver.DefaultSettings()
-			settings.Addr = "polls.internal:8443"
-			settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
-			svc, err := httpserver.NewService(s, settings, site)
-			if err != nil {
-				return nil, err
-			}
-			return []humus.Service{svc}, nil
-		}, humustest.WithApp(humus.WithHost(h.Host())))
-		<-h.Listening("polls.internal:8443")
-		c := httpservertest.NewClient(h, ca.Pool())
-		const base = "https://polls.internal:8443"
+		c, stop := start(t, storetest.New())
 
 		htmx := readScript(t, "htmx.min.js")
 		sse := readScript(t, "sse.min.js")
@@ -129,15 +144,12 @@ func TestSite_serves_each_script_at_its_content_hashed_URL_under_the_CSP(t *test
 		require.Contains(t, page.body, `<meta name="htmx-config" content='{"allowEval":false,"includeIndicatorStyles":false,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"422","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>`)
 		require.NotContains(t, page.body, "<script>", "no inline script")
 
-		<-p.Notified(syscall.SIGTERM)
-		p.Signal(syscall.SIGTERM)
-		st := <-status
-		require.Zero(t, st.Code(), "%v", st.Cause())
+		stop()
 	})
 }
 
 func TestErrorPage_writes_an_HTML_page_with_each_errors_status_and_none_of_its_text(t *testing.T) {
-	u, err := ui.New()
+	u, err := ui.New(storetest.New())
 	require.NoError(t, err)
 
 	for _, tc := range []struct {
@@ -175,8 +187,19 @@ type response struct {
 
 func do(t *testing.T, c *http.Client, method, target string) response {
 	t.Helper()
-	req, err := http.NewRequestWithContext(t.Context(), method, target, nil)
+	return send(t, c, method, target, "", nil, nil)
+}
+
+func send(t *testing.T, c *http.Client, method, target, contentType string, body io.Reader, header map[string]string) response {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), method, target, body)
 	require.NoError(t, err)
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	for k, v := range header {
+		req.Header.Set(k, v)
+	}
 	resp, err := c.Do(req)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
