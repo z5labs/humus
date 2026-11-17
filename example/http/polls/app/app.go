@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -28,6 +29,8 @@ import (
 	"github.com/z5labs/humus/example/http/polls/internal/latch"
 	"github.com/z5labs/humus/example/http/polls/store"
 	"github.com/z5labs/humus/example/http/polls/ui"
+	"github.com/z5labs/humus/fault"
+	"github.com/z5labs/humus/fault/jsonscenario"
 	"github.com/z5labs/humus/health"
 	"github.com/z5labs/humus/httphealth"
 	"github.com/z5labs/humus/httpserver"
@@ -36,8 +39,24 @@ import (
 
 const loggerName = "github.com/z5labs/humus/example/http/polls"
 
+const scenarioKey = "acme.fault"
+
 func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	return initWith(ctx, s, openPostgres)
+}
+
+func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
+	codec, err := jsonscenario.New(scenarioKey)
+	if err != nil {
+		return fault.Settings{}, err
+	}
+	d := fault.DefaultSettings()
+	return config.Struct(func(r *config.Resolver) fault.Settings {
+		f := d
+		f.Decoder = codec
+		f.MaxDelay = r.Get(config.Env(s.Process.Environment, "FAULT_MAX_DELAY").Parse(time.ParseDuration).Default(d.MaxDelay).Validate(fault.CheckMaxDelay))
+		return f
+	}).Read(ctx)
 }
 
 func BuildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
@@ -123,7 +142,7 @@ func openPostgres(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (bac
 		pool.Close()
 		return nil
 	})
-	polls := store.New(pool)
+	polls := store.New(pool, s.Faults)
 	l := store.NewListener(cfg.ConnConfig.Copy(), polls, s.Telemetry.LoggerProvider.Logger(loggerName))
 	return backend{
 		store:     polls,
@@ -190,6 +209,7 @@ func (l *listener) Shutdown(ctx context.Context) error {
 type settings struct {
 	HTTP     httpserver.Settings
 	Database *pgxpool.Config
+	TrustCAs *x509.CertPool
 }
 
 type serverCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error)
@@ -202,7 +222,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 		return env(name).Parse(time.ParseDuration).Default(def).Validate(check)
 	}
 
-	return config.Struct(func(r *config.Resolver) settings {
+	read, err := config.Struct(func(r *config.Resolver) settings {
 		server := d
 		server.Addr = r.Get(env("ADDR").Validate(httpserver.CheckAddr))
 		server.TLS = &tls.Config{
@@ -223,8 +243,39 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 		return settings{
 			HTTP:     server,
 			Database: r.Get(file("DATABASE_URL_FILE").Parse(databaseURL)),
+			TrustCAs: r.Get(env("FAULT_TRUST_CA_FILE").Parse(trustCAs(s.Host.FS)).Default(nil)),
 		}
 	}).Read(ctx)
+	if err != nil {
+		return settings{}, err
+	}
+	if read.TrustCAs != nil {
+		read.HTTP.TLS.ClientAuth = tls.VerifyClientCertIfGiven
+		read.HTTP.TLS.ClientCAs = read.TrustCAs
+		read.HTTP.TrustScenario = issuedByATrustedCA
+	}
+	return read, nil
+}
+
+func issuedByATrustedCA(r *http.Request) bool {
+	return r.TLS != nil && len(r.TLS.VerifiedChains) > 0
+}
+
+func trustCAs(fsys humus.FS) func(name string) (*x509.CertPool, error) {
+	return func(name string) (*x509.CertPool, error) {
+		if name == "" {
+			return nil, nil
+		}
+		b, err := readFile(fsys)(name)
+		if err != nil {
+			return nil, err
+		}
+		roots := x509.NewCertPool()
+		if !roots.AppendCertsFromPEM(b) {
+			return nil, errors.New("no PEM certificate in the file")
+		}
+		return roots, nil
+	}
 }
 
 func holdsCertificate(fsys humus.FS) func(name string) error {

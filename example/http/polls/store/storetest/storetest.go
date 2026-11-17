@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/z5labs/humus/example/http/polls/store"
+	"github.com/z5labs/humus/fault"
 )
 
 type poll struct {
@@ -23,15 +24,35 @@ type poll struct {
 	voters   map[string]bool
 }
 
-type Store struct {
+type database struct {
 	mu     sync.Mutex
 	polls  map[uuid.UUID]*poll
 	nextID int64
 	subs   map[uuid.UUID]map[chan store.Poll]struct{}
 }
 
+type Store struct {
+	*database
+	faults fault.Injector
+}
+
 func New() *Store {
-	return &Store{polls: make(map[uuid.UUID]*poll), subs: make(map[uuid.UUID]map[chan store.Poll]struct{})}
+	return &Store{database: &database{polls: make(map[uuid.UUID]*poll), subs: make(map[uuid.UUID]map[chan store.Poll]struct{})}}
+}
+
+func (s *Store) WithFaults(faults fault.Injector) *Store {
+	return &Store{database: s.database, faults: faults}
+}
+
+func (s *Store) inject(ctx context.Context) error {
+	f := s.faults.Eval(ctx, store.Point)
+	if err := f.Wait(ctx); err != nil {
+		return fmt.Errorf("%w: %w", store.ErrUnavailable, &fault.InjectedError{Point: store.Point, Err: err})
+	}
+	if f.Abort {
+		return fmt.Errorf("%w: %w", store.ErrUnavailable, &fault.InjectedError{Point: store.Point})
+	}
+	return nil
 }
 
 func check(question string, options []string) error {
@@ -58,6 +79,9 @@ func (s *Store) CreatePoll(ctx context.Context, question string, options []strin
 	if err := check(question, options); err != nil {
 		return uuid.Nil, fmt.Errorf("creating a poll: %w", err)
 	}
+	if err := s.inject(ctx); err != nil {
+		return uuid.Nil, fmt.Errorf("creating a poll: %w", err)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p := &poll{question: question, voters: make(map[string]bool)}
@@ -71,6 +95,9 @@ func (s *Store) CreatePoll(ctx context.Context, question string, options []strin
 }
 
 func (s *Store) Poll(ctx context.Context, id uuid.UUID) (store.Poll, error) {
+	if err := s.inject(ctx); err != nil {
+		return store.Poll{}, fmt.Errorf("reading poll %s: %w", id, err)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, ok := s.polls[id]
@@ -107,7 +134,7 @@ func (s *Store) Subscribe(pollID uuid.UUID) (<-chan store.Poll, func()) {
 	}
 }
 
-func (s *Store) publish(pollID uuid.UUID) {
+func (s *database) publish(pollID uuid.UUID) {
 	for ch := range s.subs[pollID] {
 		select {
 		case <-ch:
@@ -118,6 +145,9 @@ func (s *Store) publish(pollID uuid.UUID) {
 }
 
 func (s *Store) Vote(ctx context.Context, pollID uuid.UUID, optionID int64, voter string) error {
+	if err := s.inject(ctx); err != nil {
+		return fmt.Errorf("voting for option %d of poll %s: %w", optionID, pollID, err)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	err := s.vote(pollID, optionID, voter)
@@ -128,7 +158,7 @@ func (s *Store) Vote(ctx context.Context, pollID uuid.UUID, optionID int64, vote
 	return nil
 }
 
-func (s *Store) vote(pollID uuid.UUID, optionID int64, voter string) error {
+func (s *database) vote(pollID uuid.UUID, optionID int64, voter string) error {
 	p, ok := s.polls[pollID]
 	if !ok {
 		return store.ErrNoSuchPoll

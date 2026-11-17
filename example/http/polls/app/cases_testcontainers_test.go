@@ -133,17 +133,23 @@ func TestInit_passes_the_shared_cases_on_two_replicas_against_PostgreSQL(t *test
 
 	dir := t.TempDir()
 	ca := humustest.NewCA(t)
+	trust := humustest.NewCA(t)
 	certPEM, keyPEM := pemPair(t, ca.Issue(t, "localhost", "127.0.0.1"))
 	files := map[string]string{
-		"TLS_CERT_FILE":     writeFile(t, dir, "tls.crt", certPEM),
-		"TLS_KEY_FILE":      writeFile(t, dir, "tls.key", keyPEM),
-		"DATABASE_URL_FILE": writeFile(t, dir, "database-url", []byte(databaseURL+"\n")),
+		"TLS_CERT_FILE":       writeFile(t, dir, "tls.crt", certPEM),
+		"TLS_KEY_FILE":        writeFile(t, dir, "tls.key", keyPEM),
+		"DATABASE_URL_FILE":   writeFile(t, dir, "database-url", []byte(databaseURL+"\n")),
+		"FAULT_TRUST_CA_FILE": writeFile(t, dir, "fault-ca.crt", caPEM(trust.Issue(t, "cases"))),
 	}
 
 	var protocols http.Protocols
 	protocols.SetHTTP2(true)
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{RootCAs: ca.Pool()},
+		Protocols:       &protocols,
+	}
+	trusted := &http.Transport{
+		TLSClientConfig: &tls.Config{RootCAs: ca.Pool(), Certificates: []tls.Certificate{trust.Issue(t, "cases").TLS()}},
 		Protocols:       &protocols,
 	}
 	client := &http.Client{Transport: transport, Timeout: waitLimit}
@@ -159,7 +165,7 @@ func TestInit_passes_the_shared_cases_on_two_replicas_against_PostgreSQL(t *test
 			env[name] = file
 		}
 		p, status := humustest.Start(t, Init,
-			humustest.WithApp(httpserver.Defaults(), humus.WithHost(humus.OSHost()), humus.WithTelemetry(telemetry.NoopBuilder)),
+			humustest.WithApp(httpserver.Defaults(), humus.WithHost(humus.OSHost()), humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(Faults)),
 			humustest.WithEnv(env),
 		)
 		running = append(running, replica{addr: a, p: p, status: status})
@@ -169,14 +175,19 @@ func TestInit_passes_the_shared_cases_on_two_replicas_against_PostgreSQL(t *test
 		r.waitReady(t, client)
 	}
 
-	target := cases.Target{
-		Replicas: replicas,
-		Browser: func() *http.Client {
+	browser := func(transport *http.Transport) func() *http.Client {
+		return func() *http.Client {
 			jar, err := cookiejar.New(nil)
 			require.NoError(t, err)
 			return &http.Client{Transport: transport, Jar: jar}
-		},
-		Timeout: waitLimit,
+		}
+	}
+	target := cases.Target{
+		Replicas:       replicas,
+		Browser:        browser(transport),
+		TrustedBrowser: browser(trusted),
+		ScenarioKey:    scenarioKey,
+		Timeout:        waitLimit,
 	}
 	t.Run("cases", func(t *testing.T) {
 		for _, c := range cases.Cases {
