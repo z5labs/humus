@@ -119,7 +119,7 @@ func voter(w http.ResponseWriter, r *http.Request) string {
 }
 ```
 
-A cookie whose value isn't one `rand.Text` makes is replaced:
+A cookie whose value isn't in the form `rand.Text` returns is replaced with a new one:
 
 ```go
 var (
