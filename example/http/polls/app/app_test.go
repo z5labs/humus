@@ -64,6 +64,7 @@ type fixture struct {
 	dbPassword string
 	files      map[string][]byte
 	env        map[string]string
+	telemetry  telemetry.Builder
 }
 
 func newFixture(t *testing.T) fixture {
@@ -91,13 +92,14 @@ func newFixture(t *testing.T) fixture {
 			"TLS_KEY_FILE":      "tls/tls.key",
 			"DATABASE_URL_FILE": "database/url",
 		},
+		telemetry: telemetry.NoopBuilder,
 	}
 }
 
 func (f fixture) start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error)) (*bedrocktest.Process, <-chan bedrock.ExitStatus) {
 	t.Helper()
 	return httpservertest.Start(t, init,
-		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(f.telemetry)),
 		humustest.WithEnv(f.env),
 	)
 }

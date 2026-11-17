@@ -7,10 +7,11 @@
 package main
 
 import (
+	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/example/http/polls/app"
 	"github.com/z5labs/humus/httpserver"
 )
 
 func main() {
-	httpserver.Main(app.Init)
+	httpserver.Main(app.Init, humus.WithTelemetry(app.BuildTelemetry))
 }
