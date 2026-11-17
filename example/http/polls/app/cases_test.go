@@ -25,6 +25,7 @@ var replicaAddrs = []string{addr, "polls.internal:9443"}
 func startReplicas(t *testing.T) (cases.Target, func()) {
 	t.Helper()
 	f := newFixture(t)
+	f.env["FAULT_TRUST_CA_FILE"] = "fault/ca.crt"
 	db := newFakeDatabase()
 
 	var (
@@ -45,17 +46,21 @@ func startReplicas(t *testing.T) (cases.Target, func()) {
 		replicas = append(replicas, &url.URL{Scheme: "https", Host: a})
 	}
 
-	client := httpservertest.NewClient(f.h, f.ca.Pool())
-	target := cases.Target{
-		Replicas: replicas,
-		Browser: func() *http.Client {
+	withJar := func(c *http.Client) func() *http.Client {
+		return func() *http.Client {
 			jar, err := cookiejar.New(nil)
 			require.NoError(t, err)
-			b := *client
+			b := *c
 			b.Jar = jar
 			return &b
-		},
-		Timeout: time.Minute,
+		}
+	}
+	target := cases.Target{
+		Replicas:       replicas,
+		Browser:        withJar(httpservertest.NewClient(f.h, f.ca.Pool())),
+		TrustedBrowser: withJar(withCertificate(httpservertest.NewClient(f.h, f.ca.Pool()), f.trust.Issue(t, "cases"))),
+		ScenarioKey:    scenarioKey,
+		Timeout:        time.Minute,
 	}
 	return target, func() {
 		for _, s := range running {

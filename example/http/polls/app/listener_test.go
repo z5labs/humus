@@ -25,7 +25,7 @@ func TestListener_keeps_the_Service_contract(t *testing.T) {
 		cfg.LookupFunc = func(_ context.Context, host string) ([]string, error) {
 			return []string{host}, nil
 		}
-		l := store.NewListener(cfg, store.New(nil), s.Telemetry.LoggerProvider.Logger(loggerName))
+		l := store.NewListener(cfg, store.New(nil, s.Faults), s.Telemetry.LoggerProvider.Logger(loggerName))
 		return newListener(l.Run)
 	})
 }

@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
@@ -57,9 +58,20 @@ func pemPair(t *testing.T, c *humustest.Certificate) (certPEM, keyPEM []byte) {
 	return certPEM, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key})
 }
 
+func caPEM(cert *humustest.Certificate) []byte {
+	chain := cert.TLS().Certificate
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: chain[len(chain)-1]})
+}
+
+func withCertificate(c *http.Client, cert *humustest.Certificate) *http.Client {
+	c.Transport.(*http.Transport).TLSClientConfig.Certificates = []tls.Certificate{cert.TLS()}
+	return c
+}
+
 type fixture struct {
 	h          *humustest.Host
 	ca         *humustest.CA
+	trust      *humustest.CA
 	cert       *humustest.Certificate
 	dbPassword string
 	files      map[string][]byte
@@ -70,6 +82,7 @@ type fixture struct {
 func newFixture(t *testing.T) fixture {
 	t.Helper()
 	ca := humustest.NewCA(t)
+	trust := humustest.NewCA(t)
 	cert := ca.Issue(t, "polls.internal")
 	certPEM, keyPEM := pemPair(t, cert)
 	_, otherKey := pemPair(t, ca.Issue(t, "polls.internal"))
@@ -79,10 +92,12 @@ func newFixture(t *testing.T) fixture {
 		"tls/tls.key":   keyPEM,
 		"other/tls.key": otherKey,
 		"database/url":  []byte("postgres://polls:" + password + "@" + dbHost + "/polls?sslmode=disable\n"),
+		"fault/ca.crt":  caPEM(trust.Issue(t, "cases")),
 	}
 	return fixture{
 		h:          humustest.NewHost(t, hosttest.WithFiles(files)),
 		ca:         ca,
+		trust:      trust,
 		cert:       cert,
 		dbPassword: password,
 		files:      files,
@@ -99,7 +114,7 @@ func newFixture(t *testing.T) fixture {
 func (f fixture) start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error)) (*bedrocktest.Process, <-chan bedrock.ExitStatus) {
 	t.Helper()
 	return httpservertest.Start(t, init,
-		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(f.telemetry)),
+		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(f.telemetry), humus.WithFaults(Faults)),
 		humustest.WithEnv(f.env),
 	)
 }
@@ -127,9 +142,9 @@ func newFakeDatabase() *fakeDatabase {
 	return &fakeDatabase{Store: storetest.New(), listenerUp: true}
 }
 
-func (db *fakeDatabase) open(context.Context, *humus.Setup, *pgxpool.Config) (backend, error) {
+func (db *fakeDatabase) open(_ context.Context, s *humus.Setup, _ *pgxpool.Config) (backend, error) {
 	return backend{
-		store:     db,
+		store:     fakeStore{db: db, Store: db.WithFaults(s.Faults)},
 		results:   db.Store,
 		listen:    db.listen,
 		reached:   db.ping,
@@ -141,15 +156,20 @@ func (db *fakeDatabase) init(ctx context.Context, s *humus.Setup) ([]humus.Servi
 	return initWith(ctx, s, db.open)
 }
 
-func (db *fakeDatabase) Vote(ctx context.Context, pollID uuid.UUID, optionID int64, voter string) error {
-	db.mu.Lock()
-	holding, held := db.holding, db.held
-	db.mu.Unlock()
+type fakeStore struct {
+	db *fakeDatabase
+	*storetest.Store
+}
+
+func (s fakeStore) Vote(ctx context.Context, pollID uuid.UUID, optionID int64, voter string) error {
+	s.db.mu.Lock()
+	holding, held := s.db.holding, s.db.held
+	s.db.mu.Unlock()
 	if holding != nil {
 		close(held)
 		<-holding
 	}
-	return db.Store.Vote(ctx, pollID, optionID, voter)
+	return s.Store.Vote(ctx, pollID, optionID, voter)
 }
 
 func (db *fakeDatabase) hold() (held <-chan struct{}, release func()) {
@@ -444,6 +464,11 @@ func TestInit_with_a_bad_setting_exits_78_naming_it(t *testing.T) {
 		{name: "IDLE_TIMEOUT", value: "soon", cause: "invalid duration"},
 		{name: "DATABASE_URL_FILE", value: "missing.url", cause: "missing.url"},
 		{name: "DATABASE_URL_FILE", value: "bad.url", file: "postgres://polls:" + rand.Text() + "@db.internal:port/polls", cause: "must hold a PostgreSQL URL"},
+		{name: "FAULT_TRUST_CA_FILE", value: "missing.crt", cause: "missing.crt"},
+		{name: "FAULT_TRUST_CA_FILE", value: "tls/tls.key", cause: "no PEM certificate in the file"},
+		{name: "FAULT_MAX_DELAY", value: "0s", cause: "must be positive"},
+		{name: "FAULT_MAX_DELAY", value: "-1s", cause: "must be positive"},
+		{name: "FAULT_MAX_DELAY", value: "soon", cause: "invalid duration"},
 	} {
 		t.Run(tc.name+"="+tc.value, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
@@ -468,9 +493,10 @@ func TestInit_with_a_bad_setting_exits_78_naming_it(t *testing.T) {
 
 func TestInit_reads_its_files_only_through_the_Host(t *testing.T) {
 	for name, file := range map[string]string{
-		"TLS_CERT_FILE":     "tls/tls.crt",
-		"TLS_KEY_FILE":      "tls/tls.key",
-		"DATABASE_URL_FILE": "database/url",
+		"TLS_CERT_FILE":       "tls/tls.crt",
+		"TLS_KEY_FILE":        "tls/tls.key",
+		"DATABASE_URL_FILE":   "database/url",
+		"FAULT_TRUST_CA_FILE": "fault/ca.crt",
 	} {
 		t.Run(name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {

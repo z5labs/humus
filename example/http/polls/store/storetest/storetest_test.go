@@ -7,14 +7,21 @@ package storetest_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/fit"
+	"go.opentelemetry.io/otel/baggage"
 
 	"github.com/z5labs/humus/example/http/polls/store"
 	"github.com/z5labs/humus/example/http/polls/store/storetest"
+	"github.com/z5labs/humus/fault"
+	"github.com/z5labs/humus/fault/jsonscenario"
 )
 
 func create(t *testing.T, s *storetest.Store, question string, options ...string) store.Poll {
@@ -261,4 +268,72 @@ func TestStore_Subscribe_stops_at_unsubscribe(t *testing.T) {
 	_, open := <-results
 	require.False(t, open, "unsubscribing closes the channel, and nothing is sent on it after")
 	require.Equal(t, int64(1), (<-staying).Options[0].Votes, "another subscriber still gets the results")
+}
+
+func rehearsing(t *testing.T, f fit.Fault) (context.Context, fault.Injector) {
+	t.Helper()
+	codec, err := jsonscenario.New("acme.fault")
+	require.NoError(t, err)
+	d := fault.DefaultSettings()
+	d.Decoder = codec
+	faults, err := fault.New(d)
+	require.NoError(t, err)
+	b, err := codec.Encode(baggage.Baggage{}, fit.Scenario{Rules: []fit.Rule{{Point: store.Point, Fault: f}}})
+	require.NoError(t, err)
+	return baggage.ContextWithBaggage(t.Context(), b), faults
+}
+
+func TestStore_WithFaults_shares_the_polls_and_fails_every_query_a_scenario_aborts_as_ErrUnavailable(t *testing.T) {
+	s := storetest.New()
+	poll := create(t, s, "Tabs or spaces?", "Tabs", "Spaces")
+	ctx, faults := rehearsing(t, fit.Fault{Abort: true})
+	faulty := s.WithFaults(faults)
+
+	got, err := faulty.Poll(t.Context(), poll.ID)
+	require.NoError(t, err, "a request without a scenario reads the same polls")
+	require.Equal(t, poll, got)
+
+	_, err = faulty.CreatePoll(ctx, "Vim or Emacs?", []string{"Vim", "Emacs"})
+	requireInjected(t, err)
+	_, err = faulty.Poll(ctx, poll.ID)
+	requireInjected(t, err)
+	err = faulty.Vote(ctx, poll.ID, poll.Options[0].ID, "alice")
+	requireInjected(t, err)
+	require.Equal(t, []int64{0, 0}, counts(t, s, poll.ID), "an aborted vote counts nothing")
+
+	_, err = s.Poll(ctx, poll.ID)
+	require.NoError(t, err, "the Store it came from has no faults")
+}
+
+func requireInjected(t *testing.T, err error) {
+	t.Helper()
+	require.ErrorIs(t, err, store.ErrUnavailable)
+	require.ErrorIs(t, err, fit.ErrInjected)
+	injected, ok := errors.AsType[*fault.InjectedError](err)
+	require.True(t, ok, "%v", err)
+	require.Equal(t, store.Point, injected.Point)
+}
+
+func TestStore_WithFaults_waits_out_a_delay_before_every_query(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := storetest.New()
+		poll := create(t, s, "Tabs or spaces?", "Tabs", "Spaces")
+		ctx, faults := rehearsing(t, fit.Fault{Delay: 2 * time.Second})
+		faulty := s.WithFaults(faults)
+
+		start := time.Now()
+		_, err := faulty.Poll(ctx, poll.ID)
+		require.NoError(t, err)
+		require.NoError(t, faulty.Vote(ctx, poll.ID, poll.Options[1].ID, "alice"))
+		_, err = faulty.CreatePoll(ctx, "Vim or Emacs?", []string{"Vim", "Emacs"})
+		require.NoError(t, err)
+		require.Equal(t, 6*time.Second, time.Since(start))
+		require.Equal(t, []int64{0, 1}, counts(t, s, poll.ID))
+
+		cut, cancel := context.WithTimeout(ctx, time.Second)
+		defer cancel()
+		_, err = faulty.Poll(cut, poll.ID)
+		require.ErrorIs(t, err, store.ErrUnavailable)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	})
 }

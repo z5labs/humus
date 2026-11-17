@@ -26,6 +26,7 @@ import (
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/example/http/polls/store"
+	"github.com/z5labs/humus/fault"
 )
 
 const postgresImage = "docker.io/library/postgres:18.0"
@@ -99,7 +100,7 @@ func newPolls(t *testing.T) polls {
 	_, err = pool.Exec(ctx, string(schema))
 	require.NoError(t, err)
 
-	return polls{pool: pool, store: store.New(pool)}
+	return polls{pool: pool, store: store.New(pool, fault.Injector{})}
 }
 
 func (p polls) create(t *testing.T, question string, options ...string) store.Poll {

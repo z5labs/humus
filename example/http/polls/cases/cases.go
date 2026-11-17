@@ -28,6 +28,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/fit"
+	"go.opentelemetry.io/otel/baggage"
+
+	"github.com/z5labs/humus/fault/jsonscenario"
 )
 
 const (
@@ -44,6 +48,9 @@ const (
 	resultsEvent  = "results"
 	newPollForm   = "new-poll"
 	resultsTarget = "results"
+	unreachable   = "The polls can't be reached right now. Try again in a moment."
+	databasePoint = "postgresql:polls"
+	slowDatabase  = 2 * time.Second
 )
 
 var (
@@ -61,9 +68,11 @@ var (
 )
 
 type Target struct {
-	Replicas []*url.URL
-	Browser  func() *http.Client
-	Timeout  time.Duration
+	Replicas       []*url.URL
+	Browser        func() *http.Client
+	TrustedBrowser func() *http.Client
+	ScenarioKey    string
+	Timeout        time.Duration
 }
 
 type Case struct {
@@ -79,6 +88,9 @@ var Cases = []Case{
 	{Name: "NotFoundAndWrongMethods", Run: notFoundAndWrongMethods},
 	{Name: "EveryReplica", Run: everyReplica},
 	{Name: "Headers", Run: headers},
+	{Name: "TheDatabaseDown", Run: theDatabaseDown},
+	{Name: "ASlowDatabase", Run: aSlowDatabase},
+	{Name: "AnUntrustedScenario", Run: anUntrustedScenario},
 }
 
 func aPollsLife(t testing.TB, target Target) {
@@ -371,6 +383,59 @@ func headers(t testing.TB, target Target) {
 	}
 }
 
+func theDatabaseDown(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	p := newBrowser(t, target, 0).createPoll(ctx, t, "Tabs", "Spaces")
+	b := newTrustedBrowser(t, target, last(target))
+	seen := b.open(ctx, t, p)
+
+	down := b.rehearsing(t, abort(databasePoint))
+	r := down.send(ctx, t, http.MethodPost, p.votes(), url.Values{"option": {seen.option(t, "Tabs")}}, down.fromHTMX(p.path, resultsTarget))
+	r.errorPage(t, http.StatusServiceUnavailable, "Service Unavailable", unreachable)
+	require.NotContains(t, r.body, counted)
+	require.Equal(t, tally("Tabs=0", "Spaces=0"), b.open(ctx, t, p).options, "a vote the database didn't take counts nothing")
+
+	voted := b.vote(ctx, t, p, seen, "Tabs")
+	voted.html(t, http.StatusOK)
+	require.Equal(t, counted, voted.note)
+	require.Equal(t, tally("Tabs=1", "Spaces=0"), voted.options)
+}
+
+func aSlowDatabase(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	p := newBrowser(t, target, 0).createPoll(ctx, t, "Tabs", "Spaces")
+	b := newTrustedBrowser(t, target, 0)
+	seen := b.open(ctx, t, p)
+
+	sent := time.Now()
+	voted := b.rehearsing(t, delay(databasePoint, slowDatabase)).vote(ctx, t, p, seen, "Spaces")
+	require.GreaterOrEqual(t, time.Since(sent), slowDatabase, "the vote waits out the slow database")
+	voted.html(t, http.StatusOK)
+	require.Equal(t, counted, voted.note)
+	require.Equal(t, tally("Tabs=0", "Spaces=1"), voted.options)
+	require.Equal(t, tally("Tabs=0", "Spaces=1"), b.open(ctx, t, p).options)
+}
+
+func anUntrustedScenario(t testing.TB, target Target) {
+	ctx := bounded(t, target)
+	p := newBrowser(t, target, 0).createPoll(ctx, t, "Tabs", "Spaces")
+	b := newBrowser(t, target, last(target))
+	seen := b.open(ctx, t, p)
+
+	voted := b.rehearsing(t, abort(databasePoint)).vote(ctx, t, p, seen, "Tabs")
+	voted.html(t, http.StatusOK)
+	require.Equal(t, counted, voted.note, "a browser without the cases' certificate can't fail the database")
+	require.Equal(t, tally("Tabs=1", "Spaces=0"), voted.options)
+}
+
+func abort(point string) fit.Rule {
+	return fit.Rule{Point: point, Fault: fit.Fault{Abort: true}}
+}
+
+func delay(point string, d time.Duration) fit.Rule {
+	return fit.Rule{Point: point, Fault: fit.Fault{Delay: d}}
+}
+
 type count struct {
 	option string
 	votes  int64
@@ -412,19 +477,42 @@ func (p poll) votes() string { return p.path + "/votes" }
 func (p poll) feed() string { return p.path + "/feed" }
 
 type browser struct {
-	client  *http.Client
-	replica *url.URL
+	client   *http.Client
+	replica  *url.URL
+	scenario string
+	key      string
 }
 
 func newBrowser(t testing.TB, target Target, replica int) browser {
 	t.Helper()
+	return openBrowser(t, target, replica, "Target.Browser", target.Browser)
+}
+
+func newTrustedBrowser(t testing.TB, target Target, replica int) browser {
+	t.Helper()
+	return openBrowser(t, target, replica, "Target.TrustedBrowser", target.TrustedBrowser)
+}
+
+func openBrowser(t testing.TB, target Target, replica int, name string, newClient func() *http.Client) browser {
+	t.Helper()
 	require.GreaterOrEqual(t, len(target.Replicas), 2, "Target.Replicas")
 	require.NotNil(t, target.Replicas[replica], "Target.Replicas[%d]", replica)
-	require.NotNil(t, target.Browser, "Target.Browser")
-	c := target.Browser()
-	require.NotNil(t, c, "Target.Browser()")
-	require.NotNil(t, c.Jar, "Target.Browser()'s cookie jar")
-	return browser{client: c, replica: target.Replicas[replica]}
+	require.NotNil(t, newClient, name)
+	c := newClient()
+	require.NotNil(t, c, name+"()")
+	require.NotNil(t, c.Jar, name+"()'s cookie jar")
+	return browser{client: c, replica: target.Replicas[replica], key: target.ScenarioKey}
+}
+
+func (b browser) rehearsing(t testing.TB, rules ...fit.Rule) browser {
+	t.Helper()
+	require.NotEmpty(t, b.key, "Target.ScenarioKey")
+	codec, err := jsonscenario.New(b.key)
+	require.NoError(t, err, "Target.ScenarioKey")
+	bag, err := codec.Encode(baggage.Baggage{}, fit.Scenario{Rules: rules})
+	require.NoError(t, err)
+	b.scenario = bag.String()
+	return b
 }
 
 func (b browser) origin() string {
@@ -538,6 +626,9 @@ func (b browser) do(ctx context.Context, method, path string, form url.Values, h
 	}
 	for k, v := range header {
 		req.Header.Set(k, v)
+	}
+	if b.scenario != "" {
+		req.Header.Set("Baggage", b.scenario)
 	}
 	resp, err := b.client.Do(req)
 	if err != nil {

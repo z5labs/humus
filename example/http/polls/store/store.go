@@ -15,6 +15,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/z5labs/humus/fault"
 )
 
 var (
@@ -24,6 +26,8 @@ var (
 	ErrInvalidPoll  = errors.New("poll breaks its rules")
 	ErrUnavailable  = errors.New("database unavailable")
 )
+
+const Point = "postgresql:polls"
 
 const (
 	uniqueViolation     = "23505"
@@ -45,11 +49,23 @@ type Poll struct {
 }
 
 type Store struct {
-	pool *pgxpool.Pool
+	pool   *pgxpool.Pool
+	faults fault.Injector
 }
 
-func New(pool *pgxpool.Pool) *Store {
-	return &Store{pool: pool}
+func New(pool *pgxpool.Pool, faults fault.Injector) *Store {
+	return &Store{pool: pool, faults: faults}
+}
+
+func inject(ctx context.Context, faults fault.Injector) error {
+	f := faults.Eval(ctx, Point)
+	if err := f.Wait(ctx); err != nil {
+		return fmt.Errorf("%w: %w", ErrUnavailable, &fault.InjectedError{Point: Point, Err: err})
+	}
+	if f.Abort {
+		return fmt.Errorf("%w: %w", ErrUnavailable, &fault.InjectedError{Point: Point})
+	}
+	return nil
 }
 
 func check(question string, options []string) error {
@@ -84,6 +100,9 @@ func (s *Store) CreatePoll(ctx context.Context, question string, options []strin
 	if err := check(question, options); err != nil {
 		return uuid.Nil, fmt.Errorf("creating a poll: %w", err)
 	}
+	if err := inject(ctx, s.faults); err != nil {
+		return uuid.Nil, fmt.Errorf("creating a poll: %w", err)
+	}
 	var id uuid.UUID
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `INSERT INTO polls (question) VALUES ($1) RETURNING id`, question).Scan(&id)
@@ -104,6 +123,9 @@ func (s *Store) CreatePoll(ctx context.Context, question string, options []strin
 }
 
 func (s *Store) Poll(ctx context.Context, id uuid.UUID) (Poll, error) {
+	if err := inject(ctx, s.faults); err != nil {
+		return Poll{}, fmt.Errorf("reading poll %s: %w", id, err)
+	}
 	p := Poll{ID: id}
 	rows, err := s.pool.Query(ctx, `
 		SELECT p.question, o.id, o.text, count(v.voter)
@@ -133,6 +155,9 @@ func (s *Store) Poll(ctx context.Context, id uuid.UUID) (Poll, error) {
 }
 
 func (s *Store) Vote(ctx context.Context, pollID uuid.UUID, optionID int64, voter string) error {
+	if err := inject(ctx, s.faults); err != nil {
+		return fmt.Errorf("voting for option %d of poll %s: %w", optionID, pollID, err)
+	}
 	_, err := s.pool.Exec(ctx,
 		`INSERT INTO votes (poll_id, option_id, voter) VALUES ($1, $2, $3)`,
 		pollID, optionID, voter,
