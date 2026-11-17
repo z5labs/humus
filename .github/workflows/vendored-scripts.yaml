@@ -1,20 +1,22 @@
 name: Vendored scripts
 
 # example/http/inlineedit vendors htmx, htmx-ext-sse and Datastar, and
+# example/http/polls its own copies of htmx and htmx-ext-sse, and each
 # declares each one's version in its vendored_test.go. Renovate bumps those
-# versions through the customManagers rule in renovate.json, but it can only
-# rewrite the version, not download the file the new version names. So when a
-# pull request changes that declaration, the download job downloads each
-# script again with the test's -update flag, and the commit job commits the
-# files to the pull request's branch. The bump brings its files, and main
-# never holds one version's file under another version. Without that commit,
-# the test fails the pull request's checks, naming the file.
+# versions through the customManagers rule in renovate.json, every copy of a
+# script in one pull request, but it can only rewrite the version, not
+# download the file the new version names. So when a pull request changes a
+# declaration, the download job downloads each script again with each test's
+# -update flag, and the commit job commits the files to the pull request's
+# branch. The bump brings its files, and main never holds one version's file
+# under another version. Without that commit, the test fails the pull
+# request's checks, naming the file.
 #
 # The download job runs the pull request's code, and a Renovate pull request
 # can bring new versions of the Go modules that code compiles, so it gets no
 # secrets and a read-only token. It hands the commit job nothing but the
 # files it changed, as an artifact. The commit job checks out nothing and
-# runs no code from the pull request. It accepts only files in the two
+# runs no code from the pull request. It accepts only files in the three
 # static directories the scripts are vendored to.
 #
 # The commit job commits with the backlog App's installation token, not
@@ -37,6 +39,7 @@ on:
       - main
     paths:
       - example/http/inlineedit/vendored_test.go
+      - example/http/polls/vendored_test.go
       - .github/workflows/vendored-scripts.yaml
 
 concurrency:
@@ -66,14 +69,16 @@ jobs:
           cache: false
 
       - name: Download each script at its version
-        run: go -C example/http/inlineedit test -count=1 -run '^TestVendored_scripts_are_their_versions_files$' . -update
+        run: |
+          go -C example/http/inlineedit test -count=1 -run '^TestVendored_scripts_are_their_versions_files$' . -update
+          go -C example/http/polls test -count=1 -run '^TestVendored_scripts_are_their_versions_files$' . -update
 
       - name: Collect the changed scripts
         id: diff
         run: |
           out="$RUNNER_TEMP/vendored"
           mkdir -p "$out"
-          git diff --name-only -- example/http/inlineedit/htmxui/static example/http/inlineedit/datastarui/static > "$RUNNER_TEMP/changed.txt"
+          git diff --name-only -- example/http/inlineedit/htmxui/static example/http/inlineedit/datastarui/static example/http/polls/ui/static > "$RUNNER_TEMP/changed.txt"
           cat "$RUNNER_TEMP/changed.txt"
           while read -r file; do
             mkdir -p "$out/$(dirname "$file")"
@@ -119,7 +124,7 @@ jobs:
           entries='[]'
           while IFS= read -r -d '' file; do
             file="${file#./}"
-            if ! [[ $file =~ ^example/http/inlineedit/(htmxui|datastarui)/static/[^/]+$ ]]; then
+            if ! [[ $file =~ ^example/http/(inlineedit/(htmxui|datastarui)|polls/ui)/static/[^/]+$ ]]; then
               echo "::error title=Not a vendored script::the download job changed $file, which isn't in a vendored scripts directory"
               exit 1
             fi
@@ -133,7 +138,7 @@ jobs:
 
           read -r commit verified reason < <(
             gh api "repos/$REPO/git/commits" \
-              -f message="chore(example): download inlineedit's vendored scripts at their versions" \
+              -f message="chore(example): download the examples' vendored scripts at their versions" \
               -f tree="$tree" -f "parents[]=$HEAD" \
               --jq '[.sha, .verification.verified, .verification.reason] | @tsv'
           )
