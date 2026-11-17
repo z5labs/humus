@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - serviceaccount.yaml
+  - deployment.yaml
+  - service.yaml
+  - poddisruptionbudget.yaml
+configMapGenerator:
+  - name: polls
+    literals:
+      - ADDR=:8443
+      - TLS_CERT_FILE=/etc/polls/tls/tls.crt
+      - TLS_KEY_FILE=/etc/polls/tls/tls.key
+      - DATABASE_URL_FILE=/etc/polls/database/url
+      - OTEL_SERVICE_NAME=polls
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
