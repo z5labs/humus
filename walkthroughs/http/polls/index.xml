@@ -232,4 +232,106 @@ its directory:&lt;/p&gt;
 &lt;div class="highlight"&gt;&lt;pre tabindex="0" class="chroma"&gt;&lt;code class="language-sh" data-lang="sh"&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;docker build --file example/http/polls/Dockerfile --tag polls .
 &lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;h2 id="the-kustomization"&gt;The kustomization&lt;/h2&gt;
 &lt;p&gt;&lt;code&gt;deploy/base&lt;/code&gt; holds a ServiceAccount, the Deployment, its Service and its
-disruption budget, and the service&amp;rsquo;s settings:&lt;/p&gt;</description></item></channel></rss>
+disruption budget, and the service&amp;rsquo;s settings:&lt;/p&gt;</description></item><item><title>Observing</title><link>https://z5labs.github.io/humus/walkthroughs/http/polls/observing/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/http/polls/observing/</guid><description>&lt;h2 id="opening-grafana"&gt;Opening Grafana&lt;/h2&gt;
+&lt;p&gt;&lt;code&gt;up.sh&lt;/code&gt; generates Grafana&amp;rsquo;s admin password into the &lt;code&gt;grafana-admin&lt;/code&gt; Secret.
+Read it, then forward Grafana&amp;rsquo;s port:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre tabindex="0" class="chroma"&gt;&lt;code class="language-sh" data-lang="sh"&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;kubectl --context kind-kind --namespace polls get secret grafana-admin &lt;span class="se"&gt;\
+&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="se"&gt;&lt;/span&gt; --output &lt;span class="nv"&gt;jsonpath&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;{.data.password}&amp;#39;&lt;/span&gt; &lt;span class="p"&gt;|&lt;/span&gt; base64 --decode
+&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;kubectl --context kind-kind --namespace polls port-forward service/grafana 3000:3000
+&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;p&gt;Sign in at &lt;a href="http://localhost:3000"&gt;http://localhost:3000&lt;/a&gt; as &lt;code&gt;admin&lt;/code&gt;.&lt;/p&gt;
+&lt;h2 id="a-votes-trace"&gt;A vote&amp;rsquo;s trace&lt;/h2&gt;
+&lt;p&gt;Vote on a poll, as
+&lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/deploying/#trying-it-in-a-browser"&gt;Trying it in a browser&lt;/a&gt;
+shows. Each server span is named after its method and its route, so in
+&lt;strong&gt;Explore&lt;/strong&gt;, with &lt;strong&gt;Tempo&lt;/strong&gt;, find the votes by their name:&lt;/p&gt;</description></item><item><title>Production-ready</title><link>https://z5labs.github.io/humus/walkthroughs/http/polls/production-ready/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/walkthroughs/http/polls/production-ready/</guid><description>&lt;p&gt;The polls service meets each item. Check your own hypermedia UI against it:&lt;/p&gt;
+&lt;table&gt;
+ &lt;thead&gt;
+ &lt;tr&gt;
+ &lt;th&gt;Item&lt;/th&gt;
+ &lt;th&gt;How&lt;/th&gt;
+ &lt;th&gt;Where&lt;/th&gt;
+ &lt;/tr&gt;
+ &lt;/thead&gt;
+ &lt;tbody&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Every setting sourced and checked; a bad one exits 78, naming its variable&lt;/td&gt;
+ &lt;td&gt;&lt;code&gt;config.Struct&lt;/code&gt; and the packages&amp;rsquo; checks, in &lt;code&gt;readSettings&lt;/code&gt;&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/init/#the-settings"&gt;The settings&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/init/#every-variable-it-reads"&gt;Every variable it reads&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;No secret in the environment, the logs or the spans&lt;/td&gt;
+ &lt;td&gt;the database URL and the certificate&amp;rsquo;s key are files, read through &lt;code&gt;s.Host.FS&lt;/code&gt;. No voter cookie or database password is recorded, which a test of the App checks&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/init/#the-secrets-and-certificates-as-files"&gt;The secrets and certificates, as files&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/observing/#its-log-records"&gt;Its log records&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Certificates renewed without a restart&lt;/td&gt;
+ &lt;td&gt;&lt;code&gt;internal/certfile&lt;/code&gt;, which reads the files again when they change, so a renewed Secret needs no restart. A test of the App renews the certificate under a running server&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/init/#the-certificate-read-again-when-renewed"&gt;The certificate, read again when renewed&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Two replicas&lt;/td&gt;
+ &lt;td&gt;a PodDisruptionBudget of &lt;code&gt;minAvailable: 1&lt;/code&gt;, and a rolling update of &lt;code&gt;maxUnavailable: 0&lt;/code&gt;&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/deploying/#the-deployment"&gt;The Deployment&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/deploying/#the-disruption-budget"&gt;The disruption budget&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Ready only once it has reached PostgreSQL and its listener has listened, and still ready through an outage&lt;/td&gt;
+ &lt;td&gt;the latching monitors, on the probes beside the Site&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/init/#readiness"&gt;Readiness&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/deploying/#the-probes"&gt;The probes&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;A rollout loses no request&lt;/td&gt;
+ &lt;td&gt;&lt;code&gt;httpserver.Main&lt;/code&gt;&amp;rsquo;s 5s drain, and a &lt;code&gt;terminationGracePeriodSeconds&lt;/code&gt; above the drain, the grace period and the telemetry&amp;rsquo;s shutdown&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/deploying/#the-drain"&gt;The drain&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Least privilege&lt;/td&gt;
+ &lt;td&gt;the service&amp;rsquo;s role only reads and inserts, so it changes no schema and no vote. A non-root, read-only container. No service account token mounted&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/schema/#the-roles"&gt;The roles&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/deploying/#the-kustomization"&gt;The kustomization&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/deploying/#the-deployment"&gt;The Deployment&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Observable&lt;/td&gt;
+ &lt;td&gt;traces, logs and metrics over OTLP, the alerts in &lt;code&gt;deploy/alerts.yaml&lt;/code&gt;, &lt;code&gt;deploy/dashboard.json&lt;/code&gt;, and alerts on the Deployment from the Collector&amp;rsquo;s Kubernetes cluster receiver&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/observing/#a-votes-trace"&gt;A vote&amp;rsquo;s trace&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/observing/#its-log-records"&gt;Its log records&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/observing/#the-metrics"&gt;The metrics&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/observing/#the-alerts"&gt;The alerts&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/observing/#the-dashboard"&gt;The dashboard&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Failures say why&lt;/td&gt;
+ &lt;td&gt;an error page for each status: a 503 for a database that is down, a 404, a 409 for a second vote, and a 422 that shows each problem in place&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/site/#the-error-page"&gt;The error page&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/creating/#the-422"&gt;The 422&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/voting/#one-vote-per-browser"&gt;One vote per browser&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Failures are rehearsed&lt;/td&gt;
+ &lt;td&gt;the failure injection cases on &lt;code&gt;postgresql:polls&lt;/code&gt;, in CI, and against an end user&amp;rsquo;s staging through its own &lt;code&gt;Target&lt;/code&gt;&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/schema/#the-injection-point"&gt;The injection point&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/testing/#the-failure-injection-cases"&gt;The failure injection cases&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Safe by default&lt;/td&gt;
+ &lt;td&gt;&lt;code&gt;FAULT_TRUST_CA_FILE&lt;/code&gt; empty, so no scenario is trusted&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/init/#trustscenario"&gt;&lt;code&gt;TrustScenario&lt;/code&gt;&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;One vote per browser, kept by the database&lt;/td&gt;
+ &lt;td&gt;a &lt;code&gt;__Host-&lt;/code&gt; voter cookie, and a vote&amp;rsquo;s primary key of its poll and its voter, so two votes sent at once count once&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/schema/#the-schema"&gt;The schema&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/schema/#voting"&gt;Voting&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/voting/#the-voter-cookie"&gt;The voter cookie&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Cross-site votes refused&lt;/td&gt;
+ &lt;td&gt;&lt;code&gt;http.CrossOriginProtection&lt;/code&gt; around the Site, answered by the 403 page, and every vote a POST&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/voting/#cross-origin-requests"&gt;Cross-origin requests&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Scripts from the service&amp;rsquo;s own origin only, under the CSP&lt;/td&gt;
+ &lt;td&gt;htmx and its SSE extension vendored, at content-hashed URLs, and &lt;code&gt;script-src 'self'&lt;/code&gt; with nothing inline. The browser cases check that no page reports a CSP violation&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/site/#the-scripts"&gt;The scripts&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/site/#the-site-and-its-csp"&gt;The Site and its CSP&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/testing/#the-browser-cases-on-kind"&gt;The browser cases, on kind&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;Results on every replica&lt;/td&gt;
+ &lt;td&gt;a trigger that notifies on the vote&amp;rsquo;s commit, and a listener on each replica that hands the results to its feeds&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/replicas/#the-notification"&gt;The notification&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/replicas/#the-listener"&gt;The listener&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/testing/#the-shared-cases"&gt;The shared cases&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;tr&gt;
+ &lt;td&gt;An open page that keeps updating through a rollout, which exits 0&lt;/td&gt;
+ &lt;td&gt;each open feed ends cleanly as &lt;code&gt;Shutdown&lt;/code&gt; begins, and htmx connects it again to a replica that is still serving. Each replica exits 0 on SIGTERM&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/live-results/#at-shutdown"&gt;At Shutdown&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/testing/#inits-unit-tests"&gt;Init&amp;rsquo;s unit tests&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/testing/#the-browser-cases-on-kind"&gt;The browser cases, on kind&lt;/a&gt;&lt;/td&gt;
+ &lt;/tr&gt;
+ &lt;/tbody&gt;
+&lt;/table&gt;</description></item></channel></rss>

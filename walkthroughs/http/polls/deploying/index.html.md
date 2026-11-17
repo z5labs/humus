@@ -376,4 +376,4 @@ kubectl --context kind-kind --namespace polls port-forward service/polls 8443:84
 Open `https://localhost:8443/`, create a poll, and open its page in a
 second window. A vote in one shows in the other.
 
-Next: [Wallet](/humus/walkthroughs/grpc/wallet/)
+Next: [Observing](/humus/walkthroughs/http/polls/observing/)
