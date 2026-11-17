@@ -1,5 +1,11 @@
 {{define "main"}}<h1>{{.Question}}</h1>
+{{template "results" .Results}}
+<p><a href="{{.HomeURL}}">Create another poll</a></p>{{end}}{{define "results"}}<div id="results">
 <ul id="options">
 {{range .Options}}<li><span class="option">{{.Text}}</span> <span class="votes">{{.Votes}}</span></li>
 {{end}}</ul>
-<p><a href="{{.HomeURL}}">Create another poll</a></p>{{end}}{{template "layout" .}}
+{{with .Note}}<p class="note">{{.}}</p>
+{{end}}{{with .Action}}<form method="post" action="{{.}}" hx-post="{{.}}" hx-target="#results" hx-swap="outerHTML">
+{{range $.Options}}<button type="submit" name="option" value="{{.ID}}">{{.Text}}</button>
+{{end}}</form>
+{{end}}</div>{{end}}{{template "layout" .}}
