@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: polls
+  labels:
+    app.kubernetes.io/name: polls
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: polls
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: polls
+    spec:
+      serviceAccountName: polls
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: polls
+          image: polls
+          command: ["/polls"]
+          envFrom:
+            - configMapRef:
+                name: polls
+          ports:
+            - name: https
+              containerPort: 8443
+          startupProbe:
+            httpGet:
+              path: /health/liveness
+              port: https
+              scheme: HTTPS
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /health/liveness
+              port: https
+              scheme: HTTPS
+          readinessProbe:
+            httpGet:
+              path: /health/readiness
+              port: https
+              scheme: HTTPS
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tls
+              mountPath: /etc/polls/tls
+              readOnly: true
+            - name: database
+              mountPath: /etc/polls/database
+              readOnly: true
+            - name: postgres-ca
+              mountPath: /etc/polls/postgres-ca
+              readOnly: true
+      volumes:
+        - name: tls
+          secret:
+            secretName: polls-tls
+            defaultMode: 0440
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: database
+          secret:
+            secretName: polls-database
+            defaultMode: 0440
+            items:
+              - key: url
+                path: url
+        - name: postgres-ca
+          secret:
+            secretName: polls-postgres-ca
+            defaultMode: 0440
+            items:
+              - key: ca.crt
+                path: ca.crt
