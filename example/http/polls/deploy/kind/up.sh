@@ -15,6 +15,7 @@ fi
 
 postgres_password=$(openssl rand -hex 24)
 polls_password=$(openssl rand -hex 24)
+grafana_password=$(openssl rand -hex 24)
 
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 30 \
   -subj "/CN=polls kind CA" \
@@ -48,6 +49,7 @@ issue cases cases clientAuth
 
 printf 'postgres://polls:%s@postgres:5432/polls?sslmode=verify-full&sslrootcert=/etc/polls/postgres-ca/ca.crt' "$polls_password" >"$tmp/polls-url"
 printf '%s' "$postgres_password" >"$tmp/postgres-password"
+printf '%s' "$grafana_password" >"$tmp/grafana-password"
 openssl x509 -in "$tmp/ca.crt" -noout -pubkey | openssl pkey -pubin -outform DER | openssl dgst -sha256 -binary | openssl base64 -A >"$tmp/ca-spki"
 
 k() {
@@ -81,6 +83,8 @@ tls() {
   tls postgres-tls postgres
   echo ---
   kubectl create configmap headless-shell --namespace "$namespace" --dry-run=client -o yaml --from-file=ca-spki="$tmp/ca-spki"
+  echo ---
+  secret grafana-admin --from-literal=username=admin --from-file=password="$tmp/grafana-password"
 } >"$tmp/polls.yaml"
 
 kind load docker-image polls --name "$cluster"
@@ -108,6 +112,7 @@ GRANT SELECT, INSERT ON polls, options, votes TO polls;
 SQL
 } | k exec -i deployment/postgres -- psql -v ON_ERROR_STOP=1 -U postgres -d postgres
 
-k rollout restart deployment/polls deployment/headless-shell
-k rollout status deployment/polls --timeout 5m
-k rollout status deployment/headless-shell --timeout 5m
+k rollout restart deployment/grafana deployment/polls deployment/headless-shell
+for d in loki tempo mimir otel-collector grafana polls headless-shell; do
+  k rollout status "deployment/$d" --timeout 5m
+done
