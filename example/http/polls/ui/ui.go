@@ -8,6 +8,7 @@ package ui
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
@@ -17,6 +18,9 @@ import (
 	"io/fs"
 	"net/http"
 	"path"
+	"regexp"
+
+	"github.com/google/uuid"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/example/http/polls/store"
@@ -29,30 +33,43 @@ var static embed.FS
 //go:embed templates
 var templates embed.FS
 
-const csp = "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+const (
+	csp          = "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+	maxBodyBytes = 16 << 10
+)
 
 var (
 	scriptHash = hypermedia.PathParam[string]("hash")
 	scriptName = hypermedia.PathParam[string]("script")
 	scriptPath = hypermedia.Root().Lit("scripts").Param(scriptHash).Rest(scriptName)
+	pollID     = hypermedia.PathParam[string]("pollId").Pattern(regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`))
+	homePath   = hypermedia.Root()
+	pollsPath  = hypermedia.Root().Lit("polls")
+	pollPath   = pollsPath.Param(pollID)
 )
 
-type UI struct {
-	files   fs.FS
-	hashes  map[string]string
-	pages   map[string]*template.Template
+type Store interface {
+	CreatePoll(ctx context.Context, question string, options []string) (uuid.UUID, error)
+	Poll(ctx context.Context, id uuid.UUID) (store.Poll, error)
 }
 
-func New() (*UI, error) {
+type UI struct {
+	polls  Store
+	files  fs.FS
+	hashes map[string]string
+	pages  map[string]*template.Template
+}
+
+func New(polls Store) (*UI, error) {
 	files, err := fs.Sub(static, "static")
 	if err != nil {
 		return nil, err
 	}
-	return build(files, templates)
+	return build(polls, files, templates)
 }
 
-func build(files, tmpls fs.FS) (*UI, error) {
-	ui := &UI{files: files, hashes: make(map[string]string), pages: make(map[string]*template.Template)}
+func build(polls Store, files, tmpls fs.FS) (*UI, error) {
+	ui := &UI{polls: polls, files: files, hashes: make(map[string]string), pages: make(map[string]*template.Template)}
 	names, err := fs.Glob(files, "*.js")
 	if err != nil {
 		return nil, err
@@ -97,15 +114,19 @@ func (ui *UI) Site(s *humus.Setup) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	limited := http.MaxBytesHandler(site, maxBodyBytes)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", csp)
-		site.ServeHTTP(w, r)
+		limited.ServeHTTP(w, r)
 	}), nil
 }
 
 func (ui *UI) routes() []hypermedia.Route {
 	return []hypermedia.Route{
 		hypermedia.NewRoute(http.MethodGet, scriptPath, ui.script),
+		hypermedia.NewRoute(http.MethodGet, homePath, ui.home),
+		hypermedia.NewRoute(http.MethodPost, pollsPath, ui.create),
+		hypermedia.NewRoute(http.MethodGet, pollPath, ui.poll),
 	}
 }
 
@@ -124,12 +145,16 @@ func (ui *UI) script(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (ui *UI) render(w http.ResponseWriter, status int, page string, data any) error {
+	return ui.renderTemplate(w, status, page, page, data)
+}
+
+func (ui *UI) renderTemplate(w http.ResponseWriter, status int, page, name string, data any) error {
 	t, ok := ui.pages[page]
 	if !ok {
 		return fmt.Errorf("%q isn't a page", page)
 	}
 	var b bytes.Buffer
-	if err := t.Execute(&b, data); err != nil {
+	if err := t.ExecuteTemplate(&b, name, data); err != nil {
 		return err
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

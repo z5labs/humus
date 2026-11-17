@@ -1,0 +1,107 @@
+// Copyright (c) 2026 Z5Labs and Contributors
+//
+// This software is released under the MIT License.
+// https://opensource.org/licenses/MIT
+
+// Package storetest is the tests' in-memory Store, which keeps every rule the PostgreSQL Store keeps.
+package storetest
+
+import (
+	"context"
+	"fmt"
+	"slices"
+	"sync"
+
+	"github.com/google/uuid"
+
+	"github.com/z5labs/humus/example/http/polls/store"
+)
+
+type poll struct {
+	question string
+	options  []store.Option
+	voters   map[string]bool
+}
+
+type Store struct {
+	mu     sync.Mutex
+	polls  map[uuid.UUID]*poll
+	nextID int64
+}
+
+func New() *Store {
+	return &Store{polls: make(map[uuid.UUID]*poll)}
+}
+
+func check(question string, options []string) error {
+	if question == "" {
+		return fmt.Errorf("%w: it has no question", store.ErrInvalidPoll)
+	}
+	if len(options) < 2 {
+		return fmt.Errorf("%w: it has %d options, fewer than two", store.ErrInvalidPoll, len(options))
+	}
+	seen := make(map[string]bool, len(options))
+	for _, o := range options {
+		if o == "" {
+			return fmt.Errorf("%w: an option has no text", store.ErrInvalidPoll)
+		}
+		if seen[o] {
+			return fmt.Errorf("%w: the option %q is given twice", store.ErrInvalidPoll, o)
+		}
+		seen[o] = true
+	}
+	return nil
+}
+
+func (s *Store) CreatePoll(ctx context.Context, question string, options []string) (uuid.UUID, error) {
+	if err := check(question, options); err != nil {
+		return uuid.Nil, fmt.Errorf("creating a poll: %w", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := &poll{question: question, voters: make(map[string]bool)}
+	for _, text := range options {
+		s.nextID++
+		p.options = append(p.options, store.Option{ID: s.nextID, Text: text})
+	}
+	id := uuid.New()
+	s.polls[id] = p
+	return id, nil
+}
+
+func (s *Store) Poll(ctx context.Context, id uuid.UUID) (store.Poll, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.polls[id]
+	if !ok {
+		return store.Poll{}, fmt.Errorf("reading poll %s: %w", id, store.ErrNoSuchPoll)
+	}
+	return store.Poll{ID: id, Question: p.question, Options: slices.Clone(p.options)}, nil
+}
+
+func (s *Store) Vote(ctx context.Context, pollID uuid.UUID, optionID int64, voter string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	err := s.vote(pollID, optionID, voter)
+	if err != nil {
+		return fmt.Errorf("voting for option %d of poll %s: %w", optionID, pollID, err)
+	}
+	return nil
+}
+
+func (s *Store) vote(pollID uuid.UUID, optionID int64, voter string) error {
+	p, ok := s.polls[pollID]
+	if !ok {
+		return store.ErrNoSuchPoll
+	}
+	if p.voters[voter] {
+		return store.ErrAlreadyVoted
+	}
+	i := slices.IndexFunc(p.options, func(o store.Option) bool { return o.ID == optionID })
+	if i < 0 {
+		return store.ErrNotAnOption
+	}
+	p.voters[voter] = true
+	p.options[i].Votes++
+	return nil
+}
