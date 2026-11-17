@@ -255,6 +255,7 @@ func crossSite(t testing.TB, target Target) {
 		"htmx on another site": {
 			"HX-Request":     "true",
 			"HX-Current-URL": elsewhere + "/",
+			"HX-Target":      resultsTarget,
 			"Sec-Fetch-Site": "cross-site",
 			"Sec-Fetch-Mode": "cors",
 			"Sec-Fetch-Dest": "empty",
