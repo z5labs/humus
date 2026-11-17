@@ -291,7 +291,7 @@ shows. Each server span is named after its method and its route, so in
  &lt;tr&gt;
  &lt;td&gt;Observable&lt;/td&gt;
  &lt;td&gt;traces, logs and metrics over OTLP, the alerts in &lt;code&gt;deploy/alerts.yaml&lt;/code&gt;, &lt;code&gt;deploy/dashboard.json&lt;/code&gt;, and alerts on the Deployment from the Collector&amp;rsquo;s Kubernetes cluster receiver&lt;/td&gt;
- &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/pr-preview/pr-1562/walkthroughs/http/polls/observing/"&gt;Observing&lt;/a&gt;&lt;/td&gt;
+ &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/pr-preview/pr-1562/walkthroughs/http/polls/observing/#a-votes-trace"&gt;A vote&amp;rsquo;s trace&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/pr-preview/pr-1562/walkthroughs/http/polls/observing/#its-log-records"&gt;Its log records&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/pr-preview/pr-1562/walkthroughs/http/polls/observing/#the-metrics"&gt;The metrics&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/pr-preview/pr-1562/walkthroughs/http/polls/observing/#the-alerts"&gt;The alerts&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/pr-preview/pr-1562/walkthroughs/http/polls/observing/#the-dashboard"&gt;The dashboard&lt;/a&gt;&lt;/td&gt;
  &lt;/tr&gt;
  &lt;tr&gt;
  &lt;td&gt;Failures say why&lt;/td&gt;
