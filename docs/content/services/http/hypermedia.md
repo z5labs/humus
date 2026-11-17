@@ -37,6 +37,11 @@ The design is in
 with its [revision 2](https://github.com/z5labs/humus/discussions/1454#discussioncomment-19621172)
 and [revision 3](https://github.com/z5labs/humus/discussions/1454#discussioncomment-19621325).
 
+The [polls walkthrough]({{< relref "/walkthroughs/http/polls" >}}) builds a
+production-ready hypermedia UI on both packages, step by step, with htmx,
+forms, and live results on every replica, and its code is
+[`example/http/polls`](https://github.com/z5labs/humus/tree/main/example/http/polls).
+
 ## The Site
 
 The end user's `Init` builds a

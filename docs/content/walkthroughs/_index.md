@@ -19,6 +19,9 @@ type, and every sample on its pages is quoted from that code.
 - [Shoppingcart]({{< relref "/walkthroughs/http/shoppingcart" >}}): an API for
   shopping carts, behind JWT bearer tokens, that prices each item from a
   catalog service of its own over mTLS, both on PostgreSQL.
+- [Polls]({{< relref "/walkthroughs/http/polls" >}}): a hypermedia UI on htmx
+  for polls, with forms, one vote per browser, and live results that reach
+  every open page on every replica through PostgreSQL.
 - [Wallet]({{< relref "/walkthroughs/grpc/wallet" >}}): a gRPC service for each
   caller's own account, behind JWT bearer tokens, on a ledger service of its
   own that it calls over mTLS, which keeps the accounts and the transfers
