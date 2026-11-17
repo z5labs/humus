@@ -175,7 +175,7 @@ func TestSite_a_vote_counts_and_answers_with_the_polls_results(t *testing.T) {
 		require.Equal(t, "text/html; charset=utf-8", fragment.header.Get("Content-Type"))
 		require.Equal(t, csp, fragment.header.Get("Content-Security-Policy"))
 		require.Equal(t, []string{"HX-Request"}, fragment.header.Values("Vary"))
-		require.Equal(t, "<div id=\"results\">\n<ul id=\"options\">\n"+
+		require.Equal(t, "<div id=\"results\">\n<ul id=\"options\" sse-swap=\"results\">\n"+
 			"<li><span class=\"option\">Tabs</span> <span class=\"votes\">0</span></li>\n"+
 			"<li><span class=\"option\">Spaces</span> <span class=\"votes\">1</span></li>\n</ul>\n"+
 			"<p class=\"note\">Your vote is counted.</p>\n</div>", fragment.body)

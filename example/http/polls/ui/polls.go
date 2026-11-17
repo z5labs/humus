@@ -145,6 +145,7 @@ type pollView struct {
 	Title    string
 	Question string
 	Results  resultsView
+	FeedURL  string
 	HomeURL  string
 }
 
@@ -223,6 +224,7 @@ func newPollView(p store.Poll, results resultsView) pollView {
 		Title:    p.Question,
 		Question: p.Question,
 		Results:  results,
+		FeedURL:  feedPath.URL(hypermedia.Arg(pollID, p.ID.String())).String(),
 		HomeURL:  homePath.URL().String(),
 	}
 }

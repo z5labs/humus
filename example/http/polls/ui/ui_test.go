@@ -38,13 +38,21 @@ const (
 	base = "https://polls.internal:8443"
 )
 
-func start(t *testing.T, polls ui.Store) (*http.Client, func()) {
+type backend interface {
+	ui.Store
+	ui.Results
+}
+
+func start(t *testing.T, polls backend, opts ...humus.Option) (*http.Client, func()) {
 	t.Helper()
 	ca := humustest.NewCA(t)
 	cert := ca.Issue(t, "polls.internal")
 	h := humustest.NewHost(t)
 	p, status := httpservertest.Start(t, func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-		u, err := ui.New(polls)
+		settings := httpserver.DefaultSettings()
+		settings.Addr = "polls.internal:8443"
+		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
+		u, err := ui.New(polls, polls, settings.WriteTimeout)
 		if err != nil {
 			return nil, err
 		}
@@ -52,15 +60,12 @@ func start(t *testing.T, polls ui.Store) (*http.Client, func()) {
 		if err != nil {
 			return nil, err
 		}
-		settings := httpserver.DefaultSettings()
-		settings.Addr = "polls.internal:8443"
-		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
 		svc, err := httpserver.NewService(s, settings, site)
 		if err != nil {
 			return nil, err
 		}
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(h.Host())))
+	}, humustest.WithApp(append([]humus.Option{humus.WithHost(h.Host())}, opts...)...))
 	<-h.Listening("polls.internal:8443")
 	c := httpservertest.NewClient(h, ca.Pool())
 	return c, func() {
@@ -149,7 +154,8 @@ func TestSite_serves_each_script_at_its_content_hashed_URL_under_the_CSP(t *test
 }
 
 func TestErrorPage_writes_an_HTML_page_with_each_errors_status_and_none_of_its_text(t *testing.T) {
-	u, err := ui.New(storetest.New())
+	polls := storetest.New()
+	u, err := ui.New(polls, polls, 0)
 	require.NoError(t, err)
 
 	for _, tc := range []struct {

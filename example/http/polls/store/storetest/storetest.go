@@ -27,10 +27,11 @@ type Store struct {
 	mu     sync.Mutex
 	polls  map[uuid.UUID]*poll
 	nextID int64
+	subs   map[uuid.UUID]map[chan store.Poll]struct{}
 }
 
 func New() *Store {
-	return &Store{polls: make(map[uuid.UUID]*poll)}
+	return &Store{polls: make(map[uuid.UUID]*poll), subs: make(map[uuid.UUID]map[chan store.Poll]struct{})}
 }
 
 func check(question string, options []string) error {
@@ -76,7 +77,44 @@ func (s *Store) Poll(ctx context.Context, id uuid.UUID) (store.Poll, error) {
 	if !ok {
 		return store.Poll{}, fmt.Errorf("reading poll %s: %w", id, store.ErrNoSuchPoll)
 	}
-	return store.Poll{ID: id, Question: p.question, Options: slices.Clone(p.options)}, nil
+	return p.results(id), nil
+}
+
+func (p *poll) results(id uuid.UUID) store.Poll {
+	return store.Poll{ID: id, Question: p.question, Options: slices.Clone(p.options)}
+}
+
+func (s *Store) Subscribe(pollID uuid.UUID) (<-chan store.Poll, func()) {
+	ch := make(chan store.Poll, 1)
+	s.mu.Lock()
+	if s.subs[pollID] == nil {
+		s.subs[pollID] = make(map[chan store.Poll]struct{})
+	}
+	s.subs[pollID][ch] = struct{}{}
+	s.mu.Unlock()
+
+	var once sync.Once
+	return ch, func() {
+		once.Do(func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			delete(s.subs[pollID], ch)
+			if len(s.subs[pollID]) == 0 {
+				delete(s.subs, pollID)
+			}
+			close(ch)
+		})
+	}
+}
+
+func (s *Store) publish(pollID uuid.UUID) {
+	for ch := range s.subs[pollID] {
+		select {
+		case <-ch:
+		default:
+		}
+		ch <- s.polls[pollID].results(pollID)
+	}
 }
 
 func (s *Store) Vote(ctx context.Context, pollID uuid.UUID, optionID int64, voter string) error {
@@ -86,6 +124,7 @@ func (s *Store) Vote(ctx context.Context, pollID uuid.UUID, optionID int64, vote
 	if err != nil {
 		return fmt.Errorf("voting for option %d of poll %s: %w", optionID, pollID, err)
 	}
+	s.publish(pollID)
 	return nil
 }
 

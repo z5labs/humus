@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"path"
 	"regexp"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -47,6 +48,7 @@ var (
 	pollsPath  = hypermedia.Root().Lit("polls")
 	pollPath   = pollsPath.Param(pollID)
 	votesPath  = pollPath.Lit("votes")
+	feedPath   = pollPath.Lit("feed")
 )
 
 type Store interface {
@@ -55,19 +57,31 @@ type Store interface {
 	Vote(ctx context.Context, pollID uuid.UUID, optionID int64, voter string) error
 }
 
-type UI struct {
-	polls  Store
-	files  fs.FS
-	hashes map[string]string
-	pages  map[string]*template.Template
+type Results interface {
+	Subscribe(pollID uuid.UUID) (<-chan store.Poll, func())
 }
 
-func New(polls Store) (*UI, error) {
+type UI struct {
+	polls        Store
+	results      Results
+	writeTimeout time.Duration
+	files        fs.FS
+	hashes       map[string]string
+	pages        map[string]*template.Template
+}
+
+func New(polls Store, results Results, writeTimeout time.Duration) (*UI, error) {
 	files, err := fs.Sub(static, "static")
 	if err != nil {
 		return nil, err
 	}
-	return build(polls, files, templates)
+	ui, err := build(polls, files, templates)
+	if err != nil {
+		return nil, err
+	}
+	ui.results = results
+	ui.writeTimeout = writeTimeout
+	return ui, nil
 }
 
 func build(polls Store, files, tmpls fs.FS) (*UI, error) {
@@ -139,6 +153,7 @@ func (ui *UI) routes() []hypermedia.Route {
 		hypermedia.NewRoute(http.MethodPost, pollsPath, ui.create),
 		hypermedia.NewRoute(http.MethodGet, pollPath, ui.poll),
 		hypermedia.NewRoute(http.MethodPost, votesPath, ui.vote),
+		hypermedia.NewRoute(http.MethodGet, feedPath, ui.feed),
 	}
 }
 
@@ -160,18 +175,26 @@ func (ui *UI) render(w http.ResponseWriter, status int, page string, data any) e
 	return ui.renderTemplate(w, status, page, page, data)
 }
 
-func (ui *UI) renderTemplate(w http.ResponseWriter, status int, page, name string, data any) error {
+func (ui *UI) execute(page, name string, data any) (*bytes.Buffer, error) {
 	t, ok := ui.pages[page]
 	if !ok {
-		return fmt.Errorf("%q isn't a page", page)
+		return nil, fmt.Errorf("%q isn't a page", page)
 	}
 	var b bytes.Buffer
 	if err := t.ExecuteTemplate(&b, name, data); err != nil {
+		return nil, err
+	}
+	return &b, nil
+}
+
+func (ui *UI) renderTemplate(w http.ResponseWriter, status int, page, name string, data any) error {
+	b, err := ui.execute(page, name, data)
+	if err != nil {
 		return err
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	_, err := b.WriteTo(w)
+	_, err = b.WriteTo(w)
 	return err
 }
 
