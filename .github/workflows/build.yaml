@@ -707,7 +707,10 @@ jobs:
   # Then a vote the database fails is found in the LGTM stack: its trace and
   # route-named server span in Tempo, its records by trace ID in Loki, and
   # the service's metrics by pod and its Deployment's in Mimir, with Grafana
-  # holding all three as data sources. After them, the browser cases drive
+  # holding all three as data sources. Then Grafana is found to have loaded
+  # every alert rule and the dashboard, and after the shared cases run again,
+  # Mimir holds every series the rules read and each rule has evaluated
+  # without error since. After them, the browser cases drive
   # headless-shell, a real Chrome in the kind overlay that reaches the
   # service by its Service's name and trusts that CA, through a kubectl
   # port-forward to its DevTools port: a vote in one browser reaches another,
@@ -763,6 +766,9 @@ jobs:
 
         - name: Run the telemetry check against kind
           run: go -C example/http/polls test -exec="$GO_EXEC" -count=1 -race -tags functional -run '^TestPolls_sends_its_telemetry_to_the_LGTM_stack_on_kind$' ./functional/
+
+        - name: Run the alerts and dashboard check against kind
+          run: go -C example/http/polls test -exec="$GO_EXEC" -count=1 -race -tags functional -run '^TestPolls_Grafana_alerts_on_the_service_and_has_its_dashboard_on_kind$' ./functional/
 
         - name: Run the browser cases against kind
           run: go -C example/http/polls test -exec="$GO_EXEC" -count=1 -race -tags functional -run '^TestPolls_runs_its_htmx_in_headless_Chrome_' ./functional/
