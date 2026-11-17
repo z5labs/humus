@@ -3,7 +3,7 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-package polls_test
+package main_test
 
 import (
 	"archive/tar"

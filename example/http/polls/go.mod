@@ -9,6 +9,8 @@ require (
 	github.com/jackc/pgx/v5 v5.13.0
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.45.0
+	github.com/z5labs/bedrock v0.26.0
+	github.com/z5labs/bedrock/host v0.26.0
 	github.com/z5labs/humus v0.16.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/log v1.47.0
@@ -59,9 +61,9 @@ require (
 	github.com/tklauser/go-sysconf v0.4.0 // indirect
 	github.com/tklauser/numcpus v0.12.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
-	github.com/z5labs/bedrock v0.26.0 // indirect
+	github.com/z5labs/bedrock/circuit v0.26.0 // indirect
 	github.com/z5labs/bedrock/fit v0.26.0 // indirect
-	github.com/z5labs/bedrock/host v0.26.0 // indirect
+	github.com/z5labs/bedrock/retry v0.26.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.23.0 // indirect

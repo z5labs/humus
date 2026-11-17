@@ -9,7 +9,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -18,30 +17,30 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/log/embedded"
 )
 
 type records struct {
+	embedded.Logger
+
 	mu sync.Mutex
-	rs []slog.Record
+	rs []log.Record
 }
 
-func (r *records) Enabled(context.Context, slog.Level) bool { return true }
+func (r *records) Enabled(context.Context, log.EnabledParameters) bool { return true }
 
-func (r *records) Handle(_ context.Context, rec slog.Record) error {
+func (r *records) Emit(_ context.Context, rec log.Record) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.rs = append(r.rs, rec.Clone())
-	return nil
 }
 
-func (r *records) WithAttrs([]slog.Attr) slog.Handler { return r }
-
-func (r *records) WithGroup(string) slog.Handler { return r }
-
-func (r *records) all() []slog.Record {
+func (r *records) all() []log.Record {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]slog.Record(nil), r.rs...)
+	return append([]log.Record(nil), r.rs...)
 }
 
 type fakeConn struct {
@@ -226,7 +225,7 @@ func TestListener_sends_a_polls_results_to_its_subscribers_only(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		db := newDatabase()
 		tabs, vim, unwatched := db.create(), db.create(), db.create()
-		l := newListener(db.connect, db.poll, slog.New(&records{}))
+		l := newListener(db.connect, db.poll, &records{})
 
 		first, _ := l.Subscribe(tabs)
 		second, _ := l.Subscribe(tabs)
@@ -257,7 +256,7 @@ func TestListener_sends_nothing_more_once_a_subscriber_unsubscribes(t *testing.T
 	synctest.Test(t, func(t *testing.T) {
 		db := newDatabase()
 		tabs := db.create()
-		l := newListener(db.connect, db.poll, slog.New(&records{}))
+		l := newListener(db.connect, db.poll, &records{})
 		run(t, l)
 
 		leaving, unsubscribe := l.Subscribe(tabs)
@@ -285,7 +284,7 @@ func TestListener_never_waits_on_a_subscriber_that_doesnt_keep_up(t *testing.T) 
 	synctest.Test(t, func(t *testing.T) {
 		db := newDatabase()
 		tabs := db.create()
-		l := newListener(db.connect, db.poll, slog.New(&records{}))
+		l := newListener(db.connect, db.poll, &records{})
 
 		slow, _ := l.Subscribe(tabs)
 		fast, _ := l.Subscribe(tabs)
@@ -310,7 +309,7 @@ func TestListener_after_a_lost_connection_connects_again_and_sends_every_subscri
 		db := newDatabase()
 		tabs, vim := db.create(), db.create()
 		logs := &records{}
-		l := newListener(db.connect, db.poll, slog.New(logs))
+		l := newListener(db.connect, db.poll, logs)
 
 		tabsResults, _ := l.Subscribe(tabs)
 		vimResults, _ := l.Subscribe(vim)
@@ -340,15 +339,9 @@ func TestListener_after_a_lost_connection_connects_again_and_sends_every_subscri
 
 		rs := logs.all()
 		require.Len(t, rs, 1, "the loss is one log record, however many tries it takes to connect again")
-		require.Equal(t, slog.LevelError, rs[0].Level)
-		var logged error
-		rs[0].Attrs(func(a slog.Attr) bool {
-			if a.Key == "error" {
-				logged, _ = a.Value.Any().(error)
-			}
-			return true
-		})
-		require.ErrorIs(t, logged, reset)
+		require.Equal(t, log.SeverityError, rs[0].Severity())
+		require.Equal(t, "listening for votes failed", rs[0].Body().AsString())
+		require.ErrorIs(t, rs[0].Err(), reset)
 
 		db.vote(vim)
 		synctest.Wait()
@@ -367,7 +360,7 @@ func TestListener_whose_results_cant_be_read_connects_again(t *testing.T) {
 		db := newDatabase()
 		tabs := db.create()
 		logs := &records{}
-		l := newListener(db.connect, db.poll, slog.New(logs))
+		l := newListener(db.connect, db.poll, logs)
 
 		results, _ := l.Subscribe(tabs)
 		run(t, l)
@@ -397,7 +390,7 @@ func TestListener_whose_results_cant_be_read_connects_again(t *testing.T) {
 func TestListener_runs_until_its_context_is_done_then_closes_its_connection(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		db := newDatabase()
-		l := newListener(db.connect, db.poll, slog.New(&records{}))
+		l := newListener(db.connect, db.poll, &records{})
 		stop := run(t, l)
 		synctest.Wait()
 		require.False(t, db.connections()[0].isClosed())
@@ -412,7 +405,7 @@ func TestListener_that_cant_connect_at_all_logs_once_and_stops_with_its_context(
 		db := newDatabase()
 		db.down = errors.New("connection refused")
 		logs := &records{}
-		l := newListener(db.connect, db.poll, slog.New(logs))
+		l := newListener(db.connect, db.poll, logs)
 		stop := run(t, l)
 
 		time.Sleep(5 * reconnectDelay)
@@ -420,5 +413,69 @@ func TestListener_that_cant_connect_at_all_logs_once_and_stops_with_its_context(
 		require.Len(t, logs.all(), 1)
 		stop()
 		require.Empty(t, db.connections())
+	})
+}
+
+func TestListener_is_listening_from_its_LISTEN_until_it_loses_its_connection_or_stops(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		db := newDatabase()
+		db.down = errors.New("connection refused")
+		l := newListener(db.connect, db.poll, &records{})
+		require.ErrorIs(t, l.Listening(t.Context()), errNotListening, "before it runs")
+
+		stop := run(t, l)
+		synctest.Wait()
+		require.ErrorIs(t, l.Listening(t.Context()), errNotListening, "while it can't connect")
+
+		db.recover()
+		time.Sleep(reconnectDelay)
+		synctest.Wait()
+		require.NoError(t, l.Listening(t.Context()))
+		require.Equal(t, []string{"LISTEN votes"}, db.connections()[0].executed())
+
+		db.lose(errors.New("connection reset by peer"))
+		synctest.Wait()
+		require.ErrorIs(t, l.Listening(t.Context()), errNotListening, "once its connection is lost")
+
+		db.recover()
+		time.Sleep(reconnectDelay)
+		synctest.Wait()
+		require.NoError(t, l.Listening(t.Context()), "once it listens again")
+
+		stop()
+		require.ErrorIs(t, l.Listening(t.Context()), errNotListening, "once it stops")
+	})
+}
+
+func TestListener_warns_of_a_notification_that_names_no_poll_and_keeps_listening(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		db := newDatabase()
+		tabs := db.create()
+		logs := &records{}
+		l := newListener(db.connect, db.poll, logs)
+		results, _ := l.Subscribe(tabs)
+		run(t, l)
+		synctest.Wait()
+		require.Zero(t, votes(t, results))
+
+		db.connections()[0].notes <- &pgconn.Notification{Channel: votesChannel, Payload: "not-a-poll"}
+		synctest.Wait()
+		rs := logs.all()
+		require.Len(t, rs, 1)
+		require.Equal(t, log.SeverityWarn, rs[0].Severity())
+		require.Equal(t, "a vote's notification names no poll", rs[0].Body().AsString())
+		var payload string
+		rs[0].WalkAttributes(func(kv attribute.KeyValue) bool {
+			if kv.Key == "payload" {
+				payload = kv.Value.AsString()
+			}
+			return true
+		})
+		require.Equal(t, "not-a-poll", payload)
+
+		db.vote(tabs)
+		synctest.Wait()
+		require.EqualValues(t, 1, votes(t, results))
+		require.Len(t, db.connections(), 1)
 	})
 }
