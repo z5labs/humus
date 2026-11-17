@@ -277,7 +277,6 @@ func TestSite_an_unknown_poll_and_an_ID_that_doesnt_parse_are_the_404_page(t *te
 			"/polls/" + strings.ToUpper(id.String()),
 			"/polls/urn:uuid:" + id.String(),
 			"/polls/" + strings.ReplaceAll(id.String(), "-", ""),
-			"/polls/" + id.String() + "/votes",
 		} {
 			r := do(t, c, http.MethodGet, base+target)
 			require.Equal(t, http.StatusNotFound, r.status, target)

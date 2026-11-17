@@ -141,7 +141,7 @@ func TestSite_serves_each_script_at_its_content_hashed_URL_under_the_CSP(t *test
 		require.Contains(t, page.body, "<!DOCTYPE html>")
 		require.Contains(t, page.body, `<script src="`+htmx.url+`"></script>`, "the layout names htmx's current URL")
 		require.Contains(t, page.body, `<script src="`+sse.url+`"></script>`, "the layout names the SSE extension's current URL")
-		require.Contains(t, page.body, `<meta name="htmx-config" content='{"allowEval":false,"includeIndicatorStyles":false,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"422","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>`)
+		require.Contains(t, page.body, `<meta name="htmx-config" content='{"allowEval":false,"includeIndicatorStyles":false,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"409","swap":true},{"code":"422","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>`)
 		require.NotContains(t, page.body, "<script>", "no inline script")
 
 		stop()

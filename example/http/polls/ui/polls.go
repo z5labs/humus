@@ -144,7 +144,7 @@ type homeView struct {
 type pollView struct {
 	Title    string
 	Question string
-	Options  []store.Option
+	Results  resultsView
 	HomeURL  string
 }
 
@@ -189,22 +189,40 @@ func (ui *UI) create(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-func (ui *UI) poll(w http.ResponseWriter, r *http.Request) error {
+func pollFrom(r *http.Request) (uuid.UUID, error) {
 	id, err := uuid.Parse(hypermedia.ParamFrom(r, pollID))
 	if err != nil {
-		return &hypermedia.RequestError{Status: http.StatusNotFound, Param: "pollId", Err: err}
+		return uuid.Nil, &hypermedia.RequestError{Status: http.StatusNotFound, Param: "pollId", Err: err}
 	}
+	return id, nil
+}
+
+func (ui *UI) readPoll(r *http.Request, id uuid.UUID) (store.Poll, error) {
 	p, err := ui.polls.Poll(r.Context(), id)
 	if errors.Is(err, store.ErrNoSuchPoll) {
-		return &hypermedia.RequestError{Status: http.StatusNotFound, Param: "pollId", Err: err}
+		return store.Poll{}, &hypermedia.RequestError{Status: http.StatusNotFound, Param: "pollId", Err: err}
 	}
+	return p, err
+}
+
+func (ui *UI) poll(w http.ResponseWriter, r *http.Request) error {
+	id, err := pollFrom(r)
 	if err != nil {
 		return err
 	}
-	return ui.render(w, http.StatusOK, "poll.html", pollView{
+	p, err := ui.readPoll(r, id)
+	if err != nil {
+		return err
+	}
+	voter(w, r)
+	return ui.render(w, http.StatusOK, "poll.html", newPollView(p, resultsView{Options: p.Options, Action: votesURL(id)}))
+}
+
+func newPollView(p store.Poll, results resultsView) pollView {
+	return pollView{
 		Title:    p.Question,
 		Question: p.Question,
-		Options:  p.Options,
+		Results:  results,
 		HomeURL:  homePath.URL().String(),
-	})
+	}
 }

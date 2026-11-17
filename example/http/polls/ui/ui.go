@@ -46,11 +46,13 @@ var (
 	homePath   = hypermedia.Root()
 	pollsPath  = hypermedia.Root().Lit("polls")
 	pollPath   = pollsPath.Param(pollID)
+	votesPath  = pollPath.Lit("votes")
 )
 
 type Store interface {
 	CreatePoll(ctx context.Context, question string, options []string) (uuid.UUID, error)
 	Poll(ctx context.Context, id uuid.UUID) (store.Poll, error)
+	Vote(ctx context.Context, pollID uuid.UUID, optionID int64, voter string) error
 }
 
 type UI struct {
@@ -114,11 +116,20 @@ func (ui *UI) Site(s *humus.Setup) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	limited := http.MaxBytesHandler(site, maxBodyBytes)
+	protection := http.NewCrossOriginProtection()
+	protection.SetDenyHandler(http.HandlerFunc(ui.crossOrigin))
+	protected := protection.Handler(http.MaxBytesHandler(site, maxBodyBytes))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", csp)
-		limited.ServeHTTP(w, r)
+		protected.ServeHTTP(w, r)
 	}), nil
+}
+
+func (ui *UI) crossOrigin(w http.ResponseWriter, r *http.Request) {
+	err := ui.ErrorPage(w, r, &hypermedia.RequestError{Status: http.StatusForbidden, Err: errors.New("a cross-origin request")})
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+	}
 }
 
 func (ui *UI) routes() []hypermedia.Route {
@@ -127,6 +138,7 @@ func (ui *UI) routes() []hypermedia.Route {
 		hypermedia.NewRoute(http.MethodGet, homePath, ui.home),
 		hypermedia.NewRoute(http.MethodPost, pollsPath, ui.create),
 		hypermedia.NewRoute(http.MethodGet, pollPath, ui.poll),
+		hypermedia.NewRoute(http.MethodPost, votesPath, ui.vote),
 	}
 }
 
@@ -170,6 +182,7 @@ type errorView struct {
 
 var messages = map[int]string{
 	http.StatusBadRequest:            "The request couldn't be read.",
+	http.StatusForbidden:             "Only this site's pages can send that.",
 	http.StatusNotFound:              "There's no such page.",
 	http.StatusMethodNotAllowed:      "This page can't do that.",
 	http.StatusRequestEntityTooLarge: "What was sent is too large.",
