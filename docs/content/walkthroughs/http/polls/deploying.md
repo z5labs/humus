@@ -214,7 +214,7 @@ service a minute to start:
 ```
 
 Readiness reaches the database until the replica is first ready, so the
-readiness probe waits 5s.
+readiness probe waits up to 5s for each answer.
 
 ## The disruption budget
 
