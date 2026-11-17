@@ -90,10 +90,7 @@ func (l *Listener) Subscribe(pollID uuid.UUID) (<-chan Poll, func()) {
 func (l *Listener) Run(ctx context.Context) {
 	logged := false
 	for {
-		err := l.listen(ctx, func() {
-			logged = false
-			l.listening.Store(true)
-		})
+		err := l.listen(ctx, func() { logged = false })
 		l.listening.Store(false)
 		if ctx.Err() != nil {
 			return
@@ -131,6 +128,7 @@ func (l *Listener) listen(ctx context.Context, listening func()) error {
 	if _, err := conn.Exec(ctx, "LISTEN "+votesChannel); err != nil {
 		return err
 	}
+	l.listening.Store(true)
 	for _, id := range l.subscribed() {
 		if err := l.refresh(ctx, id); err != nil {
 			return err

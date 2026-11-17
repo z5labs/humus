@@ -11,6 +11,8 @@ import (
 	"encoding/pem"
 	"net"
 	"os"
+	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -18,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock/host/hosttest"
 
+	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/example/http/polls/internal/certfile"
 	"github.com/z5labs/humus/httpclient"
 	"github.com/z5labs/humus/httpserver"
@@ -243,5 +246,71 @@ func TestConfig(t *testing.T) {
 			client.RootCAs = ca.Pool()
 			require.NoError(t, httpclient.CheckTLS(client))
 		})
+	})
+}
+
+type gatedFS struct {
+	humus.FS
+	name   string
+	armed  atomic.Bool
+	opened chan struct{}
+	gate   chan struct{}
+}
+
+func (g *gatedFS) Open(name string) (*os.File, error) {
+	f, err := g.FS.Open(name)
+	if name == g.name && g.armed.CompareAndSwap(true, false) {
+		close(g.opened)
+		<-g.gate
+	}
+	return f, err
+}
+
+func renameInto(t *testing.T, h *humustest.Host, name string, data []byte) {
+	t.Helper()
+	tmp, err := h.FS().CreateTemp(filepath.Dir(h.Path(name)), "renewed-*")
+	require.NoError(t, err)
+	_, err = tmp.Write(data)
+	require.NoError(t, err)
+	require.NoError(t, tmp.Close())
+	require.NoError(t, h.FS().Rename(tmp.Name(), h.Path(name)))
+}
+
+func TestConfig_a_slow_read_that_finishes_after_a_newer_one_keeps_the_newer_pair(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ca := humustest.NewCA(t)
+		h := newHost(t, ca.Issue(t, serverName))
+		fsys := &gatedFS{FS: h.FS(), name: h.Path(keyFile), opened: make(chan struct{}), gate: make(chan struct{})}
+		cfg, err := certfile.Config(fsys, h.Path(certFile), h.Path(keyFile))
+		require.NoError(t, err)
+
+		older := ca.Issue(t, serverName)
+		renew(t, h, older)
+		time.Sleep(30 * time.Second)
+		fsys.armed.Store(true)
+		slow := make(chan *x509.Certificate, 1)
+		go func() {
+			got, err := serverCertificate(t, cfg, ca)
+			if err != nil {
+				t.Error(err)
+			}
+			slow <- got
+		}()
+		<-fsys.opened
+
+		time.Sleep(30 * time.Second)
+		newer := ca.Issue(t, serverName)
+		certPEM, keyPEM := encode(t, newer)
+		renameInto(t, h, certFile, certPEM)
+		renameInto(t, h, keyFile, keyPEM)
+		got, err := serverCertificate(t, cfg, ca)
+		require.NoError(t, err)
+		require.True(t, got.Equal(newer.TLS().Leaf))
+
+		close(fsys.gate)
+		require.True(t, (<-slow).Equal(older.TLS().Leaf), "the slow read got the pair it read")
+		got, err = serverCertificate(t, cfg, ca)
+		require.NoError(t, err)
+		require.True(t, got.Equal(newer.TLS().Leaf), "the slow read didn't replace the newer pair")
 	})
 }

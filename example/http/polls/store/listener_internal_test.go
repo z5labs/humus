@@ -98,6 +98,7 @@ type database struct {
 	votes    map[uuid.UUID]int64
 	reads    map[uuid.UUID]int
 	failRead error
+	slowRead chan struct{}
 }
 
 func newDatabase() *database {
@@ -117,7 +118,17 @@ func (d *database) connect(context.Context) (listenConn, error) {
 	return c, nil
 }
 
-func (d *database) poll(_ context.Context, id uuid.UUID) (Poll, error) {
+func (d *database) poll(ctx context.Context, id uuid.UUID) (Poll, error) {
+	d.mu.Lock()
+	slow := d.slowRead
+	d.mu.Unlock()
+	if slow != nil {
+		select {
+		case <-slow:
+		case <-ctx.Done():
+			return Poll{}, ctx.Err()
+		}
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.failRead != nil {
@@ -477,5 +488,25 @@ func TestListener_warns_of_a_notification_that_names_no_poll_and_keeps_listening
 		synctest.Wait()
 		require.EqualValues(t, 1, votes(t, results))
 		require.Len(t, db.connections(), 1)
+	})
+}
+
+func TestListener_is_listening_once_its_LISTEN_succeeds_before_it_reads_its_subscriptions_results(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		db := newDatabase()
+		tabs := db.create()
+		db.slowRead = make(chan struct{})
+		l := newListener(db.connect, db.poll, &records{})
+		results, _ := l.Subscribe(tabs)
+		run(t, l)
+		synctest.Wait()
+
+		require.NoError(t, l.Listening(t.Context()), "while the results it replays are still being read")
+		requireNothing(t, results)
+
+		close(db.slowRead)
+		synctest.Wait()
+		require.Zero(t, votes(t, results))
+		require.NoError(t, l.Listening(t.Context()))
 	})
 }

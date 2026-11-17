@@ -59,7 +59,8 @@ func (f *files) certificate() *tls.Certificate {
 		f.mu.Unlock()
 		return last.cert
 	}
-	f.checked = time.Now()
+	checked := time.Now()
+	f.checked = checked
 	f.mu.Unlock()
 
 	p, err := f.read(last)
@@ -68,7 +69,9 @@ func (f *files) certificate() *tls.Certificate {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.last = p
+	if f.checked.Equal(checked) {
+		f.last = p
+	}
 	return p.cert
 }
 
