@@ -5,7 +5,7 @@ go 1.27.0
 replace github.com/z5labs/humus => ../../..
 
 require (
-	github.com/chromedp/cdproto v0.160.3
+	github.com/chromedp/cdproto v0.160.4
 	github.com/chromedp/chromedp v0.23.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.13.0
@@ -48,7 +48,7 @@ require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.4 // indirect
-	github.com/klauspost/compress v1.20.2 // indirect
+	github.com/klauspost/compress v1.20.4 // indirect
 	github.com/lufia/plan9stats v0.0.0-20261101121723-be84dd9509a0 // indirect
 	github.com/magiconair/properties v1.18.13 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
