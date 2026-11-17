@@ -536,4 +536,4 @@ func main() {
 }
 ```
 
-Next: [Wallet](/humus/walkthroughs/grpc/wallet/)
+Next: [Testing](/humus/walkthroughs/http/polls/testing/)
