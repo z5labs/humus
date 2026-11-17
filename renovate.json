@@ -94,16 +94,19 @@
   ],
   "customManagers": [
     {
-      "description": "example/http/inlineedit's vendored_test.go declares the version of each script the example vendors: htmx and htmx-ext-sse from npm, and Datastar, which no longer publishes to npm, from its GitHub tags. example/http/polls's vendored_test.go declares its own copies of htmx and htmx-ext-sse in the same form, so one bump of a script changes every copy's version in one pull request. A bump changes only the version. The Vendored scripts workflow then downloads the new version's files into the same pull request, and each test fails until it has. inlineedit's internal/chrometest declares the chromedp/headless-shell image the Chrome test runs, in the same form with a digest after the version, and a bump changes both",
+      "description": "example/http/inlineedit's vendored_test.go declares the version of each script the example vendors: htmx and htmx-ext-sse from npm, and Datastar, which no longer publishes to npm, from its GitHub tags. example/http/polls's vendored_test.go declares its own copies of htmx and htmx-ext-sse in the same form, so one bump of a script changes every copy's version in one pull request. A bump changes only the version. The Vendored scripts workflow then downloads the new version's files into the same pull request, and each test fails until it has. inlineedit's internal/chrometest declares the chromedp/headless-shell image the Chrome test runs, in the same form with a digest after the version, and a bump changes both. The polls walkthrough's kind overlay names the same image, by its version and digest, in its headless-shell Deployment, which has no comment to declare it, so the second pattern finds it by the image's name and the template gives it the docker datasource, and a bump of headless-shell changes both copies in one pull request",
       "customType": "regex",
       "managerFilePatterns": [
         "/^example/http/inlineedit/vendored_test\\.go$/",
         "/^example/http/inlineedit/internal/chrometest/chrometest\\.go$/",
-        "/^example/http/polls/vendored_test\\.go$/"
+        "/^example/http/polls/vendored_test\\.go$/",
+        "/^example/http/polls/deploy/kind/headless-shell\\.yaml$/"
       ],
       "matchStrings": [
-        "datasource: \"(?<datasource>[^\"]+)\", depName: \"(?<depName>[^\"]+)\", version: \"(?<currentValue>[^\"]+)\"(?:, digest: \"(?<currentDigest>sha256:[0-9a-f]+)\")?"
-      ]
+        "datasource: \"(?<datasource>[^\"]+)\", depName: \"(?<depName>[^\"]+)\", version: \"(?<currentValue>[^\"]+)\"(?:, digest: \"(?<currentDigest>sha256:[0-9a-f]+)\")?",
+        "image: (?<depName>docker\\.io/chromedp/headless-shell):(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[0-9a-f]+)"
+      ],
+      "datasourceTemplate": "{{#if datasource}}{{{datasource}}}{{else}}docker{{/if}}"
     }
   ],
   "postUpdateOptions": [
