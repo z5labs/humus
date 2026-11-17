@@ -66,7 +66,7 @@ tls() {
 }
 
 {
-  kubectl kustomize "$dir"
+  kubectl kustomize --load-restrictor LoadRestrictionsNone "$dir"
   echo ---
   tls polls-tls polls
   echo ---

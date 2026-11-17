@@ -1,0 +1,131 @@
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: polls
+    folder: Polls
+    interval: 1m
+    rules:
+      - uid: polls-errors
+        title: PollsErrors
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: ((sum(rate(http_server_request_duration_count{job="polls", http_response_status_code=~"5.."}[5m])) or vector(0)) / sum(rate(http_server_request_duration_count{job="polls"}[5m])) >= 0) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.01]
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: The polls service has answered 5xx to {{ humanizePercentage $values.A.Value }} of its requests for 10 minutes.
+          description: Look at the service's logs and traces for the failing routes, and at its database.
+      - uid: polls-slow
+        title: PollsSlow
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: (histogram_quantile(0.99, sum by (le) (rate(http_server_request_duration_bucket{job="polls", http_route!="/polls/{pollId}/feed"}[5m]))) >= 0) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [1]
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: The polls service's p99 latency, its feed left out, has been {{ $values.A.Value }}s for 10 minutes.
+          description: Look at the slowest traces to see which span takes the time, most likely the database's. A feed's stream lasts as long as its page is open, so the feed isn't measured here.
+      - uid: polls-unavailable
+        title: PollsUnavailable
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: min(k8s_deployment_available{k8s_namespace_name="polls", k8s_deployment_name="polls"}) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: The polls Deployment has had no available replica for 5 minutes.
+          description: Nothing answers the service's pages. Look at the Deployment's pods, their events and their logs.
+      - uid: polls-crash-looping
+        title: PollsCrashLooping
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 1200
+              to: 0
+            datasourceUid: mimir
+            model:
+              refId: A
+              instant: true
+              expr: max(delta(k8s_container_restarts{k8s_namespace_name="polls", k8s_container_name="polls"}[15m])) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [3]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: page
+        annotations:
+          summary: A polls container restarted more than 3 times in 15 minutes.
+          description: Look at the previous container's logs, and at the pod's events.
