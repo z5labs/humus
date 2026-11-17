@@ -61,7 +61,7 @@ service, and that service's code.
 
 | Service type | Docs | Walkthrough | Example |
 | --- | --- | --- | --- |
-| HTTP | [HTTP](https://z5labs.github.io/humus/services/http/) | [Shopping cart](https://z5labs.github.io/humus/walkthroughs/http/shoppingcart/) | [`example/http/shoppingcart`](example/http/shoppingcart) |
+| HTTP | [HTTP](https://z5labs.github.io/humus/services/http/) | [Shopping cart](https://z5labs.github.io/humus/walkthroughs/http/shoppingcart/), [Polls](https://z5labs.github.io/humus/walkthroughs/http/polls/) | [`example/http/shoppingcart`](example/http/shoppingcart), [`example/http/polls`](example/http/polls) |
 | gRPC | [gRPC](https://z5labs.github.io/humus/services/grpc/) | [Wallet](https://z5labs.github.io/humus/walkthroughs/grpc/wallet/) | [`example/grpc/wallet`](example/grpc/wallet) |
 | Jobs | [Jobs](https://z5labs.github.io/humus/services/jobs/) | [Billing job](https://z5labs.github.io/humus/walkthroughs/job/billing/) | [`example/job/billing`](example/job/billing) |
 | Kafka | [Kafka](https://z5labs.github.io/humus/services/kafka/) | [Order status processor](https://z5labs.github.io/humus/walkthroughs/kafka/orderstatus/) | [`example/kafka/orderstatus`](example/kafka/orderstatus) |

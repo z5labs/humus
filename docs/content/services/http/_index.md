@@ -23,6 +23,10 @@ event streams with `sse`, with the code of
 The [shoppingcart walkthrough]({{< relref "/walkthroughs/http/shoppingcart" >}})
 builds a production-ready API on both, step by step, and its code is
 [`example/http/shoppingcart`](https://github.com/z5labs/humus/tree/main/example/http/shoppingcart).
+The [polls walkthrough]({{< relref "/walkthroughs/http/polls" >}}) builds a
+production-ready hypermedia UI, with live results on every replica, and its
+code is
+[`example/http/polls`](https://github.com/z5labs/humus/tree/main/example/http/polls).
 
 A service on Echo, Gin or Fiber moves to both a few routes at a time, as
 [Migrating from Echo]({{< relref "/migrating/http/echo" >}}),
