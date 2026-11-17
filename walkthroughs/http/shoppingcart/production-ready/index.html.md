@@ -19,4 +19,4 @@ The cart and the catalog meet each item. Check your own API against them:
 | Failures are rehearsed | the failure injection cases, in CI, and against an end user's staging through its own `Target` | [The shared cases](/humus/walkthroughs/http/shoppingcart/testing/#the-shared-cases), [The failure injection cases](/humus/walkthroughs/http/shoppingcart/testing/#the-failure-injection-cases) |
 | Safe by default | `FAULT_TRUST_SCOPE` empty, so no scenario is trusted. The OpenAPI document is the only open path besides the probes | [`TrustScenario`](/humus/walkthroughs/http/shoppingcart/init/#trustscenario), [Requiring it](/humus/walkthroughs/http/shoppingcart/access/#requiring-it) |
 
-Next: [Wallet](/humus/walkthroughs/grpc/wallet/)
+Next: [Polls](/humus/walkthroughs/http/polls/)
