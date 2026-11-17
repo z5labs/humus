@@ -133,7 +133,10 @@ jobs:
           done < <(find . -type f -print0)
 
           base=$(gh api "repos/$REPO/git/commits/$HEAD" --jq .tree.sha)
-          tree=$(jq -n --arg base "$base" --argjson tree "$entries" '{base_tree: $base, tree: $tree}' |
+          # The entries hold every script's content, so they reach jq on stdin:
+          # as an argument they would be refused once they pass the kernel's
+          # 128 KiB limit on one argument, which all five scripts together do.
+          tree=$(jq --arg base "$base" '{base_tree: $base, tree: .}' <<< "$entries" |
             gh api "repos/$REPO/git/trees" --input - --jq .sha)
 
           read -r commit verified reason < <(
