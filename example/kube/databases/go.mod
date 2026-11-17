@@ -15,8 +15,8 @@ require (
 	github.com/z5labs/bedrock v0.26.0
 	github.com/z5labs/bedrock/fit v0.26.0
 	github.com/z5labs/bedrock/host v0.26.0
-	github.com/z5labs/humus v0.16.0
-	github.com/z5labs/humus/kube v0.16.0
+	github.com/z5labs/humus v0.17.0
+	github.com/z5labs/humus/kube v0.17.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/sdk v1.47.0
 	go.opentelemetry.io/otel/sdk/metric v1.47.0
