@@ -1,0 +1,32 @@
+---
+title: Production-ready
+linkTitle: Production-ready
+description: >
+  The checklist the polls service meets, and how it meets each item, with
+  the page that builds it: the Walkthroughs bar, and the service's own, from
+  one vote per browser to an open page that keeps updating through a
+  rollout. Check your own hypermedia UI against it.
+type: docs
+weight: 120
+---
+
+The polls service meets each item. Check your own hypermedia UI against it:
+
+| Item | How | Where |
+|---|---|---|
+| Every setting sourced and checked; a bad one exits 78, naming its variable | `config.Struct` and the packages' checks, in `readSettings` | [The settings]({{< relref "/walkthroughs/http/polls/init#the-settings" >}}), [Every variable it reads]({{< relref "/walkthroughs/http/polls/init#every-variable-it-reads" >}}) |
+| No secret in the environment, the logs or the spans | the database URL and the certificate's key are files, read through `s.Host.FS`. No voter cookie or database password is recorded, which a test of the App checks | [The secrets and certificates, as files]({{< relref "/walkthroughs/http/polls/init#the-secrets-and-certificates-as-files" >}}), [Its log records]({{< relref "/walkthroughs/http/polls/observing#its-log-records" >}}) |
+| Certificates renewed without a restart | `internal/certfile`, which reads the files again when they change, so a renewed Secret needs no restart. A test of the App renews the certificate under a running server | [The certificate, read again when renewed]({{< relref "/walkthroughs/http/polls/init#the-certificate-read-again-when-renewed" >}}) |
+| Two replicas | a PodDisruptionBudget of `minAvailable: 1`, and a rolling update of `maxUnavailable: 0` | [The Deployment]({{< relref "/walkthroughs/http/polls/deploying#the-deployment" >}}), [The disruption budget]({{< relref "/walkthroughs/http/polls/deploying#the-disruption-budget" >}}) |
+| Ready only once it has reached PostgreSQL and its listener has listened, and still ready through an outage | the latching monitors, on the probes beside the Site | [Readiness]({{< relref "/walkthroughs/http/polls/init#readiness" >}}), [The probes]({{< relref "/walkthroughs/http/polls/deploying#the-probes" >}}) |
+| A rollout loses no request | `httpserver.Main`'s 5s drain, and a `terminationGracePeriodSeconds` above the drain, the grace period and the telemetry's shutdown | [The drain]({{< relref "/walkthroughs/http/polls/deploying#the-drain" >}}) |
+| Least privilege | the service's role only reads and inserts, so it changes no schema and no vote. A non-root, read-only container. No service account token mounted | [The roles]({{< relref "/walkthroughs/http/polls/schema#the-roles" >}}), [The kustomization]({{< relref "/walkthroughs/http/polls/deploying#the-kustomization" >}}), [The Deployment]({{< relref "/walkthroughs/http/polls/deploying#the-deployment" >}}) |
+| Observable | traces, logs and metrics over OTLP, the alerts in `deploy/alerts.yaml`, `deploy/dashboard.json`, and alerts on the Deployment from the Collector's Kubernetes cluster receiver | [Observing]({{< relref "/walkthroughs/http/polls/observing" >}}) |
+| Failures say why | an error page for each status: a 503 for a database that is down, a 404, a 409 for a second vote, and a 422 that shows each problem in place | [The error page]({{< relref "/walkthroughs/http/polls/site#the-error-page" >}}), [The 422]({{< relref "/walkthroughs/http/polls/creating#the-422" >}}), [One vote per browser]({{< relref "/walkthroughs/http/polls/voting#one-vote-per-browser" >}}) |
+| Failures are rehearsed | the failure injection cases on `postgresql:polls`, in CI, and against an end user's staging through its own `Target` | [The injection point]({{< relref "/walkthroughs/http/polls/schema#the-injection-point" >}}), [The failure injection cases]({{< relref "/walkthroughs/http/polls/testing#the-failure-injection-cases" >}}) |
+| Safe by default | `FAULT_TRUST_CA_FILE` empty, so no scenario is trusted | [`TrustScenario`]({{< relref "/walkthroughs/http/polls/init#trustscenario" >}}) |
+| One vote per browser, kept by the database | a `__Host-` voter cookie, and a vote's primary key of its poll and its voter, so two votes sent at once count once | [The schema]({{< relref "/walkthroughs/http/polls/schema#the-schema" >}}), [Voting]({{< relref "/walkthroughs/http/polls/schema#voting" >}}), [The voter cookie]({{< relref "/walkthroughs/http/polls/voting#the-voter-cookie" >}}) |
+| Cross-site votes refused | `http.CrossOriginProtection` around the Site, answered by the 403 page, and every vote a POST | [Cross-origin requests]({{< relref "/walkthroughs/http/polls/voting#cross-origin-requests" >}}) |
+| Scripts from the service's own origin only, under the CSP | htmx and its SSE extension vendored, at content-hashed URLs, and `script-src 'self'` with nothing inline. The browser cases check that no page reports a CSP violation | [The scripts]({{< relref "/walkthroughs/http/polls/site#the-scripts" >}}), [The Site and its CSP]({{< relref "/walkthroughs/http/polls/site#the-site-and-its-csp" >}}), [The browser cases, on kind]({{< relref "/walkthroughs/http/polls/testing#the-browser-cases-on-kind" >}}) |
+| Results on every replica | a trigger that notifies on the vote's commit, and a listener on each replica that hands the results to its feeds | [The notification]({{< relref "/walkthroughs/http/polls/replicas#the-notification" >}}), [The listener]({{< relref "/walkthroughs/http/polls/replicas#the-listener" >}}), [The shared cases]({{< relref "/walkthroughs/http/polls/testing#the-shared-cases" >}}) |
+| An open page that keeps updating through a rollout, which exits 0 | each open feed ends cleanly as `Shutdown` begins, and htmx connects it again to a replica that is still serving. Each replica exits 0 on SIGTERM | [At Shutdown]({{< relref "/walkthroughs/http/polls/live-results#at-shutdown" >}}), [Init's unit tests]({{< relref "/walkthroughs/http/polls/testing#inits-unit-tests" >}}), [The browser cases, on kind]({{< relref "/walkthroughs/http/polls/testing#the-browser-cases-on-kind" >}}) |
