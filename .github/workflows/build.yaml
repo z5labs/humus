@@ -699,8 +699,12 @@ jobs:
   # certificate among them, makes PostgreSQL's passwords, and applies the
   # kind overlay, with PostgreSQL over TLS holding the service's database,
   # its schema applied by its owner, and the service's Deployment has to
-  # become ready. This job saves no cache, so a push to main doesn't run it.
-  # The ruleset doesn't require this job, and Build doesn't wait on it.
+  # become ready. The tests behind the functional tag then run the shared
+  # cases against it, the failure injection cases included, through a
+  # kubectl port-forward to each of its two pods, trusting the CA up.sh
+  # generated and presenting the cases' client certificate from its Secret.
+  # The ruleset doesn't require this job, and Build doesn't wait on it; Vet
+  # the tagged tests vets them.
   polls-kind:
     name: Polls walkthrough (kind)
     # It runs when the change affects example/http/polls, as Affected modules
@@ -712,32 +716,55 @@ jobs:
       - vet
       - conformance
       - scripts
-    if: ${{ !cancelled() && github.event_name != 'push' && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/http/polls"')) }}
+    if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"example/http/polls"')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
+      actions: write
       contents: read
     steps:
         - name: Checkout
           uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+        - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+          with:
+            go-version: '1.27.4'
+            cache: false
+
+        - id: go-cache
+          uses: ./.github/actions/restore-go-cache
+          with:
+            name: polls-kind
+
         - name: Build the image
+          if: ${{ github.event_name != 'push' }}
           run: docker build --file example/http/polls/Dockerfile --tag polls .
 
         - name: Render the kustomization
+          if: ${{ github.event_name != 'push' }}
           run: kubectl kustomize example/http/polls/deploy/base
 
         - name: Bring the polls service up on kind
+          if: ${{ github.event_name != 'push' }}
           run: example/http/polls/deploy/kind/up.sh
 
+        - name: Run the functional tests against kind
+          run: go -C example/http/polls test -exec="$GO_EXEC" -count=1 -race -tags functional ./functional/
+
         - name: Show the polls namespace
-          if: ${{ failure() }}
+          if: ${{ failure() && github.event_name != 'push' }}
           run: |
             kubectl --namespace polls get all
             kubectl --namespace polls describe pods
             for pod in $(kubectl --namespace polls get pods --output name); do
               kubectl --namespace polls logs "$pod" --all-containers --prefix --tail 200 || true
             done
+
+        - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
+          uses: ./.github/actions/save-go-cache
+          with:
+            key: ${{ steps.go-cache.outputs.key }}
+            path: ${{ steps.go-cache.outputs.path }}
 
   # flaky's tests behind the testcontainers build tag start containers on the
   # runner's Docker, and check that flaky pins each one labelled
