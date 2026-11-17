@@ -1,0 +1,42 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: polls
+resources:
+  - namespace.yaml
+  - ../base
+  - postgres.yaml
+configMapGenerator:
+  - name: polls
+    behavior: merge
+    literals:
+      - FAULT_TRUST_CA_FILE=/etc/polls/fault-ca/ca.crt
+  - name: postgres-config
+    files:
+      - postgres/pg_hba.conf
+patches:
+  - target:
+      kind: Deployment
+      name: polls
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: polls
+      spec:
+        template:
+          spec:
+            containers:
+              - name: polls
+                imagePullPolicy: Never
+                volumeMounts:
+                  - name: fault-ca
+                    mountPath: /etc/polls/fault-ca
+                    readOnly: true
+            volumes:
+              - name: fault-ca
+                secret:
+                  secretName: polls-fault-ca
+                  defaultMode: 0440
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
