@@ -204,3 +204,61 @@ func TestStore_a_poll_read_back_is_a_copy(t *testing.T) {
 	require.Equal(t, "Tabs", again.Options[0].Text)
 	require.Zero(t, again.Options[0].Votes)
 }
+
+func TestStore_Subscribe_gets_each_votes_results_on_its_poll_only(t *testing.T) {
+	s := storetest.New()
+	ctx := t.Context()
+	poll := create(t, s, "Tabs or spaces?", "Tabs", "Spaces")
+	other := create(t, s, "Vim or Emacs?", "Vim", "Emacs")
+
+	first, unsubscribeFirst := s.Subscribe(poll.ID)
+	defer unsubscribeFirst()
+	second, unsubscribeSecond := s.Subscribe(poll.ID)
+	defer unsubscribeSecond()
+	elsewhere, unsubscribeElsewhere := s.Subscribe(other.ID)
+	defer unsubscribeElsewhere()
+
+	require.NoError(t, s.Vote(ctx, poll.ID, poll.Options[1].ID, "alice"))
+	for _, results := range []<-chan store.Poll{first, second} {
+		got := <-results
+		require.Equal(t, poll.ID, got.ID)
+		require.Equal(t, "Tabs or spaces?", got.Question)
+		require.Equal(t, []int64{0, 1}, []int64{got.Options[0].Votes, got.Options[1].Votes})
+	}
+	require.Empty(t, elsewhere, "a vote on another poll sends nothing")
+
+	require.ErrorIs(t, s.Vote(ctx, poll.ID, poll.Options[0].ID, "alice"), store.ErrAlreadyVoted)
+	require.ErrorIs(t, s.Vote(ctx, poll.ID, other.Options[0].ID, "bob"), store.ErrNotAnOption)
+	require.Empty(t, first, "a refused vote sends nothing")
+	require.Empty(t, second, "a refused vote sends nothing")
+}
+
+func TestStore_Subscribe_keeps_only_the_latest_results_for_a_subscriber_that_doesnt_keep_up(t *testing.T) {
+	s := storetest.New()
+	ctx := t.Context()
+	poll := create(t, s, "Tabs or spaces?", "Tabs", "Spaces")
+	results, unsubscribe := s.Subscribe(poll.ID)
+	defer unsubscribe()
+
+	for _, voter := range []string{"alice", "bob", "carol"} {
+		require.NoError(t, s.Vote(ctx, poll.ID, poll.Options[0].ID, voter))
+	}
+	require.Len(t, results, 1)
+	require.Equal(t, int64(3), (<-results).Options[0].Votes)
+}
+
+func TestStore_Subscribe_stops_at_unsubscribe(t *testing.T) {
+	s := storetest.New()
+	ctx := t.Context()
+	poll := create(t, s, "Tabs or spaces?", "Tabs", "Spaces")
+	results, unsubscribe := s.Subscribe(poll.ID)
+	staying, unsubscribeStaying := s.Subscribe(poll.ID)
+	defer unsubscribeStaying()
+
+	unsubscribe()
+	unsubscribe()
+	require.NoError(t, s.Vote(ctx, poll.ID, poll.Options[0].ID, "alice"))
+	_, open := <-results
+	require.False(t, open, "unsubscribing closes the channel, and nothing is sent on it after")
+	require.Equal(t, int64(1), (<-staying).Options[0].Votes, "another subscriber still gets the results")
+}

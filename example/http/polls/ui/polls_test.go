@@ -255,7 +255,7 @@ func TestSite_the_polls_page_shows_each_options_count(t *testing.T) {
 		require.Equal(t, http.StatusOK, page.status)
 		require.Equal(t, csp, page.header.Get("Content-Security-Policy"))
 		require.Contains(t, page.body, "<h1>Tabs or &lt;spaces&gt;?</h1>")
-		require.Contains(t, page.body, "<ul id=\"options\">\n"+
+		require.Contains(t, page.body, "<ul id=\"options\" sse-swap=\"results\">\n"+
 			"<li><span class=\"option\">Tabs</span> <span class=\"votes\">2</span></li>\n"+
 			"<li><span class=\"option\">Spaces</span> <span class=\"votes\">0</span></li>\n"+
 			"<li><span class=\"option\">Both</span> <span class=\"votes\">1</span></li>\n</ul>")

@@ -26,7 +26,7 @@ func TestScriptURL_changes_with_the_scripts_content(t *testing.T) {
 }
 
 func TestScriptURL_is_an_error_for_a_name_that_isnt_a_script(t *testing.T) {
-	u, err := New(nil)
+	u, err := New(nil, nil, 0)
 	require.NoError(t, err)
 	_, err = u.scriptURL("nothing.js")
 	require.ErrorContains(t, err, `"nothing.js" isn't a script`)
