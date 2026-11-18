@@ -45,16 +45,6 @@ import (
 // environment variable for any option it is not given, and humus reads no
 // environment variables.
 const (
-	// The batch span processor's: OTEL_BSP_*.
-	bspScheduleDelay   = 5 * time.Second
-	bspExportTimeout   = 30 * time.Second
-	bspMaxQueueSize    = 2048
-	bspMaxExportBatch  = 512
-	blrpScheduleDelay  = time.Second
-	blrpExportTimeout  = 30 * time.Second
-	blrpMaxQueueSize   = 2048
-	blrpMaxExportBatch = 512
-
 	// OTEL_GO_X_CARDINALITY_LIMIT.
 	metricCardinalityLimit = 2000
 
@@ -94,15 +84,16 @@ const (
 //   - traces: at ExporterNone, the SDK's TracerProvider with s.Sampler and
 //     the resource but no span processor, so spans get real IDs and nothing
 //     is exported; at ExporterConsole, OpenTelemetry's stdouttrace; at
-//     ExporterOTLP, the OTLP exporter in a batch span processor.
+//     ExporterOTLP, the OTLP exporter in a batch span processor, configured
+//     by s.SpanBatch.
 //   - metrics: at ExporterNone, a no-op MeterProvider; at ExporterConsole,
 //     OpenTelemetry's stdoutmetric in a periodic reader; at ExporterOTLP,
 //     the OTLP exporter in a periodic reader, as at ExporterConsole. The
 //     reader collects and exports as s.MetricExport says.
 //   - logs: at ExporterNone, a no-op LoggerProvider; at ExporterConsole,
 //     JSON lines in the format the package doc specifies; at ExporterOTLP,
-//     the OTLP exporter in a batch processor. Records below s.LogLevel are
-//     dropped either way.
+//     the OTLP exporter in a batch processor, configured by s.LogBatch.
+//     Records below s.LogLevel are dropped either way.
 //
 // The propagator is W3C trace context plus baggage.
 //
@@ -284,10 +275,10 @@ func (b *builder) tracerProvider(ctx context.Context) (*sdktrace.TracerProvider,
 		exp = timeoutSpanExporter{SpanExporter: exp, timeout: b.s.OTLP.Timeout}
 		opts = append(opts, sdktrace.WithSpanProcessor(sdktrace.NewBatchSpanProcessor(
 			b.spanExporter(exp),
-			sdktrace.WithBatchTimeout(bspScheduleDelay),
-			sdktrace.WithExportTimeout(bspExportTimeout),
-			sdktrace.WithMaxQueueSize(bspMaxQueueSize),
-			sdktrace.WithMaxExportBatchSize(bspMaxExportBatch),
+			sdktrace.WithBatchTimeout(b.s.SpanBatch.ScheduleDelay),
+			sdktrace.WithExportTimeout(b.s.SpanBatch.ExportTimeout),
+			sdktrace.WithMaxQueueSize(b.s.SpanBatch.MaxQueueSize),
+			sdktrace.WithMaxExportBatchSize(b.s.SpanBatch.MaxExportBatchSize),
 		)))
 	}
 	tp := sdktrace.NewTracerProvider(opts...)
@@ -390,10 +381,10 @@ func (b *builder) loggerProvider(ctx context.Context) (log.LoggerProvider, error
 			return nil, err
 		}
 		proc = sdklog.NewBatchProcessor(timeoutLogExporter{Exporter: exp, timeout: b.s.OTLP.Timeout},
-			sdklog.WithExportInterval(blrpScheduleDelay),
-			sdklog.WithExportTimeout(blrpExportTimeout),
-			sdklog.WithMaxQueueSize(blrpMaxQueueSize),
-			sdklog.WithExportMaxBatchSize(blrpMaxExportBatch),
+			sdklog.WithExportInterval(b.s.LogBatch.ScheduleDelay),
+			sdklog.WithExportTimeout(b.s.LogBatch.ExportTimeout),
+			sdklog.WithMaxQueueSize(b.s.LogBatch.MaxQueueSize),
+			sdklog.WithExportMaxBatchSize(b.s.LogBatch.MaxExportBatchSize),
 		)
 	}
 	lp := sdklog.NewLoggerProvider(
