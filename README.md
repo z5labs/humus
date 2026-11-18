@@ -18,7 +18,7 @@ inside Kubernetes. `humustest.Start` runs the same service in a test.
 ## Install
 
 ```sh
-go get github.com/z5labs/humus@v0.17.0
+go get github.com/z5labs/humus@v0.18.0
 ```
 
 ## A service

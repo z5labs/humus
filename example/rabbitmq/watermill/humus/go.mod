@@ -15,9 +15,9 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/rabbitmq v0.45.0
 	github.com/z5labs/bedrock v0.26.0
 	github.com/z5labs/bedrock/host v0.26.0
-	github.com/z5labs/humus v0.17.0
+	github.com/z5labs/humus v0.18.0
 	github.com/z5labs/humus/example/rabbitmq/watermill/cases v0.0.0-00010101000000-000000000000
-	github.com/z5labs/humus/queue/rabbitmq v0.17.0
+	github.com/z5labs/humus/queue/rabbitmq v0.18.0
 )
 
 require (
