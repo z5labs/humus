@@ -10,7 +10,7 @@ require (
 	github.com/ThreeDotsLabs/watermill-kafka/v3 v3.1.4
 	github.com/stretchr/testify v1.12.1
 	github.com/twmb/franz-go v1.22.3
-	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261116184642-b0611ae5ed76
+	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261117194821-7ccf00dafd0e
 	github.com/z5labs/humus/example/kafka/watermill/cases v0.0.0-00010101000000-000000000000
 )
 
