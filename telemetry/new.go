@@ -55,10 +55,6 @@ const (
 	blrpMaxQueueSize   = 2048
 	blrpMaxExportBatch = 512
 
-	// The periodic metric reader's: OTEL_METRIC_EXPORT_*.
-	metricExportInterval = time.Minute
-	metricExportTimeout  = 30 * time.Second
-
 	// OTEL_GO_X_CARDINALITY_LIMIT.
 	metricCardinalityLimit = 2000
 
@@ -100,8 +96,9 @@ const (
 //     is exported; at ExporterConsole, OpenTelemetry's stdouttrace; at
 //     ExporterOTLP, the OTLP exporter in a batch span processor.
 //   - metrics: at ExporterNone, a no-op MeterProvider; at ExporterConsole,
-//     OpenTelemetry's stdoutmetric; at ExporterOTLP, the OTLP exporter in a
-//     periodic reader.
+//     OpenTelemetry's stdoutmetric in a periodic reader; at ExporterOTLP,
+//     the OTLP exporter in a periodic reader, as at ExporterConsole. The
+//     reader collects and exports as s.MetricExport says.
 //   - logs: at ExporterNone, a no-op LoggerProvider; at ExporterConsole,
 //     JSON lines in the format the package doc specifies; at ExporterOTLP,
 //     the OTLP exporter in a batch processor. Records below s.LogLevel are
@@ -344,8 +341,8 @@ func (b *builder) meterProvider(ctx context.Context) (metric.MeterProvider, erro
 		sdkmetric.WithResource(b.res),
 		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(
 			resourceMetricExporter{Exporter: exp, res: b.res},
-			sdkmetric.WithInterval(metricExportInterval),
-			sdkmetric.WithTimeout(metricExportTimeout),
+			sdkmetric.WithInterval(b.s.MetricExport.Interval),
+			sdkmetric.WithTimeout(b.s.MetricExport.Timeout),
 		)),
 		sdkmetric.WithExemplarFilter(exemplar.TraceBasedFilter),
 		sdkmetric.WithCardinalityLimit(metricCardinalityLimit),
