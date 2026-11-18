@@ -5,7 +5,7 @@ go 1.27.0
 replace github.com/z5labs/humus/example/http/huma/cases => ../cases
 
 require (
-	github.com/danielgtaylor/huma/v2 v2.40.0
+	github.com/danielgtaylor/huma/v2 v2.41.0
 	github.com/stretchr/testify v1.12.1
 	github.com/z5labs/humus/example/http/huma/cases v0.0.0-00010101000000-000000000000
 )
