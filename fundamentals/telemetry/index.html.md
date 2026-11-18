@@ -170,6 +170,8 @@ range. A zero field means zero, never "use the default".
 | `Sampler` | `sdktrace.ParentBased(sdktrace.AlwaysSample())` | not nil | `CheckSampler` | `OTEL_TRACES_SAMPLER` and `OTEL_TRACES_SAMPLER_ARG` |
 | `LogLevel` | `log.SeverityInfo` | `log.SeverityTrace1` to `log.SeverityFatal4` | `CheckLogLevel` | none |
 | `ShutdownTimeout` | `5s` | positive | `CheckShutdownTimeout` | none |
+| `MetricExport.Interval` | `60s` | positive | `CheckMetricExportInterval` | `OTEL_METRIC_EXPORT_INTERVAL`, which is in milliseconds in the spec |
+| `MetricExport.Timeout` | `30s` | positive | `CheckMetricExportTimeout` | `OTEL_METRIC_EXPORT_TIMEOUT`, which is in milliseconds in the spec |
 
 The godoc of each field is the reference; the table is its summary. The
 `OTLP` fields are checked even when no signal is exported over OTLP. The
@@ -343,6 +345,15 @@ the run's span in full.
   stopped within it. The App shuts telemetry down after the OnStop functions,
   separately from the grace period and with a context that a cancelled root
   context does not cancel, so `ShutdownTimeout` is what bounds it.
+- **`MetricExport`** configures the periodic reader, which collects and
+  exports metrics at `console` and `otlp` alike, and is checked whatever
+  `Metrics` is. `Interval` runs from the start of one export to the start of
+  the next: an export that runs past it delays the next one, which starts as
+  soon as it ends, so two never overlap. `Timeout` bounds each periodic
+  collection and its export, but not the last one, which `SDK.Shutdown` runs:
+  `ShutdownTimeout` bounds that. A `Builder` that maps
+  `OTEL_METRIC_EXPORT_INTERVAL` or `OTEL_METRIC_EXPORT_TIMEOUT` converts their
+  milliseconds to a `time.Duration`.
 - **`Disabled`** is the counterpart of `OTEL_SDK_DISABLED`. `telemetry.New`
   ignores every other field and returns `telemetry.Noop()`, building and
   dialling nothing. The propagator stays W3C trace context plus baggage,
