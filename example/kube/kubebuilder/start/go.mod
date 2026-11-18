@@ -45,7 +45,7 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-logr/zapr v1.3.0 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
-	github.com/go-openapi/jsonpointer v1.0.2 // indirect
+	github.com/go-openapi/jsonpointer v1.0.3 // indirect
 	github.com/go-openapi/jsonreference v1.0.3 // indirect
 	github.com/go-openapi/swag v0.29.2 // indirect
 	github.com/go-openapi/swag/cmdutils v0.29.2 // indirect
@@ -112,7 +112,7 @@ require (
 	go.yaml.in/yaml/v2 v2.4.5 // indirect
 	go.yaml.in/yaml/v3 v3.0.6 // indirect
 	golang.org/x/crypto v0.59.0 // indirect
-	golang.org/x/exp v0.0.0-20261113113407-e3970619a1a4 // indirect
+	golang.org/x/exp v0.0.0-20261117202309-7a49493bfd90 // indirect
 	golang.org/x/net v0.63.0 // indirect
 	golang.org/x/oauth2 v0.38.0 // indirect
 	golang.org/x/sync v0.25.0 // indirect

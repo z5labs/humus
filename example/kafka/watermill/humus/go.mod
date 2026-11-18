@@ -11,7 +11,7 @@ replace (
 require (
 	github.com/stretchr/testify v1.12.1
 	github.com/twmb/franz-go v1.22.3
-	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261116184642-b0611ae5ed76
+	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261117194821-7ccf00dafd0e
 	github.com/twmb/franz-go/pkg/kmsg v1.15.1
 	github.com/z5labs/bedrock v0.26.0
 	github.com/z5labs/bedrock/host v0.26.0
