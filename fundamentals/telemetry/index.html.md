@@ -172,6 +172,14 @@ range. A zero field means zero, never "use the default".
 | `ShutdownTimeout` | `5s` | positive | `CheckShutdownTimeout` | none |
 | `MetricExport.Interval` | `60s` | positive | `CheckMetricExportInterval` | `OTEL_METRIC_EXPORT_INTERVAL`, which is in milliseconds in the spec |
 | `MetricExport.Timeout` | `30s` | positive | `CheckMetricExportTimeout` | `OTEL_METRIC_EXPORT_TIMEOUT`, which is in milliseconds in the spec |
+| `SpanBatch.ScheduleDelay` | `5s` | positive | `CheckBatchScheduleDelay` | `OTEL_BSP_SCHEDULE_DELAY`, which is in milliseconds in the spec |
+| `SpanBatch.ExportTimeout` | `30s` | positive | `CheckBatchExportTimeout` | `OTEL_BSP_EXPORT_TIMEOUT`, which is in milliseconds in the spec |
+| `SpanBatch.MaxQueueSize` | `2048` | positive | `CheckBatchMaxQueueSize` | `OTEL_BSP_MAX_QUEUE_SIZE` |
+| `SpanBatch.MaxExportBatchSize` | `512` | positive, and not more than `MaxQueueSize` | `CheckBatchMaxExportBatchSize` | `OTEL_BSP_MAX_EXPORT_BATCH_SIZE` |
+| `LogBatch.ScheduleDelay` | `1s` | positive | `CheckBatchScheduleDelay` | `OTEL_BLRP_SCHEDULE_DELAY`, which is in milliseconds in the spec |
+| `LogBatch.ExportTimeout` | `30s` | positive | `CheckBatchExportTimeout` | `OTEL_BLRP_EXPORT_TIMEOUT`, which is in milliseconds in the spec |
+| `LogBatch.MaxQueueSize` | `2048` | positive | `CheckBatchMaxQueueSize` | `OTEL_BLRP_MAX_QUEUE_SIZE` |
+| `LogBatch.MaxExportBatchSize` | `512` | positive, and not more than `MaxQueueSize` | `CheckBatchMaxExportBatchSize` | `OTEL_BLRP_MAX_EXPORT_BATCH_SIZE` |
 
 The godoc of each field is the reference; the table is its summary. The
 `OTLP` fields are checked even when no signal is exported over OTLP. The
@@ -354,6 +362,19 @@ the run's span in full.
   `ShutdownTimeout` bounds that. A `Builder` that maps
   `OTEL_METRIC_EXPORT_INTERVAL` or `OTEL_METRIC_EXPORT_TIMEOUT` converts their
   milliseconds to a `time.Duration`.
+- **`SpanBatch` and `LogBatch`** configure the batch span processor and the
+  batch log record processor, and are checked whatever `Traces` and `Logs`
+  are. The processors are built only at `otlp`: console traces and logs go
+  through simple processors, which export each span or record as it ends.
+  `ScheduleDelay` runs from the start of one export to the start of the next,
+  when a batch does not fill first; the processor exports one batch at a time,
+  so an export that runs past it delays the next. `ExportTimeout` and
+  `OTLP.Timeout` bound the same export, and the shorter applies, which with
+  the defaults is `OTLP.Timeout`. While the queue is full, the span processor
+  drops each span that ends, but the log record processor drops the oldest
+  record it holds. A `MaxExportBatchSize` above `MaxQueueSize` fails
+  `telemetry.New`, so a `Builder` that sources both fields sees the error
+  there.
 - **`Disabled`** is the counterpart of `OTEL_SDK_DISABLED`. `telemetry.New`
   ignores every other field and returns `telemetry.Noop()`, building and
   dialling nothing. The propagator stays W3C trace context plus baggage,
