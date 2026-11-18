@@ -143,6 +143,14 @@ type Settings struct {
 	// exports metrics at ExporterConsole and ExporterOTLP alike. It is
 	// checked whatever Metrics is.
 	MetricExport MetricExportSettings
+
+	// SpanBatch configures the batch span processor, used when Traces is
+	// ExporterOTLP. It is checked whatever Traces is.
+	SpanBatch BatchSettings
+
+	// LogBatch configures the batch log record processor, used when Logs is
+	// ExporterOTLP. It is checked whatever Logs is.
+	LogBatch BatchSettings
 }
 
 // MetricExportSettings configures the periodic metric reader.
@@ -164,6 +172,46 @@ type MetricExportSettings struct {
 	// Default: 30s. Valid: positive. Check: CheckMetricExportTimeout.
 	// Spec variable: OTEL_METRIC_EXPORT_TIMEOUT, in milliseconds.
 	Timeout time.Duration
+}
+
+// BatchSettings configures a batch processor. Settings.SpanBatch and
+// Settings.LogBatch share it.
+type BatchSettings struct {
+	// ScheduleDelay is the time from the start of one export to the start
+	// of the next, when a batch doesn't fill first. The processor exports
+	// one batch at a time, so an export that runs past it delays the next,
+	// and what is queued behind it waits longer.
+	//
+	// Default: 5s for spans, 1s for logs. Valid: positive. Check:
+	// CheckBatchScheduleDelay. Spec variables: OTEL_BSP_SCHEDULE_DELAY and
+	// OTEL_BLRP_SCHEDULE_DELAY, in milliseconds.
+	ScheduleDelay time.Duration
+
+	// ExportTimeout bounds each export. OTLP.Timeout bounds the same
+	// export, so the shorter of the two applies. With the defaults, that
+	// is OTLP.Timeout.
+	//
+	// Default: 30s. Valid: positive. Check: CheckBatchExportTimeout. Spec
+	// variables: OTEL_BSP_EXPORT_TIMEOUT and OTEL_BLRP_EXPORT_TIMEOUT, in
+	// milliseconds.
+	ExportTimeout time.Duration
+
+	// MaxQueueSize is the most spans or records held for export at once.
+	// While the queue is full, the span processor drops each span that
+	// ends, and the log record processor drops the oldest record it holds
+	// to make room for each new one.
+	//
+	// Default: 2048. Valid: positive. Check: CheckBatchMaxQueueSize. Spec
+	// variables: OTEL_BSP_MAX_QUEUE_SIZE and OTEL_BLRP_MAX_QUEUE_SIZE.
+	MaxQueueSize int
+
+	// MaxExportBatchSize is the most spans or records one export sends.
+	//
+	// Default: 512. Valid: positive, and not more than MaxQueueSize.
+	// Check: CheckBatchMaxExportBatchSize, and New compares it with
+	// MaxQueueSize. Spec variables: OTEL_BSP_MAX_EXPORT_BATCH_SIZE and
+	// OTEL_BLRP_MAX_EXPORT_BATCH_SIZE.
+	MaxExportBatchSize int
 }
 
 // OTLPSettings configures the OTLP exporters.
@@ -229,6 +277,18 @@ func DefaultSettings() Settings {
 		MetricExport: MetricExportSettings{
 			Interval: 60 * time.Second,
 			Timeout:  30 * time.Second,
+		},
+		SpanBatch: BatchSettings{
+			ScheduleDelay:      5 * time.Second,
+			ExportTimeout:      30 * time.Second,
+			MaxQueueSize:       2048,
+			MaxExportBatchSize: 512,
+		},
+		LogBatch: BatchSettings{
+			ScheduleDelay:      time.Second,
+			ExportTimeout:      30 * time.Second,
+			MaxQueueSize:       2048,
+			MaxExportBatchSize: 512,
 		},
 	}
 }
@@ -336,6 +396,43 @@ func CheckMetricExportTimeout(d time.Duration) error {
 	return nil
 }
 
+// CheckBatchScheduleDelay rejects a delay that is not positive.
+// Settings.SpanBatch and Settings.LogBatch share it.
+func CheckBatchScheduleDelay(d time.Duration) error {
+	if d <= 0 {
+		return errNotPositive
+	}
+	return nil
+}
+
+// CheckBatchExportTimeout rejects a timeout that is not positive.
+// Settings.SpanBatch and Settings.LogBatch share it.
+func CheckBatchExportTimeout(d time.Duration) error {
+	if d <= 0 {
+		return errNotPositive
+	}
+	return nil
+}
+
+// CheckBatchMaxQueueSize rejects a size that is not positive.
+// Settings.SpanBatch and Settings.LogBatch share it.
+func CheckBatchMaxQueueSize(n int) error {
+	if n <= 0 {
+		return errNotPositive
+	}
+	return nil
+}
+
+// CheckBatchMaxExportBatchSize rejects a size that is not positive. New also
+// rejects a MaxExportBatchSize above MaxQueueSize, which takes both fields
+// to tell. Settings.SpanBatch and Settings.LogBatch share it.
+func CheckBatchMaxExportBatchSize(n int) error {
+	if n <= 0 {
+		return errNotPositive
+	}
+	return nil
+}
+
 // check runs every check on s and returns every failure, joined, each one
 // naming its field.
 func (s Settings) check() error {
@@ -357,5 +454,18 @@ func (s Settings) check() error {
 	add("ShutdownTimeout", CheckShutdownTimeout(s.ShutdownTimeout))
 	add("MetricExport.Interval", CheckMetricExportInterval(s.MetricExport.Interval))
 	add("MetricExport.Timeout", CheckMetricExportTimeout(s.MetricExport.Timeout))
+	for _, g := range []struct {
+		name string
+		b    BatchSettings
+	}{{"SpanBatch", s.SpanBatch}, {"LogBatch", s.LogBatch}} {
+		add(g.name+".ScheduleDelay", CheckBatchScheduleDelay(g.b.ScheduleDelay))
+		add(g.name+".ExportTimeout", CheckBatchExportTimeout(g.b.ExportTimeout))
+		add(g.name+".MaxQueueSize", CheckBatchMaxQueueSize(g.b.MaxQueueSize))
+		add(g.name+".MaxExportBatchSize", CheckBatchMaxExportBatchSize(g.b.MaxExportBatchSize))
+		if g.b.MaxExportBatchSize > g.b.MaxQueueSize {
+			add(g.name+".MaxExportBatchSize", fmt.Errorf("%d is more than MaxQueueSize, %d",
+				g.b.MaxExportBatchSize, g.b.MaxQueueSize))
+		}
+	}
 	return errors.Join(errs...)
 }

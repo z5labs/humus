@@ -22,9 +22,10 @@ import (
 var fieldNames = []string{
 	"ServiceName", "Traces", "Metrics", "Logs", "Exporter", "Endpoint",
 	"Protocol", "Timeout", "Sampler", "LogLevel", "ShutdownTimeout", "OTLP",
-	"MetricExport", "Interval",
+	"MetricExport", "Interval", "SpanBatch", "LogBatch", "ScheduleDelay",
+	"ExportTimeout", "MaxQueueSize", "MaxExportBatchSize",
 	"service name", "endpoint", "protocol", "timeout", "sampler", "level",
-	"interval",
+	"interval", "delay", "queue", "batch",
 }
 
 func TestChecks(t *testing.T) {
@@ -115,6 +116,38 @@ func TestChecks(t *testing.T) {
 			},
 		},
 		{
+			name:   "CheckBatchScheduleDelay",
+			accept: []func() error{func() error { return telemetry.CheckBatchScheduleDelay(time.Millisecond) }},
+			reject: []func() error{
+				func() error { return telemetry.CheckBatchScheduleDelay(0) },
+				func() error { return telemetry.CheckBatchScheduleDelay(-time.Second) },
+			},
+		},
+		{
+			name:   "CheckBatchExportTimeout",
+			accept: []func() error{func() error { return telemetry.CheckBatchExportTimeout(time.Millisecond) }},
+			reject: []func() error{
+				func() error { return telemetry.CheckBatchExportTimeout(0) },
+				func() error { return telemetry.CheckBatchExportTimeout(-time.Second) },
+			},
+		},
+		{
+			name:   "CheckBatchMaxQueueSize",
+			accept: []func() error{func() error { return telemetry.CheckBatchMaxQueueSize(1) }},
+			reject: []func() error{
+				func() error { return telemetry.CheckBatchMaxQueueSize(0) },
+				func() error { return telemetry.CheckBatchMaxQueueSize(-1) },
+			},
+		},
+		{
+			name:   "CheckBatchMaxExportBatchSize",
+			accept: []func() error{func() error { return telemetry.CheckBatchMaxExportBatchSize(1) }},
+			reject: []func() error{
+				func() error { return telemetry.CheckBatchMaxExportBatchSize(0) },
+				func() error { return telemetry.CheckBatchMaxExportBatchSize(-1) },
+			},
+		},
+		{
 			name:   "CheckSampler",
 			accept: []func() error{func() error { return telemetry.CheckSampler(sdktrace.NeverSample()) }},
 			reject: []func() error{func() error { return telemetry.CheckSampler(nil) }},
@@ -171,6 +204,18 @@ func TestDefaultSettings(t *testing.T) {
 	require.Equal(t, 5*time.Second, s.ShutdownTimeout)
 	require.Equal(t, 60*time.Second, s.MetricExport.Interval)
 	require.Equal(t, 30*time.Second, s.MetricExport.Timeout)
+	require.Equal(t, telemetry.BatchSettings{
+		ScheduleDelay:      5 * time.Second,
+		ExportTimeout:      30 * time.Second,
+		MaxQueueSize:       2048,
+		MaxExportBatchSize: 512,
+	}, s.SpanBatch)
+	require.Equal(t, telemetry.BatchSettings{
+		ScheduleDelay:      time.Second,
+		ExportTimeout:      30 * time.Second,
+		MaxQueueSize:       2048,
+		MaxExportBatchSize: 512,
+	}, s.LogBatch)
 }
 
 func TestNew_names_each_bad_field(t *testing.T) {
@@ -194,6 +239,20 @@ func TestNew_names_each_bad_field(t *testing.T) {
 		// fields are checked whatever Metrics is.
 		{"MetricExport.Interval", func(s *telemetry.Settings) { s.MetricExport.Interval = 0 }},
 		{"MetricExport.Timeout", func(s *telemetry.Settings) { s.MetricExport.Timeout = -time.Second }},
+		// DefaultSettings' Traces is ExporterNone and its Logs is
+		// ExporterConsole, so neither batch processor is built: these show
+		// both groups are checked whatever Traces and Logs are.
+		{"SpanBatch.ScheduleDelay", func(s *telemetry.Settings) { s.SpanBatch.ScheduleDelay = 0 }},
+		{"SpanBatch.ExportTimeout", func(s *telemetry.Settings) { s.SpanBatch.ExportTimeout = -time.Second }},
+		{"SpanBatch.MaxQueueSize", func(s *telemetry.Settings) { s.SpanBatch.MaxQueueSize = 0 }},
+		{"SpanBatch.MaxExportBatchSize", func(s *telemetry.Settings) { s.SpanBatch.MaxExportBatchSize = -1 }},
+		{"LogBatch.ScheduleDelay", func(s *telemetry.Settings) { s.LogBatch.ScheduleDelay = -time.Second }},
+		{"LogBatch.ExportTimeout", func(s *telemetry.Settings) { s.LogBatch.ExportTimeout = 0 }},
+		{"LogBatch.MaxQueueSize", func(s *telemetry.Settings) { s.LogBatch.MaxQueueSize = -1 }},
+		{"LogBatch.MaxExportBatchSize", func(s *telemetry.Settings) { s.LogBatch.MaxExportBatchSize = 0 }},
+		// The batch-size rule, which takes both fields of a group to tell.
+		{"SpanBatch.MaxExportBatchSize above MaxQueueSize", func(s *telemetry.Settings) { s.SpanBatch.MaxExportBatchSize = s.SpanBatch.MaxQueueSize + 1 }},
+		{"LogBatch.MaxExportBatchSize above MaxQueueSize", func(s *telemetry.Settings) { s.LogBatch.MaxExportBatchSize = s.LogBatch.MaxQueueSize + 1 }},
 	}
 	for _, f := range fields {
 		t.Run(f.name, func(t *testing.T) {
@@ -203,9 +262,64 @@ func TestNew_names_each_bad_field(t *testing.T) {
 
 			sdk, err := telemetry.New(t.Context(), s, failingDialer(t), &strings.Builder{})
 			require.Error(t, err)
-			require.Contains(t, err.Error(), "Settings."+f.name+":")
+			field, _, _ := strings.Cut(f.name, " ")
+			require.Contains(t, err.Error(), "Settings."+field+":")
 			require.Zero(t, sdk.TracerProvider, "New built something")
 			require.Nil(t, sdk.Shutdown, "New built something")
+		})
+	}
+}
+
+func TestNew_rejects_a_MaxExportBatchSize_above_MaxQueueSize(t *testing.T) {
+	t.Parallel()
+
+	for _, g := range []struct {
+		name string
+		set  func(*telemetry.Settings, int, int)
+	}{
+		{"SpanBatch", func(s *telemetry.Settings, batch, queue int) {
+			s.SpanBatch.MaxExportBatchSize, s.SpanBatch.MaxQueueSize = batch, queue
+		}},
+		{"LogBatch", func(s *telemetry.Settings, batch, queue int) {
+			s.LogBatch.MaxExportBatchSize, s.LogBatch.MaxQueueSize = batch, queue
+		}},
+	} {
+		t.Run(g.name, func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("above", func(t *testing.T) {
+				t.Parallel()
+				s := telemetry.DefaultSettings()
+				g.set(&s, 4096, 2048)
+				var out strings.Builder
+
+				sdk, err := telemetry.New(t.Context(), s, failingDialer(t), &out)
+				require.EqualError(t, err, "telemetry: Settings."+g.name+".MaxExportBatchSize: 4096 is more than MaxQueueSize, 2048")
+				require.Zero(t, sdk.TracerProvider, "New built something")
+				require.Nil(t, sdk.Shutdown, "New built something")
+				require.Empty(t, out.String())
+			})
+
+			t.Run("joined with every other bad field", func(t *testing.T) {
+				t.Parallel()
+				s := telemetry.DefaultSettings()
+				g.set(&s, 4096, 2048)
+				s.ServiceName = ""
+
+				_, err := telemetry.New(t.Context(), s, failingDialer(t), &strings.Builder{})
+				require.ErrorContains(t, err, "Settings.ServiceName: must not be empty")
+				require.ErrorContains(t, err, "Settings."+g.name+".MaxExportBatchSize: 4096 is more than MaxQueueSize, 2048")
+			})
+
+			t.Run("equal", func(t *testing.T) {
+				t.Parallel()
+				s := telemetry.DefaultSettings()
+				g.set(&s, 2048, 2048)
+
+				sdk, err := telemetry.New(t.Context(), s, failingDialer(t), &strings.Builder{})
+				require.NoError(t, err)
+				require.NoError(t, sdk.Shutdown(t.Context()))
+			})
 		})
 	}
 }
