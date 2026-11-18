@@ -22,7 +22,9 @@ import (
 var fieldNames = []string{
 	"ServiceName", "Traces", "Metrics", "Logs", "Exporter", "Endpoint",
 	"Protocol", "Timeout", "Sampler", "LogLevel", "ShutdownTimeout", "OTLP",
+	"MetricExport", "Interval",
 	"service name", "endpoint", "protocol", "timeout", "sampler", "level",
+	"interval",
 }
 
 func TestChecks(t *testing.T) {
@@ -97,6 +99,22 @@ func TestChecks(t *testing.T) {
 			},
 		},
 		{
+			name:   "CheckMetricExportInterval",
+			accept: []func() error{func() error { return telemetry.CheckMetricExportInterval(time.Millisecond) }},
+			reject: []func() error{
+				func() error { return telemetry.CheckMetricExportInterval(0) },
+				func() error { return telemetry.CheckMetricExportInterval(-time.Second) },
+			},
+		},
+		{
+			name:   "CheckMetricExportTimeout",
+			accept: []func() error{func() error { return telemetry.CheckMetricExportTimeout(time.Millisecond) }},
+			reject: []func() error{
+				func() error { return telemetry.CheckMetricExportTimeout(0) },
+				func() error { return telemetry.CheckMetricExportTimeout(-time.Second) },
+			},
+		},
+		{
 			name:   "CheckSampler",
 			accept: []func() error{func() error { return telemetry.CheckSampler(sdktrace.NeverSample()) }},
 			reject: []func() error{func() error { return telemetry.CheckSampler(nil) }},
@@ -151,6 +169,8 @@ func TestDefaultSettings(t *testing.T) {
 	require.Equal(t, sdktrace.ParentBased(sdktrace.AlwaysSample()).Description(), s.Sampler.Description())
 	require.Equal(t, log.SeverityInfo, s.LogLevel)
 	require.Equal(t, 5*time.Second, s.ShutdownTimeout)
+	require.Equal(t, 60*time.Second, s.MetricExport.Interval)
+	require.Equal(t, 30*time.Second, s.MetricExport.Timeout)
 }
 
 func TestNew_names_each_bad_field(t *testing.T) {
@@ -170,6 +190,10 @@ func TestNew_names_each_bad_field(t *testing.T) {
 		{"Sampler", func(s *telemetry.Settings) { s.Sampler = nil }},
 		{"LogLevel", func(s *telemetry.Settings) { s.LogLevel = log.SeverityUndefined }},
 		{"ShutdownTimeout", func(s *telemetry.Settings) { s.ShutdownTimeout = -time.Second }},
+		// DefaultSettings' Metrics is ExporterNone, so these show the
+		// fields are checked whatever Metrics is.
+		{"MetricExport.Interval", func(s *telemetry.Settings) { s.MetricExport.Interval = 0 }},
+		{"MetricExport.Timeout", func(s *telemetry.Settings) { s.MetricExport.Timeout = -time.Second }},
 	}
 	for _, f := range fields {
 		t.Run(f.name, func(t *testing.T) {

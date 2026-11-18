@@ -138,6 +138,32 @@ type Settings struct {
 	// Default: 5s. Valid: positive. Check: CheckShutdownTimeout. Spec
 	// variable: none.
 	ShutdownTimeout time.Duration
+
+	// MetricExport configures the periodic reader, which collects and
+	// exports metrics at ExporterConsole and ExporterOTLP alike. It is
+	// checked whatever Metrics is.
+	MetricExport MetricExportSettings
+}
+
+// MetricExportSettings configures the periodic metric reader.
+type MetricExportSettings struct {
+	// Interval is the time from the start of one collection to the start
+	// of the next. A collection and its export that run past it delay the
+	// next one, which starts as soon as they end, so two never overlap.
+	//
+	// Default: 60s. Valid: positive. Check: CheckMetricExportInterval.
+	// Spec variable: OTEL_METRIC_EXPORT_INTERVAL, which is in milliseconds
+	// in the spec.
+	Interval time.Duration
+
+	// Timeout bounds each periodic collection and its export together.
+	// Over OTLP, OTLP.Timeout bounds the export as well. Timeout doesn't
+	// bound the last collection and export, the ones SDK.Shutdown runs:
+	// ShutdownTimeout does.
+	//
+	// Default: 30s. Valid: positive. Check: CheckMetricExportTimeout.
+	// Spec variable: OTEL_METRIC_EXPORT_TIMEOUT, in milliseconds.
+	Timeout time.Duration
 }
 
 // OTLPSettings configures the OTLP exporters.
@@ -200,6 +226,10 @@ func DefaultSettings() Settings {
 		Sampler:         sdktrace.ParentBased(sdktrace.AlwaysSample()),
 		LogLevel:        log.SeverityInfo,
 		ShutdownTimeout: 5 * time.Second,
+		MetricExport: MetricExportSettings{
+			Interval: 60 * time.Second,
+			Timeout:  30 * time.Second,
+		},
 	}
 }
 
@@ -290,6 +320,22 @@ func CheckShutdownTimeout(d time.Duration) error {
 	return nil
 }
 
+// CheckMetricExportInterval rejects an interval that is not positive.
+func CheckMetricExportInterval(d time.Duration) error {
+	if d <= 0 {
+		return errNotPositive
+	}
+	return nil
+}
+
+// CheckMetricExportTimeout rejects a timeout that is not positive.
+func CheckMetricExportTimeout(d time.Duration) error {
+	if d <= 0 {
+		return errNotPositive
+	}
+	return nil
+}
+
 // check runs every check on s and returns every failure, joined, each one
 // naming its field.
 func (s Settings) check() error {
@@ -309,5 +355,7 @@ func (s Settings) check() error {
 	add("Sampler", CheckSampler(s.Sampler))
 	add("LogLevel", CheckLogLevel(s.LogLevel))
 	add("ShutdownTimeout", CheckShutdownTimeout(s.ShutdownTimeout))
+	add("MetricExport.Interval", CheckMetricExportInterval(s.MetricExport.Interval))
+	add("MetricExport.Timeout", CheckMetricExportTimeout(s.MetricExport.Timeout))
 	return errors.Join(errs...)
 }
