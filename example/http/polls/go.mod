@@ -5,7 +5,7 @@ go 1.27.0
 replace github.com/z5labs/humus => ../../..
 
 require (
-	github.com/chromedp/cdproto v0.160.4
+	github.com/chromedp/cdproto v0.160.5
 	github.com/chromedp/chromedp v0.24.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.13.0
@@ -90,8 +90,8 @@ require (
 	golang.org/x/sync v0.25.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/text v0.44.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20261116203732-fd2c7689a808 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20261116203732-fd2c7689a808 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20261118221215-c8830f628b3f // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20261118221215-c8830f628b3f // indirect
 	google.golang.org/grpc v1.85.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	software.sslmate.com/src/go-pkcs12 v0.7.4 // indirect
