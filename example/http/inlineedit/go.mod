@@ -6,7 +6,7 @@ replace github.com/z5labs/humus => ../../..
 
 require (
 	github.com/chromedp/cdproto v0.160.4
-	github.com/chromedp/chromedp v0.23.1
+	github.com/chromedp/chromedp v0.24.0
 	github.com/moby/moby/api v1.57.0
 	github.com/starfederation/datastar-go v1.2.2
 	github.com/stretchr/testify v1.12.1
