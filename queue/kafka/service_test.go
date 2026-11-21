@@ -555,6 +555,44 @@ func TestService_failures(t *testing.T) {
 		})
 	})
 
+	for _, code := range []*kerr.Error{kerr.StaleMemberEpoch, kerr.FencedMemberEpoch} {
+		for _, protocol := range []kafka.GroupProtocol{kafka.ClassicProtocol, kafka.ConsumerProtocol} {
+			t.Run("a commit refused with "+code.Message+" under the "+string(protocol)+" protocol leaves the record pending", func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					h := humustest.NewHost(t)
+					c := cluster(t, h, 1)
+					produce(t, h, c, 3)
+					answerOffsetCommit(c, code.Code, false)
+
+					s := settings(c.ListenAddrs()...)
+					s.GroupProtocol = protocol
+					var seen []int64
+					p, status := humustest.Start(t, consumes(s, func(ctx context.Context, m kafka.Message) error {
+						seen = append(seen, m.Offset)
+						return nil
+					}), humustest.WithApp(humus.WithHost(h.Host())))
+					// Under the consumer protocol, franz-go waits 500ms
+					// on a commit refused with STALE_MEMBER_EPOCH for
+					// the heartbeat to bring a new epoch, before it
+					// returns the refusal.
+					time.Sleep(time.Second)
+					synctest.Wait()
+					require.Equal(t, []int64{0, 1, 2}, seen)
+					require.NotContains(t, committed(c), int32(0), "the refused commit committed nothing")
+
+					produce(t, h, c, 2) // offsets 3 and 4: the Service keeps serving
+					synctest.Wait()
+					p.Signal(syscall.SIGTERM)
+
+					st := <-status
+					require.Zero(t, st.Code(), st.Cause())
+					require.Equal(t, []int64{0, 1, 2, 3, 4}, seen)
+					require.Equal(t, int64(5), committed(c)[0], "the next commit covered the records left pending")
+				})
+			})
+		}
+	}
+
 	t.Run("a commit refused with GROUP_AUTHORIZATION_FAILED stops the App", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
@@ -774,6 +812,79 @@ func TestNewService(t *testing.T) {
 				require.ErrorContains(t, err, tc.want)
 			})
 		}
+	})
+
+	t.Run("reports a bad GroupProtocol as Settings.GroupProtocol", func(t *testing.T) {
+		t.Parallel()
+
+		testCases := []struct {
+			name     string
+			protocol kafka.GroupProtocol
+			want     string
+		}{
+			{name: "the empty protocol", protocol: "", want: `Settings.GroupProtocol "" is not classic or consumer`},
+			{name: "an unknown protocol", protocol: "share", want: `Settings.GroupProtocol "share" is not classic or consumer`},
+		}
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				s := settings("127.0.0.1:9092")
+				s.GroupProtocol = tc.protocol
+				_, err := kafka.NewService(setup, s, nop)
+				require.ErrorContains(t, err, tc.want)
+			})
+		}
+	})
+
+	t.Run("rejects ConsumerProtocol unless the first assignor has a server assignor", func(t *testing.T) {
+		t.Parallel()
+
+		const want = `Settings.GroupProtocol "consumer" needs the first of Settings.Assignors to be ` +
+			`cooperative-sticky, sticky or range, not "roundrobin"`
+		testCases := []struct {
+			name      string
+			protocol  kafka.GroupProtocol
+			assignors []kafka.Assignor
+			valid     bool
+		}{
+			{name: "consumer, roundrobin first", protocol: kafka.ConsumerProtocol, assignors: []kafka.Assignor{kafka.RoundRobinAssignor}},
+			{name: "consumer, roundrobin before range", protocol: kafka.ConsumerProtocol, assignors: []kafka.Assignor{kafka.RoundRobinAssignor, kafka.RangeAssignor}},
+			{name: "consumer, cooperative-sticky first", protocol: kafka.ConsumerProtocol, assignors: []kafka.Assignor{kafka.CooperativeStickyAssignor}, valid: true},
+			{name: "consumer, sticky first", protocol: kafka.ConsumerProtocol, assignors: []kafka.Assignor{kafka.StickyAssignor}, valid: true},
+			{name: "consumer, range before roundrobin", protocol: kafka.ConsumerProtocol, assignors: []kafka.Assignor{kafka.RangeAssignor, kafka.RoundRobinAssignor}, valid: true},
+			{name: "classic, roundrobin first", protocol: kafka.ClassicProtocol, assignors: []kafka.Assignor{kafka.RoundRobinAssignor}, valid: true},
+		}
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				s := settings("127.0.0.1:9092")
+				s.GroupProtocol = tc.protocol
+				s.Assignors = tc.assignors
+				svc, err := kafka.NewService(setup, s, nop)
+				if tc.valid {
+					require.NoError(t, err)
+					return
+				}
+				require.EqualError(t, err, "kafka: NewService: "+want)
+				require.Nil(t, svc, "NewService builds nothing")
+			})
+		}
+	})
+
+	t.Run("joins the server assignor's error with every other bad field's", func(t *testing.T) {
+		t.Parallel()
+
+		s := settings("127.0.0.1:9092")
+		s.GroupProtocol = kafka.ConsumerProtocol
+		s.Assignors = []kafka.Assignor{kafka.RoundRobinAssignor}
+		s.GroupID = ""
+		s.MaxPollRecords = 0
+		_, err := kafka.NewService(setup, s, nop)
+		require.ErrorContains(t, err, "Settings.GroupID must not be empty")
+		require.ErrorContains(t, err, "Settings.MaxPollRecords must be positive")
+		require.ErrorContains(t, err, `Settings.GroupProtocol "consumer" needs the first of Settings.Assignors`)
 	})
 
 	t.Run("rejects a nil Processor", func(t *testing.T) {

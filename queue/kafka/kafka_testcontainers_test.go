@@ -42,6 +42,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 	"github.com/twmb/franz-go/pkg/kadm"
+	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/bedrocktest"
@@ -427,7 +428,26 @@ func TestKafka_cooperative_sticky_rebalance_moves_one_partition_after_its_record
 	// partition, and only once the first App's revoke callback has let
 	// the record in flight finish and committed it.
 	t.Parallel()
+	movesOnePartitionAfterItsRecordInFlight(t, kafka.ClassicProtocol)
+}
 
+func TestKafka_consumer_protocol_rebalance_moves_one_partition_after_its_record_in_flight(t *testing.T) {
+	// kfake runs the consumer protocol's reconciliation with its own
+	// coordinator, on synctest's clock. Here Kafka's coordinator assigns
+	// the partitions, with its uniform assignor, and real heartbeats: the
+	// joining App gets one partition, and only once the first App's revoke
+	// callback has let the record in flight finish and committed it, and
+	// its next heartbeat has told Kafka the partition is free.
+	t.Parallel()
+	movesOnePartitionAfterItsRecordInFlight(t, kafka.ConsumerProtocol)
+}
+
+// movesOnePartitionAfterItsRecordInFlight runs a second App beside a first
+// one, both under protocol and the default Assignors, while the first is
+// processing both partitions of a topic, and shows that the second takes
+// one partition, at the offset after the first App's record in flight.
+func movesOnePartitionAfterItsRecordInFlight(t *testing.T, protocol kafka.GroupProtocol) {
+	t.Helper()
 	const (
 		partitions = 2
 		n          = 80
@@ -435,6 +455,8 @@ func TestKafka_cooperative_sticky_rebalance_moves_one_partition_after_its_record
 	adm := admin(t)
 	topic, group := newTopic(t, adm, partitions), unique("group")
 	produceAt(t, topic, map[int32]int{0: n, 1: n})
+	s := realSettings(t, group, topic)
+	s.GroupProtocol = protocol
 
 	l := newLedger()
 	var (
@@ -449,13 +471,13 @@ func TestKafka_cooperative_sticky_rebalance_moves_one_partition_after_its_record
 		return nil
 	}
 	tel := humustest.NewTelemetry()
-	first, firstStatus := startOnOS(t, realSettings(t, group, topic), l.processor("first", slow), humus.WithTelemetry(tel.Builder()))
+	first, firstStatus := startOnOS(t, s, l.processor("first", slow), humus.WithTelemetry(tel.Builder()))
 	eventually(t, 30*time.Second, func() bool {
 		o := l.offsets("first")
 		return len(o[0]) >= 3 && len(o[1]) >= 3
 	}, "the first App processes both partitions")
 
-	second, secondStatus := startOnOS(t, realSettings(t, group, topic), l.processor("second", func(ctx context.Context, m kafka.Message) error {
+	second, secondStatus := startOnOS(t, s, l.processor("second", func(ctx context.Context, m kafka.Message) error {
 		mu.Lock()
 		if _, ok := startedAt[m.Partition]; !ok {
 			if c, err := fetchCommitted(adm, group, topic); err != nil {
@@ -522,17 +544,24 @@ func TestKafka_a_member_whose_revoke_outlasts_RebalanceTimeout_is_fenced(t *test
 	// heartbeating, but stuck in a revoke, when another rebalance starts;
 	// Kafka waits RebalanceTimeout for it to rejoin, then drops it and
 	// gives all its partitions away while its records are still in
-	// flight. franz-go learns it was fenced from the refused commit, not
-	// a heartbeat, and rejoins as a new member: the partition it still
-	// held comes back from that rejoin as revoked rather than lost.
+	// flight. Under the classic protocol, franz-go learns it was fenced
+	// from the refused commit, not a heartbeat, and rejoins as a new
+	// member: the partition it still held comes back from that rejoin as
+	// revoked rather than lost. Under the consumer protocol, Kafka refuses
+	// the member's heartbeat once it has dropped it, and franz-go reports
+	// the partition it still held as lost.
 	t.Parallel()
+	forEachProtocol(t, aMemberWhoseRevokeOutlastsRebalanceTimeoutIsFenced)
+}
 
+func aMemberWhoseRevokeOutlastsRebalanceTimeoutIsFenced(t *testing.T, protocol kafka.GroupProtocol) {
 	const partitions = 2
 	adm := admin(t)
 	topic, group := newTopic(t, adm, partitions), unique("group")
 	produceAt(t, topic, map[int32]int{0: 1, 1: 1})
 
 	s := realSettings(t, group, topic)
+	s.GroupProtocol = protocol
 	s.RebalanceTimeout = 5 * time.Second
 	// The fenced member keeps heartbeating, and its session outlasts the
 	// test's rebalances, so only RebalanceTimeout can remove it.
@@ -606,6 +635,63 @@ func TestKafka_a_member_whose_revoke_outlasts_RebalanceTimeout_is_fenced(t *test
 	}
 	require.Equal(t, map[int32][]int64{0: {0}, 1: {0}}, again, "each record in flight was processed again, once, by its partition's new owner")
 	require.Equal(t, map[int32]int64{0: 1, 1: 1}, committedTo(t, adm, group, topic))
+}
+
+func TestKafka_consumer_protocol_runs_the_server_assignor_the_first_Assignor_picks(t *testing.T) {
+	// kfake has a uniform and a range assignor of its own. Here Kafka's
+	// coordinator picks the one the Service asks for, and kadm's
+	// DescribeConsumerGroups reports it: the group is a consumer group, not
+	// a classic one, so the Service joined with the consumer protocol.
+	t.Parallel()
+
+	testCases := []struct {
+		name      string
+		assignors []kafka.Assignor
+		want      string
+	}{
+		{name: "cooperative-sticky", assignors: []kafka.Assignor{kafka.CooperativeStickyAssignor}, want: "uniform"},
+		{name: "sticky", assignors: []kafka.Assignor{kafka.StickyAssignor}, want: "uniform"},
+		{name: "range", assignors: []kafka.Assignor{kafka.RangeAssignor, kafka.CooperativeStickyAssignor}, want: "range"},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			adm := admin(t)
+			topic, group := newTopic(t, adm, 2), unique("group")
+			produceAt(t, topic, map[int32]int{0: 1, 1: 1})
+			s := realSettings(t, group, topic)
+			s.GroupProtocol = kafka.ConsumerProtocol
+			s.Assignors = tc.assignors
+
+			l := newLedger()
+			p, status := startOnOS(t, s, l.processor("first", nil))
+			eventually(t, 30*time.Second, func() bool { return len(l.of("first")) == 2 }, "the App processes both partitions")
+
+			groups, err := adm.DescribeConsumerGroups(t.Context(), group)
+			require.NoError(t, err)
+			g, ok := groups[group]
+			require.True(t, ok, "DescribeConsumerGroups reports the group")
+			require.NoError(t, g.Err, "the group is a consumer group")
+			require.Equal(t, "Stable", g.State)
+			require.Equal(t, tc.want, g.AssignorName, "the group runs the server assignor the first Assignor picks")
+			require.Len(t, g.Members, 1)
+
+			st := terminate(t, p, status)
+			require.Zero(t, st.Code(), st.Cause())
+		})
+	}
+}
+
+// forEachProtocol runs test, in parallel, under each consumer group
+// protocol.
+func forEachProtocol(t *testing.T, test func(t *testing.T, protocol kafka.GroupProtocol)) {
+	for _, protocol := range []kafka.GroupProtocol{kafka.ClassicProtocol, kafka.ConsumerProtocol} {
+		t.Run(string(protocol), func(t *testing.T) {
+			t.Parallel()
+			test(t, protocol)
+		})
+	}
 }
 
 // gates holds a fenced App's records, by partition and offset, until a test
@@ -745,17 +831,24 @@ func logged(tel *humustest.Telemetry, body string) int {
 
 func TestKafka_at_least_once_a_fenced_member_does_not_rewind_the_new_owners_commit(t *testing.T) {
 	// kfake can fence a member the same way, and its unit test shows the
-	// commit isn't sent. Here Kafka's own coordinator fences the member,
-	// answers its rejoin with UNKNOWN_MEMBER_ID, so that franz-go rejoins
-	// as a new member, and would accept a commit from that member for a
-	// partition another member owns: the check is all that stands between
-	// the revoke's commit and __consumer_offsets. A fresh member then
-	// resumes from the offset Kafka reads back from there.
+	// commit isn't sent. Here Kafka's own coordinator fences the member.
+	// Under the classic protocol, it answers the member's rejoin with
+	// UNKNOWN_MEMBER_ID, so that franz-go rejoins as a new member, and
+	// would accept a commit from that member for a partition another
+	// member owns: the member-ID guard is all that stands between the
+	// revoke's commit and __consumer_offsets. Under the consumer protocol,
+	// franz-go reports the partitions as lost, and the Service commits
+	// nothing more for them. A fresh member then resumes from the offset
+	// Kafka reads back from there.
 	t.Parallel()
+	forEachProtocol(t, atLeastOnceAFencedMemberDoesNotRewindTheNewOwnersCommit)
+}
 
+func atLeastOnceAFencedMemberDoesNotRewindTheNewOwnersCommit(t *testing.T, protocol kafka.GroupProtocol) {
 	adm := admin(t)
 	topic, group := newTopic(t, adm, 2), unique("group")
 	s := realSettings(t, group, topic)
+	s.GroupProtocol = protocol
 	s.RebalanceTimeout = 5 * time.Second
 	// The fenced member keeps heartbeating, and its session outlasts the
 	// test's rebalances, so only RebalanceTimeout can remove it.
@@ -785,14 +878,16 @@ func TestKafka_at_least_once_a_fenced_member_does_not_rewind_the_new_owners_comm
 	g.release(at{kept, 0})
 	eventually(t, 30*time.Second, func() bool { return commitRefused(tel) }, "Kafka refuses the fenced member's commit")
 
-	// The moved partition's record finishes and its revoke ends. franz-go
-	// rejoins as a new member, which the new assignment gives nothing, and
-	// revokes the kept partition, whose revoke commits what it has pending:
-	// an offset below the 11 the new owner committed.
+	// The moved partition's record finishes and its revoke ends. Under the
+	// classic protocol, franz-go rejoins as a new member, which the new
+	// assignment gives nothing, and revokes the kept partition, whose
+	// revoke commits what it has pending: an offset below the 11 the new
+	// owner committed. Under the consumer protocol, franz-go reports the
+	// kept partition as lost, and nothing is committed for it.
 	g.release(at{moved, 0})
 	eventually(t, time.Minute, func() bool { return gaveUp(tel, "["+strconv.Itoa(int(kept))+"]") },
 		"the first App gives up the partition it kept, %d", kept)
-	require.Positive(t, logged(tel, "rejoining without a member id"), "franz-go rejoined as a new member")
+	requireFenced(t, tel, protocol, kept)
 	g.releaseAll()
 
 	st := apps[0]()
@@ -819,17 +914,24 @@ func TestKafka_at_least_once_a_fenced_member_does_not_rewind_the_new_owners_comm
 }
 
 func TestKafka_at_most_once_a_fenced_member_does_not_commit_or_process_a_batch_polled_while_it_rejoins(t *testing.T) {
-	// kfake can't show this. The commit is called while franz-go joins the
-	// group, and waits for the join on a mutex, which synctest doesn't
-	// count as durably blocked, so kfake's clock would stop. Here the
-	// commit waits for Kafka's coordinator to answer the join, and then
-	// goes out under the member ID the join returned, which Kafka would
-	// accept for a partition another member owns.
+	// kfake can't show this. Under the classic protocol, the commit is
+	// called while franz-go joins the group, and waits for the join on a
+	// mutex, which synctest doesn't count as durably blocked, so kfake's
+	// clock would stop. Here the commit waits for Kafka's coordinator to
+	// answer the join, and then goes out under the member ID the join
+	// returned, which Kafka would accept for a partition another member
+	// owns. Under the consumer protocol, there is no join to wait for:
+	// Kafka refuses the commit of a member it has fenced, and franz-go
+	// reports the partition as lost.
 	t.Parallel()
+	forEachProtocol(t, atMostOnceAFencedMemberDoesNotCommitOrProcessABatchPolledWhileItRejoins)
+}
 
+func atMostOnceAFencedMemberDoesNotCommitOrProcessABatchPolledWhileItRejoins(t *testing.T, protocol kafka.GroupProtocol) {
 	adm := admin(t)
 	topic, group := newTopic(t, adm, 2), unique("group")
 	s := realSettings(t, group, topic)
+	s.GroupProtocol = protocol
 	s.Delivery = queue.AtMostOnce
 	s.RebalanceTimeout = 5 * time.Second
 	s.SessionTimeout = 45 * time.Second
@@ -852,28 +954,45 @@ func TestKafka_at_most_once_a_fenced_member_does_not_commit_or_process_a_batch_p
 	require.Equal(t, int64(11), committedTo(t, adm, group, topic)[kept])
 	time.Sleep(time.Second) // the first App's fetch returns the ten records
 
-	// The moved partition's record finishes and its revoke ends, so
-	// franz-go rejoins. Once it is joining, the kept partition's record
-	// finishes, and the partition calls the commit of the batch the first
-	// App polled after the fence: offsets 1 to 10.
-	joins := logged(tel, "blocking commits from join&sync")
-	g.release(at{moved, 0})
-	eventually(t, 30*time.Second, func() bool { return logged(tel, "blocking commits from join&sync") > joins },
-		"franz-go begins to rejoin")
+	// The moved partition's record finishes and its revoke ends. Under the
+	// classic protocol, franz-go rejoins, and once it is joining, the kept
+	// partition's record finishes, and the partition calls the commit of
+	// the batch the first App polled after the fence: offsets 1 to 10.
+	// Under the consumer protocol, the kept partition's record finishes
+	// once franz-go has heard from Kafka that the member was fenced.
+	switch protocol {
+	case kafka.ClassicProtocol:
+		joins := logged(tel, "blocking commits from join&sync")
+		g.release(at{moved, 0})
+		eventually(t, 30*time.Second, func() bool { return logged(tel, "blocking commits from join&sync") > joins },
+			"franz-go begins to rejoin")
+	case kafka.ConsumerProtocol:
+		eventually(t, 30*time.Second, func() bool { return heartbeatRefused(tel) }, "Kafka refuses the fenced member's heartbeat")
+		g.release(at{moved, 0})
+	}
 	g.release(at{kept, 0})
 
 	eventually(t, time.Minute, func() bool { return gaveUp(tel, "["+strconv.Itoa(int(kept))+"]") },
 		"the first App gives up the partition it kept, %d", kept)
-	require.Positive(t, logged(tel, "rejoining without a member id"), "franz-go rejoined as a new member")
+	requireFenced(t, tel, protocol, kept)
 	skipped := records(tel.Logs(), "batch skipped: its commit was refused")
-	require.Len(t, skipped, 1, "the batch polled while franz-go rejoined is skipped")
-	a := attrs(skipped[0])
-	require.Equal(t, strconv.Itoa(int(kept)), a["messaging.destination.partition.id"])
-	require.Equal(t, "1", a["humus.messaging.kafka.offset.first"])
-	require.Equal(t, "10", a["humus.messaging.kafka.offset.last"])
-	require.NotContains(t, a, "messaging.kafka.offset.first", "the offsets are humus's own attributes")
-	require.NotContains(t, a, "messaging.kafka.offset.last", "the offsets are humus's own attributes")
-	require.Equal(t, "WARN", skipped[0].Severity().String())
+	if protocol == kafka.ClassicProtocol {
+		require.Len(t, skipped, 1, "the batch polled while franz-go rejoined is skipped")
+	} else {
+		// The batch is skipped if its commit was refused, and not
+		// committed at all if franz-go reported the partition as lost
+		// first.
+		require.LessOrEqual(t, len(skipped), 1, "at most the batch polled after the fence is skipped")
+	}
+	for _, r := range skipped {
+		a := attrs(r)
+		require.Equal(t, strconv.Itoa(int(kept)), a["messaging.destination.partition.id"])
+		require.Equal(t, "1", a["humus.messaging.kafka.offset.first"])
+		require.Equal(t, "10", a["humus.messaging.kafka.offset.last"])
+		require.NotContains(t, a, "messaging.kafka.offset.first", "the offsets are humus's own attributes")
+		require.NotContains(t, a, "messaging.kafka.offset.last", "the offsets are humus's own attributes")
+		require.Equal(t, "WARN", r.Severity().String())
+	}
 
 	for _, stop := range apps {
 		st := stop()
@@ -891,10 +1010,11 @@ func TestKafka_at_most_once_a_fenced_member_does_not_commit_or_process_a_batch_p
 // gaveUp reports whether the App that recorded tel logged giving up
 // exactly the partitions ids names, as a revoke or as a loss.
 //
-// Against Kafka, a fenced member gives up the partition it still held as a
-// revoke: franz-go rejoins as a new member, and the new assignment no longer
-// has it. So the Service's OnPartitionsLost path is not exercised against
-// Kafka here; kfake's tests cover it.
+// Against Kafka, under the classic protocol, a fenced member gives up the
+// partition it still held as a revoke: franz-go rejoins as a new member, and
+// the new assignment no longer has it. Under the consumer protocol, franz-go
+// keeps the member until Kafka refuses its heartbeat, and then reports the
+// partition as lost.
 func gaveUp(tel *humustest.Telemetry, ids string) bool {
 	for _, body := range []string{"partitions revoked", "partitions lost"} {
 		for _, r := range records(tel.Logs(), body) {
@@ -908,22 +1028,57 @@ func gaveUp(tel *humustest.Telemetry, ids string) bool {
 
 // commitRefused reports whether franz-go, in the App that recorded tel,
 // logged a commit refused because the coordinator no longer knew the
-// member, or no longer had its generation. It matches franz-go's own log
-// lines, such as "offset commit returned a fatal group member error,
-// triggering rejoin" with err UNKNOWN_MEMBER_ID, so a franz-go upgrade that
-// rewords them fails this check without the Service having changed.
+// member, or no longer had its generation or its epoch. It matches
+// franz-go's own log lines, such as "offset commit returned a fatal group
+// member error, triggering rejoin" with err UNKNOWN_MEMBER_ID, or "unable to
+// commit offset for topic partition" with error_code 25, so a franz-go
+// upgrade that rewords them fails this check without the Service having
+// changed.
 func commitRefused(tel *humustest.Telemetry) bool {
+	return refusedMember(tel, "commit")
+}
+
+// heartbeatRefused is commitRefused for a heartbeat.
+func heartbeatRefused(tel *humustest.Telemetry) bool {
+	return refusedMember(tel, "heartbeat")
+}
+
+// refusedMember reports whether franz-go, in the App that recorded tel,
+// logged a message containing body with one of the errors that mean the
+// member was fenced out of the group.
+func refusedMember(tel *humustest.Telemetry, body string) bool {
+	fenced := []*kerr.Error{kerr.UnknownMemberID, kerr.IllegalGeneration, kerr.FencedMemberEpoch, kerr.StaleMemberEpoch}
 	for _, r := range tel.Logs() {
-		if r.InstrumentationScope().Name != "github.com/twmb/franz-go/pkg/kgo" || !strings.Contains(r.Body().AsString(), "commit") {
+		if r.InstrumentationScope().Name != "github.com/twmb/franz-go/pkg/kgo" || !strings.Contains(r.Body().AsString(), body) {
 			continue
 		}
-		for _, v := range attrs(r) {
-			if strings.Contains(v, "UNKNOWN_MEMBER_ID") || strings.Contains(v, "ILLEGAL_GENERATION") {
-				return true
+		for k, v := range attrs(r) {
+			for _, e := range fenced {
+				if strings.Contains(v, e.Message) || k == "error_code" && v == strconv.Itoa(int(e.Code)) {
+					return true
+				}
 			}
 		}
 	}
 	return false
+}
+
+// requireFenced requires that franz-go, in the App that recorded tel, gave
+// up the partition kept the way protocol has it: under the classic
+// protocol, by rejoining the group as a new member; under the consumer
+// protocol, by reporting the partition as lost.
+func requireFenced(t *testing.T, tel *humustest.Telemetry, protocol kafka.GroupProtocol, kept int32) {
+	t.Helper()
+	switch protocol {
+	case kafka.ClassicProtocol:
+		require.Positive(t, logged(tel, "rejoining without a member id"), "franz-go rejoined as a new member")
+	case kafka.ConsumerProtocol:
+		var lost bool
+		for _, r := range records(tel.Logs(), "partitions lost") {
+			lost = lost || attrs(r)["humus.messaging.destination.partition.ids"] == "["+strconv.Itoa(int(kept))+"]"
+		}
+		require.True(t, lost, "franz-go reported partition %d as lost", kept)
+	}
 }
 
 func TestKafka_after_SIGTERM_the_other_member_takes_the_partitions_at_once(t *testing.T) {

@@ -169,10 +169,30 @@ func checkSettings(settings Settings, p queue.Processor[Message]) error {
 	check("Settings.FetchMaxBytes", CheckFetchMaxBytes(settings.FetchMaxBytes))
 	check("Settings.MaxPollRecords", CheckMaxPollRecords(settings.MaxPollRecords))
 	check("Settings.Assignors", CheckAssignors(settings.Assignors))
+	check("Settings.GroupProtocol", CheckGroupProtocol(settings.GroupProtocol))
+	if err := checkServerAssignor(settings); err != nil {
+		errs = append(errs, err)
+	}
 	if p == nil {
 		errs = append(errs, errors.New("the Processor must not be nil"))
 	}
 	return errors.Join(errs...)
+}
+
+// checkServerAssignor rejects ConsumerProtocol when the first of Assignors
+// has no server assignor: franz-go would otherwise join with the classic
+// protocol without saying so. An empty or unknown first assignor is
+// CheckAssignors' to report.
+func checkServerAssignor(settings Settings) error {
+	if settings.GroupProtocol != ConsumerProtocol || len(settings.Assignors) == 0 {
+		return nil
+	}
+	if first := settings.Assignors[0]; first == RoundRobinAssignor {
+		return fmt.Errorf("%s %q needs the first of %s to be %s, %s or %s, not %q",
+			"Settings.GroupProtocol", ConsumerProtocol, "Settings.Assignors",
+			CooperativeStickyAssignor, StickyAssignor, RangeAssignor, first)
+	}
+	return nil
 }
 
 // Serve joins the group and processes records until ctx is done, Shutdown
@@ -253,6 +273,9 @@ func (s *Service) clientOpts(g *group) []kgo.Opt {
 		kgo.OnPartitionsLost(g.lost),
 		kgo.WithHooks(connectHook{onRefusal: func(_ kgo.BrokerMetadata, err error) { g.fail(err) }}, s.brokers),
 		kgo.WithLogger(kgoLogger{ctx: g.logCtx, logger: s.kgoLogger}),
+	}
+	if s.settings.GroupProtocol == ConsumerProtocol {
+		opts = append(opts, kgo.ServerSideBalancer())
 	}
 	if s.settings.SASL != nil {
 		opts = append(opts, kgo.SASL(s.settings.SASL))
@@ -532,16 +555,20 @@ func refused(err error) bool {
 }
 
 // notMember reports whether err says the member is no longer in the group's
-// current generation, or no longer holds the partition: it was fenced out,
-// or the group is rebalancing. Kafka refused the commit, or, with
-// errNotHeld, the Service did not send it. franz-go rejoins the group on
-// it, so it is not the Service's failure.
+// current generation, or, under the consumer protocol, its current epoch, or
+// no longer holds the partition: it was fenced out, or the group is
+// rebalancing. Kafka refused the commit, or, with errNotHeld, the Service
+// did not send it. franz-go rejoins the group, or under the consumer
+// protocol heartbeats its way back to the current epoch, so it is not the
+// Service's failure.
 func notMember(err error) bool {
 	return errors.Is(err, errNotHeld) ||
 		errors.Is(err, kerr.UnknownMemberID) ||
 		errors.Is(err, kerr.IllegalGeneration) ||
 		errors.Is(err, kerr.FencedInstanceID) ||
-		errors.Is(err, kerr.RebalanceInProgress)
+		errors.Is(err, kerr.RebalanceInProgress) ||
+		errors.Is(err, kerr.StaleMemberEpoch) ||
+		errors.Is(err, kerr.FencedMemberEpoch)
 }
 
 // errNotHeld is a commit the Service did not send, because franz-go would
@@ -797,7 +824,10 @@ func (g *group) commit(cl *kgo.Client, p *partition) bool {
 // returns errNotHeld otherwise. The check runs as franz-go sends the commit,
 // not as CommitRecords is called: a commit called while franz-go joins the
 // group waits for the join to finish, and then goes out under the member ID
-// the join returned.
+// the join returned. That guard is the classic protocol's: under the
+// consumer protocol, a fenced member keeps its member ID, and franz-go
+// reports its partitions as lost instead, so commit sends nothing more for
+// them.
 func (g *group) commitRecord(cl *kgo.Client, p *partition, r *kgo.Record) error {
 	start := time.Now()
 	ctx := kgo.PreCommitFnContext(g.work, func(req *kmsg.OffsetCommitRequest) error {

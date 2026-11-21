@@ -65,7 +65,8 @@ type Settings struct {
 
 	// SessionTimeout is how long the group's coordinator waits for a
 	// heartbeat before it removes the Service from the group and gives its
-	// partitions to another member.
+	// partitions to another member. Under ConsumerProtocol, the brokers'
+	// group.consumer.session.timeout.ms applies instead.
 	//
 	// Default: 45s. Valid: positive. Check: CheckSessionTimeout.
 	SessionTimeout time.Duration
@@ -100,11 +101,25 @@ type Settings struct {
 	// Assignors are the partition assignment strategies the Service
 	// offers the group, most preferred first: Kafka's
 	// partition.assignment.strategy. The group uses the first one that
-	// every member offers, whichever Kafka client each member runs.
+	// every member offers, whichever Kafka client each member runs. Under
+	// ConsumerProtocol, the first must be RangeAssignor, StickyAssignor or
+	// CooperativeStickyAssignor, which NewService checks.
 	//
 	// Default: []Assignor{CooperativeStickyAssignor}. Valid: at least one;
 	// each one of the four Assignors; none twice. Check: CheckAssignors.
 	Assignors []Assignor
+
+	// GroupProtocol is the consumer group protocol the Service joins with:
+	// Kafka's group.protocol. Under ConsumerProtocol, the brokers assign
+	// the partitions, with the server assignor that the first of Assignors
+	// picks: range for RangeAssignor, uniform for StickyAssignor and
+	// CooperativeStickyAssignor. Brokers older than Kafka 4.0 don't
+	// support it, and the Service joins them with the classic protocol and
+	// Assignors.
+	//
+	// Default: ClassicProtocol. Valid: ClassicProtocol or
+	// ConsumerProtocol. Check: CheckGroupProtocol.
+	GroupProtocol GroupProtocol
 }
 
 // Assignor is a partition assignment strategy of the classic protocol,
@@ -130,6 +145,20 @@ const (
 	RoundRobinAssignor Assignor = "roundrobin"
 )
 
+// GroupProtocol is a consumer group protocol.
+type GroupProtocol string
+
+const (
+	// ClassicProtocol is the protocol in which a member of the group
+	// assigns the partitions.
+	ClassicProtocol GroupProtocol = "classic"
+
+	// ConsumerProtocol is KIP-848's protocol, in which the brokers assign
+	// the partitions. It needs Kafka 4.0 or later, and the Service
+	// recommends 4.3 or later.
+	ConsumerProtocol GroupProtocol = "consumer"
+)
+
 // DefaultSettings returns the Service's defaults. Brokers, GroupID and
 // Topics have none, so its Brokers and Topics are nil and its GroupID is
 // "", which CheckBrokers, CheckGroupID and CheckTopics reject: the end user
@@ -148,6 +177,7 @@ func DefaultSettings() Settings {
 		MaxPollRecords:   500,
 		TrustScenario:    nil,
 		Assignors:        []Assignor{CooperativeStickyAssignor},
+		GroupProtocol:    ClassicProtocol,
 	}
 }
 
@@ -249,6 +279,17 @@ func knownAssignor(a Assignor) bool {
 	default:
 		return false
 	}
+}
+
+// CheckGroupProtocol rejects a GroupProtocol other than ClassicProtocol and
+// ConsumerProtocol. The zero GroupProtocol is rejected too: it is not a
+// default.
+func CheckGroupProtocol(p GroupProtocol) error {
+	switch p {
+	case ClassicProtocol, ConsumerProtocol:
+		return nil
+	}
+	return fmt.Errorf("%q is not %s or %s", string(p), ClassicProtocol, ConsumerProtocol)
 }
 
 // CheckSessionTimeout rejects a timeout that is not positive.
