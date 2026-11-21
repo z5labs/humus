@@ -12,6 +12,6 @@ require (
 
 require (
 	github.com/klauspost/compress v1.20.5 // indirect
-	github.com/pierrec/lz4/v4 v4.1.33 // indirect
+	github.com/pierrec/lz4/v4 v4.1.34 // indirect
 	go.yaml.in/yaml/v3 v3.0.6 // indirect
 )
