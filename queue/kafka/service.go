@@ -168,6 +168,7 @@ func checkSettings(settings Settings, p queue.Processor[Message]) error {
 	check("Settings.RebalanceTimeout", CheckRebalanceTimeout(settings.RebalanceTimeout))
 	check("Settings.FetchMaxBytes", CheckFetchMaxBytes(settings.FetchMaxBytes))
 	check("Settings.MaxPollRecords", CheckMaxPollRecords(settings.MaxPollRecords))
+	check("Settings.Assignors", CheckAssignors(settings.Assignors))
 	if p == nil {
 		errs = append(errs, errors.New("the Processor must not be nil"))
 	}
@@ -246,6 +247,7 @@ func (s *Service) clientOpts(g *group) []kgo.Opt {
 		kgo.SessionTimeout(s.settings.SessionTimeout),
 		kgo.RebalanceTimeout(s.settings.RebalanceTimeout),
 		kgo.FetchMaxBytes(s.settings.FetchMaxBytes),
+		kgo.Balancers(balancers(s.settings.Assignors)...),
 		kgo.OnPartitionsAssigned(g.assigned),
 		kgo.OnPartitionsRevoked(g.revoked),
 		kgo.OnPartitionsLost(g.lost),
@@ -256,6 +258,25 @@ func (s *Service) clientOpts(g *group) []kgo.Opt {
 		opts = append(opts, kgo.SASL(s.settings.SASL))
 	}
 	return opts
+}
+
+// balancers returns franz-go's balancer for each of assignors, in order.
+// NewService has checked that each one is one of the four.
+func balancers(assignors []Assignor) []kgo.GroupBalancer {
+	bs := make([]kgo.GroupBalancer, len(assignors))
+	for i, a := range assignors {
+		switch a {
+		case CooperativeStickyAssignor:
+			bs[i] = kgo.CooperativeStickyBalancer()
+		case StickyAssignor:
+			bs[i] = kgo.StickyBalancer()
+		case RangeAssignor:
+			bs[i] = kgo.RangeBalancer()
+		case RoundRobinAssignor:
+			bs[i] = kgo.RoundRobinBalancer()
+		}
+	}
+	return bs
 }
 
 // Joined returns a monitor that is healthy once the Service has joined its

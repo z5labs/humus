@@ -1082,3 +1082,192 @@ func readTopic(t *testing.T, topic string, n int) []*kgo.Record {
 	}
 	return out
 }
+
+func TestKafka_range_rebalance_revokes_every_partition_after_its_record_in_flight(t *testing.T) {
+	// kfake runs an eager rebalance with its own coordinator, on synctest's
+	// clock. Here Kafka's coordinator runs it, with real heartbeats and
+	// real time: the joining App's JoinGroup makes the first App revoke
+	// every partition it holds, and each one only after its record in
+	// flight. This is the eager counterpart of the cooperative-sticky test.
+	t.Parallel()
+
+	s := realSettings(t, "", "")
+	s.Assignors = []kafka.Assignor{kafka.RangeAssignor}
+	j := joinWhileConsuming(t, s, s)
+	require.Equal(t, "range", j.before, "the group runs range with the first App alone")
+	require.Equal(t, "range", j.after, "the group runs range once the second App has joined")
+	j.requireAtLeastOnce(t)
+
+	// The second App's join made the first App revoke both partitions at
+	// once: an eager rebalance revokes every partition, the ones that stay
+	// as well as the one that moves.
+	var revokedAt time.Time
+	for _, r := range records(j.tel.Logs(), "partitions revoked") {
+		if attrs(r)["humus.messaging.destination.partition.ids"] == "[0,1]" {
+			revokedAt = r.Timestamp()
+			break
+		}
+	}
+	require.False(t, revokedAt.IsZero(), "the first App logged one revoke of both partitions")
+
+	// Each partition's record in flight when the revoke began finished
+	// after it, and was committed before the partition was processed
+	// again, by either App: no record of it began before the one in flight
+	// finished, and the next one processed is the one after it.
+	all := append(j.l.of("first"), j.l.of("second")...)
+	for p := range int32(joinPartitions) {
+		var inFlight *processing
+		for _, r := range j.l.of("first") {
+			if r.partition == p && r.start.Before(revokedAt) && r.end.After(revokedAt) {
+				inFlight = &r
+			}
+		}
+		require.NotNil(t, inFlight, "partition %d had a record in flight when the revoke began (%v)", p, revokedAt)
+		for _, r := range j.l.of("second") {
+			require.False(t, r.partition == p && r.start.Before(inFlight.end),
+				"the second App began offset %d of partition %d before the first App's record in flight finished", r.offset, p)
+		}
+		var next *processing
+		for _, r := range all {
+			if r.partition == p && !r.start.Before(inFlight.end) && (next == nil || r.start.Before(next.start)) {
+				next = &r
+			}
+		}
+		require.NotNil(t, next, "partition %d was processed after the revoke", p)
+		require.Equal(t, inFlight.offset+1, next.offset,
+			"partition %d resumed right after its record in flight, offset %d", p, inFlight.offset)
+	}
+}
+
+func TestKafka_a_member_offering_only_range_downgrades_a_cooperative_sticky_group_to_eager(t *testing.T) {
+	// kfake picks a group's protocol as Kafka does, but this is the
+	// rolling switch an operator runs against Kafka itself: the first App
+	// offers cooperative-sticky, then range, as KIP-429's upgrade path
+	// has it, and runs cooperative-sticky alone. A member that offers only
+	// range joins, so the group can run only range, eagerly. Records can
+	// be processed again through the downgrade, but every one is processed
+	// and none is committed before it is processed.
+	t.Parallel()
+
+	first := realSettings(t, "", "")
+	first.Assignors = []kafka.Assignor{kafka.CooperativeStickyAssignor, kafka.RangeAssignor}
+	second := realSettings(t, "", "")
+	second.Assignors = []kafka.Assignor{kafka.RangeAssignor}
+	j := joinWhileConsuming(t, first, second)
+	require.Equal(t, "cooperative-sticky", j.before, "the group runs cooperative-sticky with the first App alone")
+	require.Equal(t, "range", j.after, "the group runs range once the member offering only range has joined")
+	j.requireAtLeastOnce(t)
+}
+
+// joinPartitions and joinRecords are the partitions of the topic
+// joinWhileConsuming consumes, and the records each one holds.
+const (
+	joinPartitions = 2
+	joinRecords    = 80
+)
+
+// joinRun is what joinWhileConsuming saw.
+type joinRun struct {
+	l   *ledger
+	tel *humustest.Telemetry // the first App's
+	// before and after are the group's protocol with the first App alone
+	// and once the second App has joined.
+	before, after string
+	// early lists each record whose offset was committed before its first
+	// processing finished, and fetchErrs each failed read of the commits.
+	early     []string
+	fetchErrs []error
+	committed map[int32]int64
+}
+
+// joinWhileConsuming consumes a topic of joinPartitions partitions of
+// joinRecords records each, with a first App under first's Assignors, then
+// starts a second App under second's while the first is processing, and
+// stops both once every record has been processed. Only the Assignors of
+// first and second are used: both Apps get the shared Kafka, and a group
+// and a topic of their own.
+func joinWhileConsuming(t *testing.T, first, second kafka.Settings) *joinRun {
+	t.Helper()
+	adm := admin(t)
+	topic, group := newTopic(t, adm, joinPartitions), unique("group")
+	counts := map[int32]int{}
+	for p := range int32(joinPartitions) {
+		counts[p] = joinRecords
+	}
+	produceAt(t, topic, counts)
+	first.GroupID, first.Topics = group, []string{topic}
+	second.GroupID, second.Topics = group, []string{topic}
+
+	protocol := func() string {
+		groups, err := adm.DescribeGroups(t.Context(), group)
+		require.NoError(t, err)
+		g := groups[group]
+		require.NoError(t, g.Err)
+		return g.Protocol
+	}
+
+	j := &joinRun{l: newLedger(), tel: humustest.NewTelemetry()}
+	var (
+		mu sync.Mutex
+		// done is every record whose processing has finished, by
+		// partition and offset.
+		done = map[int32]map[int64]bool{}
+	)
+	slow := func(_ context.Context, m kafka.Message) error {
+		time.Sleep(250 * time.Millisecond)
+		c, err := fetchCommitted(adm, group, topic)
+		mu.Lock()
+		defer mu.Unlock()
+		again := done[m.Partition][m.Offset]
+		if done[m.Partition] == nil {
+			done[m.Partition] = map[int64]bool{}
+		}
+		done[m.Partition][m.Offset] = true
+		switch {
+		case err != nil:
+			j.fetchErrs = append(j.fetchErrs, err)
+		case !again && c[m.Partition] > m.Offset:
+			j.early = append(j.early, fmt.Sprintf("%d/%d (committed %d)", m.Partition, m.Offset, c[m.Partition]))
+		}
+		return nil
+	}
+	firstApp, firstStatus := startOnOS(t, first, j.l.processor("first", slow), humus.WithTelemetry(j.tel.Builder()))
+	eventually(t, 30*time.Second, func() bool {
+		o := j.l.offsets("first")
+		for p := range int32(joinPartitions) {
+			if len(o[p]) < 3 {
+				return false
+			}
+		}
+		return true
+	}, "the first App processes every partition")
+	j.before = protocol()
+
+	secondApp, secondStatus := startOnOS(t, second, j.l.processor("second", slow))
+	eventually(t, 2*time.Minute, func() bool { return j.l.covers(joinPartitions, joinRecords) }, "the two Apps process every record")
+	j.after = protocol()
+
+	st := terminate(t, firstApp, firstStatus)
+	require.Zero(t, st.Code(), st.Cause())
+	st = terminate(t, secondApp, secondStatus)
+	require.Zero(t, st.Code(), st.Cause())
+	j.committed = committedTo(t, adm, group, topic)
+
+	mu.Lock()
+	defer mu.Unlock()
+	return j
+}
+
+// requireAtLeastOnce requires that every record was processed and
+// committed, and that none was committed before its processing finished.
+func (j *joinRun) requireAtLeastOnce(t *testing.T) {
+	t.Helper()
+	require.Empty(t, j.fetchErrs)
+	require.Empty(t, j.early, "no record was committed before it was processed")
+	require.True(t, j.l.covers(joinPartitions, joinRecords), "every record was processed at least once")
+	want := map[int32]int64{}
+	for p := range int32(joinPartitions) {
+		want[p] = joinRecords
+	}
+	require.Equal(t, want, j.committed)
+}
