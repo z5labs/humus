@@ -96,7 +96,39 @@ type Settings struct {
 	//
 	// Default: nil, which trusts no producer. Valid: any. Check: none.
 	TrustScenario func(m Message) bool
+
+	// Assignors are the partition assignment strategies the Service
+	// offers the group, most preferred first: Kafka's
+	// partition.assignment.strategy. The group uses the first one that
+	// every member offers, whichever Kafka client each member runs.
+	//
+	// Default: []Assignor{CooperativeStickyAssignor}. Valid: at least one;
+	// each one of the four Assignors; none twice. Check: CheckAssignors.
+	Assignors []Assignor
 }
+
+// Assignor is a partition assignment strategy of the classic protocol,
+// under the name Kafka gives it. A group's members agree on one by that
+// name, whichever Kafka client each runs.
+type Assignor string
+
+const (
+	// CooperativeStickyAssignor moves as few partitions as it can, and a
+	// rebalance revokes only the partitions that move (KIP-429).
+	CooperativeStickyAssignor Assignor = "cooperative-sticky"
+
+	// StickyAssignor moves as few partitions as it can, but a rebalance
+	// revokes every partition.
+	StickyAssignor Assignor = "sticky"
+
+	// RangeAssignor gives each member a range of each topic's
+	// partitions, and a rebalance revokes every partition.
+	RangeAssignor Assignor = "range"
+
+	// RoundRobinAssignor deals out every partition in turn, and a
+	// rebalance revokes every partition.
+	RoundRobinAssignor Assignor = "roundrobin"
+)
 
 // DefaultSettings returns the Service's defaults. Brokers, GroupID and
 // Topics have none, so its Brokers and Topics are nil and its GroupID is
@@ -115,6 +147,7 @@ func DefaultSettings() Settings {
 		FetchMaxBytes:    50 << 20,
 		MaxPollRecords:   500,
 		TrustScenario:    nil,
+		Assignors:        []Assignor{CooperativeStickyAssignor},
 	}
 }
 
@@ -183,6 +216,39 @@ func CheckTopics(topics []string) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// CheckAssignors rejects an empty list, a name that is not one of the four
+// Assignors, and a name listed twice. Every problem is reported, each bad
+// name by its value.
+func CheckAssignors(a []Assignor) error {
+	if len(a) == 0 {
+		return errNoneListed
+	}
+	var errs []error
+	seen := make(map[Assignor]int, len(a))
+	for _, name := range a {
+		seen[name]++
+		switch {
+		case !knownAssignor(name):
+			if seen[name] == 1 { // reported once, however many times it repeats
+				errs = append(errs, fmt.Errorf("%q is not %s, %s, %s or %s", name,
+					CooperativeStickyAssignor, StickyAssignor, RangeAssignor, RoundRobinAssignor))
+			}
+		case seen[name] == 2: // reported once, however many times it repeats
+			errs = append(errs, fmt.Errorf("names %q more than once", name))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func knownAssignor(a Assignor) bool {
+	switch a {
+	case CooperativeStickyAssignor, StickyAssignor, RangeAssignor, RoundRobinAssignor:
+		return true
+	default:
+		return false
+	}
 }
 
 // CheckSessionTimeout rejects a timeout that is not positive.

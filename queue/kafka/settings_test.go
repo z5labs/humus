@@ -22,7 +22,7 @@ import (
 // a check reports what is wrong, and whoever calls it names the field or
 // the variable.
 var fieldNames = regexp.MustCompile(`(?i)\b(?:settings|brokers?|group ?id|topics?|delivery|tls|sasl|` +
-	`session ?timeout|rebalance ?timeout|fetch ?max ?bytes|max ?poll ?records|` +
+	`session ?timeout|rebalance ?timeout|fetch ?max ?bytes|max ?poll ?records|assignors?|` +
 	`breaker|window|probes|open ?for|probe ?timeout|policy|trip)\b`)
 
 // requireUnnamed fails the test if err names a field of Settings.
@@ -124,6 +124,41 @@ func TestCheckTopics_reports_every_problem_once(t *testing.T) {
 	requireUnnamed(t, err)
 }
 
+func TestCheckAssignors(t *testing.T) {
+	t.Parallel()
+
+	const notOne = `is not cooperative-sticky, sticky, range or roundrobin`
+	runCheck(t, kafka.CheckAssignors, []checkCase[[]kafka.Assignor]{
+		{name: "cooperative-sticky", value: []kafka.Assignor{kafka.CooperativeStickyAssignor}, valid: true},
+		{name: "sticky", value: []kafka.Assignor{kafka.StickyAssignor}, valid: true},
+		{name: "range", value: []kafka.Assignor{kafka.RangeAssignor}, valid: true},
+		{name: "roundrobin", value: []kafka.Assignor{kafka.RoundRobinAssignor}, valid: true},
+		{name: "all four", value: []kafka.Assignor{
+			kafka.RangeAssignor, kafka.RoundRobinAssignor, kafka.StickyAssignor, kafka.CooperativeStickyAssignor,
+		}, valid: true},
+		{name: "nil", value: nil, cause: "must list at least one"},
+		{name: "an empty list", value: []kafka.Assignor{}, cause: "must list at least one"},
+		{name: "an unknown name", value: []kafka.Assignor{kafka.RangeAssignor, "uniform"}, cause: `"uniform" ` + notOne},
+		{name: "the empty name", value: []kafka.Assignor{""}, cause: `"" ` + notOne},
+		{name: "a name in another case", value: []kafka.Assignor{"Range"}, cause: `"Range" ` + notOne},
+		{name: "a name twice", value: []kafka.Assignor{kafka.RangeAssignor, kafka.StickyAssignor, kafka.RangeAssignor}, cause: `names "range" more than once`},
+	})
+}
+
+func TestCheckAssignors_reports_every_problem_once(t *testing.T) {
+	t.Parallel()
+
+	err := kafka.CheckAssignors([]kafka.Assignor{
+		"uniform", kafka.RangeAssignor, kafka.RangeAssignor, kafka.RangeAssignor,
+		"uniform", kafka.StickyAssignor, kafka.StickyAssignor, "eager",
+	})
+	require.EqualError(t, err, `"uniform" is not cooperative-sticky, sticky, range or roundrobin`+"\n"+
+		`names "range" more than once`+"\n"+
+		`names "sticky" more than once`+"\n"+
+		`"eager" is not cooperative-sticky, sticky, range or roundrobin`)
+	requireUnnamed(t, err)
+}
+
 func TestCheckSessionTimeout(t *testing.T) {
 	t.Parallel()
 
@@ -182,6 +217,7 @@ func TestDefaultSettings(t *testing.T) {
 		FetchMaxBytes:    50 << 20,
 		MaxPollRecords:   500,
 		TrustScenario:    nil,
+		Assignors:        []kafka.Assignor{kafka.CooperativeStickyAssignor},
 	}, kafka.DefaultSettings())
 }
 
@@ -203,6 +239,7 @@ func TestDefaultSettings_checks(t *testing.T) {
 		{name: "RebalanceTimeout", err: kafka.CheckRebalanceTimeout(d.RebalanceTimeout), valid: true},
 		{name: "FetchMaxBytes", err: kafka.CheckFetchMaxBytes(d.FetchMaxBytes), valid: true},
 		{name: "MaxPollRecords", err: kafka.CheckMaxPollRecords(d.MaxPollRecords), valid: true},
+		{name: "Assignors", err: kafka.CheckAssignors(d.Assignors), valid: true},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {

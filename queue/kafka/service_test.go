@@ -752,6 +752,30 @@ func TestNewService(t *testing.T) {
 		require.ErrorContains(t, err, "Settings.MaxPollRecords must be positive")
 	})
 
+	t.Run("reports a bad Assignors as Settings.Assignors", func(t *testing.T) {
+		t.Parallel()
+
+		testCases := []struct {
+			name      string
+			assignors []kafka.Assignor
+			want      string
+		}{
+			{name: "nil", assignors: nil, want: "Settings.Assignors must list at least one"},
+			{name: "an unknown name", assignors: []kafka.Assignor{"uniform"}, want: `Settings.Assignors "uniform" is not cooperative-sticky, sticky, range or roundrobin`},
+			{name: "a name twice", assignors: []kafka.Assignor{kafka.RangeAssignor, kafka.RangeAssignor}, want: `Settings.Assignors names "range" more than once`},
+		}
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				s := settings("127.0.0.1:9092")
+				s.Assignors = tc.assignors
+				_, err := kafka.NewService(setup, s, nop)
+				require.ErrorContains(t, err, tc.want)
+			})
+		}
+	})
+
 	t.Run("rejects a nil Processor", func(t *testing.T) {
 		t.Parallel()
 

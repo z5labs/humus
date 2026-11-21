@@ -87,6 +87,18 @@
 // partition's new owner starts after the last record this one processed.
 // All of that has to fit in RebalanceTimeout.
 //
+// Which partitions a rebalance revokes depends on the assignor the group
+// runs. The Service offers the group its Assignors, most preferred first,
+// and the group runs the first one that every member offers, whichever
+// Kafka client each member runs. Under [CooperativeStickyAssignor], the
+// default, a rebalance revokes only the partitions that move (KIP-429).
+// Under an eager assignor, [StickyAssignor], [RangeAssignor] or
+// [RoundRobinAssignor], a rebalance revokes every partition the member
+// holds, the ones it keeps as well as the ones that move, and hands them
+// out again. So under an eager assignor RebalanceTimeout has to cover the
+// record in flight of every partition the member holds, not only of those
+// that move.
+//
 // When the member is fenced out of the group, another member may own its
 // partitions already. franz-go may report them as lost or, when it learns of
 // the fence from a refused commit and rejoins the group as a new member, as
@@ -639,7 +651,8 @@
 //
 // [Settings] holds what configures a consumer: the brokers, the consumer
 // group and the topics, how records are delivered, how the brokers are
-// dialled and authenticated, and the group's timeouts and fetch bounds.
+// dialled and authenticated, the group's timeouts and fetch bounds, and the
+// partition assignment strategies the Service offers the group.
 // Every field is a plain value, [DefaultSettings] gives the package's
 // defaults, and each checked field has a check that reports what is wrong
 // with a value without naming the field. The package reads no environment
@@ -678,6 +691,12 @@
 // config's Certificates. For SASL the end user picks a mechanism from
 // franz-go's github.com/twmb/franz-go/pkg/sasl, such as plain, scram, oauth
 // or aws, and supplies its credentials from wherever they keep them.
+//
+// Assignors defaults to []Assignor{CooperativeStickyAssignor}, franz-go's
+// default, so a rebalance revokes only the partitions that move. A group
+// whose other members offer only eager assignors, or a rolling switch
+// between strategies, lists more than one, as [Revocation and loss]
+// describes. It is checked with [CheckAssignors].
 //
 // SessionTimeout and FetchMaxBytes keep franz-go's defaults, 45s and 50 MiB.
 // RebalanceTimeout is 60s, franz-go's default, because a revoked
