@@ -711,10 +711,10 @@
 // describes. It is checked with [CheckAssignors].
 //
 // GroupProtocol defaults to [ClassicProtocol], in which a member of the
-// group assigns the partitions. Under [ConsumerProtocol], KIP-848's, the
-// brokers assign them, with the server assignor the first of Assignors
-// picks: range for [RangeAssignor], uniform for [StickyAssignor] and
-// [CooperativeStickyAssignor]. [NewService] rejects ConsumerProtocol when
+// group assigns the partitions. Under [ConsumerProtocol], KIP-848's
+// protocol, the brokers assign them, with the server assignor the first of
+// Assignors picks: range for [RangeAssignor], uniform for [StickyAssignor]
+// and [CooperativeStickyAssignor]. [NewService] rejects ConsumerProtocol when
 // the first is [RoundRobinAssignor], which has no server assignor. The
 // consumer protocol needs Kafka 4.0 or later, 4.3 or later is recommended,
 // and older brokers are joined with the classic protocol. It is checked
