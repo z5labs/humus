@@ -14,7 +14,7 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.45.0
 	github.com/twmb/franz-go v1.22.3
 	github.com/twmb/franz-go/pkg/kadm v1.20.0
-	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261118204727-b391592d4883
+	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261121001519-6c9b35e5d612
 	github.com/twmb/franz-go/pkg/kmsg v1.15.1
 	github.com/z5labs/bedrock v0.26.0
 	github.com/z5labs/bedrock/fit v0.26.0
@@ -53,7 +53,7 @@ require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.4 // indirect
-	github.com/klauspost/compress v1.20.4 // indirect
+	github.com/klauspost/compress v1.20.5 // indirect
 	github.com/lufia/plan9stats v0.0.0-20261101121723-be84dd9509a0 // indirect
 	github.com/magiconair/properties v1.18.13 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
@@ -76,7 +76,7 @@ require (
 	github.com/twmb/franz-go/plugin/kotel v1.7.1 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	github.com/z5labs/bedrock/circuit v0.26.0 // indirect
-	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
+	go.opentelemetry.io/auto/sdk v1.2.2 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.23.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.23.0 // indirect
