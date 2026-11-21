@@ -22,7 +22,7 @@ import (
 // a check reports what is wrong, and whoever calls it names the field or
 // the variable.
 var fieldNames = regexp.MustCompile(`(?i)\b(?:settings|brokers?|group ?id|topics?|delivery|tls|sasl|` +
-	`session ?timeout|rebalance ?timeout|fetch ?max ?bytes|max ?poll ?records|assignors?|` +
+	`session ?timeout|rebalance ?timeout|fetch ?max ?bytes|max ?poll ?records|assignors?|group ?protocol|` +
 	`breaker|window|probes|open ?for|probe ?timeout|policy|trip)\b`)
 
 // requireUnnamed fails the test if err names a field of Settings.
@@ -159,6 +159,18 @@ func TestCheckAssignors_reports_every_problem_once(t *testing.T) {
 	requireUnnamed(t, err)
 }
 
+func TestCheckGroupProtocol(t *testing.T) {
+	t.Parallel()
+
+	runCheck(t, kafka.CheckGroupProtocol, []checkCase[kafka.GroupProtocol]{
+		{name: "classic", value: kafka.ClassicProtocol, valid: true},
+		{name: "consumer", value: kafka.ConsumerProtocol, valid: true},
+		{name: "the empty protocol", value: "", cause: `"" is not classic or consumer`},
+		{name: "an unknown protocol", value: "share", cause: `"share" is not classic or consumer`},
+		{name: "a protocol in another case", value: "Consumer", cause: `"Consumer" is not classic or consumer`},
+	})
+}
+
 func TestCheckSessionTimeout(t *testing.T) {
 	t.Parallel()
 
@@ -218,6 +230,7 @@ func TestDefaultSettings(t *testing.T) {
 		MaxPollRecords:   500,
 		TrustScenario:    nil,
 		Assignors:        []kafka.Assignor{kafka.CooperativeStickyAssignor},
+		GroupProtocol:    kafka.ClassicProtocol,
 	}, kafka.DefaultSettings())
 }
 
@@ -240,6 +253,7 @@ func TestDefaultSettings_checks(t *testing.T) {
 		{name: "FetchMaxBytes", err: kafka.CheckFetchMaxBytes(d.FetchMaxBytes), valid: true},
 		{name: "MaxPollRecords", err: kafka.CheckMaxPollRecords(d.MaxPollRecords), valid: true},
 		{name: "Assignors", err: kafka.CheckAssignors(d.Assignors), valid: true},
+		{name: "GroupProtocol", err: kafka.CheckGroupProtocol(d.GroupProtocol), valid: true},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
