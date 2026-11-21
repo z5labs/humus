@@ -223,6 +223,7 @@ no variable name.
 | `FetchMaxBytes` | 50 MiB | positive | `CheckFetchMaxBytes` |
 | `MaxPollRecords` | 500 | positive | `CheckMaxPollRecords` |
 | `Assignors` | `[]kafka.Assignor{kafka.CooperativeStickyAssignor}` | at least one; each one of the four `Assignor`s; none twice | `CheckAssignors` |
+| `GroupProtocol` | `kafka.ClassicProtocol` | `kafka.ClassicProtocol` or `kafka.ConsumerProtocol` | `CheckGroupProtocol` |
 
 `SessionTimeout` and `FetchMaxBytes` keep franz-go's defaults.
 `RebalanceTimeout` is franz-go's 60s too, because a revoked partition's record
@@ -236,6 +237,11 @@ flight.
 group, most preferred first: Kafka's `partition.assignment.strategy`, under
 Kafka's names for them. The default, cooperative-sticky, is franz-go's, and
 [Revocation](#revocation) describes what each one revokes.
+
+`GroupProtocol` is the consumer group protocol the Service joins with:
+Kafka's `group.protocol`. The default, the classic protocol, is today's
+behaviour, and [The consumer protocol](#the-consumer-protocol) describes the
+other one.
 
 Other franz-go options become fields when end users ask for them, each with a
 default and a check. A new field breaks no one, because `DefaultSettings`
@@ -379,6 +385,33 @@ A broker that refuses the credentials ends the Service with exit 1, rather
 than franz-go retrying a password that will never be accepted, as
 [Failures](#failures) lists.
 
+### The consumer protocol
+
+A `Settings.GroupProtocol` of `kafka.ConsumerProtocol` joins the group with
+[KIP-848](https://cwiki.apache.org/confluence/display/KAFKA/KIP-848%3A+The+Next+Generation+of+the+Consumer+Rebalance+Protocol)'s
+consumer protocol, in which the brokers assign the partitions, and a
+rebalance doesn't stop the whole group. The brokers assign with the server assignor that the first of `Assignors`
+picks: `range` for `RangeAssignor`, and `uniform` for `StickyAssignor` and
+`CooperativeStickyAssignor`. `RoundRobinAssignor` has none, so `NewService`
+rejects it first under the consumer protocol, naming both
+`Settings.GroupProtocol` and `Settings.Assignors`.
+
+- **It needs Kafka 4.0 or later, and 4.3 or later is recommended.** Before
+  4.3, a commit can be refused with `STALE_MEMBER_EPOCH` in the ordinary
+  course of a rebalance.
+- **Older brokers fall back to the classic protocol.** A broker older than
+  Kafka 4.0 doesn't support the consumer protocol, and the Service joins it
+  with the classic protocol and `Assignors`, as franz-go does.
+- **franz-go's log shows which one is in use.** Under the consumer protocol,
+  franz-go logs "beginning to manage the next-gen group lifecycle" at INFO,
+  under the `github.com/twmb/franz-go/pkg/kgo` scope, as
+  [The logs](#the-logs) describes.
+- **The brokers' session timeout applies, not `SessionTimeout`.** Under the
+  consumer protocol, the brokers'
+  `group.consumer.session.timeout.ms` replaces `SessionTimeout`.
+  `RebalanceTimeout` still bounds a revoke, as [Revocation](#revocation)
+  describes.
+
 ## Delivery
 
 What each `Delivery` commits, and when:
@@ -444,7 +477,10 @@ other failure follows this table:
 
 A commit is refused for a fenced-out member with `UNKNOWN_MEMBER_ID`,
 `ILLEGAL_GENERATION` or `FENCED_INSTANCE_ID`, and during a rebalance with
-`REBALANCE_IN_PROGRESS`. A commit the Service doesn't send, because the
+`REBALANCE_IN_PROGRESS`. Under the
+[consumer protocol](#the-consumer-protocol), it is also refused with
+`STALE_MEMBER_EPOCH` or `FENCED_MEMBER_EPOCH`, when the member's epoch is not
+the group's current one. A commit the Service doesn't send, because the
 partition isn't held under the member ID franz-go would send it under, is
 handled the same way: see [Loss](#loss). A poll's error ends the Service when it is an error
 code from Kafka that franz-go doesn't retry; an error code franz-go retries,
@@ -600,18 +636,27 @@ in flight.
 ### Loss
 
 When the member is fenced out of the group, another member may own its
-partitions already. franz-go may report them as lost or, when it learns of the
-fence from a refused commit and rejoins the group as a new member, as revoked.
-Either way, the Service stops them after their record in flight and commits
-nothing more for them, and the partitions' new owner processes the uncommitted
-records again.
+partitions already. However franz-go reports them, the Service stops them
+after their record in flight and commits nothing more for them, and the
+partitions' new owner processes the uncommitted records again. What keeps a
+commit of theirs from moving the new owner's committed offset depends on the
+group's protocol.
 
-Kafka checks a commit's member ID and generation, but not who owns the
-partition, so it would accept a commit from the rejoined member for a
-partition another member now owns. So the Service sends a partition's commit
-only under the member ID the partition is held under: that of the rebalance
-that assigned it, or of a later one that kept it. A member that gets a
-partition back after a fence commits it under its new member ID.
+**Under the classic protocol, it is the member-ID guard.** franz-go may
+report the partitions as lost or, when it learns of the fence from a refused
+commit and rejoins the group as a new member, as revoked. Kafka checks a
+commit's member ID and generation, but not who owns the partition, so it
+would accept a commit from the rejoined member for a partition another member
+now owns. So the Service sends a partition's commit only under the member ID
+the partition is held under: that of the rebalance that assigned it, or of a
+later one that kept it. A member that gets a partition back after a fence
+commits it under its new member ID.
+
+**Under the [consumer protocol](#the-consumer-protocol), it is the loss.**
+franz-go keeps the member ID when the member is fenced, so the member-ID
+guard can't tell the sessions apart. franz-go reports the partitions as lost
+instead, and the Service commits nothing more for a lost partition. A commit
+already on its way is refused by Kafka, which checks the member's epoch.
 
 ## The defaults
 
