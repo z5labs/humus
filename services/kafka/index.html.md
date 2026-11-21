@@ -222,6 +222,7 @@ no variable name.
 | `RebalanceTimeout` | 60s | positive | `CheckRebalanceTimeout` |
 | `FetchMaxBytes` | 50 MiB | positive | `CheckFetchMaxBytes` |
 | `MaxPollRecords` | 500 | positive | `CheckMaxPollRecords` |
+| `Assignors` | `[]kafka.Assignor{kafka.CooperativeStickyAssignor}` | at least one; each one of the four `Assignor`s; none twice | `CheckAssignors` |
 
 `SessionTimeout` and `FetchMaxBytes` keep franz-go's defaults.
 `RebalanceTimeout` is franz-go's 60s too, because a revoked partition's record
@@ -230,6 +231,11 @@ member, as [Revocation](#revocation) describes. `MaxPollRecords` bounds how
 many records one poll hands out, which bounds how many records an
 at-most-once crash can lose, and how long a revoke waits for the records in
 flight.
+
+`Assignors` are the partition assignment strategies the Service offers its
+group, most preferred first: Kafka's `partition.assignment.strategy`, under
+Kafka's names for them. The default, cooperative-sticky, is franz-go's, and
+[Revocation](#revocation) describes what each one revokes.
 
 Other franz-go options become fields when end users ask for them, each with a
 default and a check. A new field breaks no one, because `DefaultSettings`
@@ -545,13 +551,45 @@ the member once its session times out.
 ### Revocation
 
 When the group rebalances and a partition moves to another member, such as
-when a replica starts or leaves, franz-go revokes the partition first.
-franz-go's default balancer is cooperative-sticky, so a rebalance revokes
-only the partitions that move. The Service stops each revoked partition,
-waits for its record in flight, commits, and only then lets the rebalance go
-on, so the partition's new owner starts after the last record this member
-processed. All of that has to fit in `RebalanceTimeout`: a member whose
-revoke outlasts it is fenced out of the group.
+when a replica starts or leaves, franz-go revokes the partition first. The
+Service stops each revoked partition, waits for its record in flight,
+commits, and only then lets the rebalance go on, so the partition's new owner
+starts after the last record this member processed. All of that has to fit
+in `RebalanceTimeout`: a member whose revoke outlasts it is fenced out of the
+group.
+
+Which partitions a rebalance revokes depends on the assignor the group runs.
+Each member offers its `Settings.Assignors`, most preferred first, and the
+group runs the first one that every member offers, whichever Kafka client
+each member runs:
+
+| `Assignor` | Kafka's name | A rebalance revokes |
+|---|---|---|
+| `CooperativeStickyAssignor`, the default | `cooperative-sticky` | only the partitions that move |
+| `StickyAssignor` | `sticky` | every partition the member holds |
+| `RangeAssignor` | `range` | every partition the member holds |
+| `RoundRobinAssignor` | `roundrobin` | every partition the member holds |
+
+The three eager assignors revoke every partition, the ones a member keeps as
+well as the ones that move, and hand them out again. Under one of them,
+`RebalanceTimeout` has to cover the record in flight of every partition the
+member holds, not only of those that move.
+
+**Switching strategies is a rolling restart.** A group runs only a strategy
+every member offers, so each step offers both the old strategy and the new
+one. To move an eager group to cooperative-sticky, follow
+[KIP-429's upgrade](https://cwiki.apache.org/confluence/display/KAFKA/KIP-429%3A+Kafka+Consumer+Incremental+Rebalance+Protocol#KIP429:KafkaConsumerIncrementalRebalanceProtocol-Upgrade):
+first roll out `[]kafka.Assignor{kafka.CooperativeStickyAssignor, kafka.RangeAssignor}`,
+with the eager assignor the group runs today second, and once every replica
+offers both, roll out `[]kafka.Assignor{kafka.CooperativeStickyAssignor}`.
+
+**One eager-only member downgrades a cooperative group.** A replica, or a
+consumer in another Kafka client, that offers only an eager assignor leaves
+the group no cooperative strategy that every member offers, so the group runs
+the eager one, and every member revokes every partition on each rebalance.
+At-least-once holds through the downgrade: every record is processed, and none
+is committed before it is processed. But records can be processed again
+while the group switches.
 
 The Service polls with franz-go's `BlockRebalanceOnPoll`, and allows
 rebalancing again right after each poll has handed out its records. So
