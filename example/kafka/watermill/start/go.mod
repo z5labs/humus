@@ -34,7 +34,7 @@ require (
 	github.com/klauspost/compress v1.20.5 // indirect
 	github.com/lithammer/shortuuid/v3 v3.0.7 // indirect
 	github.com/oklog/ulid v1.3.1 // indirect
-	github.com/pierrec/lz4/v4 v4.1.33 // indirect
+	github.com/pierrec/lz4/v4 v4.1.34 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20250401214520-65e299d6c5c9 // indirect
 	github.com/sony/gobreaker v1.0.0 // indirect

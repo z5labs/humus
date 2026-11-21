@@ -54,7 +54,7 @@ func (i image) String() string {
 	return i.depName + ":" + i.version + "@" + i.digest
 }
 
-var headlessShell = image{datasource: "docker", depName: "docker.io/chromedp/headless-shell", version: "160.0.8157.0", digest: "sha256:1459842ec97ea88a20645fffae40769c0c8dc70f51cf43e7df812fbaef9909cc"}
+var headlessShell = image{datasource: "docker", depName: "docker.io/chromedp/headless-shell", version: "160.0.8171.0", digest: "sha256:e2d2e25553d187f044dae3828e0b85c6049599b8bbb432b7516540454514865c"}
 
 const (
 	devtoolsPort = "9222/tcp"
