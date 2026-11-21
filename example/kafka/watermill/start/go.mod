@@ -5,7 +5,7 @@ go 1.27.0
 replace github.com/z5labs/humus/example/kafka/watermill/cases => ../cases
 
 require (
-	github.com/IBM/sarama v1.61.1
+	github.com/IBM/sarama v1.62.0
 	github.com/ThreeDotsLabs/watermill v1.5.3
 	github.com/ThreeDotsLabs/watermill-kafka/v3 v3.1.4
 	github.com/stretchr/testify v1.12.1
