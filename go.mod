@@ -46,7 +46,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.34.0 // indirect
 	github.com/swaggest/refl v1.4.0 // indirect
-	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
+	go.opentelemetry.io/auto/sdk v1.2.2 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.47.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.6 // indirect
 	golang.org/x/crypto v0.59.0 // indirect

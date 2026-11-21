@@ -9,7 +9,7 @@ replace (
 
 require (
 	github.com/go-playground/validator/v10 v10.30.6
-	github.com/labstack/echo/v5 v5.4.6
+	github.com/labstack/echo/v5 v5.4.7
 	github.com/stretchr/testify v1.12.1
 	github.com/z5labs/bedrock v0.26.0
 	github.com/z5labs/bedrock/host v0.26.0
@@ -30,7 +30,7 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.34.0 // indirect
 	github.com/leodido/go-urn v1.5.0 // indirect
 	github.com/z5labs/bedrock/fit v0.26.0 // indirect
-	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
+	go.opentelemetry.io/auto/sdk v1.2.2 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0 // indirect
 	go.opentelemetry.io/otel v1.47.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.23.0 // indirect

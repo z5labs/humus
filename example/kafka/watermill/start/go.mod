@@ -10,7 +10,7 @@ require (
 	github.com/ThreeDotsLabs/watermill-kafka/v3 v3.1.4
 	github.com/stretchr/testify v1.12.1
 	github.com/twmb/franz-go v1.22.3
-	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261118204727-b391592d4883
+	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261121001519-6c9b35e5d612
 	github.com/z5labs/humus/example/kafka/watermill/cases v0.0.0-00010101000000-000000000000
 )
 
@@ -31,7 +31,7 @@ require (
 	github.com/jcmturner/gofork v1.7.6 // indirect
 	github.com/jcmturner/gokrb5/v8 v8.4.4 // indirect
 	github.com/jcmturner/rpc/v2 v2.0.3 // indirect
-	github.com/klauspost/compress v1.20.4 // indirect
+	github.com/klauspost/compress v1.20.5 // indirect
 	github.com/lithammer/shortuuid/v3 v3.0.7 // indirect
 	github.com/oklog/ulid v1.3.1 // indirect
 	github.com/pierrec/lz4/v4 v4.1.33 // indirect
@@ -40,7 +40,7 @@ require (
 	github.com/sony/gobreaker v1.0.0 // indirect
 	github.com/twmb/franz-go/pkg/kadm v1.20.0 // indirect
 	github.com/twmb/franz-go/pkg/kmsg v1.15.1 // indirect
-	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
+	go.opentelemetry.io/auto/sdk v1.2.2 // indirect
 	go.opentelemetry.io/otel v1.47.0 // indirect
 	go.opentelemetry.io/otel/log v1.47.0 // indirect
 	go.opentelemetry.io/otel/metric v1.47.0 // indirect

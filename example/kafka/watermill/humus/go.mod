@@ -11,7 +11,7 @@ replace (
 require (
 	github.com/stretchr/testify v1.12.1
 	github.com/twmb/franz-go v1.22.3
-	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261118204727-b391592d4883
+	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261121001519-6c9b35e5d612
 	github.com/twmb/franz-go/pkg/kmsg v1.15.1
 	github.com/z5labs/bedrock v0.26.0
 	github.com/z5labs/bedrock/host v0.26.0
@@ -27,13 +27,13 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.34.0 // indirect
-	github.com/klauspost/compress v1.20.4 // indirect
+	github.com/klauspost/compress v1.20.5 // indirect
 	github.com/pierrec/lz4/v4 v4.1.33 // indirect
 	github.com/twmb/franz-go/pkg/kadm v1.20.0 // indirect
 	github.com/twmb/franz-go/plugin/kotel v1.7.1 // indirect
 	github.com/z5labs/bedrock/circuit v0.26.0 // indirect
 	github.com/z5labs/bedrock/fit v0.26.0 // indirect
-	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
+	go.opentelemetry.io/auto/sdk v1.2.2 // indirect
 	go.opentelemetry.io/otel v1.47.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.23.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.23.0 // indirect
