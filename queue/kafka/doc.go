@@ -700,9 +700,11 @@
 //
 // TLS and SASL have no check, and nil turns each off: plaintext, and no
 // authentication. TLS covers mTLS: the client certificate goes in the
-// config's Certificates. For SASL the end user picks a mechanism from
-// franz-go's github.com/twmb/franz-go/pkg/sasl, such as plain, scram, oauth
-// or aws, and supplies its credentials from wherever they keep them.
+// config's Certificates. For SASL the end user picks one of the package's
+// mechanisms, [Plain], [ScramSHA256], [ScramSHA512], [OAuthBearer] or
+// [AWSMSKIAM], and supplies its credentials from wherever they keep them.
+// An end user who needs another mechanism, or SASL's authorization ID,
+// implements [SASLMechanism].
 //
 // Assignors defaults to []Assignor{CooperativeStickyAssignor}, franz-go's
 // default, so a rebalance revokes only the partitions that move. A group

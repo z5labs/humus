@@ -23,7 +23,6 @@ import (
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/kmsg"
-	"github.com/twmb/franz-go/pkg/sasl/plain"
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/bedrocktest"
 
@@ -688,50 +687,52 @@ func TestService_TLS(t *testing.T) {
 }
 
 func TestService_SASL(t *testing.T) {
-	user, password := rand.Text(), rand.Text()
+	for _, m := range saslMechanisms {
+		t.Run(m.test, func(t *testing.T) {
+			user, password := rand.Text(), rand.Text()
 
-	t.Run("with the right password, the App processes and commits", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			h := humustest.NewHost(t)
-			c := cluster(t, h, 1, kfake.EnableSASL(), kfake.Superuser("PLAIN", user, password))
-			mechanism := plain.Auth{User: user, Pass: password}.AsMechanism()
-			produce(t, h, c, 3, kgo.SASL(mechanism))
+			t.Run("with the right password, the App processes and commits", func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					h := humustest.NewHost(t)
+					c, seed := saslCluster(t, h, m.name, user, password)
+					produce(t, h, c, 3, seed)
 
-			s := settings(c.ListenAddrs()...)
-			s.SASL = mechanism
-			var seen []int64
-			p, status := humustest.Start(t, consumes(s, func(ctx context.Context, m kafka.Message) error {
-				seen = append(seen, m.Offset)
-				return nil
-			}), humustest.WithApp(humus.WithHost(h.Host())))
-			synctest.Wait()
-			p.Signal(syscall.SIGTERM)
+					s := settings(c.ListenAddrs()...)
+					s.SASL = m.of(user, password)
+					var seen []int64
+					p, status := humustest.Start(t, consumes(s, func(ctx context.Context, m kafka.Message) error {
+						seen = append(seen, m.Offset)
+						return nil
+					}), humustest.WithApp(humus.WithHost(h.Host())))
+					synctest.Wait()
+					p.Signal(syscall.SIGTERM)
 
-			st := <-status
-			require.Zero(t, st.Code(), st.Cause())
-			require.Equal(t, []int64{0, 1, 2}, seen)
-			require.Equal(t, int64(3), committed(c)[0])
+					st := <-status
+					require.Zero(t, st.Code(), st.Cause())
+					require.Equal(t, []int64{0, 1, 2}, seen)
+					require.Equal(t, int64(3), committed(c)[0])
+				})
+			})
+
+			t.Run("with a wrong password, the App exits 1", func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					h := humustest.NewHost(t)
+					c, _ := saslCluster(t, h, m.name, user, password)
+
+					s := settings(c.ListenAddrs()...)
+					s.SASL = m.of(user, rand.Text())
+					_, status := humustest.Start(t, consumes(s, func(context.Context, kafka.Message) error {
+						return nil
+					}), humustest.WithApp(humus.WithHost(h.Host())))
+
+					st := <-status
+					require.Equal(t, humus.ExitFailure, st.Code())
+					require.ErrorIs(t, st.Cause(), kerr.SaslAuthenticationFailed)
+					require.ErrorContains(t, st.Cause(), "kafka: authenticating to 127.0.0.1:", "the broker's refusal stopped the Service")
+				})
+			})
 		})
-	})
-
-	t.Run("with a wrong password, the App exits 1", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			h := humustest.NewHost(t)
-			c := cluster(t, h, 1, kfake.EnableSASL(), kfake.Superuser("PLAIN", user, password))
-			refuseWrongPasswords(c, password)
-
-			s := settings(c.ListenAddrs()...)
-			s.SASL = plain.Auth{User: user, Pass: rand.Text()}.AsMechanism()
-			_, status := humustest.Start(t, consumes(s, func(context.Context, kafka.Message) error {
-				return nil
-			}), humustest.WithApp(humus.WithHost(h.Host())))
-
-			st := <-status
-			require.Equal(t, humus.ExitFailure, st.Code())
-			require.ErrorIs(t, st.Cause(), kerr.SaslAuthenticationFailed)
-			require.ErrorContains(t, st.Cause(), "kafka: authenticating to 127.0.0.1:", "the broker's refusal stopped the Service")
-		})
-	})
+	}
 }
 
 func TestService_logs_the_partitions_it_is_assigned_revoked_and_loses(t *testing.T) {

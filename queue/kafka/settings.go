@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/twmb/franz-go/pkg/sasl"
 	"github.com/z5labs/bedrock/circuit"
 
 	"github.com/z5labs/humus/queue"
@@ -56,12 +55,11 @@ type Settings struct {
 	// Default: nil, which means plaintext. Valid: any. Check: none.
 	TLS *tls.Config
 
-	// SASL is the mechanism the Service authenticates to the brokers with,
-	// one of franz-go's from github.com/twmb/franz-go/pkg/sasl, carrying
-	// the end user's credentials. nil means no authentication.
+	// SASL is the mechanism the Service authenticates to the brokers with.
+	// nil means no authentication.
 	//
-	// Default: nil, which means no authentication. Valid: any. Check: none.
-	SASL sasl.Mechanism
+	// Default: nil. Valid: any. Check: none.
+	SASL SASLMechanism
 
 	// SessionTimeout is how long the group's coordinator waits for a
 	// heartbeat before it removes the Service from the group and gives its
@@ -337,12 +335,11 @@ type ProducerSettings struct {
 	// Default: nil, which means plaintext. Valid: any. Check: none.
 	TLS *tls.Config
 
-	// SASL is the mechanism the Producer authenticates to the brokers with,
-	// one of franz-go's from github.com/twmb/franz-go/pkg/sasl, carrying
-	// the end user's credentials. nil means no authentication.
+	// SASL is the mechanism the Producer authenticates to the brokers with.
+	// nil means no authentication.
 	//
-	// Default: nil, which means no authentication. Valid: any. Check: none.
-	SASL sasl.Mechanism
+	// Default: nil. Valid: any. Check: none.
+	SASL SASLMechanism
 
 	// DeliveryTimeout bounds how long the cluster has to acknowledge the
 	// records of one call to Produce, franz-go's retries included. A record

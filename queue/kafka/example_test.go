@@ -17,8 +17,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/twmb/franz-go/pkg/sasl"
-	"github.com/twmb/franz-go/pkg/sasl/scram"
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/config"
 
@@ -179,9 +177,9 @@ func secureInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		k.TLS = r.Get(env("KAFKA_TLS_CA_FILE").Parse(readFile(s.Host.FS)).FlatMap(func(ca []byte) config.Value[*tls.Config] {
 			return env("KAFKA_TLS_CERT_FILE").Parse(readFile(s.Host.FS)).Parse(clientTLS(ca))
 		}))
-		k.SASL = r.Get(env("KAFKA_SASL_USER").FlatMap(func(user string) config.Value[sasl.Mechanism] {
-			return env("KAFKA_SASL_PASSWORD").Map(func(password string) sasl.Mechanism {
-				return scram.Auth{User: user, Pass: password}.AsSha512Mechanism()
+		k.SASL = r.Get(env("KAFKA_SASL_USER").FlatMap(func(user string) config.Value[kafka.SASLMechanism] {
+			return env("KAFKA_SASL_PASSWORD").Map(func(password string) kafka.SASLMechanism {
+				return kafka.ScramSHA512(user, password)
 			})
 		}))
 		return k

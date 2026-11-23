@@ -22,7 +22,6 @@ import (
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/kmsg"
-	"github.com/twmb/franz-go/pkg/sasl/plain"
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/circuit"
 	"go.opentelemetry.io/otel/codes"
@@ -367,7 +366,7 @@ func TestProduce_a_call_after_a_refusal_does_not_reach_the_breaker(t *testing.T)
 		var later []error
 		tel := humustest.NewTelemetry()
 		ps := producerSettings(c.ListenAddrs()...)
-		ps.SASL = plain.Auth{User: user, Pass: rand.Text()}.AsMechanism()
+		ps.SASL = kafka.Plain(user, rand.Text())
 		ps.BreakerPolicy = tripOnFirstFailure
 		producesWith(t, h, tel, ps, func(ctx context.Context, p *kafka.Producer) error {
 			first = p.Produce(ctx, value(0))
@@ -394,7 +393,7 @@ func TestProduce_a_call_after_a_refusal_does_not_reach_the_breaker(t *testing.T)
 // breaker that opens on the first failure.
 func refusedProducer(c *kfake.Cluster, user string) kafka.ProducerSettings {
 	ps := producerSettings(c.ListenAddrs()...)
-	ps.SASL = plain.Auth{User: user, Pass: rand.Text()}.AsMechanism()
+	ps.SASL = kafka.Plain(user, rand.Text())
 	ps.BreakerPolicy = tripOnFirstFailure
 	return ps
 }

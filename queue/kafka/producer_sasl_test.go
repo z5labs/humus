@@ -17,8 +17,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kfake"
-	"github.com/twmb/franz-go/pkg/kgo"
-	"github.com/twmb/franz-go/pkg/sasl/plain"
 	"go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
@@ -45,31 +43,53 @@ func errorRecords(logs []sdklog.Record) []sdklog.Record {
 func TestProducer_SASL(t *testing.T) {
 	user, password := rand.Text(), rand.Text()
 
-	t.Run("with the right password, the Producer produces and logs no error", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			h := humustest.NewHost(t)
-			c := cluster(t, h, 1, kfake.EnableSASL(), kfake.Superuser("PLAIN", user, password))
-			refuseWrongPasswords(c, password)
-			mechanism := plain.Auth{User: user, Pass: password}.AsMechanism()
+	for _, m := range saslMechanisms {
+		t.Run(m.test, func(t *testing.T) {
+			t.Run("with the right password, the Producer produces and logs no error", func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					h := humustest.NewHost(t)
+					c, seed := saslCluster(t, h, m.name, user, password)
 
-			ps := producerSettings(c.ListenAddrs()...)
-			ps.SASL = mechanism
-			tel := humustest.NewTelemetry()
-			var err error
-			_, status := humustest.Start(t, produces(ps, func(ctx context.Context, p *kafka.Producer) error {
-				err = p.Produce(ctx, value(0))
-				return nil
-			}), humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+					ps := producerSettings(c.ListenAddrs()...)
+					ps.SASL = m.of(user, password)
+					tel := humustest.NewTelemetry()
+					var err error
+					_, status := humustest.Start(t, produces(ps, func(ctx context.Context, p *kafka.Producer) error {
+						err = p.Produce(ctx, value(0))
+						return nil
+					}), humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
 
-			st := <-status
-			require.Zero(t, st.Code(), "cause: %v", st.Cause())
-			require.NoError(t, err)
-			got := readAll(t, h, c, topic, kgo.SASL(mechanism))
-			require.Len(t, got, 1)
-			require.Equal(t, "0", string(got[0].Value))
-			require.Empty(t, errorRecords(tel.Logs()))
+					st := <-status
+					require.Zero(t, st.Code(), "cause: %v", st.Cause())
+					require.NoError(t, err)
+					got := readAll(t, h, c, topic, seed)
+					require.Len(t, got, 1)
+					require.Equal(t, "0", string(got[0].Value))
+					require.Empty(t, errorRecords(tel.Logs()))
+				})
+			})
+
+			t.Run("with a wrong password, a call fails with the refusal", func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					h := humustest.NewHost(t)
+					c, _ := saslCluster(t, h, m.name, user, password)
+
+					ps := producerSettings(c.ListenAddrs()...)
+					ps.SASL = m.of(user, rand.Text())
+					var err error
+					_, status := humustest.Start(t, produces(ps, func(ctx context.Context, p *kafka.Producer) error {
+						err = p.Produce(ctx, value(0))
+						return nil
+					}), humustest.WithApp(humus.WithHost(h.Host())))
+
+					st := <-status
+					require.Zero(t, st.Code(), "cause: %v", st.Cause())
+					require.ErrorIs(t, err, kerr.SaslAuthenticationFailed)
+					require.ErrorContains(t, err, "kafka: authenticating to "+c.ListenAddrs()[0]+": ", "the error names the broker")
+				})
+			})
 		})
-	})
+	}
 
 	t.Run("with a wrong password, every call fails with the refusal and one record is logged", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
@@ -78,7 +98,7 @@ func TestProducer_SASL(t *testing.T) {
 			refuseWrongPasswords(c, password)
 
 			ps := producerSettings(c.ListenAddrs()...)
-			ps.SASL = plain.Auth{User: user, Pass: rand.Text()}.AsMechanism()
+			ps.SASL = kafka.Plain(user, rand.Text())
 			tel := humustest.NewTelemetry()
 			var (
 				first, second, third error
@@ -137,7 +157,7 @@ func TestProducer_SASL(t *testing.T) {
 			refuseWrongPasswords(c, password)
 
 			ps := producerSettings(c.ListenAddrs()...)
-			ps.SASL = plain.Auth{User: user, Pass: rand.Text()}.AsMechanism()
+			ps.SASL = kafka.Plain(user, rand.Text())
 			tel := humustest.NewTelemetry()
 			errs := make([]error, 5)
 			_, status := humustest.Start(t, produces(ps, func(ctx context.Context, p *kafka.Producer) error {
