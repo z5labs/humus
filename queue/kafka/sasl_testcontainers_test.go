@@ -24,6 +24,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 	"github.com/twmb/franz-go/pkg/kadm"
+	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/sasl/oauth"
 
@@ -69,7 +70,7 @@ func startOAuthKafka(t *testing.T) string {
 
 				// With no sasl.server.callback.handler.class, the broker
 				// validates OAUTHBEARER tokens with the unsecured validator.
-				"KAFKA_LISTENER_NAME_OAUTH_SASL_ENABLED_MECHANISMS":     "OAUTHBEARER",
+				"KAFKA_LISTENER_NAME_OAUTH_SASL_ENABLED_MECHANISMS":      "OAUTHBEARER",
 				"KAFKA_LISTENER_NAME_OAUTH_OAUTHBEARER_SASL_JAAS_CONFIG": "org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required;",
 
 				"KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR":         "1",
@@ -178,4 +179,17 @@ func TestKafka_OAuthBearer_authenticates_a_Service_and_a_Producer_with_a_token_f
 
 	require.GreaterOrEqual(t, exchanges.Load(), int64(3), "the Producer and the Service opened more than one connection")
 	require.Equal(t, exchanges.Load(), tokens.Load(), "token is called once for each connection")
+
+	// The validator does check the token: one that isn't a JWT is refused.
+	ps.SASL = kafka.OAuthBearer(func(context.Context) (kafka.OAuthToken, error) {
+		return kafka.OAuthToken{Token: "not-a-jwt"}, nil
+	})
+	_, status = humustest.Start(t, produces(ps, func(ctx context.Context, p *kafka.Producer) error {
+		produced = p.Produce(ctx, kafka.Record{Topic: name, Value: []byte("3")})
+		return nil
+	}), humustest.WithApp(humus.WithHost(humus.OSHost())))
+	st = exited(t, status)
+	require.Zero(t, st.Code(), "cause: %v", st.Cause())
+	require.ErrorIs(t, produced, kerr.SaslAuthenticationFailed)
+	require.ErrorContains(t, produced, `{"status":"invalid_token"}`, "Kafka's unsecured validator refused the token")
 }
