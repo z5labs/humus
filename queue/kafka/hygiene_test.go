@@ -13,15 +13,19 @@ import (
 	"go/token"
 	"go/types"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/z5labs/humus/queue/kafka"
 )
 
 // variableName matches a string that reads as an environment variable's
@@ -107,24 +111,8 @@ func TestPackage_reads_no_environment_and_no_file(t *testing.T) {
 func TestPackage_exports_no_franz_go_type(t *testing.T) {
 	t.Parallel()
 
-	const self = "github.com/z5labs/humus/queue/kafka"
-	// The package and its dependencies are read from the export data the
-	// go command builds, which is quicker than type-checking every one of
-	// them from source.
-	out, err := exec.Command("go", "list", "-export", "-deps", "-f", "{{.ImportPath}}={{.Export}}", self).Output()
-	require.NoError(t, err)
-	exports := map[string]string{}
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		path, file, _ := strings.Cut(line, "=")
-		exports[path] = file
-	}
-	pkg, err := importer.ForCompiler(token.NewFileSet(), "gc", func(path string) (io.ReadCloser, error) {
-		file, ok := exports[path]
-		if !ok || file == "" {
-			return nil, fmt.Errorf("no export data for %s", path)
-		}
-		return os.Open(file)
-	}).Import(self)
+	imp, _ := exportData(t)
+	pkg, err := imp.Import(self)
 	require.NoError(t, err)
 
 	w := apiWalker{self: pkg, seen: map[types.Type]bool{}}
@@ -139,6 +127,67 @@ func TestPackage_exports_no_franz_go_type(t *testing.T) {
 	for _, use := range w.franzGo {
 		t.Errorf("%s: a type from franz-go", use)
 	}
+}
+
+// self is the package's import path.
+const self = "github.com/z5labs/humus/queue/kafka"
+
+// exportData returns an importer of the package and of every package it
+// depends on, and those packages' import paths. They are read from the
+// export data the go command builds, which is quicker than type-checking
+// every one of them from source.
+func exportData(t *testing.T) (types.Importer, []string) {
+	t.Helper()
+	out, err := exec.Command("go", "list", "-export", "-deps", "-f", "{{.ImportPath}}={{.Export}}", self).Output()
+	require.NoError(t, err)
+	exports := map[string]string{}
+	var paths []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		path, file, _ := strings.Cut(line, "=")
+		exports[path] = file
+		paths = append(paths, path)
+	}
+	return importer.ForCompiler(token.NewFileSet(), "gc", func(path string) (io.ReadCloser, error) {
+		file, ok := exports[path]
+		if !ok || file == "" {
+			return nil, fmt.Errorf("no export data for %s", path)
+		}
+		return os.Open(file)
+	}), paths
+}
+
+// isFranzGo reports whether path is the import path of one of franz-go's
+// packages.
+func isFranzGo(path string) bool {
+	return path == "github.com/twmb/franz-go" || strings.HasPrefix(path, "github.com/twmb/franz-go/")
+}
+
+// TestFranzGoValues_lists_every_error_value_franz_go_exports type-checks
+// every franz-go package the package depends on, internal ones aside, which
+// no code outside franz-go can name, and finds each exported variable whose
+// type is error. kafka.FranzGoValues, which the tests walk errors for, names
+// every one of them, so an upgrade of franz-go that adds one fails here.
+func TestFranzGoValues_lists_every_error_value_franz_go_exports(t *testing.T) {
+	t.Parallel()
+
+	imp, paths := exportData(t)
+	errorType := types.Universe.Lookup("error").Type()
+	var found []string
+	for _, path := range paths {
+		if !isFranzGo(path) || strings.Contains(path, "/internal/") {
+			continue
+		}
+		pkg, err := imp.Import(path)
+		require.NoError(t, err)
+		scope := pkg.Scope()
+		for _, name := range scope.Names() {
+			if v, ok := scope.Lookup(name).(*types.Var); ok && v.Exported() && types.Identical(v.Type(), errorType) {
+				found = append(found, path+"."+name)
+			}
+		}
+	}
+	require.Contains(t, found, "github.com/twmb/franz-go/pkg/kgo.ErrClientClosed", "the walk reached franz-go's packages")
+	require.ElementsMatch(t, found, slices.Collect(maps.Keys(kafka.FranzGoValues)))
 }
 
 // apiWalker walks the types an exported API shows.
@@ -166,7 +215,7 @@ func (w *apiWalker) walk(at string, typ types.Type) {
 		}
 		path := obj.Pkg().Path()
 		w.named = append(w.named, path+"."+obj.Name())
-		if path == "github.com/twmb/franz-go" || strings.HasPrefix(path, "github.com/twmb/franz-go/") {
+		if isFranzGo(path) {
 			w.franzGo = append(w.franzGo, at+" is "+path+"."+obj.Name())
 			return
 		}

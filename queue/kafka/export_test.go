@@ -8,6 +8,7 @@ package kafka
 import (
 	"context"
 
+	"github.com/twmb/franz-go/pkg/kbin"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
@@ -33,3 +34,22 @@ func StripRecord(svc *Service, ctx context.Context, m Message) context.Context {
 
 // ClientSASL is the mechanism the client is given for m.
 var ClientSASL = clientSASL
+
+// FranzGoValues are the error values franz-go's packages export, by their
+// full names. TestFranzGoValues_lists_every_error_value_franz_go_exports
+// keeps it complete.
+var FranzGoValues = map[string]error{
+	"github.com/twmb/franz-go/pkg/kgo.ErrRecordTimeout":  kgo.ErrRecordTimeout,
+	"github.com/twmb/franz-go/pkg/kgo.ErrRecordRetries":  kgo.ErrRecordRetries,
+	"github.com/twmb/franz-go/pkg/kgo.ErrMaxBuffered":    kgo.ErrMaxBuffered,
+	"github.com/twmb/franz-go/pkg/kgo.ErrAborting":       kgo.ErrAborting,
+	"github.com/twmb/franz-go/pkg/kgo.ErrClientClosed":   kgo.ErrClientClosed,
+	"github.com/twmb/franz-go/pkg/kgo.ErrMaxDecompress":  kgo.ErrMaxDecompress,
+	"github.com/twmb/franz-go/pkg/kbin.ErrNotEnoughData": kbin.ErrNotEnoughData,
+}
+
+// FromClient is the translation of an error from the client.
+var FromClient = fromClient
+
+// RecordError is the translation of a record's result from the client.
+var RecordError = recordError

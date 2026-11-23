@@ -52,11 +52,11 @@ func recordsOwn(err error) bool {
 		}
 		return len(errs) > 0
 	}
-	var ke *kerr.Error
-	if !errors.As(err, &ke) {
+	ke, ok := errors.AsType[*Error](err)
+	if !ok {
 		return false
 	}
-	return !ke.Retriable || ke == kerr.UnknownTopicOrPartition || ke == kerr.UnknownTopicID
+	return !ke.Retriable || isCode(ke, kerr.UnknownTopicOrPartition) || isCode(ke, kerr.UnknownTopicID)
 }
 
 // observe counts t, a transition of the breaker, in

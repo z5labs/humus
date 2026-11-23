@@ -605,7 +605,7 @@ func TestService_failures(t *testing.T) {
 
 			st := <-status
 			require.Equal(t, humus.ExitFailure, st.Code())
-			require.ErrorIs(t, st.Cause(), kerr.GroupAuthorizationFailed)
+			requireCode(t, st.Cause(), groupAuthorizationFailed)
 		})
 	})
 
@@ -622,7 +622,7 @@ func TestService_failures(t *testing.T) {
 
 			st := <-status
 			require.Equal(t, humus.ExitFailure, st.Code())
-			require.ErrorIs(t, st.Cause(), kerr.TopicAuthorizationFailed)
+			requireCode(t, st.Cause(), topicAuthorizationFailed)
 		})
 	})
 }
@@ -727,7 +727,7 @@ func TestService_SASL(t *testing.T) {
 
 					st := <-status
 					require.Equal(t, humus.ExitFailure, st.Code())
-					require.ErrorIs(t, st.Cause(), kerr.SaslAuthenticationFailed)
+					requireCode(t, st.Cause(), saslAuthenticationFailed)
 					require.ErrorContains(t, st.Cause(), "kafka: authenticating to 127.0.0.1:", "the broker's refusal stopped the Service")
 				})
 			})

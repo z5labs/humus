@@ -517,6 +517,17 @@ handled the same way: see [Loss](#loss). A poll's error ends the Service when it
 code from Kafka that franz-go doesn't retry; an error code franz-go retries,
 or a failure to connect, is franz-go's to recover from.
 
+**A Kafka error code is a `*kafka.Error`.** When the cluster answered with
+one, `errors.As` finds it in the error `Serve` returns, with the code's
+number, Kafka's name for it, such as `TOPIC_AUTHORIZATION_FAILED`, and
+whether the protocol marks it retriable. `errors.Is` compares codes, so
+`errors.Is(err, &kafka.Error{Code: 29})` matches any
+`TOPIC_AUTHORIZATION_FAILED`. A broker's refusal of the credentials is one
+too, such as `SASL_AUTHENTICATION_FAILED`. No error the Service returns has
+franz-go's types or values in it: any other error from the client keeps its
+message, and the standard library's errors it wraps, such as `context`, `net`
+and `crypto/tls` errors.
+
 **An at-least-once failure stops the whole Service, not just its
 partition.** The other partitions finish their record in flight and commit,
 so only the failed record and those after it are processed again, when the
@@ -913,10 +924,22 @@ fails, franz-go fails the records buffered after it on that partition too, so
 a later record is never stored after an earlier one failed.
 
 **Errors.** When a record failed, `Produce` returns one error joining each
-failed record's error, with its topic, and its partition when one was chosen,
-so `errors.Is` finds `kgo.ErrRecordTimeout`, `context.DeadlineExceeded` or a
-`kerr` code in it. A failed call doesn't say which of its records were
-stored: the records that failed may have been stored anyway. `Produce`
+failed record's error, with its topic, and its partition when one was chosen.
+In a record's error:
+
+- `errors.As` finds a `*kafka.Error` when the cluster answered with a Kafka
+  error code, such as `MESSAGE_TOO_LARGE`, as [Failures](#failures)
+  describes;
+- `errors.Is` finds `kafka.ErrDeliveryTimeout`, which matches
+  `context.DeadlineExceeded` too, when the record wasn't acknowledged within
+  `DeliveryTimeout`, whether its call's deadline or franz-go's own timeout
+  failed it;
+- `errors.Is` finds `kafka.ErrProducerClosed` when the `Producer` was closed,
+  as [Shutdown and the grace period](#shutdown-and-the-grace-period)
+  describes.
+
+No error the `Producer` returns has franz-go's types or values in it. A
+failed call doesn't say which of its records were stored: the records that failed may have been stored anyway. `Produce`
 rejects a record with no `Topic` before it sends anything, and returns `nil`
 when given no records.
 
@@ -1022,8 +1045,9 @@ cluster, not the records or the callers:
   has given up on the topic. One topic's mistake doesn't open the breaker for
   the others.
 - **A failure** is anything else, the cluster not storing records in time:
-  `DeliveryTimeout` passing, `kgo.ErrRecordTimeout`, a retriable error code
-  franz-go stopped on, or a connection that failed.
+  `DeliveryTimeout` passing, which a record's error says with
+  `kafka.ErrDeliveryTimeout`, a retriable error code franz-go stopped on, or
+  a connection that failed.
 
 A caller giving up never counts: the breaker sees each call's result with
 the call's own context, which a caller's `ctx` doesn't cancel. A call whose
@@ -1083,8 +1107,8 @@ instead:
   sent, and before the breaker.
 
 The error names the broker as `host:port`, as the Service's does, and
-`errors.Is` finds its `kerr` code in it, such as
-`kerr.SaslAuthenticationFailed`. Credentials don't fix themselves while the
+`errors.As` finds its `*kafka.Error` in it, such as
+`SASL_AUTHENTICATION_FAILED`. Credentials don't fix themselves while the
 process runs, so the `Producer` never tries them again: a `Processor` that
 produces fails its record, under `AtLeastOnce` the Service stops, and the App
 is restarted with whatever the secret holds then.
@@ -1105,11 +1129,11 @@ it, such as those of a call that returned when its `ctx` was done, at most
 `DeliveryTimeout` old. Then it closes the client.
 
 **When the grace period runs out first,** closing the client fails what is
-left with `kgo.ErrClientClosed`, those records are lost, and the function
+left with `kafka.ErrProducerClosed`, those records are lost, and the function
 returns an error that wraps the context's error, which the lifecycle reports
 as a `*humus.GracePeriodError`, with exit 1. A `Produce` after that, from a
 goroutine the end user left running, fails at once with an error that wraps
-`kgo.ErrClientClosed`.
+`kafka.ErrProducerClosed`.
 
 If the end user's `Init` fails after `NewProducer`, the lifecycle runs the
 `OnStop` functions registered so far, so the client is closed and none of

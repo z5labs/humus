@@ -204,7 +204,9 @@ func checkServerAssignor(settings Settings) error {
 // called, including when Shutdown's context ran out first. It returns an
 // error when processing a record failed under queue.AtLeastOnce, when a
 // commit failed for a reason other than the member being fenced out of the
-// group, and when a poll returned an error franz-go doesn't retry.
+// group, when a poll returned an error franz-go doesn't retry, and when a
+// broker refused the credentials. When the cluster answered with a Kafka
+// error code, errors.As finds it in the error as an *Error.
 //
 // A Service is served once. A Serve called after Shutdown, or after an
 // earlier Serve, returns nil at once.
@@ -239,7 +241,7 @@ func (s *Service) Serve(ctx context.Context) error {
 	}
 	cl, err := kgo.NewClient(s.clientOpts(g)...)
 	if err != nil {
-		return fmt.Errorf("kafka: building the client: %w", err)
+		return fmt.Errorf("kafka: building the client: %w", fromClient(err))
 	}
 
 	g.poll(polling, cl)
@@ -496,17 +498,17 @@ func fatalPollError(fetches kgo.Fetches) error {
 			return
 		}
 		if topic == "" {
-			fatal = fmt.Errorf("kafka: consuming: %w", err)
+			fatal = fmt.Errorf("kafka: consuming: %w", fromClient(err))
 			return
 		}
-		fatal = fmt.Errorf("kafka: fetching %s, partition %d: %w", topic, partition, err)
+		fatal = fmt.Errorf("kafka: fetching %s, partition %d: %w", topic, partition, fromClient(err))
 	})
 	return fatal
 }
 
-// isFatal reports whether an error from a poll ends the Service: an error
-// code from Kafka that franz-go doesn't retry, such as an authorization
-// failure.
+// isFatal reports whether an error from a poll, the client's own, ends the
+// Service: an error code from Kafka that franz-go doesn't retry, such as an
+// authorization failure.
 //
 // Everything else is franz-go's to recover from. A connection error is
 // retried, with backoff, which is how the Service keeps serving while the
@@ -522,14 +524,15 @@ func isFatal(err error) bool {
 	if !ok {
 		return false
 	}
-	return !ke.Retriable && !notMember(err)
+	return !ke.Retriable && !notMember(fromClient(err))
 }
 
 // connectHook calls onRefusal when a broker refuses the client's
 // credentials, with the broker and an error that names it as host:port and
-// wraps the refusal. franz-go retries every connection that fails, and it would
-// retry a password that will never be accepted for as long as the client
-// ran, without a poll or a produce ever returning the error. The Service
+// wraps the refusal, as fromClient translates it. franz-go retries every
+// connection that fails, and it would retry a password that will never be
+// accepted for as long as the client ran, without a poll or a produce ever
+// returning the error. The Service
 // stops on the refusal, and the Producer fails every call with it.
 //
 // onRefusal may be called more than once, once for each refused connection,
@@ -543,11 +546,11 @@ func (h connectHook) OnBrokerConnect(meta kgo.BrokerMetadata, _ time.Duration, _
 	if err == nil || !refused(err) {
 		return
 	}
-	h.onRefusal(meta, fmt.Errorf("kafka: authenticating to %s: %w", net.JoinHostPort(meta.Host, strconv.Itoa(int(meta.Port))), err))
+	h.onRefusal(meta, fmt.Errorf("kafka: authenticating to %s: %w", net.JoinHostPort(meta.Host, strconv.Itoa(int(meta.Port))), fromClient(err)))
 }
 
-// refused reports whether err is a broker refusing to authenticate the
-// client.
+// refused reports whether err, an error of the client's, is a broker
+// refusing to authenticate the client.
 func refused(err error) bool {
 	return errors.Is(err, kerr.SaslAuthenticationFailed) ||
 		errors.Is(err, kerr.UnsupportedSaslMechanism) ||
@@ -558,17 +561,17 @@ func refused(err error) bool {
 // current generation, or, under the consumer protocol, its current epoch, or
 // no longer holds the partition: it was fenced out, or the group is
 // rebalancing. Kafka refused the commit, or, with errNotHeld, the Service
-// did not send it. franz-go rejoins the group, or under the consumer
-// protocol heartbeats its way back to the current epoch, so it is not the
-// Service's failure.
+// did not send it. err is translated, as fromClient translates it. franz-go
+// rejoins the group, or under the consumer protocol heartbeats its way back
+// to the current epoch, so it is not the Service's failure.
 func notMember(err error) bool {
 	return errors.Is(err, errNotHeld) ||
-		errors.Is(err, kerr.UnknownMemberID) ||
-		errors.Is(err, kerr.IllegalGeneration) ||
-		errors.Is(err, kerr.FencedInstanceID) ||
-		errors.Is(err, kerr.RebalanceInProgress) ||
-		errors.Is(err, kerr.StaleMemberEpoch) ||
-		errors.Is(err, kerr.FencedMemberEpoch)
+		isCode(err, kerr.UnknownMemberID) ||
+		isCode(err, kerr.IllegalGeneration) ||
+		isCode(err, kerr.FencedInstanceID) ||
+		isCode(err, kerr.RebalanceInProgress) ||
+		isCode(err, kerr.StaleMemberEpoch) ||
+		isCode(err, kerr.FencedMemberEpoch)
 }
 
 // errNotHeld is a commit the Service did not send, because franz-go would
@@ -818,7 +821,8 @@ func (g *group) commit(cl *kgo.Client, p *partition) bool {
 }
 
 // commitRecord commits r, which commits every record of p before it, and
-// records how long the commit took.
+// records how long the commit took. Its error is the client's, as
+// fromClient translates it.
 //
 // The commit is sent only under the member ID p is held under, and it
 // returns errNotHeld otherwise. The check runs as franz-go sends the commit,
@@ -836,7 +840,7 @@ func (g *group) commitRecord(cl *kgo.Client, p *partition, r *kgo.Record) error 
 		}
 		return nil
 	})
-	err := cl.CommitRecords(ctx, r)
+	err := fromClient(cl.CommitRecords(ctx, r))
 	attrs := append(p.attrs[:len(p.attrs):len(p.attrs)], semconv.MessagingOperationTypeSettle)
 	if err != nil {
 		attrs = append(attrs, semconv.ErrorType(err))

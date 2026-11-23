@@ -24,7 +24,6 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 	"github.com/twmb/franz-go/pkg/kadm"
-	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/sasl/oauth"
 
@@ -190,6 +189,6 @@ func TestKafka_OAuthBearer_authenticates_a_Service_and_a_Producer_with_a_token_f
 	}), humustest.WithApp(humus.WithHost(humus.OSHost())))
 	st = exited(t, status)
 	require.Zero(t, st.Code(), "cause: %v", st.Cause())
-	require.ErrorIs(t, produced, kerr.SaslAuthenticationFailed)
+	requireCode(t, produced, saslAuthenticationFailed)
 	require.ErrorContains(t, produced, `{"status":"invalid_token"}`, "Kafka's unsecured validator refused the token")
 }
