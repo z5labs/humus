@@ -161,7 +161,7 @@ func NewProducer(s *humus.Setup, settings ProducerSettings) (*Producer, error) {
 		kgo.AllowIdempotentProduceCancellation(),
 	}
 	if settings.SASL != nil {
-		opts = append(opts, kgo.SASL(settings.SASL))
+		opts = append(opts, kgo.SASL(clientSASL(settings.SASL)))
 	}
 	cl, err := kgo.NewClient(opts...)
 	if err != nil {

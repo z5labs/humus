@@ -278,7 +278,7 @@ func (s *Service) clientOpts(g *group) []kgo.Opt {
 		opts = append(opts, kgo.ServerSideBalancer())
 	}
 	if s.settings.SASL != nil {
-		opts = append(opts, kgo.SASL(s.settings.SASL))
+		opts = append(opts, kgo.SASL(clientSASL(s.settings.SASL)))
 	}
 	return opts
 }

@@ -375,18 +375,36 @@ no client certificate take a config with only `RootCAs`.
 ### SASL
 
 `Settings.SASL` is the mechanism the Service authenticates with, and `nil`
-means no authentication. It is franz-go's own
-[`sasl.Mechanism`](https://pkg.go.dev/github.com/twmb/franz-go/pkg/sasl), so
-the end user picks one of franz-go's mechanisms, `plain`, `scram`, `oauth` or
-`aws`, and supplies its credentials from wherever they keep them: humus
-decides nothing about secrets. They are in franz-go's own module, so they add
-no dependency. This chain builds SCRAM-SHA-512 credentials from two
-variables, reading the password only once the user name has been read:
+means no authentication. It is a `kafka.SASLMechanism`, and the package
+returns the common ones, each given its credentials from wherever the end
+user keeps them: humus decides nothing about secrets.
+
+| Constructor | Mechanism | For |
+| --- | --- | --- |
+| `kafka.Plain(user, password)` | `PLAIN` | brokers that check a user and a password, sent as they are |
+| `kafka.ScramSHA256(user, password)`, `kafka.ScramSHA512(user, password)` | `SCRAM-SHA-256`, `SCRAM-SHA-512` | brokers that check a user and a password, proved without sending it |
+| `kafka.OAuthBearer(token)` | `OAUTHBEARER` | brokers that check a bearer token from an identity provider, such as Confluent Cloud's |
+| `kafka.AWSMSKIAM(credentials)` | `AWS_MSK_IAM` | Amazon MSK clusters that authenticate with IAM |
+
+A user and a password are sourced once, as every setting is, so rotating
+them restarts the App. A token and AWS's temporary credentials expire while
+the App runs, so `OAuthBearer` calls `token`, and `AWSMSKIAM` calls
+`credentials`, each time the Service or the `Producer` connects to a broker,
+and an error from either fails that connection. `OAuthToken.Extensions`
+carries the SASL extensions some brokers require, such as Confluent Cloud's
+`logicalCluster`. `AWSMSKIAM` signs for the region in the broker's host name.
+An end user who needs another mechanism, such as GSSAPI, or SASL's
+authorization ID, implements `kafka.SASLMechanism`, whose `Authenticate`
+starts an exchange with one broker and whose `SASLSession` answers each of
+the broker's messages.
+
+This chain builds SCRAM-SHA-512 credentials from two variables, reading the
+password only once the user name has been read:
 
 ```go
-k.SASL = r.Get(env("KAFKA_SASL_USER").FlatMap(func(user string) config.Value[sasl.Mechanism] {
-	return env("KAFKA_SASL_PASSWORD").Map(func(password string) sasl.Mechanism {
-		return scram.Auth{User: user, Pass: password}.AsSha512Mechanism()
+k.SASL = r.Get(env("KAFKA_SASL_USER").FlatMap(func(user string) config.Value[kafka.SASLMechanism] {
+	return env("KAFKA_SASL_PASSWORD").Map(func(password string) kafka.SASLMechanism {
+		return kafka.ScramSHA512(user, password)
 	})
 }))
 ```

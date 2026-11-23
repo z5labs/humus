@@ -6,10 +6,15 @@
 package kafka_test
 
 import (
+	"fmt"
 	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	"go/types"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -90,7 +95,131 @@ func TestPackage_reads_no_environment_and_no_file(t *testing.T) {
 		})
 	}
 	// The consumer's files and the producer's are all checked.
-	require.Subset(t, checked, []string{"service.go", "settings.go", "dial.go", "logger.go", "producer.go", "breaker.go"})
+	require.Subset(t, checked, []string{"service.go", "settings.go", "dial.go", "logger.go", "producer.go", "breaker.go", "sasl.go"})
+}
+
+// TestPackage_exports_no_franz_go_type type-checks the package, test files
+// excluded, and walks its exported API: every exported constant, variable,
+// function and type, and through the types, every exported field and method,
+// the package's unexported types included when the exported API shows them.
+// No type in it is from a github.com/twmb/franz-go package, so an end user's
+// code never builds or matches one of the client's types.
+func TestPackage_exports_no_franz_go_type(t *testing.T) {
+	t.Parallel()
+
+	const self = "github.com/z5labs/humus/queue/kafka"
+	// The package and its dependencies are read from the export data the
+	// go command builds, which is quicker than type-checking every one of
+	// them from source.
+	out, err := exec.Command("go", "list", "-export", "-deps", "-f", "{{.ImportPath}}={{.Export}}", self).Output()
+	require.NoError(t, err)
+	exports := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		path, file, _ := strings.Cut(line, "=")
+		exports[path] = file
+	}
+	pkg, err := importer.ForCompiler(token.NewFileSet(), "gc", func(path string) (io.ReadCloser, error) {
+		file, ok := exports[path]
+		if !ok || file == "" {
+			return nil, fmt.Errorf("no export data for %s", path)
+		}
+		return os.Open(file)
+	}).Import(self)
+	require.NoError(t, err)
+
+	w := apiWalker{self: pkg, seen: map[types.Type]bool{}}
+	scope := pkg.Scope()
+	for _, name := range scope.Names() {
+		if obj := scope.Lookup(name); obj.Exported() {
+			w.walk(obj.Name(), obj.Type())
+		}
+	}
+	require.Contains(t, w.named, self+".Settings", "the walk reached the package's types")
+	require.Contains(t, w.named, self+".SASLMechanism")
+	for _, use := range w.franzGo {
+		t.Errorf("%s: a type from franz-go", use)
+	}
+}
+
+// apiWalker walks the types an exported API shows.
+type apiWalker struct {
+	self    *types.Package
+	seen    map[types.Type]bool
+	named   []string // every named type reached, by its full name
+	franzGo []string // where a franz-go type was reached
+}
+
+func (w *apiWalker) walk(at string, typ types.Type) {
+	if w.seen[typ] {
+		return
+	}
+	w.seen[typ] = true
+
+	switch t := typ.(type) {
+	case *types.Alias:
+		w.named = append(w.named, t.Obj().Pkg().Path()+"."+t.Obj().Name())
+		w.walk(at, types.Unalias(t))
+	case *types.Named:
+		obj := t.Obj()
+		if obj.Pkg() == nil {
+			return // error, comparable
+		}
+		path := obj.Pkg().Path()
+		w.named = append(w.named, path+"."+obj.Name())
+		if path == "github.com/twmb/franz-go" || strings.HasPrefix(path, "github.com/twmb/franz-go/") {
+			w.franzGo = append(w.franzGo, at+" is "+path+"."+obj.Name())
+			return
+		}
+		for i := range t.TypeArgs().Len() {
+			w.walk(at, t.TypeArgs().At(i))
+		}
+		if obj.Pkg() != w.self {
+			return // another package's API is its own
+		}
+		for i := range t.NumMethods() {
+			if m := t.Method(i); m.Exported() {
+				w.walk(obj.Name()+"."+m.Name(), m.Type())
+			}
+		}
+		w.walk(obj.Name(), t.Underlying())
+	case *types.Pointer:
+		w.walk(at, t.Elem())
+	case *types.Slice:
+		w.walk(at, t.Elem())
+	case *types.Array:
+		w.walk(at, t.Elem())
+	case *types.Map:
+		w.walk(at, t.Key())
+		w.walk(at, t.Elem())
+	case *types.Chan:
+		w.walk(at, t.Elem())
+	case *types.Signature:
+		for _, tuple := range []*types.Tuple{t.Params(), t.Results()} {
+			for i := range tuple.Len() {
+				w.walk(at, tuple.At(i).Type())
+			}
+		}
+		for i := range t.TypeParams().Len() {
+			w.walk(at, t.TypeParams().At(i).Constraint())
+		}
+	case *types.Struct:
+		for i := range t.NumFields() {
+			if f := t.Field(i); f.Exported() || f.Embedded() {
+				w.walk(at+"."+f.Name(), f.Type())
+			}
+		}
+	case *types.Interface:
+		for i := range t.NumMethods() {
+			if m := t.Method(i); m.Exported() {
+				w.walk(at+"."+m.Name(), m.Type())
+			}
+		}
+		for i := range t.NumEmbeddeds() {
+			w.walk(at, t.EmbeddedType(i))
+		}
+	case *types.TypeParam:
+		w.walk(at, t.Constraint())
+	}
 }
 
 // TestPackage_uses_kotels_Meter_alone checks the package's own source, test

@@ -30,3 +30,6 @@ var Classify = classify
 func StripRecord(svc *Service, ctx context.Context, m Message) context.Context {
 	return svc.strip(ctx, m)
 }
+
+// ClientSASL is the mechanism the client is given for m.
+var ClientSASL = clientSASL
