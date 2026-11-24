@@ -116,13 +116,13 @@ func (p *idp) sign(subject string, scopes ...string) (string, error) {
 
 func (p *idp) serve(t *testing.T, host humus.Host, addr string, cert *humustest.Certificate) (*bedrocktest.Process, <-chan bedrock.ExitStatus) {
 	t.Helper()
-	return humustest.Start(t, host, func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	return humustest.Start(t, host, func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = addr
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
 		mux := http.NewServeMux()
 		mux.Handle("GET "+jwksPath, p)
-		svc, err := httpserver.NewService(s, settings, mux)
+		svc, err := httpserver.NewService(ctx, s, h, settings, mux)
 		if err != nil {
 			return nil, err
 		}

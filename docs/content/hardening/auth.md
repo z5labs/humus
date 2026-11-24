@@ -347,7 +347,7 @@ mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 settings := httpserver.DefaultSettings()
 settings.Addr = ":8443"
 settings.TLS = tlsConfig // with ClientAuth tls.VerifyClientCertIfGiven, and ClientCAs
-svc, err := httpserver.NewService(s, settings, mux)
+svc, err := httpserver.NewService(ctx, s, h, settings, mux)
 ```
 
 `NewHandler` returns one error that names every mistake: a nil handler or
@@ -564,7 +564,7 @@ mux.Handle("POST /sign-out", signOutAction)
 settings := httpserver.DefaultSettings()
 settings.Addr = ":8443"
 settings.TLS = tlsConfig
-svc, err := httpserver.NewService(s, settings, http.NewCrossOriginProtection().Handler(mux))
+svc, err := httpserver.NewService(ctx, s, h, settings, http.NewCrossOriginProtection().Handler(mux))
 ```
 
 `homePage` and `signOutAction` are `auth.NewHandler`s requiring the session,
@@ -619,7 +619,7 @@ until the first token:
 clientSettings := httpclient.DefaultSettings()
 clientSettings.BaseURL = &url.URL{Scheme: idp.KeySet.Scheme, Host: idp.KeySet.Host}
 clientSettings.TLS = &tls.Config{RootCAs: idp.Roots}
-client, err := httpclient.NewClient(s, clientSettings)
+client, err := httpclient.NewClient(s, h, clientSettings)
 if err != nil {
 	return nil, err
 }
@@ -872,11 +872,11 @@ and is served on the Host as an App of the test's own:
 
 ```go
 cert := ca.Issue(t, "idp.internal")
-proc, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+proc, status := humustest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	settings := httpserver.DefaultSettings()
 	settings.Addr = ":443"
 	settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
-	svc, err := httpserver.NewService(s, settings, p)
+	svc, err := httpserver.NewService(ctx, s, h, settings, p)
 	if err != nil {
 		return nil, err
 	}

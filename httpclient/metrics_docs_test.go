@@ -119,8 +119,8 @@ func TestClient_metrics_read_once_the_App_has_exited(t *testing.T) {
 		settings := paymentsSettings(t, ca)
 
 		tel := humustest.NewTelemetry()
-		_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-			c, err := httpclient.NewClient(s, settings)
+		_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			c, err := httpclient.NewClient(s, h, settings)
 			if err != nil {
 				return nil, err
 			}

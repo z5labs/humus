@@ -13,16 +13,16 @@
 //		if err != nil {
 //			return nil, err
 //		}
-//		svc, err := httpserver.NewService(s, settings, mux)
+//		svc, err := httpserver.NewService(ctx, s, h, settings, mux)
 //		if err != nil {
 //			return nil, err
 //		}
 //		return []humus.Service{svc}, nil
 //	}
 //
-// NewService listens on the address through the Setup's Host, so a port
-// that is already taken fails Init, and a connection that arrives before
-// Serve waits in the backlog.
+// NewService listens on the address through the [Network] it is given,
+// such as Init's host, so a port that is already taken fails Init, and a
+// connection that arrives before Serve waits in the backlog.
 //
 // # Main and its defaults
 //

@@ -102,7 +102,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 		return nil, err
 	}
 
-	keysClient, err := httpclient.NewClient(s, set.KeySet.Client)
+	keysClient, err := httpclient.NewClient(s, h, set.KeySet.Client)
 	if err != nil {
 		return nil, err
 	}

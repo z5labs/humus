@@ -71,7 +71,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 
 type openStore func(ctx context.Context, s *humus.Setup, h humus.Host, cfg *pgxpool.Config) (store endpoint.Store, ping func(context.Context) error, err error)
 
-type newCatalog func(s *humus.Setup, settings httpclient.Settings) (catalog endpoint.Catalog, ready func(context.Context) error, err error)
+type newCatalog func(s *humus.Setup, n httpclient.Network, settings httpclient.Settings) (catalog endpoint.Catalog, ready func(context.Context) error, err error)
 
 func initWith(ctx context.Context, s *humus.Setup, h humus.Host, open openStore, newCatalog newCatalog) ([]humus.Service, error) {
 	settings, err := readSettings(ctx, s, h)
@@ -84,12 +84,12 @@ func initWith(ctx context.Context, s *humus.Setup, h humus.Host, open openStore,
 		return nil, err
 	}
 
-	catalog, catalogReady, err := newCatalog(s, settings.Catalog)
+	catalog, catalogReady, err := newCatalog(s, h, settings.Catalog)
 	if err != nil {
 		return nil, err
 	}
 
-	idp, err := httpclient.NewClient(s, settings.KeySet.Client)
+	idp, err := httpclient.NewClient(s, h, settings.KeySet.Client)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +138,7 @@ func initWith(ctx context.Context, s *humus.Setup, h humus.Host, open openStore,
 	}))
 	mux.Handle("/", http.MaxBytesHandler(api, maxBodyBytes))
 
-	svc, err := httpserver.NewService(s, settings.HTTP, mux)
+	svc, err := httpserver.NewService(ctx, s, h, settings.HTTP, mux)
 	if err != nil {
 		return nil, err
 	}
@@ -170,8 +170,8 @@ func trustTokens(faults fault.Injector, verify func(context.Context, string) (en
 	}
 }
 
-func openCatalog(s *humus.Setup, settings httpclient.Settings) (endpoint.Catalog, func(context.Context) error, error) {
-	client, err := httpclient.NewClient(s, settings)
+func openCatalog(s *humus.Setup, n httpclient.Network, settings httpclient.Settings) (endpoint.Catalog, func(context.Context) error, error) {
+	client, err := httpclient.NewClient(s, n, settings)
 	if err != nil {
 		return nil, nil, err
 	}

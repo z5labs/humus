@@ -21,9 +21,10 @@ import (
 // and change the fields you source. Addr and TLS have no default, so they are
 // always among them.
 type Settings struct {
-	// Addr is the TCP address the Service listens on through the Host, as
-	// host:port. It is required: humus imposes no port. An empty host listens
-	// on every address. Port 0 picks a free port, which Service.Addr reports.
+	// Addr is the TCP address the Service listens on through its Network,
+	// as host:port. It is required: humus imposes no port. An empty host
+	// listens on every address. Port 0 picks a free port, which
+	// Service.Addr reports.
 	//
 	// Default: none. Valid: host:port, with a port from 0 to 65535.
 	// Check: CheckAddr.
@@ -110,7 +111,7 @@ var (
 	errNotPositive = errors.New("must be positive")
 )
 
-// CheckAddr rejects an address that Host.ListenTCP can't listen on: one that is
+// CheckAddr rejects an address that a Network can't listen on: one that is
 // not host:port, such as "" or an address with no port, or one whose port is
 // not a number from 0 to 65535. An empty host and port 0 are valid.
 func CheckAddr(addr string) error {

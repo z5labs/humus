@@ -58,13 +58,13 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 
 	// One client for the dependency, built once and shared by every
 	// request the handler serves.
-	payments, err := httpclient.NewClient(s, paymentsSettings)
+	payments, err := httpclient.NewClient(s, h, paymentsSettings)
 	if err != nil {
 		return nil, err
 	}
 
 	api := newAPI(payments, paymentsSettings.BaseURL)
-	svc, err := httpserver.NewService(s, serverSettings, api)
+	svc, err := httpserver.NewService(ctx, s, h, serverSettings, api)
 	if err != nil {
 		return nil, err
 	}

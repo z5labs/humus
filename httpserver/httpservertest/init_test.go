@@ -44,7 +44,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 	if err != nil {
 		return nil, err // exit 78, naming every bad variable
 	}
-	return serve(s, settings)
+	return serve(ctx, s, h, settings)
 }
 
 // InitPKCS12 is an Init like Init, whose certificate is a PKCS#12 bundle in
@@ -64,16 +64,16 @@ func InitPKCS12(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Serv
 	if err != nil {
 		return nil, err
 	}
-	return serve(s, settings)
+	return serve(ctx, s, h, settings)
 }
 
 // serve returns the one Service of Init and InitPKCS12: greet on
 // GET /hello/{name}, with settings.
-func serve(s *humus.Setup, settings httpserver.Settings) ([]humus.Service, error) {
+func serve(ctx context.Context, s *humus.Setup, n httpserver.Network, settings httpserver.Settings) ([]humus.Service, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /hello/{name}", greet)
 
-	svc, err := httpserver.NewService(s, settings, mux)
+	svc, err := httpserver.NewService(ctx, s, n, settings, mux)
 	if err != nil {
 		return nil, err
 	}

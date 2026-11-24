@@ -35,11 +35,11 @@ const catalogAddr = "catalog.internal:8443"
 func startCatalog(t *testing.T, h *humustest.Host, ca *humustest.CA, handler http.Handler) (stop func()) {
 	t.Helper()
 	cert := ca.Issue(t, "catalog.internal")
-	p, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	p, status := humustest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = catalogAddr
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
-		svc, err := httpserver.NewService(s, settings, handler)
+		svc, err := httpserver.NewService(ctx, s, h, settings, handler)
 		if err != nil {
 			return nil, err
 		}
@@ -67,8 +67,8 @@ func settings(t *testing.T, ca *humustest.CA, rawURL string) httpclient.Settings
 
 func run(t *testing.T, h *humustest.Host, settings httpclient.Settings, call func(ctx context.Context, c *catalogclient.Client)) {
 	t.Helper()
-	_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		client, err := httpclient.NewClient(s, settings)
+	_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		client, err := httpclient.NewClient(s, h, settings)
 		if err != nil {
 			return nil, err
 		}

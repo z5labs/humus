@@ -101,7 +101,7 @@ func InitWith(ctx context.Context, s *humus.Setup, h humus.Host, open OpenStore)
 		return nil, err
 	}
 
-	idp, err := httpclient.NewClient(s, settings.KeySet.Client)
+	idp, err := httpclient.NewClient(s, h, settings.KeySet.Client)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +126,7 @@ func InitWith(ctx context.Context, s *humus.Setup, h humus.Host, open OpenStore)
 	}))
 	mux.Handle("/", http.MaxBytesHandler(api, maxBodyBytes))
 
-	svc, err := httpserver.NewService(s, settings.HTTP, mux)
+	svc, err := httpserver.NewService(ctx, s, h, settings.HTTP, mux)
 	if err != nil {
 		return nil, err
 	}

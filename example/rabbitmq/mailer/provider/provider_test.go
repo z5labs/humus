@@ -87,11 +87,11 @@ func always(a func(http.ResponseWriter)) func(int, http.ResponseWriter) {
 func startProvider(t *testing.T, h *humustest.Host, ca *humustest.CA, handler http.Handler) (stop func()) {
 	t.Helper()
 	cert := ca.Issue(t, "provider")
-	p, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	p, status := humustest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = ":8443"
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
-		svc, err := httpserver.NewService(s, settings, handler)
+		svc, err := httpserver.NewService(ctx, s, h, settings, handler)
 		if err != nil {
 			return nil, err
 		}
@@ -128,7 +128,7 @@ func settings(t *testing.T, ca *humustest.CA) provider.Settings {
 func run(t *testing.T, h *humustest.Host, settings provider.Settings, f func(ctx context.Context, c *provider.Client)) {
 	t.Helper()
 	_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		c, err := provider.New(s, settings)
+		c, err := provider.New(s, h, settings)
 		if err != nil {
 			return nil, err
 		}
@@ -440,7 +440,7 @@ func TestNew_rejects_bad_settings(t *testing.T) {
 				tc.change(&s)
 
 				_, status := humustest.Start(t, h.Host(), func(_ context.Context, setup *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-					_, err := provider.New(setup, s)
+					_, err := provider.New(setup, h, s)
 					return nil, err
 				}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 				st := <-status

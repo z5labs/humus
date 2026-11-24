@@ -62,7 +62,7 @@
 //	idpSettings := httpclient.DefaultSettings() // sourced with config.Struct
 //	idpSettings.BaseURL = idpURL                // https://idp.example.com
 //	idpSettings.TLS = &tls.Config{RootCAs: idpRoots}
-//	idp, err := httpclient.NewClient(s, idpSettings)
+//	idp, err := httpclient.NewClient(s, h, idpSettings)
 //	if err != nil {
 //		return nil, err
 //	}

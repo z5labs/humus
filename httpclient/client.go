@@ -33,6 +33,15 @@ const (
 // default policy does.
 const maxRedirects = 10
 
+// Network is what a client needs of a host: a way to dial. humus.Host
+// implements it, and so does any network of the end user's with this
+// method.
+type Network interface {
+	// DialTCP connects to address over "tcp", "tcp4" or "tcp6", like
+	// net.Dialer.DialContext.
+	DialTCP(ctx context.Context, network, address string) (net.Conn, error)
+}
+
 // NewClient returns an *http.Client for the dependency at settings.BaseURL.
 //
 // NewClient runs every check on settings, and rejects a BackoffMax below
@@ -46,7 +55,7 @@ const maxRedirects = 10
 // dials nothing, and registers a function with s.OnStop that closes the
 // client's idle connections.
 //
-// The client dials through s.Host. A request to any origin other than
+// The client dials through n. A request to any origin other than
 // settings.BaseURL's fails without being sent. A request that is safe to
 // send twice is retried, as settings.Classify decides each attempt's result
 // counts. Every attempt goes through the dependency's breaker, which counts
@@ -59,7 +68,7 @@ const maxRedirects = 10
 // humus's own instruments, with s.Telemetry's MeterProvider, and each
 // change of the breaker's state is a log record through s.Telemetry's
 // LoggerProvider.
-func NewClient(s *humus.Setup, settings Settings) (*http.Client, error) {
+func NewClient(s *humus.Setup, n Network, settings Settings) (*http.Client, error) {
 	if s == nil {
 		return nil, errors.New("httpclient: NewClient: the Setup must not be nil")
 	}
@@ -99,7 +108,7 @@ func NewClient(s *humus.Setup, settings Settings) (*http.Client, error) {
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
 	tr := &http.Transport{
-		DialContext:         s.Host.DialTCP,
+		DialContext:         n.DialTCP,
 		Proxy:               nil,
 		Protocols:           &protocols,
 		MaxIdleConns:        maxIdleConns,

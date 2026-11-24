@@ -22,7 +22,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 
 type openStore func(ctx context.Context, s *humus.Setup, h humus.Host, cfg *pgxpool.Config) (store endpoint.Store, ping func(context.Context) error, err error)
 
-type newCatalog func(s *humus.Setup, settings httpclient.Settings) (catalog endpoint.Catalog, ready func(context.Context) error, err error)
+type newCatalog func(s *humus.Setup, n httpclient.Network, settings httpclient.Settings) (catalog endpoint.Catalog, ready func(context.Context) error, err error)
 ```
 
 So its unit tests give it a Store in memory and a fake catalog, which

@@ -29,19 +29,16 @@ import (
 // nothing.
 var errDialled = errors.New("dialled")
 
-// newSetup returns a Setup on a test host whose DialTCP records that it was
-// called, with telemetry that discards everything.
-func newSetup(t *testing.T, dialled *bool) *humus.Setup {
-	th := hosttest.New(t)
-	n := hosttest.Seams{Network: th}
+// newSetup returns a Setup with telemetry that discards everything, and no
+// Host, and a network on a test host whose DialTCP records that it was
+// called.
+func newSetup(t *testing.T, dialled *bool) (*humus.Setup, Network) {
+	n := hosttest.Seams{Network: hosttest.New(t)}
 	n.OnDialTCP = func(context.Context, string, string) (net.Conn, error) {
 		*dialled = true
 		return nil, errDialled
 	}
-	return &humus.Setup{
-		Host:      humus.Host{IPNetwork: n, Filesystem: th.Filesystem()},
-		Telemetry: telemetry.Noop(),
-	}
+	return &humus.Setup{Telemetry: telemetry.Noop()}, n
 }
 
 // transportOf returns c's http.Transport.
@@ -69,8 +66,8 @@ func TestNewClient_the_client(t *testing.T) {
 	settings.Timeout = 7 * time.Second
 
 	var dialled bool
-	s := newSetup(t, &dialled)
-	c, err := NewClient(s, settings)
+	s, n := newSetup(t, &dialled)
+	c, err := NewClient(s, n, settings)
 	require.NoError(t, err)
 	require.False(t, dialled, "NewClient dials nothing")
 
@@ -82,7 +79,7 @@ func TestNewClient_the_client(t *testing.T) {
 	require.NotNil(t, tr.DialContext)
 	_, err = tr.DialContext(t.Context(), "tcp", "payments:8443")
 	require.ErrorIs(t, err, errDialled)
-	require.True(t, dialled, "the transport dials with the Host's DialTCP")
+	require.True(t, dialled, "the transport dials with the Network's DialTCP")
 
 	require.Nil(t, tr.Proxy, "the transport reads no proxy variable")
 	require.Equal(t, 100, tr.MaxIdleConns)
@@ -105,7 +102,8 @@ func TestNewClient_an_http_BaseURL_is_HTTP1_alone(t *testing.T) {
 	settings := DefaultSettings()
 	settings.BaseURL = mustParse(t, "http://payments:8080")
 	var dialled bool
-	c, err := NewClient(newSetup(t, &dialled), settings)
+	s, n := newSetup(t, &dialled)
+	c, err := NewClient(s, n, settings)
 	require.NoError(t, err)
 
 	tr := transportOf(t, c)
@@ -152,7 +150,8 @@ func TestRetryTransport_refuses_another_origin(t *testing.T) {
 	settings.BaseURL = mustParse(t, "https://payments:8443/v1")
 	settings.TLS = &tls.Config{}
 	var dialled bool
-	c, err := NewClient(newSetup(t, &dialled), settings)
+	s, n := newSetup(t, &dialled)
+	c, err := NewClient(s, n, settings)
 	require.NoError(t, err)
 
 	body := &closeRecorder{Reader: strings.NewReader("{}")}

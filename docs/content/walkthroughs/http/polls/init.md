@@ -426,7 +426,7 @@ func initWith(ctx context.Context, s *humus.Setup, h humus.Host, open openBacken
 	}))
 	mux.Handle("/", site)
 
-	svc, err := httpserver.NewService(s, settings.HTTP, mux)
+	svc, err := httpserver.NewService(ctx, s, h, settings.HTTP, mux)
 	if err != nil {
 		return nil, err
 	}

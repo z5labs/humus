@@ -357,13 +357,13 @@ func TestWithProbes_the_pod_is_ready_once_the_caches_have_synced(t *testing.T) {
 			TLS:  &tls.Config{Certificates: []tls.Certificate{ca.Issue(t, "localhost").TLS()}},
 		}
 
-		p, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+		p, status := humustest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			ctrl, err := kube.NewController(s, testClient(t, s), testSettings(), Memcached, Reconciler{Kube: fc.kube})
 			if err != nil {
 				return nil, err
 			}
 			kube.SetClients(ctrl, fc.dyn, fc.meta, fc.kube.CoordinationV1())
-			return withProbes(s, ctrl, probeSettings)
+			return withProbes(ctx, s, h, ctrl, probeSettings)
 		})
 		<-h.Listening("localhost:8081")
 		synctest.Wait()

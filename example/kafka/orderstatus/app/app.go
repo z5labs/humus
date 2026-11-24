@@ -120,7 +120,7 @@ func initWith(ctx context.Context, s *humus.Setup, h humus.Host, open openStore)
 	if err != nil {
 		return nil, err
 	}
-	probes, err := httphealth.NewService(s, set.Probes, health.Readiness(consumer.Joined()))
+	probes, err := httphealth.NewService(ctx, s, h, set.Probes, health.Readiness(consumer.Joined()))
 	if err != nil {
 		return nil, err
 	}

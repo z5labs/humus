@@ -88,8 +88,8 @@ cart's client certificate verified.
 it, a `Catalog` and a readiness check:
 
 ```go
-func openCatalog(s *humus.Setup, settings httpclient.Settings) (endpoint.Catalog, func(context.Context) error, error) {
-	client, err := httpclient.NewClient(s, settings)
+func openCatalog(s *humus.Setup, n httpclient.Network, settings httpclient.Settings) (endpoint.Catalog, func(context.Context) error, error) {
+	client, err := httpclient.NewClient(s, n, settings)
 	if err != nil {
 		return nil, nil, err
 	}

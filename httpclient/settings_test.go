@@ -345,11 +345,11 @@ func TestDefaultSettings(t *testing.T) {
 	})
 }
 
-// newSetup returns a Setup on a new humustest Host, with telemetry that
-// discards everything, for a test that builds a client and sends nothing.
+// newSetup returns a Setup with telemetry that discards everything, and no
+// Host, for a test that builds a client and sends nothing.
 func newSetup(t *testing.T) *humus.Setup {
 	t.Helper()
-	return &humus.Setup{Host: humustest.NewHost(t).Host(), Telemetry: telemetry.Noop()}
+	return &humus.Setup{Telemetry: telemetry.Noop()}
 }
 
 func TestNewClient_the_Setup(t *testing.T) {
@@ -360,7 +360,7 @@ func TestNewClient_the_Setup(t *testing.T) {
 
 	t.Run("a nil Setup is rejected", func(t *testing.T) {
 		t.Parallel()
-		c, err := httpclient.NewClient(nil, settings)
+		c, err := httpclient.NewClient(nil, humustest.NewHost(t), settings)
 		require.Nil(t, c)
 		require.EqualError(t, err, "httpclient: NewClient: the Setup must not be nil")
 	})
@@ -369,7 +369,7 @@ func TestNewClient_the_Setup(t *testing.T) {
 		t.Parallel()
 		tel := telemetry.Noop()
 		tel.LoggerProvider = nil
-		c, err := httpclient.NewClient(&humus.Setup{Host: humustest.NewHost(t).Host(), Telemetry: tel}, settings)
+		c, err := httpclient.NewClient(&humus.Setup{Telemetry: tel}, humustest.NewHost(t), settings)
 		require.Nil(t, c)
 		require.EqualError(t, err, "httpclient: NewClient: the Setup's Telemetry.LoggerProvider must not be nil")
 	})
@@ -378,14 +378,14 @@ func TestNewClient_the_Setup(t *testing.T) {
 		t.Parallel()
 		tel := telemetry.Noop()
 		tel.MeterProvider = nil
-		c, err := httpclient.NewClient(&humus.Setup{Host: humustest.NewHost(t).Host(), Telemetry: tel}, settings)
+		c, err := httpclient.NewClient(&humus.Setup{Telemetry: tel}, humustest.NewHost(t), settings)
 		require.Nil(t, c)
 		require.EqualError(t, err, "httpclient: NewClient: the Setup's Telemetry.MeterProvider must not be nil")
 	})
 
 	t.Run("alongside the bad fields", func(t *testing.T) {
 		t.Parallel()
-		_, err := httpclient.NewClient(&humus.Setup{}, httpclient.DefaultSettings())
+		_, err := httpclient.NewClient(&humus.Setup{}, humustest.NewHost(t), httpclient.DefaultSettings())
 		require.ErrorContains(t, err, "the Setup's Telemetry.LoggerProvider must not be nil")
 		require.ErrorContains(t, err, "the Setup's Telemetry.MeterProvider must not be nil")
 		require.ErrorContains(t, err, "Settings.BaseURL must not be nil")
@@ -404,7 +404,7 @@ func TestNewClient_settings(t *testing.T) {
 
 	t.Run("DefaultSettings alone fails, naming BaseURL", func(t *testing.T) {
 		t.Parallel()
-		c, err := httpclient.NewClient(newSetup(t), httpclient.DefaultSettings())
+		c, err := httpclient.NewClient(newSetup(t), humustest.NewHost(t), httpclient.DefaultSettings())
 		require.Nil(t, c)
 		require.EqualError(t, err, "httpclient: NewClient: Settings.BaseURL must not be nil")
 	})
@@ -423,7 +423,7 @@ func TestNewClient_settings(t *testing.T) {
 		settings.Breaker = circuit.Config{Window: 0, Probes: circuit.MaxCount + 1, OpenFor: 0, ProbeTimeout: -time.Second}
 		settings.BreakerPolicy = circuit.Policy{}
 
-		_, err := httpclient.NewClient(newSetup(t), settings)
+		_, err := httpclient.NewClient(newSetup(t), humustest.NewHost(t), settings)
 		require.ErrorContains(t, err, "httpclient: NewClient: ")
 		require.ErrorContains(t, err, "Settings.TLS sets InsecureSkipVerify")
 		require.ErrorContains(t, err, "Settings.Timeout must be positive")
@@ -450,7 +450,7 @@ func TestNewClient_settings(t *testing.T) {
 		settings.BackoffMax = time.Second
 		settings.Classify = nil
 
-		c, err := httpclient.NewClient(newSetup(t), settings)
+		c, err := httpclient.NewClient(newSetup(t), humustest.NewHost(t), settings)
 		require.Nil(t, c)
 		require.EqualError(t, err, "httpclient: NewClient: Settings.BackoffMax must be at least Settings.BackoffBase, 2s, got 1s\n"+
 			"Settings.Classify must not be nil")
@@ -461,7 +461,7 @@ func TestNewClient_settings(t *testing.T) {
 		settings := https(t)
 		settings.BackoffBase = time.Second
 		settings.BackoffMax = time.Second
-		_, err := httpclient.NewClient(newSetup(t), settings)
+		_, err := httpclient.NewClient(newSetup(t), humustest.NewHost(t), settings)
 		require.NoError(t, err)
 	})
 
@@ -487,7 +487,7 @@ func TestNewClient_settings(t *testing.T) {
 		} {
 			settings := https(t)
 			change(&settings)
-			_, err := httpclient.NewClient(newSetup(t), settings)
+			_, err := httpclient.NewClient(newSetup(t), humustest.NewHost(t), settings)
 			require.ErrorContains(t, err, field)
 		}
 	})
@@ -496,7 +496,7 @@ func TestNewClient_settings(t *testing.T) {
 		t.Parallel()
 		settings := https(t)
 		settings.TLS = nil
-		c, err := httpclient.NewClient(newSetup(t), settings)
+		c, err := httpclient.NewClient(newSetup(t), humustest.NewHost(t), settings)
 		require.Nil(t, c)
 		require.EqualError(t, err, "httpclient: NewClient: Settings.TLS must be set for an https Settings.BaseURL")
 	})
@@ -505,7 +505,7 @@ func TestNewClient_settings(t *testing.T) {
 		t.Parallel()
 		settings := https(t)
 		settings.BaseURL = mustParse(t, "http://payments:8080")
-		c, err := httpclient.NewClient(newSetup(t), settings)
+		c, err := httpclient.NewClient(newSetup(t), humustest.NewHost(t), settings)
 		require.Nil(t, c)
 		require.EqualError(t, err, "httpclient: NewClient: Settings.TLS must be nil for an http Settings.BaseURL, which is plain text")
 	})
@@ -514,7 +514,7 @@ func TestNewClient_settings(t *testing.T) {
 		t.Parallel()
 		settings := httpclient.DefaultSettings()
 		settings.BaseURL = mustParse(t, "http://payments:8080")
-		c, err := httpclient.NewClient(newSetup(t), settings)
+		c, err := httpclient.NewClient(newSetup(t), humustest.NewHost(t), settings)
 		require.NoError(t, err)
 		require.NotNil(t, c)
 		require.Equal(t, 10*time.Second, c.Timeout)
@@ -523,7 +523,7 @@ func TestNewClient_settings(t *testing.T) {
 
 	t.Run("DefaultSettings with an https BaseURL and a TLS config passes", func(t *testing.T) {
 		t.Parallel()
-		c, err := httpclient.NewClient(newSetup(t), https(t))
+		c, err := httpclient.NewClient(newSetup(t), humustest.NewHost(t), https(t))
 		require.NoError(t, err)
 		require.NotNil(t, c)
 	})

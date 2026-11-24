@@ -609,8 +609,8 @@ func TestService_a_job_next_to_a_probes_server_ends_the_App(t *testing.T) {
 			}
 		}
 
-		_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-			probes, err := httphealth.NewService(s, probeSettings, health.Liveness(progress))
+		_, status := humustest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			probes, err := httphealth.NewService(ctx, s, h, probeSettings, health.Liveness(progress))
 			if err != nil {
 				return nil, err
 			}

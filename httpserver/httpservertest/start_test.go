@@ -36,13 +36,13 @@ func serves(cert *humustest.Certificate, h http.Handler) func(context.Context, *
 }
 
 // servesWith is serves, with the Settings changed by edit.
-func servesWith(cert *humustest.Certificate, h http.Handler, edit func(*httpserver.Settings)) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+func servesWith(cert *humustest.Certificate, handler http.Handler, edit func(*httpserver.Settings)) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
+	return func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = ":8443"
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
 		edit(&settings)
-		svc, err := httpserver.NewService(s, settings, h)
+		svc, err := httpserver.NewService(ctx, s, h, settings, handler)
 		if err != nil {
 			return nil, err
 		}

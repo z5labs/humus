@@ -52,11 +52,11 @@ func startPayments(t *testing.T, h *humustest.Host, host humus.Host, ca *humuste
 func startPaymentsWith(t *testing.T, h *humustest.Host, host humus.Host, tel telemetry.Builder, ca *humustest.CA, handler http.Handler) (stop func()) {
 	t.Helper()
 	cert := ca.Issue(t, "payments")
-	p, status := humustest.Start(t, host, func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	p, status := humustest.Start(t, host, func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = ":8443"
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
-		svc, err := httpserver.NewService(s, settings, handler)
+		svc, err := httpserver.NewService(ctx, s, h, settings, handler)
 		if err != nil {
 			return nil, err
 		}
@@ -98,8 +98,8 @@ func runJob(t *testing.T, host humus.Host, settings httpclient.Settings, run fun
 // runJobWith is runJob, with the App's telemetry built by tel.
 func runJobWith(t *testing.T, host humus.Host, tel telemetry.Builder, settings httpclient.Settings, run func(ctx context.Context, c *http.Client) error) bedrock.ExitStatus {
 	t.Helper()
-	_, status := humustest.Start(t, host, func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		c, err := httpclient.NewClient(s, settings)
+	_, status := humustest.Start(t, host, func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		c, err := httpclient.NewClient(s, h, settings)
 		if err != nil {
 			return nil, err
 		}
@@ -533,8 +533,8 @@ func TestClient_closes_its_idle_connections_at_OnStop(t *testing.T) {
 
 			errInit := errors.New("init failed")
 			settings := paymentsSettings(t, ca)
-			_, status := humustest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-				c, err := httpclient.NewClient(s, settings)
+			_, status := humustest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+				c, err := httpclient.NewClient(s, h, settings)
 				if err != nil {
 					return nil, err
 				}

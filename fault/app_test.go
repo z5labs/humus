@@ -89,11 +89,11 @@ func startPayments(t *testing.T, h *humustest.Host, ca *humustest.CA, c *charges
 		c.mu.Unlock()
 		_, _ = io.WriteString(w, "paid")
 	})
-	p, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	p, status := humustest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = ":8443"
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
-		svc, err := httpserver.NewService(s, settings, handler)
+		svc, err := httpserver.NewService(ctx, s, h, settings, handler)
 		if err != nil {
 			return nil, err
 		}

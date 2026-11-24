@@ -53,7 +53,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 	if err != nil {
 		return nil, err
 	}
-	svc, err := httpserver.NewService(s, settings, http.NewCrossOriginProtection().Handler(site))
+	svc, err := httpserver.NewService(ctx, s, h, settings, http.NewCrossOriginProtection().Handler(site))
 	if err != nil {
 		return nil, err
 	}

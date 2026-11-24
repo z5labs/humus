@@ -32,11 +32,11 @@ import (
 func startGateway(t *testing.T, h *humustest.Host, host humus.Host, ca *humustest.CA, handler http.Handler) (stop func()) {
 	t.Helper()
 	cert := ca.Issue(t, "gateway")
-	p, status := humustest.Start(t, host, func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	p, status := humustest.Start(t, host, func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = ":8443"
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
-		svc, err := httpserver.NewService(s, settings, handler)
+		svc, err := httpserver.NewService(ctx, s, h, settings, handler)
 		if err != nil {
 			return nil, err
 		}
@@ -104,14 +104,14 @@ func TestClient_two_clients_of_one_origin_share_one_Classify(t *testing.T) {
 		ledgerSettings.Classify = ourAPIs
 
 		var got []response
-		_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+		_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 			// Two clients of one origin, each with its own Settings, built
 			// once in Init and shared by everything that calls them.
-			payments, err := httpclient.NewClient(s, paymentsSettings)
+			payments, err := httpclient.NewClient(s, h, paymentsSettings)
 			if err != nil {
 				return nil, err
 			}
-			ledger, err := httpclient.NewClient(s, ledgerSettings)
+			ledger, err := httpclient.NewClient(s, h, ledgerSettings)
 			if err != nil {
 				return nil, err
 			}

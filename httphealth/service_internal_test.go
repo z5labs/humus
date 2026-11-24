@@ -36,8 +36,8 @@ func TestService_limits_are_httpservers_defaults(t *testing.T) {
 func newTestService(t *testing.T, h *humustest.Host) *Service {
 	t.Helper()
 	cert := humustest.NewCA(t).Issue(t, "localhost")
-	s := &humus.Setup{Host: h.Host(), Telemetry: telemetry.Noop()}
-	svc, err := NewService(s, Settings{
+	s := &humus.Setup{Telemetry: telemetry.Noop()}
+	svc, err := NewService(t.Context(), s, h, Settings{
 		Addr: ":8081",
 		TLS:  &tls.Config{Certificates: []tls.Certificate{cert.TLS()}},
 	})

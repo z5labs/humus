@@ -50,16 +50,16 @@ func tlsConfig(t *testing.T, ca *humustest.CA) *tls.Config {
 	return &tls.Config{Certificates: []tls.Certificate{ca.Issue(t, "localhost").TLS()}}
 }
 
-// newServer returns a Server on addr, serving h over TLS with a certificate
-// from ca, and logging through s's logger named scope.
-func newServer(s *humus.Setup, addr string, cfg *tls.Config, h http.Handler) (*server.Server, error) {
-	return server.New(s, name, addr, &http.Server{Handler: h, TLSConfig: cfg}, s.Telemetry.LoggerProvider.Logger(scope))
+// newServer returns a Server listening on addr through n, serving h over TLS
+// with cfg, and logging through s's logger named scope.
+func newServer(ctx context.Context, s *humus.Setup, n server.Network, addr string, cfg *tls.Config, h http.Handler) (*server.Server, error) {
+	return server.New(ctx, s, n, name, addr, &http.Server{Handler: h, TLSConfig: cfg}, s.Telemetry.LoggerProvider.Logger(scope))
 }
 
 // serves returns an Init whose only Service is a Server serving h on :8443.
-func serves(cfg *tls.Config, h http.Handler) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		srv, err := newServer(s, ":8443", cfg, h)
+func serves(cfg *tls.Config, handler http.Handler) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
+	return func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		srv, err := newServer(ctx, s, h, ":8443", cfg, handler)
 		if err != nil {
 			return nil, err
 		}
@@ -67,10 +67,10 @@ func serves(cfg *tls.Config, h http.Handler) func(context.Context, *humus.Setup,
 	}
 }
 
-// newSetup returns a Setup on h with telemetry off, for a test that drives a
-// Server directly rather than through an App.
-func newSetup(h *humustest.Host) *humus.Setup {
-	return &humus.Setup{Host: h.Host(), Telemetry: telemetry.Noop()}
+// newSetup returns a Setup with telemetry off and no Host, for a test that
+// drives a Server directly rather than through an App.
+func newSetup() *humus.Setup {
+	return &humus.Setup{Telemetry: telemetry.Noop()}
 }
 
 // client returns h's HTTP client, trusting only ca.
@@ -147,7 +147,7 @@ func attr(r sdklog.Record, key string) (attribute.Value, bool) {
 
 func TestServer_meets_the_Service_contract(t *testing.T) {
 	humustest.TestService(t, func(t *testing.T, s *humus.Setup) humus.Service {
-		srv, err := newServer(s, ":8443", tlsConfig(t, humustest.NewCA(t)), http.NotFoundHandler())
+		srv, err := newServer(t.Context(), s, humustest.NewHost(t), ":8443", tlsConfig(t, humustest.NewCA(t)), http.NotFoundHandler())
 		require.NoError(t, err)
 		return srv
 	})
@@ -179,7 +179,7 @@ func TestServer_serves_the_callers_http_Server(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
 		h := humustest.NewHost(t)
-		s := newSetup(h)
+		s := newSetup()
 		// A handler that outlives the WriteTimeout gets its connection
 		// closed with no response, so the timeout the caller set is the
 		// one served.
@@ -187,7 +187,7 @@ func TestServer_serves_the_callers_http_Server(t *testing.T) {
 			time.Sleep(2 * time.Second)
 			_, _ = io.WriteString(w, "too late")
 		})
-		srv, err := server.New(s, name, ":8443", &http.Server{
+		srv, err := server.New(t.Context(), s, h, name, ":8443", &http.Server{
 			Handler:      slow,
 			TLSConfig:    tlsConfig(t, ca),
 			WriteTimeout: time.Second,
@@ -214,7 +214,7 @@ func TestServer_an_in_flight_request_finishes_during_Shutdown(t *testing.T) {
 			time.Sleep(3 * time.Second)
 			_, _ = io.WriteString(w, "finished")
 		})
-		srv, err := newServer(newSetup(h), ":8443", tlsConfig(t, ca), handler)
+		srv, err := newServer(t.Context(), newSetup(), h, ":8443", tlsConfig(t, ca), handler)
 		require.NoError(t, err)
 		served := make(chan error, 1)
 		go func() { served <- srv.Serve(t.Context()) }()
@@ -236,7 +236,7 @@ func TestServer_Shutdown(t *testing.T) {
 	t.Run("before Serve, Serve then returns nil at once", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
-			srv, err := newServer(newSetup(h), ":8443", tlsConfig(t, humustest.NewCA(t)), hello)
+			srv, err := newServer(t.Context(), newSetup(), h, ":8443", tlsConfig(t, humustest.NewCA(t)), hello)
 			require.NoError(t, err)
 
 			require.NoError(t, srv.Shutdown(t.Context()))
@@ -258,7 +258,7 @@ func TestServer_Shutdown(t *testing.T) {
 				<-r.Context().Done()
 				cancelled <- r.Context().Err()
 			})
-			srv, err := newServer(newSetup(h), ":8443", tlsConfig(t, ca), handler)
+			srv, err := newServer(t.Context(), newSetup(), h, ":8443", tlsConfig(t, ca), handler)
 			require.NoError(t, err)
 			served := make(chan error, 1)
 			go func() { served <- srv.Serve(t.Context()) }()
@@ -290,7 +290,7 @@ func TestServer_Shutdown(t *testing.T) {
 				<-r.Context().Done()
 				cancelled <- time.Now()
 			})
-			srv, err := newServer(newSetup(h), ":8443", tlsConfig(t, ca), handler)
+			srv, err := newServer(t.Context(), newSetup(), h, ":8443", tlsConfig(t, ca), handler)
 			require.NoError(t, err)
 			served := make(chan error, 1)
 			go func() { served <- srv.Serve(t.Context()) }()
@@ -311,7 +311,7 @@ func TestServer_Shutdown(t *testing.T) {
 	t.Run("a second call returns nil", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
-			srv, err := newServer(newSetup(h), ":8443", tlsConfig(t, humustest.NewCA(t)), hello)
+			srv, err := newServer(t.Context(), newSetup(), h, ":8443", tlsConfig(t, humustest.NewCA(t)), hello)
 			require.NoError(t, err)
 			served := make(chan error, 1)
 			go func() { served <- srv.Serve(t.Context()) }()
@@ -333,8 +333,8 @@ func TestNew_the_listener(t *testing.T) {
 			h := humustest.NewHost(t)
 			errInit := errors.New("the database is unreachable")
 			cfg := tlsConfig(t, ca)
-			init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-				if _, err := newServer(s, ":8443", cfg, hello); err != nil {
+			init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+				if _, err := newServer(ctx, s, h, ":8443", cfg, hello); err != nil {
 					return nil, err
 				}
 				return nil, errInit
@@ -354,12 +354,12 @@ func TestNew_the_listener(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			ca := humustest.NewCA(t)
 			h := humustest.NewHost(t)
-			s := newSetup(h)
-			first, err := newServer(s, ":8443", tlsConfig(t, ca), hello)
+			s := newSetup()
+			first, err := newServer(t.Context(), s, h, ":8443", tlsConfig(t, ca), hello)
 			require.NoError(t, err)
 			defer func() { _ = first.Shutdown(t.Context()) }()
 
-			second, err := newServer(s, ":8443", tlsConfig(t, ca), hello)
+			second, err := newServer(t.Context(), s, h, ":8443", tlsConfig(t, ca), hello)
 			require.Nil(t, second)
 			require.ErrorIs(t, err, syscall.EADDRINUSE)
 		})
@@ -369,7 +369,7 @@ func TestNew_the_listener(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			ca := humustest.NewCA(t)
 			h := humustest.NewHost(t)
-			srv, err := newServer(newSetup(h), ":0", tlsConfig(t, ca), hello)
+			srv, err := newServer(t.Context(), newSetup(), h, ":0", tlsConfig(t, ca), hello)
 			require.NoError(t, err)
 			served := make(chan error, 1)
 			go func() { served <- srv.Serve(t.Context()) }()
@@ -390,7 +390,7 @@ func TestNew_the_listener(t *testing.T) {
 func TestServer_Serve_without_a_certificate_fails(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
-		srv, err := newServer(newSetup(h), ":8443", &tls.Config{}, hello)
+		srv, err := newServer(t.Context(), newSetup(), h, ":8443", &tls.Config{}, hello)
 		require.NoError(t, err)
 
 		err = srv.Serve(t.Context())

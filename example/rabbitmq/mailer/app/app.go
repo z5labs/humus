@@ -109,7 +109,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 	if err != nil {
 		return nil, err
 	}
-	client, err := provider.New(s, settings.Provider)
+	client, err := provider.New(s, h, settings.Provider)
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +130,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 	if err != nil {
 		return nil, err
 	}
-	probes, err := httphealth.NewService(s, settings.Probes, health.Readiness(svc.Consuming()))
+	probes, err := httphealth.NewService(ctx, s, h, settings.Probes, health.Readiness(svc.Consuming()))
 	if err != nil {
 		return nil, err
 	}

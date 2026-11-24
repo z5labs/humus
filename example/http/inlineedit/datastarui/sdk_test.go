@@ -55,7 +55,7 @@ func startSDK(t *testing.T, routes ...hypermedia.Route) sdkApp {
 		if err != nil {
 			return nil, err
 		}
-		svc, err := httpserver.NewService(s, settings, site)
+		svc, err := httpserver.NewService(ctx, s, h, settings, site)
 		if err != nil {
 			return nil, err
 		}

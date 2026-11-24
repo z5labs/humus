@@ -75,7 +75,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 	}
 
 	payments.ForwardScenario = true // payments is ours, and honors acme.fault too
-	client, err := httpclient.NewClient(s, payments)
+	client, err := httpclient.NewClient(s, h, payments)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +85,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 	api.TrustScenario = func(r *http.Request) bool {
 		return r.TLS != nil && len(r.TLS.VerifiedChains) > 0
 	}
-	svc, err := httpserver.NewService(s, api, newAPI(client, payments.BaseURL))
+	svc, err := httpserver.NewService(ctx, s, h, api, newAPI(client, payments.BaseURL))
 	if err != nil {
 		return nil, err
 	}

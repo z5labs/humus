@@ -230,7 +230,7 @@ api.HandleFunc("GET /hello", hello)
 mux := http.NewServeMux()
 mux.Handle("/", api)
 mux.Handle("/health/", httphealth.NewHandler(s, hs.Probes()))
-svc, err := httpserver.NewService(s, settings, mux)
+svc, err := httpserver.NewService(ctx, s, h, settings, mux)
 if err != nil {
 	return nil, err
 }
@@ -292,7 +292,7 @@ a consumer, is ready once it has connected:
 
 ```go
 w := newWorker()
-probes, err := httphealth.NewService(s, probeSettings, health.Readiness(w.Connected()))
+probes, err := httphealth.NewService(ctx, s, h, probeSettings, health.Readiness(w.Connected()))
 if err != nil {
 	return nil, err
 }
@@ -589,7 +589,7 @@ consumer, err := kafka.NewService(s, settings, nop)
 if err != nil {
 	return nil, err
 }
-probes, err := httphealth.NewService(s, probeSettings, health.Readiness(consumer.Joined()))
+probes, err := httphealth.NewService(ctx, s, h, probeSettings, health.Readiness(consumer.Joined()))
 if err != nil {
 	return nil, err
 }
@@ -686,7 +686,7 @@ monitor of its own progress, here `progress`, which the run keeps healthy
 while it makes progress:
 
 ```go
-probes, err := httphealth.NewService(s, probeSettings, health.Liveness(progress))
+probes, err := httphealth.NewService(ctx, s, h, probeSettings, health.Liveness(progress))
 if err != nil {
 	return nil, err
 }
@@ -714,15 +714,15 @@ func TestInit_is_not_ready_during_the_drain(t *testing.T) {
 
 		// apiInit returns an API on :8443 and a probes server on :8081, and
 		// no health Service: the probes server owns readiness.
-		apiInit := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+		apiInit := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 			settings := httpserver.DefaultSettings()
 			settings.Addr = ":8443"
 			settings.TLS = &tls.Config{Certificates: []tls.Certificate{ca.Issue(t, "localhost").TLS()}}
-			api, err := httpserver.NewService(s, settings, http.NotFoundHandler())
+			api, err := httpserver.NewService(ctx, s, h, settings, http.NotFoundHandler())
 			if err != nil {
 				return nil, err
 			}
-			probes, err := httphealth.NewService(s, probeSettings(t, ca))
+			probes, err := httphealth.NewService(ctx, s, h, probeSettings(t, ca))
 			if err != nil {
 				return nil, err
 			}
@@ -801,7 +801,7 @@ after `Serve` has returned on its own reports SKIP:
 func TestService(t *testing.T) {
 	humustest.TestService(t, func(t *testing.T, s *humus.Setup) humus.Service {
 		cert := humustest.NewCA(t).Issue(t, "localhost")
-		svc, err := httphealth.NewService(s, httphealth.Settings{
+		svc, err := httphealth.NewService(t.Context(), s, humustest.NewHost(t), httphealth.Settings{
 			Addr: ":8081",
 			TLS:  &tls.Config{Certificates: []tls.Certificate{cert.TLS()}},
 		})

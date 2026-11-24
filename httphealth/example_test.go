@@ -108,7 +108,7 @@ func APIInit(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service
 	mux := http.NewServeMux()
 	mux.Handle("/", api)
 	mux.Handle("/health/", httphealth.NewHandler(s, hs.Probes()))
-	svc, err := httpserver.NewService(s, settings, mux)
+	svc, err := httpserver.NewService(ctx, s, h, settings, mux)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +149,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 	}
 
 	w := newWorker()
-	probes, err := httphealth.NewService(s, probeSettings, health.Readiness(w.Connected()))
+	probes, err := httphealth.NewService(ctx, s, h, probeSettings, health.Readiness(w.Connected()))
 	if err != nil {
 		return nil, err
 	}

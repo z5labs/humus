@@ -40,9 +40,20 @@ type Service struct {
 	shuttingDown func()
 }
 
+// Network is what a Service needs of a host: a way to listen. humus.Host
+// implements it, and so does any network of the end user's with this
+// method.
+type Network interface {
+	// ListenTCP announces on the local network address, for "tcp", "tcp4"
+	// or "tcp6", like net.ListenConfig.Listen.
+	ListenTCP(ctx context.Context, network, address string) (net.Listener, error)
+}
+
 // NewService runs every check on settings, reporting every bad field in one
 // error that names each one, rejects a nil handler, and listens on
-// settings.Addr through s.Host. It registers the listener's close with
+// settings.Addr through n, with ctx, which bounds the lookup of the
+// address's host. A failure to listen, such as EADDRINUSE, is its error, so
+// it fails the end user's Init. It registers the listener's close with
 // s.OnStop, so a listener whose Service never serves, because Init failed
 // after NewService, is still closed.
 //
@@ -55,7 +66,7 @@ type Service struct {
 // and aborts its response. Before h runs, the failure scenario a request
 // carries is stripped with s.Faults, unless settings.TrustScenario trusts
 // the caller.
-func NewService(s *humus.Setup, settings Settings, h http.Handler) (*Service, error) {
+func NewService(ctx context.Context, s *humus.Setup, n Network, settings Settings, h http.Handler) (*Service, error) {
 	if err := checkSettings(settings, h); err != nil {
 		return nil, fmt.Errorf("httpserver: NewService: %w", err)
 	}
@@ -102,7 +113,7 @@ func NewService(s *humus.Setup, settings Settings, h http.Handler) (*Service, er
 	// The server listens on settings.Addr, and registers the listener's
 	// close with s.OnStop. Its error log and its "listening" record go
 	// through logger, so they keep this package's scope.
-	srv, err := server.New(s, "httpserver", settings.Addr, hs, logger)
+	srv, err := server.New(ctx, s, n, "httpserver", settings.Addr, hs, logger)
 	if err != nil {
 		return nil, fmt.Errorf("httpserver: NewService: %w", err)
 	}
@@ -147,8 +158,8 @@ func nextProtos(configured []string, http2Only bool) []string {
 	return protos
 }
 
-// Addr returns the address the Service listens on, with the port the Host
-// picked when settings.Addr has port 0.
+// Addr returns the address the Service listens on, with the port the
+// Network picked when settings.Addr has port 0.
 func (svc *Service) Addr() net.Addr {
 	return svc.srv.Addr()
 }

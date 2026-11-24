@@ -52,7 +52,7 @@ func serveSite(t *testing.T, routes ...hypermedia.Route) *served {
 	ca := humustest.NewCA(t)
 	cert := ca.Issue(t, "localhost")
 	s := &served{t: t, h: humustest.NewHost(t), tel: humustest.NewTelemetry(), pool: ca.Pool()}
-	p, status := httpservertest.Start(t, s.h.Host(), func(_ context.Context, setup *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	p, status := httpservertest.Start(t, s.h.Host(), func(ctx context.Context, setup *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		site, err := hypermedia.NewSite(setup, func(w http.ResponseWriter, _ *http.Request, _ error) error {
 			s.pages.Add(1)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -65,7 +65,7 @@ func serveSite(t *testing.T, routes ...hypermedia.Route) *served {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = ":8443"
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
-		svc, err := httpserver.NewService(setup, settings, site)
+		svc, err := httpserver.NewService(ctx, setup, h, settings, site)
 		if err != nil {
 			return nil, err
 		}

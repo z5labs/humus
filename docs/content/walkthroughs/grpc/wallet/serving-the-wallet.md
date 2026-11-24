@@ -69,7 +69,7 @@ got.KeySet.Client.BaseURL = &url.URL{Scheme: got.KeySet.URL.Scheme, Host: got.Ke
 against it:
 
 ```go
-keysClient, err := httpclient.NewClient(s, set.KeySet.Client)
+keysClient, err := httpclient.NewClient(s, h, set.KeySet.Client)
 if err != nil {
 	return nil, err
 }
