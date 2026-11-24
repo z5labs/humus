@@ -14,7 +14,7 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.45.0
 	github.com/twmb/franz-go v1.22.3
 	github.com/twmb/franz-go/pkg/kadm v1.20.0
-	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261124015457-9f00b45986ea
+	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261124015931-df47e7aa0399
 	github.com/twmb/franz-go/pkg/kmsg v1.15.1
 	github.com/z5labs/bedrock v0.27.0
 	github.com/z5labs/bedrock/fit v0.27.0
