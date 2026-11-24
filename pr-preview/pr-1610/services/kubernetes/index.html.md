@@ -1053,7 +1053,7 @@ probes server made with `httphealth.NewService`, returned beside the
 Controller:
 
 ```go
-probes, err := httphealth.NewService(ctx, s, n, probeSettings, health.Readiness(ctrl.Synced()))
+probes, err := httphealth.NewService(ctx, s, h, probeSettings, health.Readiness(ctrl.Synced()))
 if err != nil {
 	return nil, err
 }
