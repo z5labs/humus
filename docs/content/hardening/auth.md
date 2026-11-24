@@ -377,7 +377,7 @@ unary, stream, err := grpcauth.Interceptors(s,
 if err != nil {
 	return nil, err
 }
-svc, err := grpcserver.NewService(s, grpcserver.Settings{Addr: ":9090", TLS: tlsConfig}, unary, stream)
+svc, err := grpcserver.NewService(ctx, s, h, grpcserver.Settings{Addr: ":9090", TLS: tlsConfig}, unary, stream)
 ```
 
 - `grpcauth.Default` is the requirement of every method no `Method` names,

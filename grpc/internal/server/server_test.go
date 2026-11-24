@@ -53,9 +53,10 @@ func (testServer) EmptyCall(context.Context, *testpb.Empty) (*testpb.Empty, erro
 // the package building a Server passes its own import path.
 const callerScope = "example.com/caller"
 
-// newSetup returns a Setup on h.
-func newSetup(h *humustest.Host) *humus.Setup {
-	return &humus.Setup{Host: h.Host(), Telemetry: telemetry.Noop()}
+// newSetup returns a Setup with telemetry off and no Host, for a test that
+// drives a Server directly rather than through an App.
+func newSetup() *humus.Setup {
+	return &humus.Setup{Telemetry: telemetry.Noop()}
 }
 
 // plaintext returns a client of address in h that speaks plain text.
@@ -67,7 +68,7 @@ func plaintext(t *testing.T, h *humustest.Host, address string) testpb.TestServi
 
 func TestServer_meets_the_Service_contract(t *testing.T) {
 	humustest.TestService(t, func(t *testing.T, s *humus.Setup) humus.Service {
-		srv, err := server.New(s, callerScope, ":8081", nil)
+		srv, err := server.New(t.Context(), s, humustest.NewHost(t), callerScope, ":8081", nil)
 		require.NoError(t, err)
 		require.NoError(t, srv.RegisterService(&testpb.TestService_ServiceDesc, testServer{}))
 		return srv
@@ -77,8 +78,8 @@ func TestServer_meets_the_Service_contract(t *testing.T) {
 func TestServer_serves_plain_text_through_the_drain(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
-		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-			srv, err := server.New(s, callerScope, ":8081", nil)
+		init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			srv, err := server.New(ctx, s, h, callerScope, ":8081", nil)
 			if err != nil {
 				return nil, err
 			}
@@ -106,11 +107,11 @@ func TestServer_serves_plain_text_through_the_drain(t *testing.T) {
 func TestNew_returns_the_error_of_Listen(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
-		first, err := server.New(newSetup(h), callerScope, ":8081", nil)
+		first, err := server.New(t.Context(), newSetup(), h, callerScope, ":8081", nil)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = first.Shutdown(context.Background()) })
 
-		second, err := server.New(newSetup(h), callerScope, ":8081", nil)
+		second, err := server.New(t.Context(), newSetup(), h, callerScope, ":8081", nil)
 		require.Nil(t, second)
 		require.ErrorIs(t, err, syscall.EADDRINUSE)
 	})
@@ -119,7 +120,7 @@ func TestNew_returns_the_error_of_Listen(t *testing.T) {
 func TestServer_RegisterService_refuses_what_grpc_go_exits_on(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
-		srv, err := server.New(newSetup(h), callerScope, ":8081", nil)
+		srv, err := server.New(t.Context(), newSetup(), h, callerScope, ":8081", nil)
 		require.NoError(t, err)
 
 		err = srv.RegisterService(&testpb.TestService_ServiceDesc, struct{}{})
@@ -144,7 +145,7 @@ func TestServer_RegisterService_refuses_what_grpc_go_exits_on(t *testing.T) {
 func TestServer_Shutdown_closes_the_listener_before_Serve(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
-		srv, err := server.New(newSetup(h), callerScope, "localhost:0", nil)
+		srv, err := server.New(t.Context(), newSetup(), h, callerScope, "localhost:0", nil)
 		require.NoError(t, err)
 		addr := srv.Addr().String()
 
@@ -160,7 +161,7 @@ func TestServer_Shutdown_called_during_another_waits_for_it(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
 			ts := testServer{entered: make(chan struct{})}
-			srv, err := server.New(newSetup(h), callerScope, "localhost:8081", nil)
+			srv, err := server.New(t.Context(), newSetup(), h, callerScope, "localhost:8081", nil)
 			require.NoError(t, err)
 			require.NoError(t, srv.RegisterService(&testpb.TestService_ServiceDesc, ts))
 			served := make(chan error, 1)
@@ -199,7 +200,7 @@ func TestServer_Shutdown_called_during_another_waits_for_it(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
 			ts := testServer{entered: make(chan struct{})}
-			srv, err := server.New(newSetup(h), callerScope, "localhost:8081", nil)
+			srv, err := server.New(t.Context(), newSetup(), h, callerScope, "localhost:8081", nil)
 			require.NoError(t, err)
 			require.NoError(t, srv.RegisterService(&testpb.TestService_ServiceDesc, ts))
 			served := make(chan error, 1)
@@ -249,7 +250,7 @@ func TestServer_Shutdown_closes_a_connection_in_its_handshake(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				h := humustest.NewHost(t)
-				srv, err := server.New(newSetup(h), callerScope, "localhost:8081", nil)
+				srv, err := server.New(t.Context(), newSetup(), h, callerScope, "localhost:8081", nil)
 				require.NoError(t, err)
 				require.NoError(t, srv.RegisterService(&testpb.TestService_ServiceDesc, testServer{}))
 				served := make(chan error, 1)

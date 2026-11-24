@@ -158,14 +158,14 @@ func (a app) run(t *testing.T) (*grpcclient.Client, error) {
 		client  *grpcclient.Client
 		workErr error
 	)
-	init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		var services []humus.Service
 		if a.backend != nil {
 			addr := a.backendAddr
 			if addr == "" {
 				addr = "backend:9090"
 			}
-			srv, err := grpcserver.NewService(s, grpcserver.Settings{Addr: addr, TLS: a.serverTLS})
+			srv, err := grpcserver.NewService(ctx, s, h, grpcserver.Settings{Addr: addr, TLS: a.serverTLS})
 			if err != nil {
 				return nil, err
 			}
@@ -173,7 +173,7 @@ func (a app) run(t *testing.T) (*grpcclient.Client, error) {
 			services = append(services, srv)
 		}
 
-		c, err := grpcclient.NewClient(s, a.settings, a.opts...)
+		c, err := grpcclient.NewClient(s, h, a.settings, a.opts...)
 		if err != nil {
 			return nil, err
 		}
@@ -516,8 +516,8 @@ func TestNewClient_opts(t *testing.T) {
 			ca := humustest.NewCA(t)
 			h := humustest.NewHost(t)
 			b := &backend{answer: unavailable}
-			p, exit := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-				srv, err := grpcserver.NewService(s, grpcserver.Settings{Addr: "backend:9090", TLS: serving(t, ca, "backend")})
+			p, exit := humustest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+				srv, err := grpcserver.NewService(ctx, s, h, grpcserver.Settings{Addr: "backend:9090", TLS: serving(t, ca, "backend")})
 				if err != nil {
 					return nil, err
 				}
@@ -639,8 +639,8 @@ func TestClient_closes_its_connection_at_OnStop(t *testing.T) {
 			settings.Addr = "backend:9090"
 
 			var client *grpcclient.Client
-			_, exit := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-				c, err := grpcclient.NewClient(s, settings)
+			_, exit := humustest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+				c, err := grpcclient.NewClient(s, h, settings)
 				if err != nil {
 					return nil, err
 				}

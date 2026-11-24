@@ -92,8 +92,8 @@ func serve(t *testing.T, sdk telemetry.SDK, p health.Probes) healthpb.HealthClie
 	t.Helper()
 	ca := humustest.NewCA(t)
 	h := humustest.NewHost(t)
-	s := &humus.Setup{Host: h.Host(), Telemetry: sdk}
-	svc, err := grpcserver.NewService(s, grpcserver.Settings{
+	s := &humus.Setup{Telemetry: sdk}
+	svc, err := grpcserver.NewService(t.Context(), s, h, grpcserver.Settings{
 		Addr: ":9090",
 		TLS:  tlsFor(t, ca),
 	})
@@ -454,8 +454,8 @@ func drain(statuses <-chan healthpb.HealthCheckResponse_ServingStatus) []healthp
 // grpcserver.Service on :9090, with settings' TLS, answering from a health
 // Service's Probes.
 func watchesInit(settings grpcserver.Settings) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		svc, err := grpcserver.NewService(s, settings)
+	return func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		svc, err := grpcserver.NewService(ctx, s, h, settings)
 		if err != nil {
 			return nil, err
 		}
@@ -735,8 +735,8 @@ func TestNewServer_Watch_ends_when_its_context_is_done(t *testing.T) {
 
 		ca := humustest.NewCA(t)
 		h := humustest.NewHost(t)
-		s := &humus.Setup{Host: h.Host(), Telemetry: telemetry.Noop()}
-		svc, err := grpcserver.NewService(s, grpcserver.Settings{
+		s := &humus.Setup{Telemetry: telemetry.Noop()}
+		svc, err := grpcserver.NewService(t.Context(), s, h, grpcserver.Settings{
 			Addr: ":9090",
 			TLS:  tlsFor(t, ca),
 		}, grpc.ChainStreamInterceptor(interceptor))

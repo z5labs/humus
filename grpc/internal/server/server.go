@@ -6,7 +6,7 @@
 // Package server serves a *grpc.Server as a humus.Service.
 //
 // It is the code every gRPC server of the grpc module is served with: it
-// listens through the Setup's Host, builds the *grpc.Server, serves it
+// listens through the Network it is given, builds the *grpc.Server, serves it
 // through the drain, and shuts it down with GracefulStop, then Stop once
 // the grace period runs out. It knows nothing of TLS or of
 // grpcserver.Settings: the transport credentials, if any, are the ones New
@@ -73,8 +73,15 @@ type Server struct {
 	stopped  chan struct{}
 }
 
-// New listens on addr with s.Host.ListenTCP over "tcp", and builds the
-// server with grpc.WaitForHandlers(true), a unary and a stream interceptor
+// Network is what a Server needs of a host: a way to listen.
+type Network interface {
+	// ListenTCP announces on the local network address, for "tcp", "tcp4"
+	// or "tcp6", like net.ListenConfig.Listen.
+	ListenTCP(ctx context.Context, network, address string) (net.Listener, error)
+}
+
+// New listens on addr with n.ListenTCP over "tcp", with ctx, which bounds
+// the lookup of addr's host, and builds the server with grpc.WaitForHandlers(true), a unary and a stream interceptor
 // that recover a panic, a stream interceptor inside it that gives each
 // stream's handler a context Shutdown cancels, then opts, and then
 // grpc.Creds with tc, or with insecure credentials, for plain text, if tc
@@ -87,8 +94,8 @@ type Server struct {
 // logged through, s.Telemetry.LoggerProvider.Logger(scope): the import path
 // of the package building the server, such as
 // "github.com/z5labs/humus/grpc/grpcserver".
-func New(s *humus.Setup, scope, addr string, tc credentials.TransportCredentials, opts ...grpc.ServerOption) (*Server, error) {
-	ln, err := s.Host.ListenTCP(context.Background(), "tcp", addr)
+func New(ctx context.Context, s *humus.Setup, n Network, scope, addr string, tc credentials.TransportCredentials, opts ...grpc.ServerOption) (*Server, error) {
+	ln, err := n.ListenTCP(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
 	}
@@ -147,8 +154,8 @@ func closeListener(ln net.Listener) error {
 	return nil
 }
 
-// Addr returns the address the Server listens on, with the port the Host
-// picked when addr has port 0.
+// Addr returns the address the Server listens on, with the port the
+// Network picked when addr has port 0.
 func (s *Server) Addr() net.Addr {
 	return s.ln.Addr()
 }

@@ -24,8 +24,8 @@ import (
 // and change the fields you source. Addr has no default, so it is always
 // among them.
 type Settings struct {
-	// Addr is the address the Client dials through the Setup's Host, as
-	// host:port. The Host resolves the host when it dials. Addr is also the
+	// Addr is the address the Client dials through its Network, as
+	// host:port. The Network resolves the host when it dials. Addr is also the
 	// RPCs' :authority, and its host the name the server's certificate is
 	// verified for, unless TLS sets a ServerName, or opts has a
 	// grpc.WithAuthority, which then replaces both. It is required.
@@ -204,11 +204,11 @@ func defaultProbe(c circuit.Counts) circuit.State {
 // client dials a host, it doesn't listen on every name. It rejects a scheme,
 // such as dns:///, since the Client never resolves names itself, and a
 // named port, such as :grpc. It rejects ?, # and %, which grpc-go's target
-// would read as a query, a fragment or an escape, so that the Host would be
-// asked to dial something other than addr.
+// would read as a query, a fragment or an escape, so that the Network would
+// be asked to dial something other than addr.
 func CheckAddr(addr string) error {
 	if strings.Contains(addr, "/") {
-		return fmt.Errorf("%q is not host:port: it names a scheme or a path, and only the Host resolves names", addr)
+		return fmt.Errorf("%q is not host:port: it names a scheme or a path, and only the Network resolves names", addr)
 	}
 	if strings.ContainsAny(addr, "?#%") {
 		return fmt.Errorf("%q is not host:port: it has a ?, # or %%", addr)

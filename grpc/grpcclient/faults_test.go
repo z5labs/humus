@@ -238,8 +238,8 @@ func runFront(t *testing.T, run frontRun) frontResult {
 
 	b := &scenarioBackend{t: t}
 	backendCert := ca.Issue(t, "backend")
-	bp, backendExit := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		svc, err := grpcserver.NewService(s, grpcserver.Settings{
+	bp, backendExit := humustest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		svc, err := grpcserver.NewService(ctx, s, h, grpcserver.Settings{
 			Addr: "backend:9090",
 			TLS:  &tls.Config{Certificates: []tls.Certificate{backendCert.TLS()}},
 		})
@@ -253,17 +253,17 @@ func runFront(t *testing.T, run frontRun) frontResult {
 
 	f := &front{codec: codec}
 	frontCert := ca.Issue(t, "front")
-	init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		settings := settingsFor(ca, "backend:9090")
 		if run.change != nil {
 			run.change(&settings)
 		}
-		c, err := grpcclient.NewClient(s, settings)
+		c, err := grpcclient.NewClient(s, h, settings)
 		if err != nil {
 			return nil, err
 		}
 		f.client = testpb.NewTestServiceClient(c)
-		svc, err := grpcserver.NewService(s, grpcserver.Settings{
+		svc, err := grpcserver.NewService(ctx, s, h, grpcserver.Settings{
 			Addr:          "front:8443",
 			TLS:           &tls.Config{Certificates: []tls.Certificate{frontCert.TLS()}},
 			TrustScenario: func(context.Context, string) bool { return true }, // the edge

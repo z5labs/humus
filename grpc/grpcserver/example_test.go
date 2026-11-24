@@ -43,7 +43,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 		return nil, err // exit 78, naming every bad variable
 	}
 
-	svc, err := grpcserver.NewService(s, settings)
+	svc, err := grpcserver.NewService(ctx, s, h, settings)
 	if err != nil {
 		return nil, err
 	}

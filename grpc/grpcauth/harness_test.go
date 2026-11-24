@@ -147,7 +147,7 @@ func serve(t *testing.T, schemes map[string]auth.Scheme[user], rules []grpcauth.
 	h := humustest.NewHost(t)
 	tel := humustest.NewTelemetry()
 
-	p, status := grpcservertest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	p, status := grpcservertest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		unary, stream, err := grpcauth.Interceptors(s, rules...)
 		if err != nil {
 			return nil, err
@@ -159,7 +159,7 @@ func serve(t *testing.T, schemes map[string]auth.Scheme[user], rules []grpcauth.
 		if edit != nil {
 			edit(settings.TLS, ca)
 		}
-		svc, err := grpcserver.NewService(s, settings, unary, stream)
+		svc, err := grpcserver.NewService(ctx, s, h, settings, unary, stream)
 		if err != nil {
 			return nil, err
 		}

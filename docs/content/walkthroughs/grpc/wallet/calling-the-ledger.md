@@ -47,7 +47,7 @@ type (
 the generated client on it:
 
 ```go
-ledger, err := grpcclient.NewClient(s, set.Ledger)
+ledger, err := grpcclient.NewClient(s, h, set.Ledger)
 if err != nil {
 	return nil, err
 }
@@ -121,7 +121,7 @@ wallet's client certificate verified.
 The wallet's readiness is the Client's `Connected`:
 
 ```go
-probes, err := grpchealth.NewService(s, set.Probes, health.Readiness(ledger.Connected()))
+probes, err := grpchealth.NewService(ctx, s, h, set.Probes, health.Readiness(ledger.Connected()))
 if err != nil {
 	return nil, err
 }

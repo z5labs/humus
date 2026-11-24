@@ -19,8 +19,8 @@ import (
 // TLS has a default, so the end user sources both. TrustScenario is set in
 // code, not sourced.
 type Settings struct {
-	// Addr is the address the Service listens on through the Setup's Host,
-	// as host:port. It is required: humus imposes no port. An empty host
+	// Addr is the address the Service listens on through its Network, as
+	// host:port. It is required: humus imposes no port. An empty host
 	// listens on every name, and port 0 picks a free port, which
 	// Service.Addr reports.
 	//

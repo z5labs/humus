@@ -54,8 +54,8 @@ var probeSettings = grpchealth.Settings{Addr: ":8081"}
 // servesProbes returns an Init whose only Service is a probes Service on
 // settings, with opts.
 func servesProbes(settings grpchealth.Settings, opts ...health.Option) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		svc, err := grpchealth.NewService(s, settings, opts...)
+	return func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		svc, err := grpchealth.NewService(ctx, s, h, settings, opts...)
 		if err != nil {
 			return nil, err
 		}
@@ -80,10 +80,10 @@ func check(t *testing.T, client healthpb.HealthClient, name string) healthpb.Hea
 	return resp.GetStatus()
 }
 
-// hostSetup returns a Setup on h with telemetry off, for a test that drives
-// a Service directly rather than through an App.
-func hostSetup(h *humustest.Host) *humus.Setup {
-	return &humus.Setup{Host: h.Host(), Telemetry: telemetry.Noop()}
+// hostSetup returns a Setup with telemetry off and no Host, for a test that
+// drives a Service directly rather than through an App.
+func hostSetup() *humus.Setup {
+	return &humus.Setup{Telemetry: telemetry.Noop()}
 }
 
 // requireRefused fails t unless a DialTCP to address is refused.
@@ -115,7 +115,7 @@ const (
 
 func TestService(t *testing.T) {
 	humustest.TestService(t, func(t *testing.T, s *humus.Setup) humus.Service {
-		svc, err := grpchealth.NewService(s, probeSettings)
+		svc, err := grpchealth.NewService(t.Context(), s, humustest.NewHost(t), probeSettings)
 		require.NoError(t, err)
 		return svc
 	})
@@ -379,7 +379,7 @@ func TestNewService_settings(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
 
-			svc, err := grpchealth.NewService(hostSetup(h), grpchealth.Settings{})
+			svc, err := grpchealth.NewService(t.Context(), hostSetup(), h, grpchealth.Settings{})
 			require.Nil(t, svc)
 			require.ErrorContains(t, err, "grpchealth: NewService")
 			require.ErrorContains(t, err, "Settings.Addr")
@@ -390,7 +390,7 @@ func TestNewService_settings(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
 
-			svc, err := grpchealth.NewService(hostSetup(h), probeSettings, health.Readiness(healthyMonitor), nil)
+			svc, err := grpchealth.NewService(t.Context(), hostSetup(), h, probeSettings, health.Readiness(healthyMonitor), nil)
 			require.Nil(t, svc)
 			require.ErrorContains(t, err, "opts[1] must not be nil")
 			require.NotContains(t, err.Error(), "opts[0]")
@@ -402,7 +402,7 @@ func TestNewService_settings(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
 
-			_, err := grpchealth.NewService(hostSetup(h), grpchealth.Settings{Addr: ":grpc"}, nil, health.Liveness(healthyMonitor), nil)
+			_, err := grpchealth.NewService(t.Context(), hostSetup(), h, grpchealth.Settings{Addr: ":grpc"}, nil, health.Liveness(healthyMonitor), nil)
 			require.ErrorContains(t, err, "Settings.Addr")
 			require.ErrorContains(t, err, "opts[0] must not be nil")
 			require.ErrorContains(t, err, "opts[2] must not be nil")
@@ -416,8 +416,8 @@ func TestNewService_the_listener(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
 			errInit := errors.New("the database is misconfigured")
-			init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-				if _, err := grpchealth.NewService(s, probeSettings); err != nil {
+			init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+				if _, err := grpchealth.NewService(ctx, s, h, probeSettings); err != nil {
 					return nil, err
 				}
 				return nil, errInit
@@ -440,7 +440,7 @@ func TestNewService_the_listener(t *testing.T) {
 			require.NoError(t, err)
 			defer func() { _ = l.Close() }()
 
-			svc, err := grpchealth.NewService(hostSetup(h), probeSettings)
+			svc, err := grpchealth.NewService(t.Context(), hostSetup(), h, probeSettings)
 			require.Nil(t, svc)
 			require.ErrorIs(t, err, syscall.EADDRINUSE)
 			require.ErrorContains(t, err, "grpchealth: NewService")
@@ -452,8 +452,8 @@ func TestService_Addr_reports_the_port_the_Host_picked(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
 		addrs := make(chan net.Addr, 1)
-		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-			svc, err := grpchealth.NewService(s, grpchealth.Settings{Addr: ":0"})
+		init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			svc, err := grpchealth.NewService(ctx, s, h, grpchealth.Settings{Addr: ":0"})
 			if err != nil {
 				return nil, err
 			}
@@ -480,7 +480,7 @@ func TestService_Shutdown(t *testing.T) {
 	t.Run("before Serve, Serve then returns nil at once", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
-			svc, err := grpchealth.NewService(hostSetup(h), probeSettings)
+			svc, err := grpchealth.NewService(t.Context(), hostSetup(), h, probeSettings)
 			require.NoError(t, err)
 
 			require.NoError(t, svc.Shutdown(t.Context()))
@@ -502,7 +502,7 @@ func TestService_Shutdown(t *testing.T) {
 				cancelled <- ctx.Err()
 				return false, ctx.Err()
 			})
-			svc, err := grpchealth.NewService(hostSetup(h), probeSettings, health.Liveness(slow))
+			svc, err := grpchealth.NewService(t.Context(), hostSetup(), h, probeSettings, health.Liveness(slow))
 			require.NoError(t, err)
 			served := make(chan error, 1)
 			go func() { served <- svc.Serve(t.Context()) }()
@@ -532,7 +532,7 @@ func TestService_Shutdown(t *testing.T) {
 	t.Run("a second call returns nil", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
-			svc, err := grpchealth.NewService(hostSetup(h), probeSettings)
+			svc, err := grpchealth.NewService(t.Context(), hostSetup(), h, probeSettings)
 			require.NoError(t, err)
 			served := make(chan error, 1)
 			go func() { served <- svc.Serve(t.Context()) }()

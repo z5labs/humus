@@ -21,7 +21,7 @@
 //		if err != nil {
 //			return nil, err
 //		}
-//		svc, err := grpcserver.NewService(s, settings, unary, stream)
+//		svc, err := grpcserver.NewService(ctx, s, h, settings, unary, stream)
 //		if err != nil {
 //			return nil, err
 //		}
@@ -34,9 +34,9 @@
 // meets its method's requirement, here a token bearer verifies. They are
 // options like any other, as the Options section below describes.
 //
-// NewService listens on the address through the Setup's Host, so a port
-// that is already taken fails Init, and a connection that arrives before
-// Serve waits in the backlog. If Init fails after NewService, the listener
+// NewService listens on the address through the [Network] it is given,
+// such as Init's host, so a port that is already taken fails Init, and a
+// connection that arrives before Serve waits in the backlog. If Init fails after NewService, the listener
 // is closed by a function NewService registers with the Setup's OnStop.
 //
 // # Main and its defaults
@@ -258,7 +258,7 @@
 // OpenTelemetry metrics, passes them in opts as a second stats handler,
 // which grpc-go calls after humus's:
 //
-//	grpcserver.NewService(s, settings, opentelemetry.ServerOption(opentelemetry.Options{
+//	grpcserver.NewService(ctx, s, h, settings, opentelemetry.ServerOption(opentelemetry.Options{
 //		MetricsOptions: opentelemetry.MetricsOptions{MeterProvider: s.Telemetry.MeterProvider},
 //	}))
 //

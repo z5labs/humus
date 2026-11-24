@@ -117,7 +117,7 @@ func InitWith(ctx context.Context, s *humus.Setup, h humus.Host, open OpenStore)
 	if err != nil {
 		return nil, err
 	}
-	svc, err := grpcserver.NewService(s, set.GRPC,
+	svc, err := grpcserver.NewService(ctx, s, h, set.GRPC,
 		unary,
 		stream,
 		grpc.KeepaliveParams(keepalive.ServerParameters{MaxConnectionAge: maxConnectionAge}),
@@ -127,7 +127,7 @@ func InitWith(ctx context.Context, s *humus.Setup, h humus.Host, open OpenStore)
 	}
 	ledgerpb.RegisterLedgerServer(svc, ledger)
 
-	probes, err := grpchealth.NewService(s, set.Probes, health.Readiness(newReached(ping)))
+	probes, err := grpchealth.NewService(ctx, s, h, set.Probes, health.Readiness(newReached(ping)))
 	if err != nil {
 		return nil, err
 	}

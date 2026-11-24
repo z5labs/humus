@@ -42,7 +42,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 		return nil, err // exit 78, naming every bad variable
 	}
 
-	svc, err := grpcserver.NewService(s, settings)
+	svc, err := grpcserver.NewService(ctx, s, h, settings)
 	if err != nil {
 		return nil, err
 	}
@@ -124,12 +124,12 @@ func ProbesInit(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Serv
 		return nil, err // exit 78, naming every bad variable
 	}
 
-	svc, err := grpcserver.NewService(s, cfg.grpc)
+	svc, err := grpcserver.NewService(ctx, s, h, cfg.grpc)
 	if err != nil {
 		return nil, err
 	}
 	testpb.RegisterTestServiceServer(svc, greeter{}) // the end user's own service
-	probes, err := grpchealth.NewService(s, cfg.probes)
+	probes, err := grpchealth.NewService(ctx, s, h, cfg.probes)
 	if err != nil {
 		return nil, err
 	}

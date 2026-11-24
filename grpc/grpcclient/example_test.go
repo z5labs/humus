@@ -56,13 +56,13 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 
 	// One Client for the dependency, built once and shared by every RPC
 	// the service serves.
-	carts, err := grpcclient.NewClient(s, cartsSettings)
+	carts, err := grpcclient.NewClient(s, h, cartsSettings)
 	if err != nil {
 		return nil, err
 	}
 
 	api := &api{carts: testpb.NewTestServiceClient(carts)}
-	svc, err := grpcserver.NewService(s, serverSettings)
+	svc, err := grpcserver.NewService(ctx, s, h, serverSettings)
 	if err != nil {
 		return nil, err
 	}

@@ -317,18 +317,18 @@ func TestClient_metrics_of_two_Clients_of_one_address_add_up(t *testing.T) {
 
 		tel := humustest.NewTelemetry()
 		var during map[string]int64
-		_, exit := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-			srv, err := grpcserver.NewService(s, grpcserver.Settings{Addr: "backend:9090", TLS: serving(t, ca, "backend")})
+		_, exit := humustest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			srv, err := grpcserver.NewService(ctx, s, h, grpcserver.Settings{Addr: "backend:9090", TLS: serving(t, ca, "backend")})
 			if err != nil {
 				return nil, err
 			}
 			testpb.RegisterTestServiceServer(srv, b)
 
-			first, err := grpcclient.NewClient(s, settings)
+			first, err := grpcclient.NewClient(s, h, settings)
 			if err != nil {
 				return nil, err
 			}
-			second, err := grpcclient.NewClient(s, settings)
+			second, err := grpcclient.NewClient(s, h, settings)
 			if err != nil {
 				return nil, err
 			}
@@ -359,10 +359,10 @@ func TestClient_metrics_callback_is_registered_last(t *testing.T) {
 		settings := settingsFor(humustest.NewCA(t), "backend:9090")
 
 		tel := humustest.NewTelemetry()
-		_, exit := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+		_, exit := humustest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 			// A default service config that isn't JSON fails grpc-go's
 			// NewClient, after the instruments and the breaker are built.
-			_, err := grpcclient.NewClient(s, settings, grpc.WithDefaultServiceConfig("not json"))
+			_, err := grpcclient.NewClient(s, h, settings, grpc.WithDefaultServiceConfig("not json"))
 			if err == nil {
 				require.FailNow(t, "NewClient accepted a service config that isn't JSON")
 			}
