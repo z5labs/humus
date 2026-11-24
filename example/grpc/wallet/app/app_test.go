@@ -239,8 +239,8 @@ func (f *fixture) startLedger(t *testing.T) (*fakeLedger, func()) {
 	t.Helper()
 	l := newFakeLedger()
 	cert := f.ca.Issue(t, "ledger").TLS()
-	p, exit := grpcservertest.Start(t, f.h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		svc, err := grpcserver.NewService(s, grpcserver.Settings{
+	p, exit := grpcservertest.Start(t, f.h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		svc, err := grpcserver.NewService(ctx, s, h, grpcserver.Settings{
 			Addr: ledgerAddr,
 			TLS: &tls.Config{
 				Certificates: []tls.Certificate{cert},

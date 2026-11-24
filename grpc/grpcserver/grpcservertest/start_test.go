@@ -43,8 +43,8 @@ func (s *stuckServer) UnaryCall(ctx context.Context, _ *testpb.SimpleRequest) (*
 // serves returns an Init whose only Service serves ts on ":9090", over TLS
 // with cert.
 func serves(cert *humustest.Certificate, ts testpb.TestServiceServer) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		svc, err := grpcserver.NewService(s, grpcserver.Settings{
+	return func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		svc, err := grpcserver.NewService(ctx, s, h, grpcserver.Settings{
 			Addr: ":9090",
 			TLS:  &tls.Config{Certificates: []tls.Certificate{cert.TLS()}},
 		})

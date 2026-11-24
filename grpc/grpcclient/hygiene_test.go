@@ -46,7 +46,8 @@ func sourceFiles(t *testing.T) (*token.FileSet, []*ast.File) {
 // TestPackage_exports_only_Settings_its_checks_and_the_Client
 // checks that the package's only exported names, methods included, are
 // Settings, DefaultSettings and the checks, Classification, and the Client
-// with NewClient, Invoke, NewStream and Connected: in particular, the Client has no Close,
+// with NewClient, Invoke, NewStream and Connected, and the Network NewClient
+// takes: in particular, the Client has no Close,
 // and there is no App and no Main.
 func TestPackage_exports_only_Settings_its_checks_and_the_Client(t *testing.T) {
 	t.Parallel()
@@ -87,7 +88,7 @@ func TestPackage_exports_only_Settings_its_checks_and_the_Client(t *testing.T) {
 		"CheckMaxAttempts",
 		"CheckRetryBudgetMaxTokens", "CheckRetryBudgetTokenRatio", "CheckTLS", "CheckTimeout",
 		"Classification", "Client", "Connected", "DefaultSettings",
-		"Invoke", "NewClient", "NewStream", "Settings",
+		"Invoke", "Network", "NewClient", "NewStream", "Settings",
 	}, exported)
 }
 

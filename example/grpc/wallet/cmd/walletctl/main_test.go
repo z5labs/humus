@@ -126,8 +126,8 @@ func (f *fixture) output(t *testing.T, args ...string) string {
 
 func (f *fixture) serve(t *testing.T, addr string, tlsConfig *tls.Config, register func(grpc.ServiceRegistrar)) {
 	t.Helper()
-	_, status := grpcservertest.Start(t, f.h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		svc, err := grpcserver.NewService(s, grpcserver.Settings{Addr: addr, TLS: tlsConfig})
+	_, status := grpcservertest.Start(t, f.h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		svc, err := grpcserver.NewService(ctx, s, h, grpcserver.Settings{Addr: addr, TLS: tlsConfig})
 		if err != nil {
 			return nil, err
 		}

@@ -80,6 +80,15 @@ type Client struct {
 
 var _ grpc.ClientConnInterface = (*Client)(nil)
 
+// Network is what a Client needs of a host: a way to dial. humus.Host
+// implements it, and so does any network of the end user's with this
+// method.
+type Network interface {
+	// DialTCP connects to address over "tcp", "tcp4" or "tcp6", like
+	// net.Dialer.DialContext.
+	DialTCP(ctx context.Context, network, address string) (net.Conn, error)
+}
+
 // NewClient runs every check on settings, and rejects a BackoffMax below
 // BackoffBase, a nil Classify, and a BreakerPolicy with a nil Trip or
 // Probe, reporting every bad field in one error that names each one. It
@@ -90,8 +99,8 @@ var _ grpc.ClientConnInterface = (*Client)(nil)
 // retries: each attempt is one call through it. It opens no connection:
 // the first RPC dials.
 //
-// The Client dials settings.Addr through s.Host, with grpc-go's passthrough
-// resolver, so no name is looked up but by the Host.
+// The Client dials settings.Addr through n, with grpc-go's passthrough
+// resolver, so no name is looked up but by n.
 //
 // humus's first dial option is otelgrpc's client stats handler, given the
 // TracerProvider, the MeterProvider and the Propagator of s.Telemetry, so
@@ -113,7 +122,7 @@ var _ grpc.ClientConnInterface = (*Client)(nil)
 // retries, once per attempt.
 //
 // NewClient registers the connection's close with s.OnStop.
-func NewClient(s *humus.Setup, settings Settings, opts ...grpc.DialOption) (*Client, error) {
+func NewClient(s *humus.Setup, n Network, settings Settings, opts ...grpc.DialOption) (*Client, error) {
 	if s == nil {
 		return nil, errors.New("grpcclient: NewClient: the Setup must not be nil")
 	}
@@ -157,7 +166,7 @@ func NewClient(s *humus.Setup, settings Settings, opts ...grpc.DialOption) (*Cli
 		return nil, fmt.Errorf("grpcclient: NewClient: %w", err)
 	}
 
-	dial := s.Host.DialTCP
+	dial := n.DialTCP
 	creds := insecure.NewCredentials()
 	if settings.TLS != nil {
 		// credentials.NewTLS clones the config, so the end user's is never

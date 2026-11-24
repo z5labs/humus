@@ -19,13 +19,13 @@
 //		if err != nil {
 //			return nil, err
 //		}
-//		carts, err := grpcclient.NewClient(s, settings)
+//		carts, err := grpcclient.NewClient(s, h, settings)
 //		if err != nil {
 //			return nil, err
 //		}
 //
 //		api := &api{carts: cartpb.NewCartServiceClient(carts)}
-//		svc, err := grpcserver.NewService(s, serverSettings)
+//		svc, err := grpcserver.NewService(ctx, s, h, serverSettings)
 //		if err != nil {
 //			return nil, err
 //		}
@@ -33,9 +33,9 @@
 //		return []humus.Service{svc}, nil
 //	}
 //
-// The Client dials only through the Setup's Host, so a test runs the end
-// user's whole App, its outbound calls included, on humustest's network,
-// inside a testing/synctest bubble.
+// The Client dials only through the [Network] it is given, such as Init's
+// host, so a test runs the end user's whole App, its outbound calls
+// included, on humustest's network, inside a testing/synctest bubble.
 //
 // # One Client per dependency
 //
@@ -56,12 +56,12 @@
 // # Dialling and names
 //
 // NewClient targets "passthrough:///" and Settings.Addr, and dials with the
-// Setup's Host.DialTCP. The passthrough resolver hands Addr to the dialler as
-// it is, so grpc-go looks no name up: the Host resolves the name when it
+// Network's DialTCP. The passthrough resolver hands Addr to the dialler as
+// it is, so grpc-go looks no name up: the Network resolves the name when it
 // dials. grpc-go's dns resolver, the default for a target with no scheme, is
-// never used. It would look the name up with net.DefaultResolver, around the
-// Host, reading the real host's resolver configuration and querying the real
-// network, and inside a testing/synctest bubble it crashes the test binary.
+// never used. It would look the name up with net.DefaultResolver, around
+// the Network, reading the real host's resolver configuration and querying
+// the real network, and inside a testing/synctest bubble it crashes the test binary.
 //
 // In main, humus.OSHost's DialTCP is a net.Dialer's, which looks the name up as
 // net.Dial does, each time it dials. In a test, humustest's Host compares
@@ -70,7 +70,7 @@
 //
 // The Client uses no HTTP CONNECT proxy, so it never reads HTTPS_PROXY or
 // the other proxy variables from the real environment: it dials through the
-// Host, and passes grpc.WithNoProxy.
+// Network, and passes grpc.WithNoProxy.
 //
 // # One connection, picked first
 //
@@ -78,7 +78,7 @@
 // name or an IP, so the Client has one subchannel, and grpc-go's default
 // pick_first policy. Every RPC goes over one HTTP/2 connection, to whichever
 // backend that dial reached. When the connection breaks, grpc-go dials again
-// through the Host, with its own connection backoff, which starts at 1s and
+// through the Network, with its own connection backoff, which starts at 1s and
 // grows to 120s. grpc.WithConnectParams in opts changes it.
 //
 // OSHost's DialTCP tries a name's addresses in the order the lookup returns
@@ -91,7 +91,7 @@
 //     the Client connects to the first that accepts. Clients in different
 //     pods may reach different backends, but each Client keeps one.
 //   - When the connection ends, grpc-go dials the same name again, and the
-//     Host looks it up again, so a Client finds pods that weren't there when
+//     Network looks it up again, so a Client finds pods that weren't there when
 //     it first dialled. A pod's IP, given as Addr, never moves.
 //
 // This is what an end user who calls grpc.NewClient with nothing but an
@@ -463,7 +463,7 @@
 // NewClient's opts are grpc.DialOptions, for what humus doesn't configure:
 // per-RPC credentials with grpc.WithPerRPCCredentials, interceptors,
 // grpc.WithConnectParams, and the like. They come after humus's own
-// options, which trace and measure every attempt, dial through the Host,
+// options, which trace and measure every attempt, dial through the Network,
 // use no proxy, and turn grpc-go's configurable retries off. They run
 // inside the Client's retries: grpc-go applies them to each attempt. A stats
 // handler in opts, with grpc.WithStatsHandler, is a second one: grpc-go
@@ -475,7 +475,7 @@
 // Since opts come after humus's own options, an option in opts that
 // replaces one of them wins. A grpc.WithContextDialer, or a
 // grpc.WithResolvers with a resolver for the passthrough scheme, takes the
-// dial away from the Host, and with it the test Host's network: the Client
+// dial away from the Network, and with it the test Host's network: the Client
 // then dials only where the end user's dialler or resolver does.
 //
 // # grpc-go's retries

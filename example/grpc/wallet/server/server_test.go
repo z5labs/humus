@@ -325,8 +325,8 @@ func (e *env) startReplica(addr string) {
 	t := e.t
 	t.Helper()
 	cert := e.ca.Issue(t, "ledger").TLS()
-	p, exit := grpcservertest.Start(t, e.h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		svc, err := grpcserver.NewService(s, grpcserver.Settings{
+	p, exit := grpcservertest.Start(t, e.h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		svc, err := grpcserver.NewService(ctx, s, h, grpcserver.Settings{
 			Addr: addr,
 			TLS:  &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
 		})
@@ -362,11 +362,11 @@ func (e *env) startWallet() {
 		return e.h.DialTCP(ctx, network, address)
 	}}
 	cert := e.ca.Issue(t, "wallet").TLS()
-	_, exit := grpcservertest.Start(t, host, func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	_, exit := grpcservertest.Start(t, host, func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		settings := grpcclient.DefaultSettings()
 		settings.Addr = ledgerAddr
 		settings.TLS = &tls.Config{RootCAs: e.ca.Pool(), MinVersion: tls.VersionTLS12}
-		ledger, err := grpcclient.NewClient(s, settings)
+		ledger, err := grpcclient.NewClient(s, h, settings)
 		if err != nil {
 			return nil, err
 		}
@@ -380,7 +380,7 @@ func (e *env) startWallet() {
 		if err != nil {
 			return nil, err
 		}
-		svc, err := grpcserver.NewService(s, grpcserver.Settings{
+		svc, err := grpcserver.NewService(ctx, s, h, grpcserver.Settings{
 			Addr: walletAddr,
 			TLS:  &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
 		}, unary, stream)

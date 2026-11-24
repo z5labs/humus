@@ -152,8 +152,8 @@ func TestNewServer_uses_no_OpenTelemetry_globals(t *testing.T) {
 		h := humustest.NewHost(t)
 		tel := humustest.NewTelemetry()
 		failing := health.MonitorFunc(func(context.Context) (bool, error) { return false, errSecret })
-		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-			svc, err := grpcserver.NewService(s, grpcserver.Settings{Addr: ":9090", TLS: tlsFor(t, ca)})
+		init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			svc, err := grpcserver.NewService(ctx, s, h, grpcserver.Settings{Addr: ":9090", TLS: tlsFor(t, ca)})
 			if err != nil {
 				return nil, err
 			}

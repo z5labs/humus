@@ -44,8 +44,8 @@ func sourceFiles(t *testing.T) (*token.FileSet, []*ast.File) {
 }
 
 // TestPackage_exports_only_its_API checks that the package's exported
-// names are NewServer, and Settings, CheckAddr, Service and NewService, and
-// that Service's exported methods are Addr, Serve and Shutdown. The server
+// names are NewServer, and Settings, CheckAddr, Service, Network and
+// NewService, and that Service's exported methods are Addr, Serve and Shutdown. The server
 // NewServer returns is of an unexported type, so its methods are
 // healthpb.HealthServer's and no API of the package's own. There is no
 // DefaultSettings: Settings' one field has no default.
@@ -91,7 +91,7 @@ func TestPackage_exports_only_its_API(t *testing.T) {
 		}
 	}
 	slices.Sort(exported)
-	require.Equal(t, []string{"CheckAddr", "NewServer", "NewService", "Service", "Settings"}, exported)
+	require.Equal(t, []string{"CheckAddr", "Network", "NewServer", "NewService", "Service", "Settings"}, exported)
 	slices.Sort(methods)
 	require.Equal(t, []string{"Service.Addr", "Service.Serve", "Service.Shutdown"}, methods)
 }

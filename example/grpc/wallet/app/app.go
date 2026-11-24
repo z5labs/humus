@@ -97,7 +97,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 		return nil, err
 	}
 
-	ledger, err := grpcclient.NewClient(s, set.Ledger)
+	ledger, err := grpcclient.NewClient(s, h, set.Ledger)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +128,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 	if err != nil {
 		return nil, err
 	}
-	svc, err := grpcserver.NewService(s, set.GRPC,
+	svc, err := grpcserver.NewService(ctx, s, h, set.GRPC,
 		unary,
 		stream,
 		grpc.KeepaliveParams(keepalive.ServerParameters{MaxConnectionAge: maxConnectionAge}),
@@ -142,7 +142,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 	}
 	walletpb.RegisterWalletServer(svc, wallet)
 
-	probes, err := grpchealth.NewService(s, set.Probes, health.Readiness(ledger.Connected()))
+	probes, err := grpchealth.NewService(ctx, s, h, set.Probes, health.Readiness(ledger.Connected()))
 	if err != nil {
 		return nil, err
 	}

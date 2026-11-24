@@ -62,8 +62,8 @@ func (carts) UnaryCall(context.Context, *testpb.SimpleRequest) (*testpb.SimpleRe
 func startCarts(t *testing.T, h *humustest.Host, ca *humustest.CA) (stop func()) {
 	t.Helper()
 	cert := ca.Issue(t, "carts")
-	p, exit := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		svc, err := grpcserver.NewService(s, grpcserver.Settings{
+	p, exit := humustest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		svc, err := grpcserver.NewService(ctx, s, h, grpcserver.Settings{
 			Addr: "carts:9090",
 			TLS:  &tls.Config{Certificates: []tls.Certificate{cert.TLS()}},
 		})

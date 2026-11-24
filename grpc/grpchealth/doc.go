@@ -71,7 +71,7 @@
 // Service, which owns the App's readiness and is returned from Init next
 // to the gRPC Service:
 //
-//	svc, err := grpcserver.NewService(s, settings)
+//	svc, err := grpcserver.NewService(ctx, s, h, settings)
 //	if err != nil {
 //		return nil, err
 //	}
@@ -131,12 +131,12 @@
 // for as long as it serves, so the end user's Init returns no health
 // Service next to it:
 //
-//	svc, err := grpcserver.NewService(s, settings)
+//	svc, err := grpcserver.NewService(ctx, s, h, settings)
 //	if err != nil {
 //		return nil, err
 //	}
 //	cartpb.RegisterCartServiceServer(svc, carts)
-//	probes, err := grpchealth.NewService(s, probeSettings)
+//	probes, err := grpchealth.NewService(ctx, s, h, probeSettings)
 //	if err != nil {
 //		return nil, err
 //	}

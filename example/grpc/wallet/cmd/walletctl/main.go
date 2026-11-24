@@ -47,14 +47,14 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 	if err != nil {
 		return nil, err
 	}
-	run, err := newRun(s, set)
+	run, err := newRun(s, h, set)
 	if err != nil {
 		return nil, err
 	}
 	return []humus.Service{job.NewService(s, run)}, nil
 }
 
-func newRun(s *humus.Setup, set settings) (func(context.Context) error, error) {
+func newRun(s *humus.Setup, n grpcclient.Network, set settings) (func(context.Context) error, error) {
 	out := s.Process.Stdout
 	switch set.Command {
 	case jwksCommand:
@@ -76,7 +76,7 @@ func newRun(s *humus.Setup, set settings) (func(context.Context) error, error) {
 			return err
 		}, nil
 	case depositCommand:
-		conn, err := grpcclient.NewClient(s, set.Client)
+		conn, err := grpcclient.NewClient(s, n, set.Client)
 		if err != nil {
 			return nil, err
 		}
@@ -95,7 +95,7 @@ func newRun(s *humus.Setup, set settings) (func(context.Context) error, error) {
 		}, nil
 	}
 
-	conn, err := grpcclient.NewClient(s, set.Client, grpc.WithPerRPCCredentials(bearer{key: set.Key, token: set.Token}))
+	conn, err := grpcclient.NewClient(s, n, set.Client, grpc.WithPerRPCCredentials(bearer{key: set.Key, token: set.Token}))
 	if err != nil {
 		return nil, err
 	}

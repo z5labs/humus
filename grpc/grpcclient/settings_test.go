@@ -295,11 +295,10 @@ func TestDefaultSettings(t *testing.T) {
 	})
 }
 
-// newSetup returns a Setup on a new humustest Host, for a test that builds
-// a Client and makes no RPC.
-func newSetup(t *testing.T) *humus.Setup {
-	t.Helper()
-	return &humus.Setup{Host: humustest.NewHost(t).Host(), Telemetry: telemetry.Noop()}
+// newSetup returns a Setup with telemetry off and no Host, for a test that
+// builds a Client and makes no RPC.
+func newSetup() *humus.Setup {
+	return &humus.Setup{Telemetry: telemetry.Noop()}
 }
 
 func TestNewClient_the_Setup(t *testing.T) {
@@ -310,7 +309,7 @@ func TestNewClient_the_Setup(t *testing.T) {
 
 	t.Run("a nil Setup is rejected", func(t *testing.T) {
 		t.Parallel()
-		c, err := grpcclient.NewClient(nil, settings)
+		c, err := grpcclient.NewClient(nil, humustest.NewHost(t), settings)
 		require.Nil(t, c)
 		require.EqualError(t, err, "grpcclient: NewClient: the Setup must not be nil")
 	})
@@ -321,7 +320,7 @@ func TestNewClient_settings(t *testing.T) {
 
 	t.Run("DefaultSettings alone fails, naming Addr", func(t *testing.T) {
 		t.Parallel()
-		c, err := grpcclient.NewClient(newSetup(t), grpcclient.DefaultSettings())
+		c, err := grpcclient.NewClient(newSetup(), humustest.NewHost(t), grpcclient.DefaultSettings())
 		require.Nil(t, c)
 		require.EqualError(t, err, `grpcclient: NewClient: Settings.Addr "" is not host:port`)
 	})
@@ -340,7 +339,7 @@ func TestNewClient_settings(t *testing.T) {
 		settings.Breaker = circuit.Config{Window: 0, Probes: circuit.MaxCount + 1, OpenFor: 0, ProbeTimeout: -time.Second}
 		settings.BreakerPolicy = circuit.Policy{}
 
-		c, err := grpcclient.NewClient(newSetup(t), settings)
+		c, err := grpcclient.NewClient(newSetup(), humustest.NewHost(t), settings)
 		require.Nil(t, c)
 		require.ErrorContains(t, err, "Settings.Breaker.Window must be from 1 to 65536, got 0")
 		require.ErrorContains(t, err, "Settings.Breaker.Probes must be from 1 to 65536, got 65537")
@@ -368,7 +367,7 @@ func TestNewClient_settings(t *testing.T) {
 		settings.BackoffMax = time.Second
 		settings.Classify = nil
 
-		c, err := grpcclient.NewClient(newSetup(t), settings)
+		c, err := grpcclient.NewClient(newSetup(), humustest.NewHost(t), settings)
 		require.Nil(t, c)
 		require.EqualError(t, err, "grpcclient: NewClient: Settings.BackoffMax must be at least Settings.BackoffBase, 2s, got 1s\n"+
 			"Settings.Classify must not be nil")
@@ -385,8 +384,8 @@ func TestNewClient_settings(t *testing.T) {
 			// close the connection.
 			errInit := errors.New("init failed")
 			var newErr error
-			_, exit := humustest.Start(t, humustest.NewHost(t).Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-				_, newErr = grpcclient.NewClient(s, settings)
+			_, exit := humustest.Start(t, humustest.NewHost(t).Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+				_, newErr = grpcclient.NewClient(s, h, settings)
 				return nil, errInit
 			}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 			st := <-exit
@@ -417,7 +416,7 @@ func TestNewClient_settings(t *testing.T) {
 			settings := grpcclient.DefaultSettings()
 			settings.Addr = "carts:9090"
 			change(&settings)
-			_, err := grpcclient.NewClient(newSetup(t), settings)
+			_, err := grpcclient.NewClient(newSetup(), humustest.NewHost(t), settings)
 			require.ErrorContains(t, err, field)
 		}
 	})
@@ -436,8 +435,8 @@ func TestNewClient_settings(t *testing.T) {
 				c      *grpcclient.Client
 				newErr error
 			)
-			_, exit := humustest.Start(t, host, func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-				c, newErr = grpcclient.NewClient(s, settings)
+			_, exit := humustest.Start(t, host, func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+				c, newErr = grpcclient.NewClient(s, h, settings)
 				return nil, errInit
 			}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 			st := <-exit
@@ -453,7 +452,7 @@ func TestNewClient_settings(t *testing.T) {
 		t.Parallel()
 		settings := grpcclient.DefaultSettings()
 		settings.Addr = "carts:9090"
-		c, err := grpcclient.NewClient(newSetup(t), settings, grpc.WithDefaultServiceConfig("not JSON"))
+		c, err := grpcclient.NewClient(newSetup(), humustest.NewHost(t), settings, grpc.WithDefaultServiceConfig("not JSON"))
 		require.Nil(t, c)
 		require.ErrorContains(t, err, "grpcclient: NewClient: ")
 	})

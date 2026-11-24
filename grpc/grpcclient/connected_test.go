@@ -71,8 +71,8 @@ func (c *rpcCounter) HandleConn(_ context.Context, s stats.ConnStats) {
 // 0.
 func startBackend(t *testing.T, h *humustest.Host, serverTLS *tls.Config) (stop func()) {
 	t.Helper()
-	p, exit := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		svc, err := grpcserver.NewService(s, grpcserver.Settings{Addr: "backend:9090", TLS: serverTLS})
+	p, exit := humustest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		svc, err := grpcserver.NewService(ctx, s, h, grpcserver.Settings{Addr: "backend:9090", TLS: serverTLS})
 		if err != nil {
 			return nil, err
 		}
@@ -104,8 +104,8 @@ type probed struct {
 func startProbed(t *testing.T, host humus.Host, settings grpcclient.Settings) *probed {
 	t.Helper()
 	a := &probed{counter: &rpcCounter{}, tel: humustest.NewTelemetry()}
-	p, exit := humustest.Start(t, host, func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		c, err := grpcclient.NewClient(s, settings, grpc.WithStatsHandler(a.counter))
+	p, exit := humustest.Start(t, host, func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		c, err := grpcclient.NewClient(s, h, settings, grpc.WithStatsHandler(a.counter))
 		if err != nil {
 			return nil, err
 		}

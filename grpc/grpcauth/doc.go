@@ -25,7 +25,7 @@
 //	if err != nil {
 //		return nil, err
 //	}
-//	svc, err := grpcserver.NewService(s, settings, unary, stream)
+//	svc, err := grpcserver.NewService(ctx, s, h, settings, unary, stream)
 //
 // A handler reads its principal back with the scheme's From, typed:
 //

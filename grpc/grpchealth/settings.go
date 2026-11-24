@@ -14,8 +14,8 @@ import (
 // Settings configures a Service. Its one field has no default, so the end
 // user always sources it.
 type Settings struct {
-	// Addr is the TCP address the Service listens on through the Host, as
-	// host:port. It is required: humus imposes no port. An empty host
+	// Addr is the TCP address the Service listens on through its Network,
+	// as host:port. It is required: humus imposes no port. An empty host
 	// listens on every name, and port 0 picks a free port, which
 	// Service.Addr reports.
 	//
@@ -24,13 +24,13 @@ type Settings struct {
 	Addr string
 }
 
-// CheckAddr rejects an address that Host.ListenTCP can't listen on, without
+// CheckAddr rejects an address that a Network can't listen on, without
 // naming the field: one that is not host:port, such as "" or an address
 // with no port, or one whose port is not a number from 0 to 65535, a
 // service name such as "grpc" included. An empty host and port 0 are
 // valid. It accepts and rejects what grpcserver.CheckAddr does. It checks
 // the address's form, not that the host resolves or that the port is free:
-// Host.ListenTCP reports those when the Service listens.
+// the Network's ListenTCP reports those when the Service listens.
 func CheckAddr(addr string) error {
 	_, port, err := net.SplitHostPort(addr)
 	if err != nil {

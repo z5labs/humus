@@ -58,8 +58,8 @@ func (g greeterService) UnaryCall(ctx context.Context, _ *testpb.SimpleRequest) 
 // SecuredInit serves the greeter over TLS, with every method requiring a
 // bearer token, StreamingOutputCall requiring the "greetings:write" scope
 // too, and gRPC health on the same Service opened for the kubelet's probes.
-func SecuredInit(tokens Tokens, tlsConfig *tls.Config) func(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+func SecuredInit(tokens Tokens, tlsConfig *tls.Config) func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	return func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		bearer := auth.Bearer("bearer", tokens.Verify).Format("JWT")
 
 		unary, stream, err := grpcauth.Interceptors(s,
@@ -72,7 +72,7 @@ func SecuredInit(tokens Tokens, tlsConfig *tls.Config) func(ctx context.Context,
 		if err != nil {
 			return nil, err
 		}
-		svc, err := grpcserver.NewService(s, grpcserver.Settings{Addr: ":9090", TLS: tlsConfig}, unary, stream)
+		svc, err := grpcserver.NewService(ctx, s, h, grpcserver.Settings{Addr: ":9090", TLS: tlsConfig}, unary, stream)
 		if err != nil {
 			return nil, err
 		}

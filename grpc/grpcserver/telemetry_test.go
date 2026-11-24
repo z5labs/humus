@@ -203,8 +203,8 @@ func TestService_records_gRFC_A66_metrics_with_a_second_stats_handler(t *testing
 		h := humustest.NewHost(t)
 		tel := humustest.NewTelemetry()
 		settings := settingsFor(t, ca, ":9090")
-		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-			svc, err := grpcserver.NewService(s, settings, opentelemetry.ServerOption(opentelemetry.Options{
+		init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			svc, err := grpcserver.NewService(ctx, s, h, settings, opentelemetry.ServerOption(opentelemetry.Options{
 				MetricsOptions: opentelemetry.MetricsOptions{MeterProvider: s.Telemetry.MeterProvider},
 			}))
 			if err != nil {

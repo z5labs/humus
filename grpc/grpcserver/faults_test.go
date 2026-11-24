@@ -191,8 +191,8 @@ func runFaults(t *testing.T, run faultsRun) faultsResult {
 		got.record(ss.Context(), "stream interceptor")
 		return handler(srv, ss)
 	}
-	init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		svc, err := grpcserver.NewService(s, settings, grpc.ChainUnaryInterceptor(unary), grpc.ChainStreamInterceptor(stream))
+	init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		svc, err := grpcserver.NewService(ctx, s, h, settings, grpc.ChainUnaryInterceptor(unary), grpc.ChainStreamInterceptor(stream))
 		if err != nil {
 			return nil, err
 		}

@@ -81,8 +81,8 @@ func settingsFor(t *testing.T, ca *humustest.CA, addr string) grpcserver.Setting
 // serves returns an Init whose only Service serves ts on settings, built
 // with opts.
 func serves(settings grpcserver.Settings, ts testpb.TestServiceServer, opts ...grpc.ServerOption) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		svc, err := grpcserver.NewService(s, settings, opts...)
+	return func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		svc, err := grpcserver.NewService(ctx, s, h, settings, opts...)
 		if err != nil {
 			return nil, err
 		}
@@ -100,17 +100,17 @@ func appOptions() humustest.Option {
 	)
 }
 
-// newSetup returns a Setup on h, for a test that calls a Service's methods
-// itself.
-func newSetup(h *humustest.Host) *humus.Setup {
-	return &humus.Setup{Host: h.Host(), Telemetry: telemetry.Noop()}
+// newSetup returns a Setup with telemetry off and no Host, for a test that
+// calls a Service's methods itself.
+func newSetup() *humus.Setup {
+	return &humus.Setup{Telemetry: telemetry.Noop()}
 }
 
 // newService returns a Service on ":9090" of h, with a certificate for
 // carts from ca, serving ts. It is shut down when the test ends.
 func newService(t *testing.T, h *humustest.Host, ca *humustest.CA, ts testpb.TestServiceServer) *grpcserver.Service {
 	t.Helper()
-	svc, err := grpcserver.NewService(newSetup(h), settingsFor(t, ca, ":9090"))
+	svc, err := grpcserver.NewService(t.Context(), newSetup(), h, settingsFor(t, ca, ":9090"))
 	require.NoError(t, err)
 	testpb.RegisterTestServiceServer(svc, ts)
 	t.Cleanup(func() { _ = svc.Shutdown(context.Background()) })
@@ -153,7 +153,7 @@ func panicked(f func()) (v any) {
 func TestService_meets_the_Service_contract(t *testing.T) {
 	humustest.TestService(t, func(t *testing.T, s *humus.Setup) humus.Service {
 		cert := humustest.NewCA(t).Issue(t, "carts")
-		svc, err := grpcserver.NewService(s, grpcserver.Settings{
+		svc, err := grpcserver.NewService(t.Context(), s, humustest.NewHost(t), grpcserver.Settings{
 			Addr: ":9090",
 			TLS:  &tls.Config{Certificates: []tls.Certificate{cert.TLS()}},
 		})
@@ -248,7 +248,7 @@ func TestNewService_settings(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
 
-			svc, err := grpcserver.NewService(newSetup(h), grpcserver.Settings{})
+			svc, err := grpcserver.NewService(t.Context(), newSetup(), h, grpcserver.Settings{})
 			require.Nil(t, svc)
 			require.ErrorContains(t, err, `Settings.Addr "" is not host:port`)
 			require.ErrorContains(t, err, "Settings.TLS must not be nil")
@@ -273,7 +273,7 @@ func TestNewService_settings(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
 
-			_, err := grpcserver.NewService(newSetup(h), grpcserver.Settings{Addr: ":9090", TLS: &tls.Config{}})
+			_, err := grpcserver.NewService(t.Context(), newSetup(), h, grpcserver.Settings{Addr: ":9090", TLS: &tls.Config{}})
 			require.ErrorContains(t, err, "Settings.TLS has no certificate")
 			require.NotContains(t, err.Error(), "Settings.Addr")
 			requireRefused(t, h, "carts:9090")
@@ -287,7 +287,7 @@ func TestService_RegisterService_panics_instead_of_exiting(t *testing.T) {
 	t.Run("after Serve", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
-			svc, err := grpcserver.NewService(newSetup(h), settingsFor(t, humustest.NewCA(t), ":9090"))
+			svc, err := grpcserver.NewService(t.Context(), newSetup(), h, settingsFor(t, humustest.NewCA(t), ":9090"))
 			require.NoError(t, err)
 			served := make(chan error, 1)
 			go func() { served <- svc.Serve(t.Context()) }()
@@ -319,7 +319,7 @@ func TestService_RegisterService_panics_instead_of_exiting(t *testing.T) {
 	t.Run("with an implementation of the wrong type", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
-			svc, err := grpcserver.NewService(newSetup(h), settingsFor(t, humustest.NewCA(t), ":9090"))
+			svc, err := grpcserver.NewService(t.Context(), newSetup(), h, settingsFor(t, humustest.NewCA(t), ":9090"))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = svc.Shutdown(context.Background()) })
 
@@ -338,12 +338,12 @@ func TestNewService_the_listener(t *testing.T) {
 			ca := humustest.NewCA(t)
 			h := humustest.NewHost(t)
 			settings := settingsFor(t, ca, ":9090")
-			init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-				first, err := grpcserver.NewService(s, settings)
+			init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+				first, err := grpcserver.NewService(ctx, s, h, settings)
 				if err != nil {
 					return nil, err
 				}
-				second, err := grpcserver.NewService(s, settings)
+				second, err := grpcserver.NewService(ctx, s, h, settings)
 				if err != nil {
 					return nil, err
 				}
@@ -364,8 +364,8 @@ func TestNewService_the_listener(t *testing.T) {
 			h := humustest.NewHost(t)
 			settings := settingsFor(t, ca, ":9090")
 			errInit := errors.New("the database is unreachable")
-			failing := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-				if _, err := grpcserver.NewService(s, settings); err != nil {
+			failing := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+				if _, err := grpcserver.NewService(ctx, s, h, settings); err != nil {
 					return nil, err
 				}
 				return nil, errInit
@@ -395,8 +395,8 @@ func TestService_Addr_reports_the_port_the_Host_picked(t *testing.T) {
 		h := humustest.NewHost(t)
 		settings := settingsFor(t, ca, ":0")
 		addrs := make(chan net.Addr, 1)
-		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-			svc, err := grpcserver.NewService(s, settings)
+		init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			svc, err := grpcserver.NewService(ctx, s, h, settings)
 			if err != nil {
 				return nil, err
 			}
@@ -426,8 +426,8 @@ func TestService_works_with_reflection(t *testing.T) {
 		ca := humustest.NewCA(t)
 		h := humustest.NewHost(t)
 		settings := settingsFor(t, ca, ":9090")
-		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-			svc, err := grpcserver.NewService(s, settings)
+		init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			svc, err := grpcserver.NewService(ctx, s, h, settings)
 			if err != nil {
 				return nil, err
 			}

@@ -34,9 +34,20 @@ type Service struct {
 // The Service is a humus.Service.
 var _ humus.Service = (*Service)(nil)
 
+// Network is what a Service needs of a host: a way to listen. humus.Host
+// implements it, and so does any network of the end user's with this
+// method.
+type Network interface {
+	// ListenTCP announces on the local network address, for "tcp", "tcp4"
+	// or "tcp6", like net.ListenConfig.Listen.
+	ListenTCP(ctx context.Context, network, address string) (net.Listener, error)
+}
+
 // NewService checks settings and opts, reporting every problem in one
-// error, listens on settings.Addr through s.Host, and registers NewServer's
-// server, and nothing else. It registers the listener's close with
+// error, listens on settings.Addr through n, with ctx, which bounds the
+// lookup of the address's host, and registers NewServer's server, and
+// nothing else. A failure to listen, such as EADDRINUSE, is its error, so it
+// fails the end user's Init. It registers the listener's close with
 // s.OnStop, so a listener whose Service never serves, because Init failed
 // after NewService, is still closed.
 //
@@ -56,7 +67,7 @@ var _ humus.Service = (*Service)(nil)
 // metric, and extracts no trace context. A panic of a monitor fails only
 // its RPC, with codes.Internal, and is logged as one ERROR record under
 // this package's import path.
-func NewService(s *humus.Setup, settings Settings, opts ...health.Option) (*Service, error) {
+func NewService(ctx context.Context, s *humus.Setup, n Network, settings Settings, opts ...health.Option) (*Service, error) {
 	if err := checkSettings(settings, opts); err != nil {
 		return nil, fmt.Errorf("grpchealth: NewService: %w", err)
 	}
@@ -66,7 +77,7 @@ func NewService(s *humus.Setup, settings Settings, opts ...health.Option) (*Serv
 	// Plain-text credentials and no stats handler: the server speaks plain
 	// text, and a probe records no span and no metric. A recovered panic is
 	// logged under this package's scope.
-	srv, err := grpcsrv.New(s, loggerName, settings.Addr, nil)
+	srv, err := grpcsrv.New(ctx, s, n, loggerName, settings.Addr, nil)
 	if err != nil {
 		return nil, fmt.Errorf("grpchealth: NewService: %w", err)
 	}
@@ -94,8 +105,8 @@ func checkSettings(settings Settings, opts []health.Option) error {
 	return errors.Join(errs...)
 }
 
-// Addr returns the address the Service listens on, with the port the Host
-// picked when settings.Addr has port 0.
+// Addr returns the address the Service listens on, with the port the
+// Network picked when settings.Addr has port 0.
 func (svc *Service) Addr() net.Addr {
 	return svc.srv.Addr()
 }

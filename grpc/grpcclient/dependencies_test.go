@@ -73,12 +73,12 @@ import (
 func startServing(t *testing.T, h *humustest.Host, ca *humustest.CA, name, addr string, b *backend, hs *grpcgohealth.Server, opts ...grpc.ServerOption) (stop func()) {
 	t.Helper()
 	cert := ca.Issue(t, name)
-	p, exit := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	p, exit := humustest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		settings := grpcserver.Settings{
 			Addr: addr,
 			TLS:  &tls.Config{Certificates: []tls.Certificate{cert.TLS()}},
 		}
-		svc, err := grpcserver.NewService(s, settings, opts...)
+		svc, err := grpcserver.NewService(ctx, s, h, settings, opts...)
 		if err != nil {
 			return nil, err
 		}
@@ -154,15 +154,15 @@ func TestClient_two_Clients_of_one_address_have_a_breaker_each(t *testing.T) {
 			paymentsAfter  error
 			ledgerResponse error
 		)
-		_, exit := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+		_, exit := humustest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 			// Two Clients of one address, each with its own Settings, and
 			// so its own breaker, built once in Init and shared by
 			// everything that calls them.
-			payments, err := grpcclient.NewClient(s, paymentsSettings)
+			payments, err := grpcclient.NewClient(s, h, paymentsSettings)
 			if err != nil {
 				return nil, err
 			}
-			ledger, err := grpcclient.NewClient(s, ledgerSettings)
+			ledger, err := grpcclient.NewClient(s, h, ledgerSettings)
 			if err != nil {
 				return nil, err
 			}
@@ -205,8 +205,8 @@ func TestClient_moves_when_the_servers_MaxConnectionAge_passes(t *testing.T) {
 
 		counter := &rpcCounter{}
 		var errs []error
-		_, exit := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-			carts, err := grpcclient.NewClient(s, settingsFor(ca, "carts:9090"), grpc.WithStatsHandler(counter))
+		_, exit := humustest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			carts, err := grpcclient.NewClient(s, h, settingsFor(ca, "carts:9090"), grpc.WithStatsHandler(counter))
 			if err != nil {
 				return nil, err
 			}
@@ -237,12 +237,12 @@ func TestInit_turns_ready_once_its_Client_has_connected(t *testing.T) {
 		serverSettings := grpcserver.Settings{Addr: ":8443", TLS: serving(t, ca, "orders")}
 		probeSettings := grpchealth.Settings{Addr: ":8081"}
 
-		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-			carts, err := grpcclient.NewClient(s, cartsSettings)
+		init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			carts, err := grpcclient.NewClient(s, h, cartsSettings)
 			if err != nil {
 				return nil, err
 			}
-			svc, err := grpcserver.NewService(s, serverSettings)
+			svc, err := grpcserver.NewService(ctx, s, h, serverSettings)
 			if err != nil {
 				return nil, err
 			}
@@ -251,7 +251,7 @@ func TestInit_turns_ready_once_its_Client_has_connected(t *testing.T) {
 			// The service turns ready once its Client has connected to
 			// carts, and stays ready through an outage of carts after
 			// that.
-			probes, err := grpchealth.NewService(s, probeSettings, health.Readiness(carts.Connected()))
+			probes, err := grpchealth.NewService(ctx, s, h, probeSettings, health.Readiness(carts.Connected()))
 			if err != nil {
 				return nil, err
 			}
@@ -315,8 +315,8 @@ func TestClient_a_monitor_of_the_dependencys_grpc_health_v1(t *testing.T) {
 
 		checked, stopped := make(chan struct{}), make(chan struct{})
 		var before, after struct{ monitor, connected bool }
-		_, exit := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-			carts, err := grpcclient.NewClient(s, settingsFor(ca, "carts:9090"))
+		_, exit := humustest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			carts, err := grpcclient.NewClient(s, h, settingsFor(ca, "carts:9090"))
 			if err != nil {
 				return nil, err
 			}
@@ -417,13 +417,13 @@ func startWrappedPod(t *testing.T, wrap func(humus.Init[humus.Host]) humus.Init[
 	t.Helper()
 	cert := ca.Issue(t, "ledger")
 	life := &podLife{inited: make(chan struct{})}
-	p, exit := grpcservertest.Start(t, host, wrap(func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	p, exit := grpcservertest.Start(t, host, wrap(func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		defer close(life.inited)
 		settings := grpcserver.Settings{
 			Addr: addr,
 			TLS:  &tls.Config{Certificates: []tls.Certificate{cert.TLS()}},
 		}
-		svc, err := grpcserver.NewService(s, settings, opts...)
+		svc, err := grpcserver.NewService(ctx, s, h, settings, opts...)
 		if err != nil {
 			return nil, err
 		}
@@ -695,8 +695,8 @@ func (s *subscriptions) log(t *testing.T, tel *humustest.Telemetry) {
 func subscriber(t *testing.T, host humus.Host, tel *humustest.Telemetry, ca *humustest.CA, subs *subscriptions, done <-chan struct{}) (*grpcclient.Client, <-chan bedrock.ExitStatus) {
 	t.Helper()
 	built := make(chan *grpcclient.Client, 1)
-	_, exit := humustest.Start(t, host, func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		ledger, err := grpcclient.NewClient(s, settingsFor(ca, "ledger:9090"))
+	_, exit := humustest.Start(t, host, func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		ledger, err := grpcclient.NewClient(s, h, settingsFor(ca, "ledger:9090"))
 		if err != nil {
 			return nil, err
 		}
@@ -989,8 +989,8 @@ func reopenOnce(t *testing.T, host humus.Host, ca *humustest.CA, n int, open ope
 	t.Helper()
 	got := make(chan []reopened, 1)
 	counter := &rpcCounter{}
-	_, exit := humustest.Start(t, host, func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		ledger, err := grpcclient.NewClient(s, settingsFor(ca, "ledger:9090"), grpc.WithStatsHandler(counter))
+	_, exit := humustest.Start(t, host, func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		ledger, err := grpcclient.NewClient(s, h, settingsFor(ca, "ledger:9090"), grpc.WithStatsHandler(counter))
 		if err != nil {
 			return nil, err
 		}

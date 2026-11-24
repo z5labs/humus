@@ -62,8 +62,8 @@ func TestServer_recovers_a_panic_of_an_RPC(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
 		tel := humustest.NewTelemetry()
-		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-			srv, err := server.New(s, callerScope, ":8081", nil)
+		init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			srv, err := server.New(ctx, s, h, callerScope, ":8081", nil)
 			if err != nil {
 				return nil, err
 			}

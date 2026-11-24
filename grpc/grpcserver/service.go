@@ -37,9 +37,20 @@ var (
 	_ humus.Service         = (*Service)(nil)
 )
 
+// Network is what a Service needs of a host: a way to listen. humus.Host
+// implements it, and so does any network of the end user's with this
+// method.
+type Network interface {
+	// ListenTCP announces on the local network address, for "tcp", "tcp4"
+	// or "tcp6", like net.ListenConfig.Listen.
+	ListenTCP(ctx context.Context, network, address string) (net.Listener, error)
+}
+
 // NewService runs CheckAddr and CheckTLS on settings, reporting every bad
 // field in one error that names each one, listens on settings.Addr through
-// s.Host, and builds the server.
+// n, with ctx, which bounds the lookup of the address's host, and builds the
+// server. A failure to listen, such as EADDRINUSE, is its error, so it fails
+// the end user's Init.
 //
 // The first of humus's options is a stats handler, otelgrpc's, that traces
 // and measures every RPC with s.Telemetry's TracerProvider, MeterProvider
@@ -63,7 +74,7 @@ var (
 //
 // The listener is closed by Shutdown, or by an OnStop function NewService
 // registers with s, if the App never serves.
-func NewService(s *humus.Setup, settings Settings, opts ...grpc.ServerOption) (*Service, error) {
+func NewService(ctx context.Context, s *humus.Setup, n Network, settings Settings, opts ...grpc.ServerOption) (*Service, error) {
 	if err := checkSettings(settings); err != nil {
 		return nil, fmt.Errorf("grpcserver: NewService: %w", err)
 	}
@@ -92,7 +103,7 @@ func NewService(s *humus.Setup, settings Settings, opts ...grpc.ServerOption) (*
 	)
 	all = append(all, opts...)
 
-	srv, err := server.New(s, scope, settings.Addr, credentials.NewTLS(settings.TLS), all...)
+	srv, err := server.New(ctx, s, n, scope, settings.Addr, credentials.NewTLS(settings.TLS), all...)
 	if err != nil {
 		return nil, fmt.Errorf("grpcserver: NewService: %w", err)
 	}
@@ -113,8 +124,8 @@ func checkSettings(settings Settings) error {
 	return errors.Join(errs...)
 }
 
-// Addr returns the address the Service listens on, with the port the Host
-// picked when settings.Addr has port 0.
+// Addr returns the address the Service listens on, with the port the
+// Network picked when settings.Addr has port 0.
 func (svc *Service) Addr() net.Addr {
 	return svc.srv.Addr()
 }
