@@ -159,13 +159,23 @@ func newFilesHost() (filesHost, error) {
 	return filesHost{IPNetwork: host.IPNetwork{}, Files: host.OSFilesystem{}}, nil
 }
 
-// initOnFiles is the Init of an App on filesHost. It reads its greeting
-// through its own host's filesystem, with no type assertion.
+// initOnFiles is the Init of an App on filesHost. It reads its greeting,
+// from the file GREETING_FILE names, through its own host's filesystem,
+// with no type assertion.
 func initOnFiles(ctx context.Context, s *humus.Setup, h filesHost) ([]humus.Service, error) {
-	if _, err := h.Files.ReadFile("/etc/greeter/greeting"); err != nil {
+	name, err := config.Env(s.Process.Environment, "GREETING_FILE").Read(ctx)
+	if err != nil {
 		return nil, err
 	}
-	return []humus.Service{newServer(s.Process.Stdout)}, nil
+	greeting, err := h.Files.ReadFile(name)
+	if err != nil {
+		return nil, err
+	}
+	out := s.Process.Stdout
+	if _, err := fmt.Fprintf(out, "greeting: %s\n", greeting); err != nil {
+		return nil, err
+	}
+	return []humus.Service{newServer(out)}, nil
 }
 
 // faultsOnFiles is the Faults function of an App on filesHost.
@@ -181,6 +191,37 @@ func ExampleMainOn() {
 	humus.MainOn(newFilesHost, initOnFiles,
 		humus.WithFaults(faultsOnFiles),
 		humus.WithShutdownGracePeriod(30*time.Second),
+	)
+}
+
+// drainOnFiles returns a Drain that needs more of its host than the
+// humus.Network a Drain is given: it waits until the load balancer's agent
+// has written the file name, which it reads through the host's filesystem.
+// So it closes over the host.
+func drainOnFiles(h filesHost, name string) humus.Drain {
+	return func(ctx context.Context, _ *humus.Setup, _ humus.Network) error {
+		for {
+			if _, err := h.Files.ReadFile(name); err == nil {
+				return nil
+			}
+			t := time.NewTimer(time.Second)
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return nil
+			case <-t.C:
+			}
+		}
+	}
+}
+
+// A Drain that needs more of the host than DialTCP closes over it, so main
+// builds the host first and hands it to humus.MainOn. Like ExampleMain,
+// this example is compiled but never run.
+func ExampleMainOn_drain() {
+	h := filesHost{IPNetwork: host.IPNetwork{}, Files: host.OSFilesystem{}}
+	humus.MainOn(func() (filesHost, error) { return h, nil }, initOnFiles,
+		humus.WithDrain(drainOnFiles(h, "/run/greeter/deregistered")),
 	)
 }
 

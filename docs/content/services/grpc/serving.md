@@ -91,6 +91,12 @@ describes:
 grpcserver.Main(Init, humus.WithTelemetry(buildTelemetry))
 ```
 
+`NewService(ctx, s, n, settings, opts...)` takes the network it listens
+through, `n`, right after `s`: a `grpcserver.Network`, which lists one
+method, `ListenTCP`. `Init` passes the host it is given, which has it, and an
+`Init` that wants another network for this server passes that instead. `ctx`
+is `Init`'s, so a signal during `Init` cancels the listen.
+
 `NewService` runs every check on the `Settings` again, and then listens on
 `Settings.Addr` through the network it is given, in `Init`. So a port that is already
 taken fails `Init`, and the App exits 1, and a connection that arrives before
@@ -569,7 +575,9 @@ package answers gRPC health v1 from an App's `health.Probes`, in two ways:
 - **`grpchealth.NewService`, on a plaintext port of its own,** for a cluster
   whose `grpc` probes can't use TLS, which is most clusters today. It
   registers only `grpc.health.v1.Health`, so the end user's services are
-  never reachable in plain text. It owns the App's readiness, so `Init`
+  never reachable in plain text. Like `grpcserver.NewService`, it takes `ctx`
+  and a network right after `s`, a `grpchealth.Network`, which lists only
+  `ListenTCP`. It owns the App's readiness, so `Init`
   returns it next to the gRPC Service and no health Service. It serves
   through the drain and shuts down as this Service does.
 - **`grpchealth.NewServer`, registered on this Service,** next to a health

@@ -380,6 +380,11 @@ and [The cart's API]({{< relref "/walkthroughs/http/shoppingcart/api#the-api" >}
 show. The catalog's `Init` is the same, with `InitWith` and no catalog to
 open.
 
+Each `Init` is given the host, `h`, and hands it to each runtime as the
+network it uses: the pool dials through it, `newCatalog` takes it as the
+catalog client's `httpclient.Network`, and `httpserver.NewService` listens
+through it.
+
 ## Readiness
 
 The probes are attached to the cart's own port, at `/health/`, beside the

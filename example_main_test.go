@@ -9,6 +9,8 @@ import (
 	"context"
 	"errors"
 	"maps"
+	"net"
+	"strings"
 	"syscall"
 	"testing"
 	"testing/synctest"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/bedrocktest"
+	"github.com/z5labs/bedrock/host/hosttest"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/humustest"
@@ -237,6 +240,108 @@ func TestStart_a_whole_App(t *testing.T) {
 		}
 		if got := p.Stderr(); got != "" {
 			t.Errorf("stderr = %q, want nothing", got)
+		}
+	})
+}
+
+// dialsInit is an Init that dials its database before it builds anything,
+// as one that opens a connection pool does.
+func dialsInit(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	conn, err := h.DialTCP(ctx, "tcp", "db:5432")
+	if err != nil {
+		return nil, err
+	}
+	s.OnStop(func(context.Context) error { return conn.Close() })
+	return []humus.Service{newServer(s.Process.Stdout)}, nil
+}
+
+func TestStart_with_every_dial_failing(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		th := humustest.NewHost(t)
+		n := hosttest.Seams{Network: th}
+		n.OnDialTCP = func(context.Context, string, string) (net.Conn, error) { return nil, syscall.ECONNRESET }
+		_, status := humustest.Start(t, humus.Host{IPNetwork: n, Filesystem: th.Filesystem()}, dialsInit,
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
+		)
+		st := <-status
+
+		if st.Code() != humus.ExitFailure {
+			t.Errorf("code = %d, want %d", st.Code(), humus.ExitFailure)
+		}
+		if !errors.Is(st.Cause(), syscall.ECONNRESET) {
+			t.Errorf("cause = %v, want the failed dial", st.Cause())
+		}
+	})
+}
+
+func TestStart_an_App_on_its_own_host(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		th := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
+			"etc/greeter/greeting":     []byte("hello"),
+			"run/greeter/deregistered": nil,
+		}))
+		h := filesHost{IPNetwork: th, Files: th.Filesystem()}
+		p, status := humustest.Start(t, h, initOnFiles,
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
+			humustest.WithApp(humus.WithDrain(drainOnFiles(h, th.Path("run/greeter/deregistered")))),
+			humustest.WithEnv(map[string]string{"GREETING_FILE": th.Path("etc/greeter/greeting")}),
+		)
+		st := stopApp(p, status)
+
+		if st.Code() != 0 {
+			t.Errorf("code = %d, want 0: %v", st.Code(), st.Cause())
+		}
+		if got := p.Stdout(); !strings.HasPrefix(got, "greeting: hello\n") {
+			t.Errorf("stdout = %q, want it to start with the greeting", got)
+		}
+	})
+}
+
+func TestStart_an_App_on_its_own_host_drains_until_deregistered(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		th := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
+			"etc/greeter/greeting": []byte("hello"),
+		}))
+		h := filesHost{IPNetwork: th, Files: th.Filesystem()}
+		var shutdownAt time.Time
+		api := serving(func(context.Context) error {
+			shutdownAt = time.Now()
+			return nil
+		})
+		init := func(ctx context.Context, s *humus.Setup, h filesHost) ([]humus.Service, error) {
+			if _, err := initOnFiles(ctx, s, h); err != nil {
+				return nil, err
+			}
+			return []humus.Service{api}, nil
+		}
+		p, status := humustest.Start(t, h, init,
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
+			humustest.WithApp(humus.WithDrain(drainOnFiles(h, th.Path("run/greeter/deregistered")))),
+			humustest.WithEnv(map[string]string{"GREETING_FILE": th.Path("etc/greeter/greeting")}),
+		)
+		<-p.Notified(syscall.SIGTERM)
+		synctest.Wait()
+		sigterm := time.Now()
+		p.Signal(syscall.SIGTERM)
+
+		// The agent writes the file 2.5s into the drain, and the Drain sees
+		// it on its next poll, 3s in.
+		time.Sleep(2500 * time.Millisecond)
+		if err := th.Filesystem().MkdirAll(th.Path("run/greeter"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		f, err := th.Filesystem().Create(th.Path("run/greeter/deregistered"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = f.Close()
+		st := <-status
+
+		if st.Code() != 0 {
+			t.Errorf("code = %d, want 0: %v", st.Code(), st.Cause())
+		}
+		if got := shutdownAt.Sub(sigterm); got != 3*time.Second {
+			t.Errorf("Shutdown called %s after SIGTERM, want after the 3s drain", got)
 		}
 	})
 }
