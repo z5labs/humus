@@ -178,7 +178,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "sum by (server_address, humus_circuit_state) (humus_circuit_state{job=\"cart\", otel_scope_name=\"github.com/z5labs/humus/httpclient\"})",
+          "expr": "sum by (server_address, humus_circuit_state) (humus_circuit_state{job=\"cart\", otel_scope_name=\"github.com/z5labs/humus/http/httpclient\"})",
           "legendFormat": "{{server_address}} {{humus_circuit_state}}"
         }
       ]
@@ -218,7 +218,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "sum by (server_address, humus_circuit_state) (increase(humus_circuit_transitions{job=\"cart\", otel_scope_name=\"github.com/z5labs/humus/httpclient\"}[$__rate_interval]))",
+          "expr": "sum by (server_address, humus_circuit_state) (increase(humus_circuit_transitions{job=\"cart\", otel_scope_name=\"github.com/z5labs/humus/http/httpclient\"}[$__rate_interval]))",
           "legendFormat": "{{server_address}} to {{humus_circuit_state}}"
         }
       ]
@@ -258,7 +258,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "sum by (server_address, humus_retry_decision) (rate(humus_retry_decisions{job=\"cart\", otel_scope_name=\"github.com/z5labs/humus/httpclient\"}[$__rate_interval]))",
+          "expr": "sum by (server_address, humus_retry_decision) (rate(humus_retry_decisions{job=\"cart\", otel_scope_name=\"github.com/z5labs/humus/http/httpclient\"}[$__rate_interval]))",
           "legendFormat": "{{server_address}} {{humus_retry_decision}}"
         }
       ]

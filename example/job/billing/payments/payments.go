@@ -21,7 +21,7 @@ import (
 	"github.com/z5labs/bedrock/retry"
 
 	"github.com/z5labs/humus"
-	"github.com/z5labs/humus/httpclient"
+	"github.com/z5labs/humus/http/httpclient"
 )
 
 const maxAnswer = 64 << 10

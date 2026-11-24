@@ -29,7 +29,7 @@ import (
 	"github.com/z5labs/humus/example/job/billing/postgres"
 	"github.com/z5labs/humus/fault"
 	"github.com/z5labs/humus/fault/jsonscenario"
-	"github.com/z5labs/humus/httpclient"
+	"github.com/z5labs/humus/http/httpclient"
 	"github.com/z5labs/humus/job"
 	"github.com/z5labs/humus/telemetry"
 )

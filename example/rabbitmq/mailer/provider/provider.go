@@ -24,7 +24,7 @@ import (
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/example/rabbitmq/mailer/mail"
-	"github.com/z5labs/humus/httpclient"
+	"github.com/z5labs/humus/http/httpclient"
 )
 
 const maxAnswerSize = 64 << 10

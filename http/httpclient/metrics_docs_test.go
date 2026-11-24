@@ -22,7 +22,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 
 	"github.com/z5labs/humus"
-	"github.com/z5labs/humus/httpclient"
+	"github.com/z5labs/humus/http/httpclient"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/job"
 	"github.com/z5labs/humus/telemetry"
@@ -65,7 +65,7 @@ func ordersTelemetry(reader sdkmetric.Reader) telemetry.Builder {
 				sdkmetric.NewView(
 					sdkmetric.Instrument{
 						Name:  "humus.retry.decisions",
-						Scope: instrumentation.Scope{Name: "github.com/z5labs/humus/httpclient"},
+						Scope: instrumentation.Scope{Name: "github.com/z5labs/humus/http/httpclient"},
 					},
 					sdkmetric.Stream{Name: "orders.payments.retries"},
 				),
@@ -138,7 +138,7 @@ func TestClient_metrics_read_once_the_App_has_exited(t *testing.T) {
 		require.NoError(t, err)
 		byState := map[string]int64{}
 		for _, sm := range rm.ScopeMetrics {
-			if sm.Scope.Name != "github.com/z5labs/humus/httpclient" {
+			if sm.Scope.Name != "github.com/z5labs/humus/http/httpclient" {
 				continue // otelhttp's instruments, and any other client's
 			}
 			for _, m := range sm.Metrics {

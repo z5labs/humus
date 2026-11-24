@@ -124,7 +124,7 @@ humus records its own:
 |---|---|
 | `messaging.client.consumed.messages`, `messaging.process.duration` | the Service, for each delivery |
 | `messaging.client.sent.messages`, `messaging.client.operation.duration` | the three Publishers |
-| `humus.circuit.state`, `humus.circuit.calls`, `humus.circuit.transitions`, `humus.retry.decisions` | the provider's client, scope `github.com/z5labs/humus/httpclient`, and each Publisher, scope `github.com/z5labs/humus/queue/rabbitmq` |
+| `humus.circuit.state`, `humus.circuit.calls`, `humus.circuit.transitions`, `humus.retry.decisions` | the provider's client, scope `github.com/z5labs/humus/http/httpclient`, and each Publisher, scope `github.com/z5labs/humus/queue/rabbitmq` |
 
 The Collector reads each queue's depth and consumers from RabbitMQ's
 management API, and the containers' restarts from Kubernetes:
