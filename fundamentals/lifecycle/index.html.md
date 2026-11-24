@@ -411,6 +411,18 @@ it runs on a Host built from the test host's parts, whose network and
 filesystem the test controls, so that a whole App runs without touching the
 real host.
 
+The host is `Init`'s third argument, `h`, not a field of the `Setup`. `Init`
+hands it to each runtime it builds as the network that runtime uses, such as
+`httpserver.NewService(ctx, s, h, settings, handler)`. A `Host` embeds its
+network, so it is a `humus.Network` and is passed as it is.
+
+`Run` rejects a `Host` with a nil field before it builds the telemetry or
+calls `Init`: it writes
+`humus: Host.IPNetwork is nil: build the Host with OSHost, or from the test host's parts`,
+or the same for `Host.Filesystem`, to standard error and exits 1. A runtime doesn't check the network it is
+given: the first call through a nil one would panic, often in a Service's
+goroutine.
+
 An App listens over TCP with `ListenTCP`, which returns a `net.Listener`,
 and over UDP with `ListenUDP`, which returns a `net.PacketConn`, because UDP
 has no listener. It dials TCP with `DialTCP`, and UDP with `DialUDP`, which
@@ -426,6 +438,64 @@ embeds the `Filesystem` and overrides the method that fails, as
 `Host` is meant for user code as well as for humus. Hand `Host.DialTCP` to a
 client that takes a dial function, such as pgx's `DialFunc`, and open files
 through `Host.Filesystem` rather than through package `os`.
+
+### A host of the end user's own
+
+`humus.Main` runs an App on the default host, `humus.OSHost()`. An App that
+wants more of its host than `Host` offers, such as a filesystem with
+`ReadFile`, declares a host type of its own. It embeds an interface for its
+network, here `humus.IPNetwork`, so that the host is a `humus.Network` and a
+test can put the test host's network in it:
+
+```go
+type filesHost struct {
+	humus.IPNetwork
+	Files interface {
+		ReadFile(name string) ([]byte, error)
+	}
+}
+```
+
+Its `acquire` builds it, and its `Init` and `Faults` take it with its own
+type, so nothing type-asserts it:
+
+```go
+func newFilesHost() (filesHost, error) {
+	return filesHost{IPNetwork: host.IPNetwork{}, Files: host.OSFilesystem{}}, nil
+}
+```
+
+`main` runs it with [`humus.MainOn`](#mainon):
+
+```go
+humus.MainOn(newFilesHost, initOnFiles,
+	humus.WithFaults(faultsOnFiles),
+	humus.WithShutdownGracePeriod(30*time.Second),
+)
+```
+
+`Run` checks only humus's own `Host` for nil fields. A host the end user
+defines is theirs to check, in `acquire`.
+
+**`MainOn` never releases the host.** bedrock's network and filesystem hold
+nothing open, so the host lives as long as the process, and the OS closes
+its descriptors at exit. A host that needs an orderly close registers it in
+`Init` with `s.OnStop`, which runs after the Services stop, and also when
+`Init` fails. An App that exits before it calls `Init`, on a malformed
+setting or a failed `Builder`, has registered nothing, so the process's exit
+is all that closes its host.
+
+**A Drain that needs more than `DialTCP` closes over the host.** A Drain is
+given the host as a `humus.Network`, which has only `DialTCP`. One that
+needs more, such as the host's files, takes the host itself, so `main`
+builds the host first and hands it to `MainOn` as well:
+
+```go
+h := filesHost{IPNetwork: host.IPNetwork{}, Files: host.OSFilesystem{}}
+humus.MainOn(func() (filesHost, error) { return h, nil }, initOnFiles,
+	humus.WithDrain(drainOnFiles(h, "/run/greeter/deregistered")),
+)
+```
 
 ### Why `Filesystem` hands out `*os.File`
 
@@ -496,22 +566,24 @@ the context each is given is done when the grace period runs out.
 
 ## What Run does, in order
 
-1. Reads the lifecycle's [settings](#settings) from the process's
+1. Rejects a [`Host`](#host) with a nil field, writing which to standard
+   error and exiting 1.
+2. Reads the lifecycle's [settings](#settings) from the process's
    environment, defaulting each to its App field: under `Main`, that is
    `Main`'s default, or what an option set. A malformed one, or a bad
    default, exits 78 before the App listens for signals, and `Init` is never
    called.
-2. Listens for an interrupt and SIGTERM through the process's
+3. Listens for an interrupt and SIGTERM through the process's
    `NotifyContext`, before the telemetry and `Init`, so a signal during a slow
    `Builder` or a slow `Init` cancels it.
-3. Builds the [telemetry](#telemetry) by calling `App.Telemetry`. If it
+4. Builds the [telemetry](#telemetry) by calling `App.Telemetry`. If it
    fails, `Init` is never called, and the App exits 78 when a `*config.Error`
    is in the error chain, or 1 otherwise.
-4. Sets OpenTelemetry's process-wide error handler, which writes each export
+5. Sets OpenTelemetry's process-wide error handler, which writes each export
    error to standard error.
-5. Builds the [failure injection](/humus/hardening/failure-injection/), when
-   `App.Faults` is set: calls it with the context a signal cancels and the
-   `Setup` that `Init` is then given, builds the `fault.Injector` from the
+6. Builds the [failure injection](/humus/hardening/failure-injection/), when
+   `App.Faults` is set: calls it with the context a signal cancels, the
+   `Setup` that `Init` is then given and the App's host, builds the `fault.Injector` from the
    settings it returns with `fault.New`, and puts it in `Setup.Faults`. If
    either fails, the failure is logged as `failure injection: ` and the
    error, the OnStop functions registered so far run, within the grace
@@ -519,21 +591,21 @@ the context each is given is done when the grace period runs out.
    chain, or 1 otherwise, without calling `Init`. It comes after the
    telemetry, which the function may use, and before `Init`, because every
    server and client copies `Setup.Faults` when it is built.
-6. Calls `Init`. If it fails, runs the OnStop functions registered so far,
+7. Calls `Init`. If it fails, runs the OnStop functions registered so far,
    within the grace period, and exits 78 when a `*config.Error` is in `Init`'s
    error chain, or 1 otherwise.
-7. Calls `Serve` on every Service concurrently, and logs `serving`.
-8. Waits for a signal, or for the first Service to return. A Service whose
+8. Calls `Serve` on every Service concurrently, and logs `serving`.
+9. Waits for a signal, or for the first Service to return. A Service whose
    `Serve` returns once a signal has come, or once Run's context is
    cancelled, returned on it, as the health Service, a job or a queue
    consumer does, so the shutdown is the signal's, or the context's, even
    when Run receives that `Serve`'s result first. The shutdown is a Service's
    own only when its `Serve` returned before any signal and before Run's
    context was cancelled.
-9. Stops listening for signals, so that a second interrupt or SIGTERM takes
+10. Stops listening for signals, so that a second interrupt or SIGTERM takes
    its default action and ends the process at once, cancels the context
    passed to `Serve`, and logs `shutting down`.
-10. When it hasn't yet received every `Serve`'s result, calls the
+11. When it hasn't yet received every `Serve`'s result, calls the
     [drain](#the-drain), with the `Setup` that `Init` was given and the App's host:
     `humus.DrainDelay` of `HUMUS_SHUTDOWN_DRAIN_DELAY` when that is set, and
     `App.Drain` otherwise. Its context keeps the values of Run's context but
@@ -542,13 +614,13 @@ the context each is given is done when the grace period runs out.
     `Serve` results that arrive in the meantime and waits for the drain to
     return. A drain error is logged at ERROR and joined into the cause as
     `drain: ` and the error.
-11. Calls `Shutdown` on every Service concurrently, waits for every `Serve` to
+12. Calls `Shutdown` on every Service concurrently, waits for every `Serve` to
     return, and then runs the OnStop functions in reverse order of
     registration. All of this happens within one grace period,
     `HUMUS_SHUTDOWN_GRACE_PERIOD`, which starts after the drain. Then it
     logs `stopped`.
-12. Shuts the telemetry down.
-13. Returns the [exit status](#exit-codes).
+13. Shuts the telemetry down.
+14. Returns the [exit status](#exit-codes).
 
 An `Init` that returns no Services, and a Service that returns on its own
 when it is the only one, end the App without calling the drain, as there is

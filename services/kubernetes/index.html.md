@@ -3,8 +3,8 @@
 The [`kube`](https://pkg.go.dev/github.com/z5labs/humus/kube) package writes
 Kubernetes controllers as `humus.Service`s, with
 [client-go](https://github.com/kubernetes/client-go), Kubernetes' own client,
-and no controller-runtime. It reaches the API server through the Setup's
-Host, declares custom resources as Go values, reflects their CRDs from Go
+and no controller-runtime. It reaches the API server through the network
+its `Client` is given, declares custom resources as Go values, reflects their CRDs from Go
 types, and reconciles their objects, or those of Kubernetes' own kinds, on
 client-go's informers, work queue and leader election. The end user's
 `Init` fills a `kube.Connection` and sources `kube.Settings`, builds a
@@ -290,7 +290,8 @@ clientset `kubernetes.NewForConfig` returns, as `Init` builds, and the
 dynamic and metadata clients. Every one of them reaches the API server
 through the Client's transport, which:
 
-- dials with the `DialTCP` of the network `NewClient` is given;
+- dials with the `DialTCP` of the network `NewClient(s, n, c)` is given,
+  `n`, a `kube.Network`, which lists only `DialTCP`. `Init` passes its host;
 - runs TLS with a clone of `Connection.TLS`;
 - uses no proxy, whatever the environment says;
 - over HTTP/2, sends a ping after 30s without a frame, and gives up on the
@@ -305,8 +306,8 @@ through the Client's transport, which:
   and fairness limits each client by its identity itself.
 
 Each call returns a new `rest.Config`, so changing one changes no other. The
-Client closes its idle connections at `OnStop`. Dialling through the Host is
-what lets a test put the API server on a network of its own, with no
+Client closes its idle connections at `OnStop`. Dialling through the network
+it is given is what lets a test put the API server on a network of its own, with no
 test-only seam, and building its own transport keeps client-go's
 `DISABLE_HTTP2` and `HTTP2_*` variables, and `http.ProxyFromEnvironment`,
 out of the process.

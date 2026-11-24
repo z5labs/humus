@@ -243,6 +243,10 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 	}
 ```
 
+`Init` is given the host, `h`, and hands it on as the network the
+Publishers, the provider's client and the Service dial through, and the
+probes' `httphealth` server listens through.
+
 A parked request carries the mailer's login as its `UserID`, so its
 scenario is still trusted when it comes back:
 

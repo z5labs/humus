@@ -330,8 +330,10 @@ if err != nil {
 `readFile` and `serverTLS` are the end user's helpers, as on
 [Serving HTTP](/humus/services/http/serving/#tls). `CheckAddr` rejects an address
 that isn't `host:port`, `""` included, and a port that isn't a number from
-0 to 65535. `NewService` runs every check again, rejects a nil `Option`,
-and listens on `Addr` through the network it is given, in `Init`.
+0 to 65535. `NewService(ctx, s, n, settings, opts...)` takes the network it
+listens through right after `s`: an `httphealth.Network`, which lists only
+`ListenTCP`, and `Init` passes its host. It runs every check again, rejects
+a nil `Option`, and listens on `Addr` through that network, in `Init`.
 
 #### TLS on the HTTP probes port
 

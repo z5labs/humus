@@ -11,8 +11,10 @@ the dependency keeps failing.
 
 The package is in the nested module `github.com/z5labs/humus/grpc`, next to
 [`grpcserver`](/humus/services/grpc/serving/): `grpcserver` is the server half, and
-`grpcclient` the client half. The `Client` dials only through the network it
-is given, so a test runs the end user's whole App, its outbound calls included,
+`grpcclient` the client half. `NewClient(s, n, settings, opts...)` takes the
+network it dials through, `n`, right after `s`: a `grpcclient.Network`, which
+lists only `DialTCP`, and `Init` passes its host. The `Client` dials only
+through that network, so a test runs the end user's whole App, its outbound calls included,
 on humustest's network, as [Testing](#testing) shows.
 
 The design behind everything on this page is in

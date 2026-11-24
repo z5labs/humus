@@ -219,7 +219,9 @@ func initWith(ctx context.Context, s *humus.Setup, h humus.Host, open openStore)
 ```
 
 `initWith` takes the store's constructor, so the unit tests can give the run
-a store in memory.
+a store in memory. `Init` is given the host, `h`, and hands it on as the
+network the pool and `payments.NewClient`, which takes an
+`httpclient.Network`, dial through.
 
 ## `Faults`
 

@@ -74,6 +74,12 @@ describes:
 httpserver.Main(Init, humus.WithTelemetry(buildTelemetry))
 ```
 
+`NewService(ctx, s, n, settings, h)` takes the network it listens through,
+`n`, right after `s`: an `httpserver.Network`, which lists one method,
+`ListenTCP`. `Init` passes the host it is given, which has it, and an `Init`
+that wants another network for this server passes that instead. `ctx` is
+`Init`'s, so a signal during `Init` cancels the listen.
+
 `NewService` runs every check on the `Settings` again, rejects a nil
 handler, and then listens on `Settings.Addr` through the network it is given,
 in `Init`. So a port that is already taken fails `Init`, and the App exits 1,

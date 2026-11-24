@@ -62,8 +62,11 @@ when that is safe, and fail at once while a circuit breaker says the
 dependency keeps failing.&lt;/p&gt;
 &lt;p&gt;Service code, generated clients and SDKs take the &lt;code&gt;*http.Client&lt;/code&gt; as they
 take any other, and depend on &lt;code&gt;net/http&lt;/code&gt;&amp;rsquo;s type rather than on this package,
-so a unit test of that code passes any client. The client dials only
-through the network it is given, so a test runs the end user&amp;rsquo;s whole App, its
+so a unit test of that code passes any client. &lt;code&gt;NewClient(s, n, settings)&lt;/code&gt;
+takes the network it dials through, &lt;code&gt;n&lt;/code&gt;, right after &lt;code&gt;s&lt;/code&gt;: an
+&lt;code&gt;httpclient.Network&lt;/code&gt;, which lists only &lt;code&gt;DialTCP&lt;/code&gt;, and &lt;code&gt;Init&lt;/code&gt; passes its host.
+The client dials only
+through that network, so a test runs the end user&amp;rsquo;s whole App, its
 outbound calls included, on humustest&amp;rsquo;s network, as &lt;a href="#testing"&gt;Testing&lt;/a&gt;
 shows.&lt;/p&gt;</description></item><item><title>Migrating from kubebuilder</title><link>https://z5labs.github.io/humus/migrating/kube/kubebuilder/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/migrating/kube/kubebuilder/</guid><description>&lt;p&gt;This guide moves a small &lt;a href="https://book.kubebuilder.io"&gt;kubebuilder&lt;/a&gt; v4
 operator to humus&amp;rsquo;s &lt;code&gt;kube&lt;/code&gt; module. Its reconciler runs on client-go through
@@ -1406,8 +1409,8 @@ and the mailer exits 78, naming its variable:&lt;/p&gt;
 one user.&lt;/p&gt;</description></item><item><title>Writing a Kubernetes controller</title><link>https://z5labs.github.io/humus/services/kubernetes/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/services/kubernetes/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/kube"&gt;&lt;code&gt;kube&lt;/code&gt;&lt;/a&gt; package writes
 Kubernetes controllers as &lt;code&gt;humus.Service&lt;/code&gt;s, with
 &lt;a href="https://github.com/kubernetes/client-go"&gt;client-go&lt;/a&gt;, Kubernetes&amp;rsquo; own client,
-and no controller-runtime. It reaches the API server through the Setup&amp;rsquo;s
-Host, declares custom resources as Go values, reflects their CRDs from Go
+and no controller-runtime. It reaches the API server through the network
+its &lt;code&gt;Client&lt;/code&gt; is given, declares custom resources as Go values, reflects their CRDs from Go
 types, and reconciles their objects, or those of Kubernetes&amp;rsquo; own kinds, on
 client-go&amp;rsquo;s informers, work queue and leader election. The end user&amp;rsquo;s
 &lt;code&gt;Init&lt;/code&gt; fills a &lt;code&gt;kube.Connection&lt;/code&gt; and sources &lt;code&gt;kube.Settings&lt;/code&gt;, builds a

@@ -10,8 +10,11 @@ dependency keeps failing.
 
 Service code, generated clients and SDKs take the `*http.Client` as they
 take any other, and depend on `net/http`'s type rather than on this package,
-so a unit test of that code passes any client. The client dials only
-through the network it is given, so a test runs the end user's whole App, its
+so a unit test of that code passes any client. `NewClient(s, n, settings)`
+takes the network it dials through, `n`, right after `s`: an
+`httpclient.Network`, which lists only `DialTCP`, and `Init` passes its host.
+The client dials only
+through that network, so a test runs the end user's whole App, its
 outbound calls included, on humustest's network, as [Testing](#testing)
 shows.
 

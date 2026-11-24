@@ -467,7 +467,9 @@ func initWith(ctx context.Context, s *humus.Setup, h humus.Host, open openStore)
 ```
 
 `initWith` takes the store's opener, so the in-process tests can give the
-App a store of their own.
+App a store of their own. `Init` is given the host, `h`, and hands it on as
+the network the pool, the `Producer`s and the Service dial through, and the
+probes' `httphealth` server listens through.
 
 ## The projector and the Service
 

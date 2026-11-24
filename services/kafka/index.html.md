@@ -191,8 +191,10 @@ humus.Main(Init, humus.WithTelemetry(buildTelemetry))
 again, rejects a nil `Processor`, and builds the Service's instruments. It
 builds no client and registers no `OnStop` function, so an `Init` that fails
 after it leaks nothing. `Serve` builds the franz-go client, dials every
-broker through the `DialTCP` of the network `NewService` is given, joins the
-group and starts processing. Dialling through that network is what puts the Service on a test's network, with no
+broker through the `DialTCP` of the network `NewService(s, n, settings, p)`
+is given, `n`, joins the group and starts processing. `n` is a
+`kafka.Network`, which lists only `DialTCP`, and `Init` passes its host.
+`NewProducer(s, n, settings)` takes the same network the same way. Dialling through that network is what puts the Service on a test's network, with no
 test-only seam.
 
 `Init` returns the consumer along with any other Service the process runs,
