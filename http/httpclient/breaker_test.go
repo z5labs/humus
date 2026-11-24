@@ -23,7 +23,7 @@ import (
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
-	"github.com/z5labs/humus/httpclient"
+	"github.com/z5labs/humus/http/httpclient"
 	"github.com/z5labs/humus/humustest"
 )
 
@@ -46,7 +46,7 @@ func withoutBreaker(settings httpclient.Settings) httpclient.Settings {
 func breakerRecords(tel *humustest.Telemetry) []sdklog.Record {
 	var out []sdklog.Record
 	for _, r := range tel.Logs() {
-		if r.InstrumentationScope().Name == "github.com/z5labs/humus/httpclient" {
+		if r.InstrumentationScope().Name == "github.com/z5labs/humus/http/httpclient" {
 			out = append(out, r)
 		}
 	}

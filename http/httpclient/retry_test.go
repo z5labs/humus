@@ -28,7 +28,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/z5labs/humus/httpclient"
+	"github.com/z5labs/humus/http/httpclient"
 	"github.com/z5labs/humus/humustest"
 )
 

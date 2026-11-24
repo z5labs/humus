@@ -414,7 +414,7 @@
 //
 // The client records four instruments of humus's own, for its breaker and
 // its retries, with the Setup's MeterProvider, in the scope
-// github.com/z5labs/humus/httpclient. Every data point carries the
+// github.com/z5labs/humus/http/httpclient. Every data point carries the
 // dependency's server.address and server.port, of BaseURL's origin, and
 // nothing per call, such as a method or a route. Every other attribute's
 // value is the String() of bedrock's own type:
@@ -448,7 +448,7 @@
 // has no setting to turn them off.
 //
 // The client logs through the Setup's LoggerProvider, with the logger
-// github.com/z5labs/humus/httpclient, one record for each change of the
+// github.com/z5labs/humus/http/httpclient, one record for each change of the
 // breaker's state, in the context of the call that made it: "circuit
 // breaker open" at WARN, and "circuit breaker half-open" and "circuit
 // breaker closed" at INFO. Each has the dependency's server.address and

@@ -21,7 +21,7 @@ import (
 	"github.com/z5labs/humus/example/rabbitmq/mailer/cases"
 )
 
-const providerScope = `otel_scope_name="github.com/z5labs/humus/httpclient"`
+const providerScope = `otel_scope_name="github.com/z5labs/humus/http/httpclient"`
 
 var alertRules = []struct {
 	title  string

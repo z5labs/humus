@@ -29,7 +29,7 @@ import (
 )
 
 const (
-	httpclientScope = "github.com/z5labs/humus/httpclient"
+	httpclientScope = "github.com/z5labs/humus/http/httpclient"
 	rabbitmqScope   = "github.com/z5labs/humus/queue/rabbitmq"
 	workerScope     = "github.com/z5labs/humus/example/rabbitmq/mailer/worker"
 )

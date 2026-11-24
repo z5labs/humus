@@ -174,7 +174,7 @@ for _, v := range recorded {
 | `rpc.server.call.duration` | otelgrpc, in each service, for each call |
 | `rpc.client.call.duration` | otelgrpc, in the wallet, for each attempt at the ledger |
 | `http.client.request.duration` | the wallet's Client for the key set, for each attempt |
-| `humus.circuit.state`, `humus.circuit.calls`, `humus.circuit.transitions`, `humus.retry.decisions` | the wallet's two Clients, scopes `github.com/z5labs/humus/grpc/grpcclient` and `github.com/z5labs/humus/httpclient` |
+| `humus.circuit.state`, `humus.circuit.calls`, `humus.circuit.transitions`, `humus.retry.decisions` | the wallet's two Clients, scopes `github.com/z5labs/humus/grpc/grpcclient` and `github.com/z5labs/humus/http/httpclient` |
 | `ledger.transfers`, by `ledger.transfer.outcome` | the ledger, for each transfer it answers: `posted`, `replayed` or `refused` |
 | `ledger.watches` | the ledger, the watches open on it |
 | `wallet.watches.reopened` | the wallet, each watch of the ledger's it opened again |

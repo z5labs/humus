@@ -19,14 +19,14 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/z5labs/humus"
-	"github.com/z5labs/humus/httpclient"
+	"github.com/z5labs/humus/http/httpclient"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/job"
 )
 
 // scope is the instrumentation scope of the client's own instruments and
 // log records.
-const scope = "github.com/z5labs/humus/httpclient"
+const scope = "github.com/z5labs/humus/http/httpclient"
 
 // collect returns what tel's ManualReader collects now, or once the App has
 // exited, what its Shutdown collected.

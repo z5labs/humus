@@ -172,7 +172,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: max(humus_circuit_state{job="mailer", otel_scope_name="github.com/z5labs/humus/httpclient", humus_circuit_state="open"}) or vector(0)
+              expr: max(humus_circuit_state{job="mailer", otel_scope_name="github.com/z5labs/humus/http/httpclient", humus_circuit_state="open"}) or vector(0)
           - refId: B
             datasourceUid: __expr__
             model:

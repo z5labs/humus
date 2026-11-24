@@ -41,7 +41,7 @@ import (
 	"github.com/z5labs/humus/grpc/grpchealth"
 	"github.com/z5labs/humus/grpc/grpcserver"
 	"github.com/z5labs/humus/health"
-	"github.com/z5labs/humus/httpclient"
+	"github.com/z5labs/humus/http/httpclient"
 	"github.com/z5labs/humus/telemetry"
 )
 

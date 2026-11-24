@@ -117,7 +117,7 @@ func TestSelect_a_file_a_package_is_not_built_from_does_not_affect_a_module_in_a
 		"kube/internal/x.go",
 		"README.md",
 		"renovate.json",
-		"httpclient/client.go",
+		"http/httpclient/client.go",
 	} {
 		require.Empty(t, selected(t, mods[1:], file), file)
 	}

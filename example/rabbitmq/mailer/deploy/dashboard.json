@@ -169,7 +169,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "sum by (humus_circuit_state) (humus_circuit_state{job=\"mailer\", otel_scope_name=\"github.com/z5labs/humus/httpclient\"})",
+          "expr": "sum by (humus_circuit_state) (humus_circuit_state{job=\"mailer\", otel_scope_name=\"github.com/z5labs/humus/http/httpclient\"})",
           "legendFormat": "{{humus_circuit_state}}"
         }
       ]
@@ -209,7 +209,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "sum by (humus_retry_decision) (rate(humus_retry_decisions{job=\"mailer\", otel_scope_name=\"github.com/z5labs/humus/httpclient\"}[$__rate_interval]))",
+          "expr": "sum by (humus_retry_decision) (rate(humus_retry_decisions{job=\"mailer\", otel_scope_name=\"github.com/z5labs/humus/http/httpclient\"}[$__rate_interval]))",
           "legendFormat": "{{humus_retry_decision}}"
         }
       ]

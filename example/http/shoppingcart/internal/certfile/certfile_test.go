@@ -19,8 +19,8 @@ import (
 	"github.com/z5labs/bedrock/host/hosttest"
 
 	"github.com/z5labs/humus/example/http/shoppingcart/internal/certfile"
+	"github.com/z5labs/humus/http/httpclient"
 	"github.com/z5labs/humus/http/httpserver"
-	"github.com/z5labs/humus/httpclient"
 	"github.com/z5labs/humus/humustest"
 )
 
