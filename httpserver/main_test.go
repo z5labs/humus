@@ -45,9 +45,7 @@ func TestDefaults_leaves_the_rest_of_the_App_unchanged(t *testing.T) {
 		}
 		httpserver.Defaults()(&a)
 
-		require.Equal(t, funcPointer(host.Listen), funcPointer(a.Host.Listen), "Host.Listen")
-		require.Equal(t, funcPointer(host.Dial), funcPointer(a.Host.Dial), "Host.Dial")
-		require.Equal(t, host.FS, a.Host.FS, "Host.FS")
+		require.Equal(t, host, a.Host, "Host")
 		require.Equal(t, funcPointer(telemetry.NoopBuilder), funcPointer(a.Telemetry), "Telemetry")
 		require.Equal(t, funcPointer(noServices), funcPointer(a.Init), "Init")
 
@@ -58,9 +56,7 @@ func TestDefaults_leaves_the_rest_of_the_App_unchanged(t *testing.T) {
 	t.Run("including an App with none of them set", func(t *testing.T) {
 		var a humus.App
 		httpserver.Defaults()(&a)
-		require.Nil(t, a.Host.Listen)
-		require.Nil(t, a.Host.Dial)
-		require.Nil(t, a.Host.FS)
+		require.Zero(t, a.Host)
 		require.Nil(t, a.Telemetry)
 		require.Nil(t, a.Init)
 	})

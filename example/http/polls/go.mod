@@ -13,7 +13,7 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.45.0
 	github.com/z5labs/bedrock v0.26.0
 	github.com/z5labs/bedrock/fit v0.26.0
-	github.com/z5labs/bedrock/host v0.26.0
+	github.com/z5labs/bedrock/host v0.27.0
 	github.com/z5labs/humus v0.18.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/log v1.47.0

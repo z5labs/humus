@@ -12,7 +12,7 @@ import (
 	"net"
 )
 
-// dialFunc dials an address, like humus.Host.Dial and kgo.Dialer's function.
+// dialFunc dials an address, like humus.Host.DialTCP and kgo.Dialer's function.
 type dialFunc func(ctx context.Context, network, address string) (net.Conn, error)
 
 // tlsDialer returns dial when cfg is nil. Otherwise it returns a dialer that

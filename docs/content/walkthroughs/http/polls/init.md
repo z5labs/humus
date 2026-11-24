@@ -32,7 +32,7 @@ and the service exits 78, naming its variable:
 func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 	d := httpserver.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
-	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.FS)) }
+	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.Filesystem)) }
 	timeout := func(name string, def time.Duration, check func(time.Duration) error) config.Value[time.Duration] {
 		return env(name).Parse(time.ParseDuration).Default(def).Validate(check)
 	}
@@ -41,9 +41,9 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 		server := d
 		server.Addr = r.Get(env("ADDR").Validate(httpserver.CheckAddr))
 		server.TLS = &tls.Config{
-			GetCertificate: r.Get(env("TLS_CERT_FILE").Validate(holdsCertificate(s.Host.FS)).FlatMap(func(certFile string) config.Value[serverCertificate] {
+			GetCertificate: r.Get(env("TLS_CERT_FILE").Validate(holdsCertificate(s.Host.Filesystem)).FlatMap(func(certFile string) config.Value[serverCertificate] {
 				return env("TLS_KEY_FILE").Parse(func(keyFile string) (serverCertificate, error) {
-					cfg, err := certfile.Config(s.Host.FS, certFile, keyFile)
+					cfg, err := certfile.Config(s.Host.Filesystem, certFile, keyFile)
 					if err != nil {
 						return nil, err
 					}
@@ -58,7 +58,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 		return settings{
 			HTTP:     server,
 			Database: r.Get(file("DATABASE_URL_FILE").Parse(databaseURL)),
-			TrustCAs: r.Get(env("FAULT_TRUST_CA_FILE").Parse(trustCAs(s.Host.FS)).Default(nil)),
+			TrustCAs: r.Get(env("FAULT_TRUST_CA_FILE").Parse(trustCAs(s.Host.Filesystem)).Default(nil)),
 		}
 	}).Read(ctx)
 	if err != nil {
@@ -122,11 +122,11 @@ volumeMounts:
     readOnly: true
 ```
 
-Each is read through the Host's `FS`, so the tests can give the service
+Each is read through the Host's `Filesystem`, so the tests can give the service
 files of their own:
 
 ```go
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {
@@ -151,7 +151,7 @@ func databaseURL(b []byte) (*pgxpool.Config, error) {
 Its error quotes nothing of the file, so no password reaches a log.
 
 ```go
-func holdsCertificate(fsys humus.FS) func(name string) error {
+func holdsCertificate(fsys humus.Filesystem) func(name string) error {
 	return func(name string) error {
 		b, err := readFile(fsys)(name)
 		if err != nil {
@@ -172,7 +172,7 @@ func holdsCertificate(fsys humus.FS) func(name string) error {
 ```
 
 ```go
-func trustCAs(fsys humus.FS) func(name string) (*x509.CertPool, error) {
+func trustCAs(fsys humus.Filesystem) func(name string) (*x509.CertPool, error) {
 	return func(name string) (*x509.CertPool, error) {
 		if name == "" {
 			return nil, nil
@@ -197,7 +197,7 @@ func trustCAs(fsys humus.FS) func(name string) (*x509.CertPool, error) {
 ```go
 const interval = 30 * time.Second
 
-func Config(fsys humus.FS, certFile, keyFile string) (*tls.Config, error) {
+func Config(fsys humus.Filesystem, certFile, keyFile string) (*tls.Config, error) {
 	f := &files{fs: fsys, certFile: certFile, keyFile: keyFile, checked: time.Now()}
 	p, err := f.read(nil)
 	if err != nil {
@@ -268,8 +268,9 @@ func (f *files) read(last *pair) (*pair, error) {
 
 ## The store and the listener, through the Host
 
-`openPostgres` opens the pool and the listener. Both dial through the
-Host, and leave the host unresolved so the Host's `Dial` resolves it too.
+`openPostgres` opens the pool and the listener. Both dial TCP through the
+Host, and a Unix socket with a `net.Dialer` of their own. They leave the
+host unresolved so the Host's `DialTCP` resolves it too.
 The listener gets a copy of the pool's connection settings, and `OnStop`
 closes the pool:
 
@@ -287,7 +288,13 @@ type openBackend func(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) 
 
 ```go
 func openPostgres(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (backend, error) {
-	cfg.ConnConfig.DialFunc = s.Host.Dial
+	cfg.ConnConfig.DialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if network == "unix" {
+			var d net.Dialer
+			return d.DialContext(ctx, network, addr)
+		}
+		return s.Host.DialTCP(ctx, network, addr)
+	}
 	cfg.ConnConfig.LookupFunc = func(_ context.Context, host string) ([]string, error) {
 		return []string{host}, nil
 	}

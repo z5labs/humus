@@ -294,7 +294,7 @@ func (a *apiServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func startAPIServer(t *testing.T, c *target, api http.Handler) {
 	t.Helper()
-	l, err := c.h.Listen("tcp", apiServerAddr)
+	l, err := c.h.ListenTCP(t.Context(), "tcp", apiServerAddr)
 	require.NoError(t, err)
 	srv := &http.Server{
 		Handler:   api,
@@ -334,7 +334,7 @@ func TestInit_reaches_the_API_server_with_the_service_accounts_token_and_is_read
 func TestOpenPostgres_dials_through_the_Host(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		c := newTarget(t, nil)
-		l, err := c.h.Listen("tcp", "postgres.internal:5432")
+		l, err := c.h.ListenTCP(t.Context(), "tcp", "postgres.internal:5432")
 		require.NoError(t, err)
 		accepted := make(chan struct{})
 		go func() {

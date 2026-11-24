@@ -121,7 +121,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 	return config.Struct(func(r *config.Resolver) settings {
 		set := settings{
 			Command: args.command,
-			Key:     r.Get(args.value("key").Parse(readFile(s.Host.FS)).Parse(parseKey)),
+			Key:     r.Get(args.value("key").Parse(readFile(s.Host.Filesystem)).Parse(parseKey)),
 		}
 		if args.command != signCommand {
 			return set
@@ -300,7 +300,7 @@ func positive(d time.Duration) error {
 	return nil
 }
 
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {

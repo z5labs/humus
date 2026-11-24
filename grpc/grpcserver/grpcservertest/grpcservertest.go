@@ -43,7 +43,7 @@ func NewClient(t testing.TB, h *humustest.Host, address string, roots *x509.Cert
 	}
 
 	dial := func(ctx context.Context, addr string) (net.Conn, error) {
-		return h.Dial(ctx, "tcp", addr)
+		return h.DialTCP(ctx, "tcp", addr)
 	}
 	conn, err := grpc.NewClient("passthrough:///"+address, append([]grpc.DialOption{
 		grpc.WithContextDialer(dial),

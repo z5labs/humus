@@ -149,7 +149,7 @@ type settings struct {
 
 func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
-	file := readFile(s.Host.FS)
+	file := readFile(s.Host.Filesystem)
 
 	read, err := config.Struct(func(r *config.Resolver) settings {
 		consumer := rabbitmq.DefaultSettings()
@@ -189,7 +189,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 			},
 			Probes: httphealth.Settings{
 				Addr: r.Get(env("PROBES_ADDR").Validate(httphealth.CheckAddr)),
-				TLS:  r.Get(env("PROBES_TLS_PEM_FILE").Parse(pemTLS(s.Host.FS)).Validate(httphealth.CheckTLS)),
+				TLS:  r.Get(env("PROBES_TLS_PEM_FILE").Parse(pemTLS(s.Host.Filesystem)).Validate(httphealth.CheckTLS)),
 			},
 		}
 	}).Read(ctx)
@@ -245,7 +245,7 @@ func positive(n int) error {
 	return nil
 }
 
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {
@@ -276,7 +276,7 @@ func trusting(roots *x509.CertPool) *tls.Config {
 	return &tls.Config{RootCAs: roots}
 }
 
-func pemTLS(fsys humus.FS) func(name string) (*tls.Config, error) {
+func pemTLS(fsys humus.Filesystem) func(name string) (*tls.Config, error) {
 	return func(name string) (*tls.Config, error) {
 		return certfile.Config(fsys, name, name)
 	}

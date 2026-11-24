@@ -32,7 +32,7 @@ and the mailer exits 78, naming its variable:
 ```go
 func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
-	file := readFile(s.Host.FS)
+	file := readFile(s.Host.Filesystem)
 
 	read, err := config.Struct(func(r *config.Resolver) settings {
 		consumer := rabbitmq.DefaultSettings()
@@ -72,7 +72,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 			},
 			Probes: httphealth.Settings{
 				Addr: r.Get(env("PROBES_ADDR").Validate(httphealth.CheckAddr)),
-				TLS:  r.Get(env("PROBES_TLS_PEM_FILE").Parse(pemTLS(s.Host.FS)).Validate(httphealth.CheckTLS)),
+				TLS:  r.Get(env("PROBES_TLS_PEM_FILE").Parse(pemTLS(s.Host.Filesystem)).Validate(httphealth.CheckTLS)),
 			},
 		}
 	}).Read(ctx)
@@ -123,10 +123,10 @@ if read.Consumer.Concurrency > read.Consumer.Prefetch {
 ## The secrets, as files
 
 The password and the API key are files mounted from Secrets, read through
-the Host's `FS`, so the tests can give the mailer files of their own:
+the Host's `Filesystem`, so the tests can give the mailer files of their own:
 
 ```go
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {
@@ -307,7 +307,7 @@ Its certificate and key are one PEM file, read again when it changes, so a
 renewal needs no restart:
 
 ```go
-func pemTLS(fsys humus.FS) func(name string) (*tls.Config, error) {
+func pemTLS(fsys humus.Filesystem) func(name string) (*tls.Config, error) {
 	return func(name string) (*tls.Config, error) {
 		return certfile.Config(fsys, name, name)
 	}
@@ -315,7 +315,7 @@ func pemTLS(fsys humus.FS) func(name string) (*tls.Config, error) {
 ```
 
 ```go
-func Config(fsys humus.FS, certFile, keyFile string) (*tls.Config, error) {
+func Config(fsys humus.Filesystem, certFile, keyFile string) (*tls.Config, error) {
 	f := &files{fs: fsys, certFile: certFile, keyFile: keyFile}
 	if _, err := f.certificate(); err != nil {
 		return nil, err

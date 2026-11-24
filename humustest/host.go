@@ -32,14 +32,9 @@ func NewHost(t testing.TB, opts ...hosttest.Option) *Host {
 }
 
 // Host returns the humus.Host to run an App on, like bedrocktest's
-// Process.Process: the Host's Listen, ListenPacket, Dial and FS.
+// Process.Process: humus.Host{IPNetwork: h, Filesystem: h.Filesystem()}.
 func (h *Host) Host() humus.Host {
-	return humus.Host{
-		Listen:       h.Listen,
-		ListenPacket: h.ListenPacket,
-		Dial:         h.Dial,
-		FS:           h.FS(),
-	}
+	return humus.Host{IPNetwork: h, Filesystem: h.Filesystem()}
 }
 
 // HTTPClient returns an http.Client that dials the Host, with keep-alives
@@ -49,25 +44,30 @@ func (h *Host) Host() humus.Host {
 func (h *Host) HTTPClient() *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
-			DialContext:       h.Dial,
+			DialContext:       h.DialTCP,
 			DisableKeepAlives: true,
 		},
 	}
 }
 
-// Listen is hosttest.Host's Listen.
-func (h *Host) Listen(network, address string) (net.Listener, error) {
-	return h.h.Listen(network, address)
+// ListenTCP is hosttest.Host's ListenTCP.
+func (h *Host) ListenTCP(ctx context.Context, network, address string) (net.Listener, error) {
+	return h.h.ListenTCP(ctx, network, address)
 }
 
-// ListenPacket is hosttest.Host's ListenPacket.
-func (h *Host) ListenPacket(network, address string) (net.PacketConn, error) {
-	return h.h.ListenPacket(network, address)
+// DialTCP is hosttest.Host's DialTCP.
+func (h *Host) DialTCP(ctx context.Context, network, address string) (net.Conn, error) {
+	return h.h.DialTCP(ctx, network, address)
 }
 
-// Dial is hosttest.Host's Dial.
-func (h *Host) Dial(ctx context.Context, network, address string) (net.Conn, error) {
-	return h.h.Dial(ctx, network, address)
+// ListenUDP is hosttest.Host's ListenUDP.
+func (h *Host) ListenUDP(ctx context.Context, network, address string) (net.PacketConn, error) {
+	return h.h.ListenUDP(ctx, network, address)
+}
+
+// DialUDP is hosttest.Host's DialUDP.
+func (h *Host) DialUDP(ctx context.Context, network, address string) (net.Conn, error) {
+	return h.h.DialUDP(ctx, network, address)
 }
 
 // Listening is hosttest.Host's Listening.
@@ -75,9 +75,9 @@ func (h *Host) Listening(address string) <-chan struct{} {
 	return h.h.Listening(address)
 }
 
-// FS is hosttest.Host's FS, as a humus.FS.
-func (h *Host) FS() humus.FS {
-	return h.h.FS()
+// Filesystem is hosttest.Host's Filesystem, which is a humus.Filesystem.
+func (h *Host) Filesystem() *hosttest.Filesystem {
+	return h.h.Filesystem()
 }
 
 // Path is hosttest.Host's Path.

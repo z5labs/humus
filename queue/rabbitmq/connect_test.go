@@ -74,7 +74,7 @@ func TestConnect_fails_at_ConnectTimeout_when_the_broker_never_answers(t *testin
 
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
-		l, err := h.Listen("tcp", "rabbit:5672")
+		l, err := h.ListenTCP(t.Context(), "tcp", "rabbit:5672")
 		require.NoError(t, err)
 		defer func() { _ = l.Close() }()
 		closed := silent(t, l)
@@ -103,7 +103,7 @@ func TestConnect_names_Addrs_host_when_TLS_leaves_ServerName_empty(t *testing.T)
 		h := humustest.NewHost(t)
 		ca := humustest.NewCA(t)
 		cert := ca.Issue(t, "rabbit")
-		l, err := h.Listen("tcp", "rabbit:5671")
+		l, err := h.ListenTCP(t.Context(), "tcp", "rabbit:5671")
 		require.NoError(t, err)
 		defer func() { _ = l.Close() }()
 
@@ -147,7 +147,7 @@ func TestConnect_fails_the_TLS_handshake_at_ConnectTimeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
 		ca := humustest.NewCA(t)
-		l, err := h.Listen("tcp", "rabbit:5671")
+		l, err := h.ListenTCP(t.Context(), "tcp", "rabbit:5671")
 		require.NoError(t, err)
 		defer func() { _ = l.Close() }()
 		closed := silent(t, l)
@@ -181,7 +181,7 @@ func TestConnect_fails_before_dialling_when_TLS_needs_a_host_Addr_lacks(t *testi
 		c.TLS = &tls.Config{MinVersion: tls.VersionTLS12}
 		conn, err := rabbitmq.Connect(t.Context(), h.Host(), c)
 		require.Nil(t, conn)
-		// The Host's Dial would fail with a *net.OpError.
+		// The Host's DialTCP would fail with a *net.OpError.
 		var addrErr *net.AddrError
 		require.ErrorAs(t, err, &addrErr)
 		var opErr *net.OpError
@@ -242,7 +242,7 @@ func TestConnect_reports_a_timeout_after_Connection_Start_as_a_timeout(t *testin
 
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
-		l, err := h.Listen("tcp", "rabbit:5672")
+		l, err := h.ListenTCP(t.Context(), "tcp", "rabbit:5672")
 		require.NoError(t, err)
 		defer func() { _ = l.Close() }()
 		closed := startOnly(t, l)
@@ -271,7 +271,7 @@ func TestConnect_stops_the_AMQP_handshake_when_ctx_is_cancelled(t *testing.T) {
 
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
-		l, err := h.Listen("tcp", "rabbit:5672")
+		l, err := h.ListenTCP(t.Context(), "tcp", "rabbit:5672")
 		require.NoError(t, err)
 		defer func() { _ = l.Close() }()
 		closed := silent(t, l)
@@ -298,7 +298,7 @@ func TestConnect_stops_the_AMQP_handshake_at_ctxs_earlier_deadline(t *testing.T)
 
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
-		l, err := h.Listen("tcp", "rabbit:5672")
+		l, err := h.ListenTCP(t.Context(), "tcp", "rabbit:5672")
 		require.NoError(t, err)
 		defer func() { _ = l.Close() }()
 		closed := silent(t, l)

@@ -169,7 +169,7 @@ The kubelet sets `KUBERNETES_SERVICE_HOST` and `KUBERNETES_SERVICE_PORT` in
 every container, and mounts the service account's CA and token in
 `/var/run/secrets/kubernetes.io/serviceaccount/`. The end user's `inPod`
 sources `Server` from the two variables, and reads the CA and the token
-through `s.Host.FS`:
+through `s.Host.Filesystem`:
 
 ```go
 // serviceAccount is where the kubelet mounts the pod's service account: its
@@ -180,11 +180,11 @@ const serviceAccount = "/var/run/secrets/kubernetes.io/serviceaccount/"
 ```go
 // inPod fills the Connection of a pod from what the kubelet gives every
 // container: the API server's address in two variables, and the service
-// account's CA and token in dir, read through s.Host.FS.
+// account's CA and token in dir, read through s.Host.Filesystem.
 func inPod(ctx context.Context, s *humus.Setup, dir string) (kube.Connection, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
-	ca, err := readFile(s.Host.FS, dir+"ca.crt")
+	ca, err := readFile(s.Host.Filesystem, dir+"ca.crt")
 	if err != nil {
 		return kube.Connection{}, err
 	}
@@ -200,7 +200,7 @@ func inPod(ctx context.Context, s *humus.Setup, dir string) (kube.Connection, er
 			TLS:    &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
 			// Read again at most once a minute, so a token the kubelet rotates is picked up.
 			Token: func(context.Context) (string, error) {
-				b, err := readFile(s.Host.FS, dir+"token")
+				b, err := readFile(s.Host.Filesystem, dir+"token")
 				return string(bytes.TrimSpace(b)), err
 			},
 		}
@@ -209,11 +209,11 @@ func inPod(ctx context.Context, s *humus.Setup, dir string) (kube.Connection, er
 ```
 
 `readFile` is the end user's helper, which reads a whole file through a
-`humus.FS`:
+`humus.Filesystem`:
 
 ```go
 // readFile reads the whole file name through fsys.
-func readFile(fsys humus.FS, name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem, name string) ([]byte, error) {
 	f, err := fsys.Open(name)
 	if err != nil {
 		return nil, err
@@ -244,14 +244,14 @@ it doesn't, as when `Server` is a load balancer in front of the API server.
 
 On a laptop, the end user fills the Connection from a kubeconfig's embedded
 data, as kind and k3s write it, with client-go's `clientcmd.Load`. The end
-user reads the file, through the Host's FS:
+user reads the file, through the Host's Filesystem:
 
 ```go
 // fromKubeconfig fills a Connection from the kubeconfig at path, for local
 // development: the API server, CA and client certificate of its current
 // context, embedded in the file, as kind and k3s write them. It reads the
 // file through fsys.
-func fromKubeconfig(fsys humus.FS, path string) (kube.Connection, error) {
+func fromKubeconfig(fsys humus.Filesystem, path string) (kube.Connection, error) {
 	b, err := readFile(fsys, path)
 	if err != nil {
 		return kube.Connection{}, err
@@ -305,7 +305,7 @@ clientset `kubernetes.NewForConfig` returns, as `Init` builds, and the
 dynamic and metadata clients. Every one of them reaches the API server
 through the Client's transport, which:
 
-- dials with `s.Host.Dial`;
+- dials with `s.Host.DialTCP`;
 - runs TLS with a clone of `Connection.TLS`;
 - uses no proxy, whatever the environment says;
 - over HTTP/2, sends a ping after 30s without a frame, and gives up on the

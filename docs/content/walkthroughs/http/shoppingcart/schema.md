@@ -72,7 +72,7 @@ type settings struct {
 
 func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
-	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.FS)) }
+	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.Filesystem)) }
 
 	return config.Struct(func(r *config.Resolver) settings {
 		return settings{
@@ -120,12 +120,19 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 }
 ```
 
-The job connects through the Host, and runs tern's `Migrator`:
+The job connects over TCP through the Host, or to a Unix socket with a
+`net.Dialer` of its own, and runs tern's `Migrator`:
 
 ```go
 func run(ctx context.Context, s *humus.Setup, set settings) (err error) {
 	cfg := set.Database
-	cfg.DialFunc = s.Host.Dial
+	cfg.DialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if network == "unix" {
+			var d net.Dialer
+			return d.DialContext(ctx, network, addr)
+		}
+		return s.Host.DialTCP(ctx, network, addr)
+	}
 	cfg.LookupFunc = func(_ context.Context, host string) ([]string, error) {
 		return []string{host}, nil
 	}

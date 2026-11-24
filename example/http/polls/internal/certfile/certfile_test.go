@@ -55,7 +55,7 @@ func newHost(t *testing.T, c *humustest.Certificate) *humustest.Host {
 
 func write(t *testing.T, h *humustest.Host, name string, data []byte) {
 	t.Helper()
-	f, err := h.FS().OpenFile(h.Path(name), os.O_WRONLY|os.O_TRUNC, 0)
+	f, err := h.Filesystem().OpenFile(h.Path(name), os.O_WRONLY|os.O_TRUNC, 0)
 	require.NoError(t, err)
 	_, err = f.Write(data)
 	require.NoError(t, err)
@@ -71,7 +71,7 @@ func renew(t *testing.T, h *humustest.Host, c *humustest.Certificate) {
 
 func config(t *testing.T, h *humustest.Host) *tls.Config {
 	t.Helper()
-	cfg, err := certfile.Config(h.FS(), h.Path(certFile), h.Path(keyFile))
+	cfg, err := certfile.Config(h.Filesystem(), h.Path(certFile), h.Path(keyFile))
 	require.NoError(t, err)
 	return cfg
 }
@@ -190,7 +190,7 @@ func TestConfig(t *testing.T) {
 					require.NoError(t, err)
 					require.True(t, got.Equal(old.TLS().Leaf))
 
-					require.NoError(t, h.FS().Remove(h.Path(keyFile)))
+					require.NoError(t, h.Filesystem().Remove(h.Path(keyFile)))
 					time.Sleep(30 * time.Second)
 					got, err = peerCertificate(t, cfg, ca)
 					require.NoError(t, err)
@@ -199,7 +199,7 @@ func TestConfig(t *testing.T) {
 					renewed := ca.Issue(t, serverName)
 					certPEM, keyPEM := encode(t, renewed)
 					write(t, h, certFile, certPEM)
-					f, err := h.FS().OpenFile(h.Path(keyFile), os.O_WRONLY|os.O_CREATE, 0o600)
+					f, err := h.Filesystem().OpenFile(h.Path(keyFile), os.O_WRONLY|os.O_CREATE, 0o600)
 					require.NoError(t, err)
 					_, err = f.Write(keyPEM)
 					require.NoError(t, err)
@@ -220,7 +220,7 @@ func TestConfig(t *testing.T) {
 			_, keyPEM := encode(t, ca.Issue(t, serverName))
 			h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{certFile: certPEM, keyFile: keyPEM}))
 
-			_, err := certfile.Config(h.FS(), h.Path(certFile), h.Path(keyFile))
+			_, err := certfile.Config(h.Filesystem(), h.Path(certFile), h.Path(keyFile))
 			require.ErrorContains(t, err, h.Path(certFile))
 		})
 	})
@@ -231,7 +231,7 @@ func TestConfig(t *testing.T) {
 			certPEM, _ := encode(t, ca.Issue(t, serverName))
 			h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{certFile: certPEM}))
 
-			_, err := certfile.Config(h.FS(), h.Path(certFile), h.Path(keyFile))
+			_, err := certfile.Config(h.Filesystem(), h.Path(certFile), h.Path(keyFile))
 			require.ErrorIs(t, err, os.ErrNotExist)
 		})
 	})
@@ -250,7 +250,7 @@ func TestConfig(t *testing.T) {
 }
 
 type gatedFS struct {
-	humus.FS
+	humus.Filesystem
 	name   string
 	armed  atomic.Bool
 	opened chan struct{}
@@ -258,7 +258,7 @@ type gatedFS struct {
 }
 
 func (g *gatedFS) Open(name string) (*os.File, error) {
-	f, err := g.FS.Open(name)
+	f, err := g.Filesystem.Open(name)
 	if name == g.name && g.armed.CompareAndSwap(true, false) {
 		close(g.opened)
 		<-g.gate
@@ -268,19 +268,19 @@ func (g *gatedFS) Open(name string) (*os.File, error) {
 
 func renameInto(t *testing.T, h *humustest.Host, name string, data []byte) {
 	t.Helper()
-	tmp, err := h.FS().CreateTemp(filepath.Dir(h.Path(name)), "renewed-*")
+	tmp, err := h.Filesystem().CreateTemp(filepath.Dir(h.Path(name)), "renewed-*")
 	require.NoError(t, err)
 	_, err = tmp.Write(data)
 	require.NoError(t, err)
 	require.NoError(t, tmp.Close())
-	require.NoError(t, h.FS().Rename(tmp.Name(), h.Path(name)))
+	require.NoError(t, h.Filesystem().Rename(tmp.Name(), h.Path(name)))
 }
 
 func TestConfig_a_slow_read_that_finishes_after_a_newer_one_keeps_the_newer_pair(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
 		h := newHost(t, ca.Issue(t, serverName))
-		fsys := &gatedFS{FS: h.FS(), name: h.Path(keyFile), opened: make(chan struct{}), gate: make(chan struct{})}
+		fsys := &gatedFS{Filesystem: h.Filesystem(), name: h.Path(keyFile), opened: make(chan struct{}), gate: make(chan struct{})}
 		cfg, err := certfile.Config(fsys, h.Path(certFile), h.Path(keyFile))
 		require.NoError(t, err)
 

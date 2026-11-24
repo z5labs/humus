@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/circuit"
+	"github.com/z5labs/bedrock/host/hosttest"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -84,13 +85,13 @@ func TestPublisher_fails_at_once_once_the_breaker_opens(t *testing.T) {
 			mu    sync.Mutex
 			dials int
 		)
-		dial := host.Dial
-		host.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		dial := host.DialTCP
+		host.IPNetwork = hosttest.Seams{Network: host.IPNetwork, OnDialTCP: func(ctx context.Context, network, address string) (net.Conn, error) {
 			mu.Lock()
 			dials++
 			mu.Unlock()
 			return dial(ctx, network, address)
-		}
+		}}
 		tel := humustest.NewTelemetry()
 		sdk, err := tel.Builder()(t.Context(), bedrock.Process{}, nil)
 		require.NoError(t, err)

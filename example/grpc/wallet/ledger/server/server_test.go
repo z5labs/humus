@@ -148,7 +148,7 @@ func serveWith(t *testing.T, st server.Store, tel telemetry.SDK) ledgerpb.Ledger
 	t.Helper()
 	ca := humustest.NewCA(t)
 	h := humustest.NewHost(t)
-	l, err := h.Listen("tcp", "ledger:9090")
+	l, err := h.ListenTCP(t.Context(), "tcp", "ledger:9090")
 	require.NoError(t, err)
 
 	srv := grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{

@@ -68,13 +68,13 @@ func readSettings(ctx context.Context, s *humus.Setup) (httpserver.Settings, err
 		settings := httpserver.DefaultSettings()
 		settings.Addr = r.Get(env("ADDR").Validate(httpserver.CheckAddr))
 		settings.TLS = r.Get(env("TLS_CERT_FILE").FlatMap(func(certFile string) config.Value[*tls.Config] {
-			return env("TLS_KEY_FILE").Parse(serverTLS(s.Host.FS, certFile))
+			return env("TLS_KEY_FILE").Parse(serverTLS(s.Host.Filesystem, certFile))
 		}).Validate(httpserver.CheckTLS))
 		return settings
 	}).Read(ctx)
 }
 
-func serverTLS(fsys humus.FS, certFile string) func(keyFile string) (*tls.Config, error) {
+func serverTLS(fsys humus.Filesystem, certFile string) func(keyFile string) (*tls.Config, error) {
 	return func(keyFile string) (*tls.Config, error) {
 		certPEM, err := readFile(fsys, certFile)
 		if err != nil {
@@ -92,7 +92,7 @@ func serverTLS(fsys humus.FS, certFile string) func(keyFile string) (*tls.Config
 	}
 }
 
-func readFile(fsys humus.FS, name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem, name string) ([]byte, error) {
 	f, err := fsys.Open(name)
 	if err != nil {
 		return nil, err

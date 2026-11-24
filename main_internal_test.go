@@ -8,7 +8,6 @@ package humus
 import (
 	"context"
 	"encoding/json"
-	"net"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -76,10 +75,7 @@ func runUntilSIGTERM(t *testing.T, app App) (*bedrocktest.Process, bedrock.ExitS
 func TestMainApp_has_Mains_defaults(t *testing.T) {
 	app := mainApp(noInit)
 
-	require.Equal(t, funcPointer(net.Listen), funcPointer(app.Host.Listen), "Host.Listen is OSHost's")
-	require.Equal(t, funcPointer(net.ListenPacket), funcPointer(app.Host.ListenPacket), "Host.ListenPacket is OSHost's")
-	require.NotNil(t, app.Host.Dial, "Host.Dial is OSHost's")
-	require.Equal(t, host.OSFS{}, app.Host.FS, "Host.FS is OSHost's")
+	require.Equal(t, OSHost(), app.Host, "the Host is OSHost")
 	require.Equal(t, 20*time.Second, app.ShutdownGracePeriod)
 	require.Nil(t, app.Drain, "Main has no drain")
 	require.Nil(t, app.Faults, "Main has no failure injection")
@@ -103,7 +99,7 @@ func TestMainApp_applies_opts_in_order_after_the_defaults(t *testing.T) {
 			order = append(order, name+"@"+a.ShutdownGracePeriod.String())
 		}
 	}
-	h := Host{FS: host.OSFS{}}
+	h := Host{Filesystem: host.OSFilesystem{}}
 
 	app := mainApp(noInit,
 		record("first"),
@@ -119,7 +115,7 @@ func TestMainApp_applies_opts_in_order_after_the_defaults(t *testing.T) {
 
 	require.Equal(t, []string{"first@20s", "second@1s", "third@2s"}, order)
 	require.Equal(t, 2*time.Second, app.ShutdownGracePeriod, "the later Option wins")
-	require.Nil(t, app.Host.Listen, "WithHost replaced OSHost")
+	require.Equal(t, h, app.Host, "WithHost replaced OSHost")
 	require.Equal(t, funcPointer(telemetry.NoopBuilder), funcPointer(app.Telemetry))
 	require.NotNil(t, app.Drain)
 	require.Equal(t, funcPointer(noFaults), funcPointer(app.Faults))

@@ -30,6 +30,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/circuit"
+	"github.com/z5labs/bedrock/host/hosttest"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/httpclient"
@@ -264,7 +265,7 @@ func newEnv(t *testing.T, answer func(*http.Request, string, http.ResponseWriter
 		tel:   humustest.NewTelemetry(),
 		key:   rand.Text(),
 	}
-	l, err := e.host.Listen("tcp", ":8443")
+	l, err := e.host.ListenTCP(t.Context(), "tcp", ":8443")
 	require.NoError(t, err)
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
@@ -674,14 +675,14 @@ func (e *env) heldRun(t *testing.T, period time.Time, run context.Context, a *an
 	settings.TLS = &tls.Config{RootCAs: e.ca.Pool()}
 	sdk := e.sdk(t)
 	host := e.host.Host()
-	dial := host.Dial
-	host.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+	dial := host.DialTCP
+	host.IPNetwork = hosttest.Seams{Network: host.IPNetwork, OnDialTCP: func(ctx context.Context, network, address string) (net.Conn, error) {
 		c, err := dial(ctx, network, address)
 		if err != nil {
 			return nil, err
 		}
 		return &heldConn{Conn: c, run: run, answered: a}, nil
-	}
+	}}
 	client, err := payments.NewClient(&humus.Setup{Host: host, Telemetry: sdk}, settings, e.key)
 	require.NoError(t, err)
 	return billing.Run{Invoices: e.store, Payments: client, Period: period, Concurrency: 1, Telemetry: sdk}

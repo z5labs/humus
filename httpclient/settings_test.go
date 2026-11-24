@@ -365,13 +365,6 @@ func TestNewClient_the_Setup(t *testing.T) {
 		require.EqualError(t, err, "httpclient: NewClient: the Setup must not be nil")
 	})
 
-	t.Run("a Host with no Dial is rejected, rather than dialling the real network", func(t *testing.T) {
-		t.Parallel()
-		c, err := httpclient.NewClient(&humus.Setup{Telemetry: telemetry.Noop()}, settings)
-		require.Nil(t, c)
-		require.EqualError(t, err, "httpclient: NewClient: the Setup's Host.Dial must not be nil")
-	})
-
 	t.Run("a Telemetry with no LoggerProvider is rejected, rather than panic", func(t *testing.T) {
 		t.Parallel()
 		tel := telemetry.Noop()
@@ -393,7 +386,6 @@ func TestNewClient_the_Setup(t *testing.T) {
 	t.Run("alongside the bad fields", func(t *testing.T) {
 		t.Parallel()
 		_, err := httpclient.NewClient(&humus.Setup{}, httpclient.DefaultSettings())
-		require.ErrorContains(t, err, "the Setup's Host.Dial must not be nil")
 		require.ErrorContains(t, err, "the Setup's Telemetry.LoggerProvider must not be nil")
 		require.ErrorContains(t, err, "the Setup's Telemetry.MeterProvider must not be nil")
 		require.ErrorContains(t, err, "Settings.BaseURL must not be nil")

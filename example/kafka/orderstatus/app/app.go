@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"slices"
 	"strconv"
@@ -150,7 +151,7 @@ type sourced struct {
 
 func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
-	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.FS)) }
+	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.Filesystem)) }
 	list := func(v string) []string { return strings.Split(v, ",") }
 
 	got, err := config.Struct(func(r *config.Resolver) sourced {
@@ -179,11 +180,11 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 				},
 				Probes: httphealth.Settings{
 					Addr: r.Get(env("PROBES_ADDR").Validate(httphealth.CheckAddr)),
-					TLS:  r.Get(env("PROBES_TLS_PEM_FILE").Parse(pemTLS(s.Host.FS)).Validate(httphealth.CheckTLS)),
+					TLS:  r.Get(env("PROBES_TLS_PEM_FILE").Parse(pemTLS(s.Host.Filesystem)).Validate(httphealth.CheckTLS)),
 				},
 			},
 			KafkaCA:  r.Get(file("KAFKA_TLS_CA_FILE").Parse(certPool)),
-			KafkaTLS: r.Get(env("KAFKA_TLS_CERT_FILE").Parse(pemTLS(s.Host.FS))),
+			KafkaTLS: r.Get(env("KAFKA_TLS_CERT_FILE").Parse(pemTLS(s.Host.Filesystem))),
 			Postgres: postgres{
 				URL:      r.Get(env("POSTGRES_URL").Parse(parsePostgresURL).Validate(checkPostgresURL)),
 				Password: r.Get(file("POSTGRES_PASSWORD_FILE").Parse(secret)),
@@ -324,7 +325,13 @@ func poolConfig(p postgres) (*pgxpool.Config, error) {
 }
 
 func openPostgres(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (projector.Store, error) {
-	cfg.ConnConfig.DialFunc = s.Host.Dial
+	cfg.ConnConfig.DialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if network == "unix" {
+			var d net.Dialer
+			return d.DialContext(ctx, network, addr)
+		}
+		return s.Host.DialTCP(ctx, network, addr)
+	}
 	cfg.ConnConfig.LookupFunc = func(_ context.Context, host string) ([]string, error) {
 		return []string{host}, nil
 	}
@@ -353,7 +360,7 @@ func positive[T int | time.Duration](v T) error {
 	return nil
 }
 
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {
@@ -380,7 +387,7 @@ func certPool(pem []byte) (*x509.CertPool, error) {
 	return roots, nil
 }
 
-func pemTLS(fsys humus.FS) func(name string) (*tls.Config, error) {
+func pemTLS(fsys humus.Filesystem) func(name string) (*tls.Config, error) {
 	return func(name string) (*tls.Config, error) {
 		return certfile.Config(fsys, name, name)
 	}

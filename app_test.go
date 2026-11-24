@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -739,8 +740,41 @@ func TestApp_Run_gives_Init_the_Process_and_Host(t *testing.T) {
 		if want := []string{bedrocktest.ProgramName, "-v"}; !slices.Equal(gotArgs, want) {
 			t.Errorf("Setup.Process.Args = %q, want %q", gotArgs, want)
 		}
-		if gotHost.Listen == nil || gotHost.Dial == nil || gotHost.FS == nil {
+		if !reflect.DeepEqual(gotHost, app.Host) {
 			t.Error("Setup.Host is not the App's Host")
+		}
+	})
+}
+
+func TestApp_Run_rejects_a_Host_with_nil_fields(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		p := bedrocktest.NewProcess(t)
+		var built, ran bool
+		app := appWith(func(context.Context, *humus.Setup) ([]humus.Service, error) {
+			ran = true
+			return nil, nil
+		})
+		app.Host = humus.Host{}
+		app.Telemetry = func(context.Context, bedrock.Process, telemetry.Dialer) (telemetry.SDK, error) {
+			built = true
+			return telemetry.Noop(), nil
+		}
+
+		st := app.Run(t.Context(), p.Process())
+
+		if st.Code() != humus.ExitFailure {
+			t.Errorf("code = %d, want %d", st.Code(), humus.ExitFailure)
+		}
+		want := "humus: Host.IPNetwork is nil: build the Host with OSHost, or from the test host's parts\n" +
+			"humus: Host.Filesystem is nil: build the Host with OSHost, or from the test host's parts"
+		if st.Cause() == nil || st.Cause().Error() != want {
+			t.Errorf("cause = %v, want %q", st.Cause(), want)
+		}
+		if got := p.Stderr(); got != want+"\n" {
+			t.Errorf("stderr = %q, want %q", got, want+"\n")
+		}
+		if built || ran {
+			t.Errorf("telemetry built = %v, Init ran = %v, want neither", built, ran)
 		}
 	})
 }

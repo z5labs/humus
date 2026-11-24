@@ -633,7 +633,7 @@ func TestService_a_job_next_to_a_probes_server_ends_the_App(t *testing.T) {
 		close(finish)
 		st := <-status
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
-		_, err = h.Dial(t.Context(), "tcp", "localhost:8081")
+		_, err = h.DialTCP(t.Context(), "tcp", "localhost:8081")
 		require.Error(t, err, "the probes server outlived the job")
 	})
 }

@@ -16,7 +16,7 @@ import (
 	"github.com/z5labs/humus"
 )
 
-func Config(fsys humus.FS, name string) (*tls.Config, error) {
+func Config(fsys humus.Filesystem, name string) (*tls.Config, error) {
 	f := &file{fs: fsys, name: name}
 	if _, err := f.certificate(); err != nil {
 		return nil, err
@@ -32,7 +32,7 @@ func Config(fsys humus.FS, name string) (*tls.Config, error) {
 }
 
 type file struct {
-	fs   humus.FS
+	fs   humus.Filesystem
 	name string
 
 	mu   sync.Mutex
@@ -69,7 +69,7 @@ func (f *file) cached(data []byte) *tls.Certificate {
 	return nil
 }
 
-func readFile(fsys humus.FS, name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem, name string) ([]byte, error) {
 	file, err := fsys.Open(name)
 	if err != nil {
 		return nil, err

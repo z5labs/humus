@@ -88,7 +88,7 @@ func newPolls(t *testing.T) polls {
 	require.NoError(t, err)
 	cfg, err := pgxpool.ParseConfig(fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=disable", name, password, net.JoinHostPort(host, port.Port()), name))
 	require.NoError(t, err)
-	cfg.ConnConfig.DialFunc = humus.OSHost().Dial
+	cfg.ConnConfig.DialFunc = humus.OSHost().DialTCP
 	cfg.MaxConns = 32
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)

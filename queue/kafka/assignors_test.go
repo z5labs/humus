@@ -29,7 +29,7 @@ import (
 // through a client that dials h.
 func describeGroup(t *testing.T, h *humustest.Host, c *kfake.Cluster) kadm.DescribedGroup {
 	t.Helper()
-	cl, err := kgo.NewClient(kgo.SeedBrokers(c.ListenAddrs()...), kgo.Dialer(h.Dial))
+	cl, err := kgo.NewClient(kgo.SeedBrokers(c.ListenAddrs()...), kgo.Dialer(h.DialTCP))
 	require.NoError(t, err)
 	defer cl.Close()
 	groups, err := kadm.NewClient(cl).DescribeGroups(context.Background(), group)

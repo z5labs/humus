@@ -27,7 +27,7 @@ const locale = "en_US"
 // all bounded by c.ConnectTimeout and by ctx: the dial, the TLS handshake
 // when c.TLS is set, and the AMQP handshake.
 //
-// It dials with host.Dial and hands the connection to amqp.Open, so the
+// It dials with host.DialTCP and hands the connection to amqp.Open, so the
 // broker is reached only through the Host, and no URL is ever built: amqp091's
 // Dial, DialConfig, DialTLS and DefaultDial all take or make one, and dial the
 // real network. The TLS handshake uses a clone of c.TLS, whose ServerName is
@@ -60,7 +60,7 @@ func connect(ctx context.Context, host humus.Host, c Connection) (*amqp.Connecti
 	// The earlier of ConnectTimeout's end and ctx's own deadline.
 	deadline, _ := ctx.Deadline()
 
-	nc, err := host.Dial(ctx, "tcp", c.Addr)
+	nc, err := host.DialTCP(ctx, "tcp", c.Addr)
 	if err != nil {
 		return nil, fmt.Errorf("rabbitmq: dialling %s: %w", c.Addr, err)
 	}

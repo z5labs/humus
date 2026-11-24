@@ -68,13 +68,13 @@ func dialRead(t *testing.T, dial func(context.Context, string, string) (net.Conn
 
 func listen(t *testing.T, h *humustest.Host, address string) net.Listener {
 	t.Helper()
-	ln, err := h.Listen("tcp", address)
+	ln, err := h.ListenTCP(t.Context(), "tcp", address)
 	require.NoError(t, err)
 	return ln
 }
 
 // readFile reads the named file through fsys.
-func readFile(t *testing.T, fsys humus.FS, name string) string {
+func readFile(t *testing.T, fsys humus.Filesystem, name string) string {
 	t.Helper()
 	f, err := fsys.Open(name)
 	require.NoError(t, err)
@@ -93,36 +93,35 @@ func isClosed(ch <-chan struct{}) bool {
 	}
 }
 
-// TestHost_Host_sets_every_field shows that the four fields of Host() are
-// one hosttest host's: a listener made through one is dialled through the
-// Host's own methods, and a file it was built with is read through the FS.
+// TestHost_Host_sets_every_field shows that both fields of Host() are one
+// hosttest host's: a listener made through one is dialled through the
+// Host's own methods, and a file it was built with is read through the
+// Filesystem.
 func TestHost_Host_sets_every_field(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{"etc/app.conf": []byte("conf")}))
 		hh := h.Host()
-		require.NotNil(t, hh.Listen)
-		require.NotNil(t, hh.ListenPacket)
-		require.NotNil(t, hh.Dial)
-		require.NotNil(t, hh.FS)
+		require.Same(t, h, hh.IPNetwork, "the IPNetwork is the Host")
+		require.Equal(t, h.Filesystem(), hh.Filesystem, "the Filesystem is the Host's")
 
-		require.Equal(t, "conf", readFile(t, hh.FS, "etc/app.conf"), "the FS works inside a bubble")
-		require.Equal(t, "conf", readFile(t, hh.FS, h.Path("etc/app.conf")), "Path names the FS's file")
+		require.Equal(t, "conf", readFile(t, hh.Filesystem, "etc/app.conf"), "the Filesystem works inside a bubble")
+		require.Equal(t, "conf", readFile(t, hh.Filesystem, h.Path("etc/app.conf")), "Path names the Filesystem's file")
 
-		ln, err := hh.Listen("tcp", "api:80")
+		ln, err := hh.ListenTCP(t.Context(), "tcp", "api:80")
 		require.NoError(t, err)
-		require.True(t, isClosed(h.Listening("api:80")), "Host()'s Listen is the Host's")
+		require.True(t, isClosed(h.Listening("api:80")), "Host()'s ListenTCP is the Host's")
 		serve(t, ln, "api")
-		require.Equal(t, "api", dialRead(t, h.Dial, "api:80"), "Host()'s Listen is the Host's")
+		require.Equal(t, "api", dialRead(t, h.DialTCP, "api:80"), "Host()'s ListenTCP is the Host's")
 
-		ln, err = h.Listen("tcp", "admin:80")
+		ln, err = h.ListenTCP(t.Context(), "tcp", "admin:80")
 		require.NoError(t, err)
 		serve(t, ln, "admin")
-		require.Equal(t, "admin", dialRead(t, hh.Dial, "admin:80"), "Host()'s Dial is the Host's")
+		require.Equal(t, "admin", dialRead(t, hh.DialTCP, "admin:80"), "Host()'s DialTCP is the Host's")
 
-		pc, err := hh.ListenPacket("udp", "dns:53")
+		pc, err := hh.ListenUDP(t.Context(), "udp", "dns:53")
 		require.NoError(t, err)
-		_, err = h.ListenPacket("udp", "dns:53")
-		require.ErrorIs(t, err, syscall.EADDRINUSE, "Host()'s ListenPacket is the Host's")
+		_, err = h.ListenUDP(t.Context(), "udp", "dns:53")
+		require.ErrorIs(t, err, syscall.EADDRINUSE, "Host()'s ListenUDP is the Host's")
 		require.NoError(t, pc.Close())
 	})
 }
@@ -144,8 +143,8 @@ func TestNewHost_applies_hosttests_options(t *testing.T) {
 	require.Len(t, got, 2)
 	require.Same(t, got[0], got[1])
 	require.Equal(t, got[0].Path("a.txt"), h.Path("a.txt"), "the Host is built on the hosttest.Host the options configured")
-	require.Equal(t, "a", readFile(t, h.FS(), "a.txt"))
-	require.Equal(t, "b", readFile(t, h.FS(), "b.txt"))
+	require.Equal(t, "a", readFile(t, h.Filesystem(), "a.txt"))
+	require.Equal(t, "b", readFile(t, h.Filesystem(), "b.txt"))
 }
 
 // TestHost_starts_no_goroutines builds a Host inside a bubble and leaves a
@@ -154,28 +153,28 @@ func TestNewHost_applies_hosttests_options(t *testing.T) {
 func TestHost_starts_no_goroutines(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
-		_, err := h.Listen("tcp", "api:80")
+		_, err := h.ListenTCP(t.Context(), "tcp", "api:80")
 		require.NoError(t, err)
-		_, err = h.ListenPacket("udp", "api:80")
+		_, err = h.ListenUDP(t.Context(), "udp", "api:80")
 		require.NoError(t, err)
-		_, err = h.Dial(t.Context(), "tcp", "api:81")
+		_, err = h.DialTCP(t.Context(), "tcp", "api:81")
 		require.ErrorIs(t, err, syscall.ECONNREFUSED)
 		require.True(t, isClosed(h.Listening("api:80")))
 		require.False(t, isClosed(h.Listening("api:81")))
 	})
 }
 
-// TestHost_udp_through_Host binds a socket with ListenPacket and dials it
-// over "udp", both through Host(), so the datagram network is wired.
+// TestHost_udp_through_Host binds a socket with ListenUDP and dials it
+// with DialUDP, both through Host(), so the datagram network is wired.
 func TestHost_udp_through_Host(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		hh := humustest.NewHost(t).Host()
 
-		pc, err := hh.ListenPacket("udp", "dns:53")
+		pc, err := hh.ListenUDP(t.Context(), "udp", "dns:53")
 		require.NoError(t, err)
 		defer func() { require.NoError(t, pc.Close()) }()
 
-		c, err := hh.Dial(t.Context(), "udp", "dns:53")
+		c, err := hh.DialUDP(t.Context(), "udp", "dns:53")
 		require.NoError(t, err)
 		defer func() { require.NoError(t, c.Close()) }()
 
@@ -232,7 +231,7 @@ func TestHost_Listening_an_App_in_real_time(t *testing.T) {
 		ShutdownGracePeriod: 10 * time.Second,
 		Telemetry:           telemetry.NoopBuilder,
 		Init: func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
-			ln, err := s.Host.Listen("tcp", ":8080")
+			ln, err := s.Host.ListenTCP(t.Context(), "tcp", ":8080")
 			if err != nil {
 				return nil, err
 			}
@@ -261,7 +260,7 @@ func TestHost_Listening_an_App_in_real_time(t *testing.T) {
 	st := <-status
 	require.Equal(t, 0, st.Code(), "cause: %v, stderr: %s", st.Cause(), p.Stderr())
 
-	_, err = host.Dial(t.Context(), "tcp", "localhost:8080")
+	_, err = host.DialTCP(t.Context(), "tcp", "localhost:8080")
 	require.ErrorIs(t, err, syscall.ECONNREFUSED, "the server's listener is closed with the App")
 }
 

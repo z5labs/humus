@@ -59,7 +59,7 @@ type Connection struct {
 	TLS *tls.Config
 
 	// Token returns the bearer token every request carries, such as the
-	// pod's service account token, read through the Host's FS. nil sends
+	// pod's service account token, read through the Host's Filesystem. nil sends
 	// none, for a client that authenticates with a certificate. The Client
 	// calls it at most once a minute, and keeps its last token while a call
 	// fails, so a token the kubelet rotates is picked up within a minute. A
@@ -117,15 +117,13 @@ type Client struct {
 	conns     *http.Transport
 }
 
-// NewClient returns a Client that dials c.Server with s.Host.Dial, and
+// NewClient returns a Client that dials c.Server with s.Host.DialTCP, and
 // traces and measures every request with s.Telemetry. It opens no
 // connection.
 //
 // NewClient runs every check on c, and reports every bad field in one error
-// that names each one. It also rejects a nil s, and an s whose Host has no
-// Dial, rather than let net/http fall back to dialling the real network. It
-// registers a function with s.OnStop that closes the Client's idle
-// connections.
+// that names each one. It also rejects a nil s. It registers a function
+// with s.OnStop that closes the Client's idle connections.
 //
 // The Client's transport runs TLS with a clone of c.TLS, so the end user's
 // config is never changed, and the clone's ServerName defaults to
@@ -146,9 +144,6 @@ func NewClient(s *humus.Setup, c Connection) (*Client, error) {
 		return nil, errors.New("kube: NewClient: the Setup must not be nil")
 	}
 	err := checkConnection(c)
-	if s.Host.Dial == nil {
-		err = errors.Join(err, errors.New("the Setup's Host.Dial must not be nil"))
-	}
 	if err != nil {
 		return nil, fmt.Errorf("kube: NewClient: %w", err)
 	}
@@ -163,7 +158,7 @@ func NewClient(s *humus.Setup, c Connection) (*Client, error) {
 	protocols.SetHTTP1(true)
 	protocols.SetHTTP2(true)
 	tr := &http.Transport{
-		DialContext:         s.Host.Dial,
+		DialContext:         s.Host.DialTCP,
 		Proxy:               nil,
 		TLSClientConfig:     tlsConfig,
 		Protocols:           &protocols,

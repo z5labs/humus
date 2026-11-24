@@ -184,7 +184,7 @@ func TestSecureInit_presents_its_client_certificate_to_the_broker(t *testing.T) 
 
 		// A broker that requires a client certificate the CA issued, and
 		// then never speaks AMQP, so the Service waits on its handshake.
-		l, err := h.Listen("tcp", "rabbit:5671")
+		l, err := h.ListenTCP(t.Context(), "tcp", "rabbit:5671")
 		require.NoError(t, err)
 		defer func() { _ = l.Close() }()
 		// Issued here, since Issue fails t, which a goroutine of its own mustn't.

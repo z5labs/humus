@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/bedrocktest"
+	"github.com/z5labs/bedrock/host/hosttest"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/humustest"
@@ -166,8 +167,8 @@ func TestStart_with_no_options_runs_Mains_defaults_on_a_test_Host(t *testing.T) 
 			require.True(t, ok, "Shutdown's context has the grace period's deadline")
 			grace = time.Until(deadline)
 		})
-		init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
-			ln, err := s.Host.Listen("tcp", ":8080")
+		init := func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+			ln, err := s.Host.ListenTCP(ctx, "tcp", ":8080")
 			if err != nil {
 				return nil, err
 			}
@@ -225,8 +226,8 @@ func TestWithApp_uses_the_Host_and_telemetry_it_is_given(t *testing.T) {
 			},
 			shutdown: func(context.Context) error { return nil },
 		}
-		init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
-			ln, err := s.Host.Listen("tcp", "api.internal:8080")
+		init := func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+			ln, err := s.Host.ListenTCP(ctx, "tcp", "api.internal:8080")
 			if err != nil {
 				return nil, err
 			}
@@ -287,14 +288,14 @@ func TestWithApp_an_Option_sees_the_test_Host_and_Init_and_may_wrap_them(t *test
 		var sawHost, sawInit bool
 		var listened []string
 		wrap := func(a *humus.App) {
-			sawHost = a.Host.Listen != nil && a.Host.Dial != nil && a.Host.FS != nil
+			sawHost = a.Host.IPNetwork != nil && a.Host.Filesystem != nil
 			sawInit = a.Init != nil
 
-			listen := a.Host.Listen
-			a.Host.Listen = func(network, address string) (net.Listener, error) {
+			listen := a.Host.ListenTCP
+			a.Host.IPNetwork = hosttest.Seams{Network: a.Host.IPNetwork, OnListenTCP: func(ctx context.Context, network, address string) (net.Listener, error) {
 				listened = append(listened, address)
-				return listen(network, address)
-			}
+				return listen(ctx, network, address)
+			}}
 			init := a.Init
 			a.Init = func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 				svcs, err := init(ctx, s)
@@ -304,8 +305,8 @@ func TestWithApp_an_Option_sees_the_test_Host_and_Init_and_may_wrap_them(t *test
 				return append(svcs, added), nil
 			}
 		}
-		init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
-			ln, err := s.Host.Listen("tcp", ":9090")
+		init := func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+			ln, err := s.Host.ListenTCP(ctx, "tcp", ":9090")
 			if err != nil {
 				return nil, err
 			}
@@ -423,8 +424,8 @@ type helloService struct {
 	srv   http.Server
 }
 
-func (h *helloService) Serve(context.Context) error {
-	ln, err := h.setup.Host.Listen("tcp", ":8080")
+func (h *helloService) Serve(ctx context.Context) error {
+	ln, err := h.setup.Host.ListenTCP(ctx, "tcp", ":8080")
 	if err != nil {
 		return err
 	}
@@ -472,4 +473,56 @@ func TestInit_serves_hello(t *testing.T) {
 			t.Errorf("code = %d, want 0: %v", st.Code(), st.Cause())
 		}
 	})
+}
+
+// TestStart_rejects_a_Host_with_a_nil_field shows that an App whose Host
+// lacks its network or its filesystem exits before telemetry or Init, with
+// a message naming the field, rather than panic the first time a runtime
+// reaches for it.
+func TestStart_rejects_a_Host_with_a_nil_field(t *testing.T) {
+	cases := []struct {
+		name string
+		host func(h *humustest.Host) humus.Host
+		want string
+	}{
+		{
+			name: "IPNetwork",
+			host: func(h *humustest.Host) humus.Host { return humus.Host{Filesystem: h.Filesystem()} },
+			want: "humus: Host.IPNetwork is nil: build the Host with OSHost, or from the test host's parts",
+		},
+		{
+			name: "Filesystem",
+			host: func(h *humustest.Host) humus.Host { return humus.Host{IPNetwork: h} },
+			want: "humus: Host.Filesystem is nil: build the Host with OSHost, or from the test host's parts",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				var built, ran bool
+				builder := func(context.Context, bedrock.Process, telemetry.Dialer) (telemetry.SDK, error) {
+					built = true
+					return telemetry.Noop(), nil
+				}
+				init := func(context.Context, *humus.Setup) ([]humus.Service, error) {
+					ran = true
+					return nil, nil
+				}
+
+				p, status := humustest.Start(t, init,
+					humustest.WithApp(
+						humus.WithHost(tc.host(humustest.NewHost(t))),
+						humus.WithTelemetry(builder),
+					),
+				)
+				st := <-status
+
+				require.Equal(t, humus.ExitFailure, st.Code())
+				require.EqualError(t, st.Cause(), tc.want)
+				require.Equal(t, tc.want+"\n", p.Stderr())
+				require.False(t, built, "telemetry was built")
+				require.False(t, ran, "Init ran")
+			})
+		})
+	}
 }

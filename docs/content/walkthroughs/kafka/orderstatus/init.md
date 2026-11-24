@@ -46,7 +46,7 @@ type sourced struct {
 ```go
 func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
-	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.FS)) }
+	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.Filesystem)) }
 	list := func(v string) []string { return strings.Split(v, ",") }
 
 	got, err := config.Struct(func(r *config.Resolver) sourced {
@@ -75,11 +75,11 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 				},
 				Probes: httphealth.Settings{
 					Addr: r.Get(env("PROBES_ADDR").Validate(httphealth.CheckAddr)),
-					TLS:  r.Get(env("PROBES_TLS_PEM_FILE").Parse(pemTLS(s.Host.FS)).Validate(httphealth.CheckTLS)),
+					TLS:  r.Get(env("PROBES_TLS_PEM_FILE").Parse(pemTLS(s.Host.Filesystem)).Validate(httphealth.CheckTLS)),
 				},
 			},
 			KafkaCA:  r.Get(file("KAFKA_TLS_CA_FILE").Parse(certPool)),
-			KafkaTLS: r.Get(env("KAFKA_TLS_CERT_FILE").Parse(pemTLS(s.Host.FS))),
+			KafkaTLS: r.Get(env("KAFKA_TLS_CERT_FILE").Parse(pemTLS(s.Host.Filesystem))),
 			Postgres: postgres{
 				URL:      r.Get(env("POSTGRES_URL").Parse(parsePostgresURL).Validate(checkPostgresURL)),
 				Password: r.Get(file("POSTGRES_PASSWORD_FILE").Parse(secret)),
@@ -171,11 +171,11 @@ func positive[T int | time.Duration](v T) error {
 ## The secrets, as files
 
 PostgreSQL's password, and every CA, certificate and key, are files mounted
-from Secrets, read through the Host's `FS`, so the tests can give the
+from Secrets, read through the Host's `Filesystem`, so the tests can give the
 processor files of their own:
 
 ```go
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {
@@ -227,7 +227,7 @@ changes, so a renewal needs no restart. `certfile.Config` serves it to the
 brokers as a client certificate, and on the probes as a server's:
 
 ```go
-func pemTLS(fsys humus.FS) func(name string) (*tls.Config, error) {
+func pemTLS(fsys humus.Filesystem) func(name string) (*tls.Config, error) {
 	return func(name string) (*tls.Config, error) {
 		return certfile.Config(fsys, name, name)
 	}
@@ -235,7 +235,7 @@ func pemTLS(fsys humus.FS) func(name string) (*tls.Config, error) {
 ```
 
 ```go
-func Config(fsys humus.FS, certFile, keyFile string) (*tls.Config, error) {
+func Config(fsys humus.Filesystem, certFile, keyFile string) (*tls.Config, error) {
 	f := &files{fs: fsys, certFile: certFile, keyFile: keyFile}
 	if _, err := f.certificate(); err != nil {
 		return nil, err
@@ -409,12 +409,19 @@ func poolConfig(p postgres) (*pgxpool.Config, error) {
 }
 ```
 
-`openPostgres` dials through the Host, so the tests can give the pool their
-own network, and closes the pool when the App stops:
+`openPostgres` dials TCP through the Host, so the tests can give the pool
+their own network, and a Unix socket with a `net.Dialer` of its own. It
+closes the pool when the App stops:
 
 ```go
 func openPostgres(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (projector.Store, error) {
-	cfg.ConnConfig.DialFunc = s.Host.Dial
+	cfg.ConnConfig.DialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if network == "unix" {
+			var d net.Dialer
+			return d.DialContext(ctx, network, addr)
+		}
+		return s.Host.DialTCP(ctx, network, addr)
+	}
 	cfg.ConnConfig.LookupFunc = func(_ context.Context, host string) ([]string, error) {
 		return []string{host}, nil
 	}

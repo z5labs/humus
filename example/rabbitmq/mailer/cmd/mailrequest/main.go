@@ -86,7 +86,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 		return settings{}, err
 	}
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
-	file := readFile(s.Host.FS)
+	file := readFile(s.Host.Filesystem)
 
 	return config.Struct(func(r *config.Resolver) settings {
 		publisher := rabbitmq.DefaultPublisherSettings()
@@ -155,7 +155,7 @@ func notEmpty(s string) error {
 	return nil
 }
 
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {

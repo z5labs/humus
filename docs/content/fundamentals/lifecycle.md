@@ -111,7 +111,7 @@ bedrock.Main(humus.App{
 | Field | `Main`'s default | Why |
 |---|---|---|
 | `Host` | `humus.OSHost()` | `Main` runs only in `main`. A test runs its App with `humustest.Start`, which uses a test Host. |
-| `Telemetry` | `telemetry.New` with `telemetry.DefaultSettings()`, the Host's `Dial` and the Process's stdout | Logs go to stdout as JSON lines, and spans get real IDs without being exported. A service that exports anything passes its own `Builder` with `humus.WithTelemetry`. |
+| `Telemetry` | `telemetry.New` with `telemetry.DefaultSettings()`, the Host's `DialTCP` and the Process's stdout | Logs go to stdout as JSON lines, and spans get real IDs without being exported. A service that exports anything passes its own `Builder` with `humus.WithTelemetry`. |
 | `ShutdownGracePeriod` | 20s | It fits inside Kubernetes' default `terminationGracePeriodSeconds` of 30s, with telemetry's 5s shutdown after it and a margin for the process to exit. |
 | `Drain` | none | Only a Service that a load balancer routes to, and that keeps serving until `Shutdown`, needs a drain, and the package that provides it sets one. |
 | `Faults` | none | Failure injection is off until a service turns it on with `humus.WithFaults`: no scenario is evaluated or stripped. |
@@ -348,7 +348,7 @@ when a Service returned on the signal before Run waited for one. When a
 Service returned on its own before any signal, such as a job next to an API,
 it wraps `humus.ErrServiceReturned`, and nothing outside is draining the App.
 A Drain that waited for deregistration then would wait for something nothing
-triggers. This Drain polls a load balancer through `s.Host.Dial`, so that it
+triggers. This Drain polls a load balancer through `s.Host.DialTCP`, so that it
 runs on a test Host too, and only after a signal:
 
 ```go
@@ -356,7 +356,7 @@ func deregisteringDrain(ctx context.Context, s *humus.Setup) error {
 	if errors.Is(humus.ShutdownCause(ctx), humus.ErrServiceReturned) {
 		return nil // no signal came, so nothing is deregistering the pod
 	}
-	return waitUntilDeregistered(ctx, s.Host.Dial)
+	return waitUntilDeregistered(ctx, s.Host.DialTCP)
 }
 ```
 
@@ -382,34 +382,33 @@ that misbehaves, from the same manifest that sets
 ## Host
 
 A [`Host`](https://pkg.go.dev/github.com/z5labs/humus#Host) is what humus
-hands an App beyond its process: the network and the filesystem. It is
-bedrock's [`host.Host`](https://pkg.go.dev/github.com/z5labs/bedrock/host),
-as `host.Host[humus.FS]`, so its fields are bedrock's: `Listen`,
-`ListenPacket`, `Dial` and a filesystem, `FS`. Every field is required.
-Under `humus.Main` an App runs on `humus.OSHost()`, which is the Host of the
-real machine, bedrock's `host.OS()`. In a test it runs on a Host whose
-network and filesystem the test controls, so that a whole App runs without
-touching the real host.
+hands an App beyond its process: the network and the filesystem. It has two
+fields, an embedded `IPNetwork` and a `Filesystem`, and both are required.
+Under `humus.Main` an App runs on `humus.OSHost()`, the Host of the real
+machine: bedrock's `host.IPNetwork{}` and `host.OSFilesystem{}`. In a test
+it runs on a Host built from the test host's parts, whose network and
+filesystem the test controls, so that a whole App runs without touching the
+real host.
 
-An App listens over TCP with `Listen`, which returns a `net.Listener`, and
-over UDP with `ListenPacket`, which returns a `net.PacketConn`, because UDP
-has no listener. It dials either with `Dial`, which over `"udp"` returns a
-connected socket: one that sends only to the address it dialled, and takes
-datagrams only from it.
+An App listens over TCP with `ListenTCP`, which returns a `net.Listener`,
+and over UDP with `ListenUDP`, which returns a `net.PacketConn`, because UDP
+has no listener. It dials TCP with `DialTCP`, and UDP with `DialUDP`, which
+returns a connected socket: one that sends only to the address it dialled,
+and takes datagrams only from it. Each method refuses the other protocol's
+networks, on the real machine as on the test host.
 
-`humus.FS` is sealed: it embeds bedrock's `host.FS`, which has an unexported
-method, so a type is a `humus.FS` only if it embeds `host.OSFS`, hosttest's
-`*FS`, `host.FS` or `humus.FS`. A test that needs a filesystem call to fail,
-as on a full disk, embeds the `FS` and overrides the method that fails, as
+`humus.Filesystem` lists twelve methods and nothing else, so any type with
+them is one. A test that needs a filesystem call to fail, as on a full disk,
+embeds the `Filesystem` and overrides the method that fails, as
 [Testing]({{< relref "/fundamentals/testing#files" >}}) shows.
 
-`Host` is meant for user code as well as for humus. Hand `Host.Dial` to a
+`Host` is meant for user code as well as for humus. Hand `Host.DialTCP` to a
 client that takes a dial function, such as pgx's `DialFunc`, and open files
-through `Host.FS` rather than through package `os`.
+through `Host.Filesystem` rather than through package `os`.
 
-### Why `FS` hands out `*os.File`
+### Why `Filesystem` hands out `*os.File`
 
-`FS` names files by OS path and opens them as `*os.File`, rather than through
+`Filesystem` names files by OS path and opens them as `*os.File`, rather than through
 an in-memory filesystem:
 
 - Libraries that need a real file or a path keep working in a test: SQLite
@@ -418,13 +417,13 @@ an in-memory filesystem:
 - It is a one-way decision. An `*os.File` is always an OS handle, so moving to
   an in-memory filesystem later would change every signature.
 
-`OSHost`'s `FS` is not `os.OpenRoot("/")`, because an `os.Root` refuses to
+`OSHost`'s `Filesystem` is not `os.OpenRoot("/")`, because an `os.Root` refuses to
 follow absolute symbolic links even when it is rooted at `/`, and paths on a
 real host routinely pass through them.
 
 What it costs a test: the rule is that it opens no file outside its own
-temporary directory; a call that fails, as on a full disk, comes from an `FS`
-of the test's own that embeds the Host's and overrides that method; and file
+temporary directory; a call that fails, as on a full disk, comes from a
+`Filesystem` of the test's own that embeds the Host's and overrides that method; and file
 modification times are real under `synctest`, so code that compares
 `ModTime()` with `time.Now()` needs `Chtimes` in its tests.
 
@@ -558,7 +557,7 @@ context.
 
 **Telemetry is built after `NotifyContext` and before `Init`.** `Run` calls
 `App.Telemetry` with the context that a signal cancels, the `Process`, and the
-Host's `Dial`, so the OTLP exporters reach the collector through the `Host`. A
+Host's `DialTCP`, so the OTLP exporters reach the collector through the `Host`. A
 `Builder` that runs a resource detector can be slow, because a cloud detector
 calls its metadata server, so a signal cancels it as it cancels a slow
 `Init`. A failure exits 78 when a `*config.Error` is in its chain, such as a
@@ -762,8 +761,9 @@ explicitly from `Setup`:
   password file that `PGPASSFILE` names, or `~/.pgpass`, from the real disk
   and use it when the connection string sets no password, and they pick up
   client certificates from `~/.postgresql`. The config they return dials the
-  real network: set `cfg.ConnConfig.DialFunc = s.Host.Dial` before opening the
-  pool. Its `LookupFunc` still resolves host names with the real resolver.
+  real network: set `cfg.ConnConfig.DialFunc` to one that dials TCP with
+  `s.Host.DialTCP` before opening the pool. `DialTCP` refuses a Unix socket,
+  so it dials one with a `net.Dialer` of its own. Its `LookupFunc` still resolves host names with the real resolver.
 - `flag.CommandLine` and `flag.ExitOnError` read `os.Args` and exit the
   process. Parse `p.Args[1:]` with a `flag.FlagSet` of your own, using
   `flag.ContinueOnError`.
@@ -771,7 +771,7 @@ explicitly from `Setup`:
   `Env` from the keys you know, reading each through `p.Environment`.
 - `http.ProxyFromEnvironment`, the `Proxy` of `http.DefaultTransport`, reads
   the proxy variables of the real environment, and `http.DefaultClient`
-  dials the real network rather than through `Host.Dial`.
+  dials the real network rather than through `Host.DialTCP`.
 - **`crypto/x509`'s system roots.** A TLS config with no `RootCAs` verifies
   the server against the system's roots, which `crypto/x509` reads from the
   files and directories `SSL_CERT_FILE` and `SSL_CERT_DIR` name in the real
@@ -794,7 +794,7 @@ explicitly from `Setup`:
   from the real environment.
 - Any resource detector the end user opts into in `Settings.ResourceOptions`,
   which reads the real host, such as `/etc`, `/proc` and cgroups, or dials a
-  metadata server rather than through `Host.Dial`.
+  metadata server rather than through `Host.DialTCP`.
 - **grpc-go's logger.** Its `grpclog` package reads
   `GRPC_GO_LOG_SEVERITY_LEVEL`, `GRPC_GO_LOG_VERBOSITY_LEVEL` and
   `GRPC_GO_LOG_FORMATTER`, and its `internal/envconfig` package reads its

@@ -86,10 +86,10 @@ func hostSetup(h *humustest.Host) *humus.Setup {
 	return &humus.Setup{Host: h.Host(), Telemetry: telemetry.Noop()}
 }
 
-// requireRefused fails t unless a Dial to address is refused.
+// requireRefused fails t unless a DialTCP to address is refused.
 func requireRefused(t *testing.T, h *humustest.Host, address string) {
 	t.Helper()
-	conn, err := h.Dial(t.Context(), "tcp", address)
+	conn, err := h.DialTCP(t.Context(), "tcp", address)
 	if err == nil {
 		_ = conn.Close()
 		t.Fatalf("Dial(%q) connected, want ECONNREFUSED", address)
@@ -436,7 +436,7 @@ func TestNewService_the_listener(t *testing.T) {
 	t.Run("a taken address fails NewService, with the Host's error", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
-			l, err := h.Listen("tcp", ":8081")
+			l, err := h.ListenTCP(t.Context(), "tcp", ":8081")
 			require.NoError(t, err)
 			defer func() { _ = l.Close() }()
 

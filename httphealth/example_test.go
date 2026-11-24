@@ -87,7 +87,7 @@ func APIInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	settings, err := config.Struct(func(r *config.Resolver) httpserver.Settings {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = r.Get(env("ADDR").Validate(httpserver.CheckAddr))
-		settings.TLS = r.Get(env("TLS_PEM_FILE").Parse(readFile(s.Host.FS)).Parse(serverTLS).Validate(httpserver.CheckTLS))
+		settings.TLS = r.Get(env("TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS))
 		return settings
 	}).Read(ctx)
 	if err != nil {
@@ -141,7 +141,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		return httphealth.Settings{
 			// No .Default: both fields are required.
 			Addr: r.Get(env("PROBES_ADDR").Validate(httphealth.CheckAddr)),
-			TLS:  r.Get(env("PROBES_TLS_PEM_FILE").Parse(readFile(s.Host.FS)).Parse(serverTLS).Validate(httphealth.CheckTLS)),
+			TLS:  r.Get(env("PROBES_TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(httphealth.CheckTLS)),
 		}
 	}).Read(ctx)
 	if err != nil {
@@ -193,7 +193,7 @@ func (w *worker) Shutdown(context.Context) error {
 
 // readFile returns a parser for config.Value.Parse that reads the whole
 // file a variable names, through fsys.
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {

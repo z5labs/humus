@@ -209,7 +209,7 @@ func (lb *fakeLB) pollCount() int {
 // serveLB serves lb on lbAddr of h until the test's bubble ends.
 func serveLB(t *testing.T, h *humustest.Host, lb *fakeLB) {
 	t.Helper()
-	ln, err := h.Listen("tcp", lbAddr)
+	ln, err := h.ListenTCP(t.Context(), "tcp", lbAddr)
 	if err != nil {
 		t.Fatalf("listen for the load balancer: %v", err)
 	}
@@ -277,7 +277,7 @@ func deregisteringDrain(ctx context.Context, s *humus.Setup) error {
 	if errors.Is(humus.ShutdownCause(ctx), humus.ErrServiceReturned) {
 		return nil // no signal came, so nothing is deregistering the pod
 	}
-	return waitUntilDeregistered(ctx, s.Host.Dial)
+	return waitUntilDeregistered(ctx, s.Host.DialTCP)
 }
 
 func TestApp_Run_a_Drain_that_waits_on_a_load_balancer(t *testing.T) {

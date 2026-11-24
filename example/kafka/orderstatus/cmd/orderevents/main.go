@@ -107,8 +107,8 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 				OrderID:  r.Get(args.orderIDValue().Default(rand.Text()).Validate(notEmpty)),
 				Types:    r.Get(args.typesValue().Validate(noneEmpty)),
 			},
-			KafkaCA:  r.Get(env("KAFKA_TLS_CA_FILE").Parse(readFile(s.Host.FS)).Parse(certPool)),
-			KafkaTLS: r.Get(env("KAFKA_TLS_CERT_FILE").Parse(pemTLS(s.Host.FS))),
+			KafkaCA:  r.Get(env("KAFKA_TLS_CA_FILE").Parse(readFile(s.Host.Filesystem)).Parse(certPool)),
+			KafkaTLS: r.Get(env("KAFKA_TLS_CERT_FILE").Parse(pemTLS(s.Host.Filesystem))),
 		}
 	}).Read(ctx)
 	if err != nil {
@@ -180,7 +180,7 @@ func noneEmpty(types []string) error {
 	return nil
 }
 
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {
@@ -199,7 +199,7 @@ func certPool(pem []byte) (*x509.CertPool, error) {
 	return roots, nil
 }
 
-func pemTLS(fsys humus.FS) func(name string) (*tls.Config, error) {
+func pemTLS(fsys humus.Filesystem) func(name string) (*tls.Config, error) {
 	return func(name string) (*tls.Config, error) {
 		return certfile.Config(fsys, name, name)
 	}

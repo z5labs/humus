@@ -11,7 +11,7 @@ require (
 	github.com/z5labs/bedrock v0.26.0
 	github.com/z5labs/bedrock/circuit v0.26.0
 	github.com/z5labs/bedrock/fit v0.26.0
-	github.com/z5labs/bedrock/host v0.26.0
+	github.com/z5labs/bedrock/host v0.27.0
 	github.com/z5labs/bedrock/retry v0.26.0
 	github.com/z5labs/humus v0.18.0
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.72.0

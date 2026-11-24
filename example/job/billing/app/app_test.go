@@ -193,7 +193,7 @@ func newJob(t *testing.T, accounts ...string) *target {
 		"PAYMENTS_CA_FILE":      "payments-ca.pem",
 	}
 
-	l, err := j.host.Listen("tcp", "payments.internal:8443")
+	l, err := j.host.ListenTCP(t.Context(), "tcp", "payments.internal:8443")
 	require.NoError(t, err)
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
@@ -359,7 +359,7 @@ func TestInit_reads_no_secret_from_the_environment(t *testing.T) {
 func TestInit_dials_PostgreSQL_through_the_Host(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		j := newJob(t, "acct-1")
-		l, err := j.host.Listen("tcp", "db.internal:5432")
+		l, err := j.host.ListenTCP(t.Context(), "tcp", "db.internal:5432")
 		require.NoError(t, err)
 		var (
 			mu      sync.Mutex

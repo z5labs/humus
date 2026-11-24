@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"sync"
@@ -130,7 +131,13 @@ func initWith(ctx context.Context, s *humus.Setup, open openBackend) ([]humus.Se
 }
 
 func openPostgres(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (backend, error) {
-	cfg.ConnConfig.DialFunc = s.Host.Dial
+	cfg.ConnConfig.DialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if network == "unix" {
+			var d net.Dialer
+			return d.DialContext(ctx, network, addr)
+		}
+		return s.Host.DialTCP(ctx, network, addr)
+	}
 	cfg.ConnConfig.LookupFunc = func(_ context.Context, host string) ([]string, error) {
 		return []string{host}, nil
 	}
@@ -217,7 +224,7 @@ type serverCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error)
 func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 	d := httpserver.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
-	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.FS)) }
+	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.Filesystem)) }
 	timeout := func(name string, def time.Duration, check func(time.Duration) error) config.Value[time.Duration] {
 		return env(name).Parse(time.ParseDuration).Default(def).Validate(check)
 	}
@@ -226,9 +233,9 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 		server := d
 		server.Addr = r.Get(env("ADDR").Validate(httpserver.CheckAddr))
 		server.TLS = &tls.Config{
-			GetCertificate: r.Get(env("TLS_CERT_FILE").Validate(holdsCertificate(s.Host.FS)).FlatMap(func(certFile string) config.Value[serverCertificate] {
+			GetCertificate: r.Get(env("TLS_CERT_FILE").Validate(holdsCertificate(s.Host.Filesystem)).FlatMap(func(certFile string) config.Value[serverCertificate] {
 				return env("TLS_KEY_FILE").Parse(func(keyFile string) (serverCertificate, error) {
-					cfg, err := certfile.Config(s.Host.FS, certFile, keyFile)
+					cfg, err := certfile.Config(s.Host.Filesystem, certFile, keyFile)
 					if err != nil {
 						return nil, err
 					}
@@ -243,7 +250,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 		return settings{
 			HTTP:     server,
 			Database: r.Get(file("DATABASE_URL_FILE").Parse(databaseURL)),
-			TrustCAs: r.Get(env("FAULT_TRUST_CA_FILE").Parse(trustCAs(s.Host.FS)).Default(nil)),
+			TrustCAs: r.Get(env("FAULT_TRUST_CA_FILE").Parse(trustCAs(s.Host.Filesystem)).Default(nil)),
 		}
 	}).Read(ctx)
 	if err != nil {
@@ -261,7 +268,7 @@ func issuedByATrustedCA(r *http.Request) bool {
 	return r.TLS != nil && len(r.TLS.VerifiedChains) > 0
 }
 
-func trustCAs(fsys humus.FS) func(name string) (*x509.CertPool, error) {
+func trustCAs(fsys humus.Filesystem) func(name string) (*x509.CertPool, error) {
 	return func(name string) (*x509.CertPool, error) {
 		if name == "" {
 			return nil, nil
@@ -278,7 +285,7 @@ func trustCAs(fsys humus.FS) func(name string) (*x509.CertPool, error) {
 	}
 }
 
-func holdsCertificate(fsys humus.FS) func(name string) error {
+func holdsCertificate(fsys humus.Filesystem) func(name string) error {
 	return func(name string) error {
 		b, err := readFile(fsys)(name)
 		if err != nil {
@@ -305,7 +312,7 @@ func databaseURL(b []byte) (*pgxpool.Config, error) {
 	return cfg, nil
 }
 
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {

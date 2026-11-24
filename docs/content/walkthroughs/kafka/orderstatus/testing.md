@@ -273,7 +273,9 @@ The App runs inside `synctest` on humustest's Host, against
 func (p *processor) cluster(t *testing.T, opts ...kfake.Opt) *kfake.Cluster {
 	t.Helper()
 	c, err := kfake.NewCluster(append([]kfake.Opt{
-		kfake.ListenFn(p.h.Listen),
+		kfake.ListenFn(func(network, address string) (net.Listener, error) {
+			return p.h.ListenTCP(t.Context(), network, address)
+		}),
 		kfake.NumBrokers(1),
 		kfake.SeedTopics(1, eventsTopic, statusTopic, retryTopic, deadLetterTopic),
 		kfake.TLS(&tls.Config{

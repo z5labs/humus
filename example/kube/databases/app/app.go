@@ -136,11 +136,11 @@ type settings struct {
 
 func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
-	read := readFile(s.Host.FS)
+	read := readFile(s.Host.Filesystem)
 
 	return config.Struct(func(r *config.Resolver) settings {
 		tokenFile := r.Get(env("KUBERNETES_TOKEN_FILE").Default(serviceAccount + "token").Validate(func(name string) error {
-			_, err := readToken(s.Host.FS, name)
+			_, err := readToken(s.Host.Filesystem, name)
 			return err
 		}))
 
@@ -160,7 +160,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 				),
 				TLS: r.Get(env("KUBERNETES_CA_FILE").Default(serviceAccount + "ca.crt").Parse(read).Parse(certPool).Map(trusting).Validate(kube.CheckTLS)),
 				Token: func(context.Context) (string, error) {
-					return readToken(s.Host.FS, tokenFile)
+					return readToken(s.Host.Filesystem, tokenFile)
 				},
 			},
 			Controller: k,
@@ -169,7 +169,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 			Port:       r.Get(env("POSTGRES_PORT").Parse(strconv.Atoi).Default(5432).Validate(checkPostgresPort)),
 			Probes: httphealth.Settings{
 				Addr: r.Get(env("PROBES_ADDR").Validate(httphealth.CheckAddr)),
-				TLS:  r.Get(env("PROBES_TLS_PEM_FILE").Parse(pemTLS(s.Host.FS)).Validate(httphealth.CheckTLS)),
+				TLS:  r.Get(env("PROBES_TLS_PEM_FILE").Parse(pemTLS(s.Host.Filesystem)).Validate(httphealth.CheckTLS)),
 			},
 			TrustedPrefix: r.Get(env("FAULT_TRUSTED_NAMESPACE_PREFIX").Default("")),
 		}
@@ -216,7 +216,13 @@ func adminDSN(b []byte) (*pgxpool.Config, error) {
 }
 
 func openPostgres(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (*postgres.Server, error) {
-	cfg.ConnConfig.DialFunc = s.Host.Dial
+	cfg.ConnConfig.DialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if network == "unix" {
+			var d net.Dialer
+			return d.DialContext(ctx, network, addr)
+		}
+		return s.Host.DialTCP(ctx, network, addr)
+	}
 	cfg.ConnConfig.LookupFunc = func(_ context.Context, host string) ([]string, error) {
 		return []string{host}, nil
 	}
@@ -231,7 +237,7 @@ func openPostgres(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (*po
 	return postgres.New(pool, s.Faults, s.Telemetry.TracerProvider), nil
 }
 
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {
@@ -242,7 +248,7 @@ func readFile(fsys humus.FS) func(name string) ([]byte, error) {
 	}
 }
 
-func readToken(fsys humus.FS, name string) (string, error) {
+func readToken(fsys humus.Filesystem, name string) (string, error) {
 	b, err := readFile(fsys)(name)
 	if err != nil {
 		return "", err
@@ -266,7 +272,7 @@ func trusting(roots *x509.CertPool) *tls.Config {
 	return &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
 }
 
-func pemTLS(fsys humus.FS) func(name string) (*tls.Config, error) {
+func pemTLS(fsys humus.Filesystem) func(name string) (*tls.Config, error) {
 	return func(name string) (*tls.Config, error) {
 		return certfile.Config(fsys, name, name)
 	}

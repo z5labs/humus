@@ -470,7 +470,7 @@ func TestNew_Shutdown_returns_within_ShutdownTimeout_when_the_receiver_never_ans
 				s.OTLP.Endpoint = "otlp:4317"
 				s.OTLP.Protocol = protocol
 				s.ShutdownTimeout = 2 * time.Second
-				sdk, err := telemetry.New(t.Context(), s, host.Dial, nil)
+				sdk, err := telemetry.New(t.Context(), s, host.DialTCP, nil)
 				require.NoError(t, err)
 
 				_, span := sdk.TracerProvider.Tracer("carts").Start(t.Context(), "create cart")
@@ -552,7 +552,7 @@ func TestNew_OTLP_Timeout_bounds_each_export(t *testing.T) {
 				s.OTLP.Protocol = protocol
 				s.OTLP.Timeout = time.Second
 				s.ShutdownTimeout = time.Minute
-				sdk, err := telemetry.New(t.Context(), s, host.Dial, nil)
+				sdk, err := telemetry.New(t.Context(), s, host.DialTCP, nil)
 				require.NoError(t, err)
 
 				_, span := sdk.TracerProvider.Tracer("carts").Start(t.Context(), "create cart")

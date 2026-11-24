@@ -1002,9 +1002,10 @@ a cart service, and a catalog service it prices items from, each an
 
 ### pgx's ambient leaks
 
-pgx dials through the Host: the shoppingcart's `Init` sets the pool's
-`DialFunc` to the Host's `Dial`, and its `LookupFunc` to one that returns
-the host unresolved, so the Host's `Dial` resolves the name too. Everything
+pgx dials TCP through the Host: the shoppingcart's `Init` sets the pool's
+`DialFunc` to one that dials TCP with the Host's `DialTCP`, and its
+`LookupFunc` to one that returns the host unresolved, so the Host's
+`DialTCP` resolves the name too. Everything
 else pgx reads, it reads from the real process, whatever Host the App runs
 on, as [Ambient leaks]({{< relref "/fundamentals/lifecycle#ambient-leaks" >}}) lists:
 
@@ -1018,8 +1019,9 @@ on, as [Ambient leaks]({{< relref "/fundamentals/lifecycle#ambient-leaks" >}}) l
 - The files `sslcert`, `sslkey` and `sslrootcert` name, and
   `~/.postgresql`'s defaults for them, are read from the real filesystem,
   not the Host's.
-- A URL with no host connects to a Unix socket, in `/tmp` or the like,
-  through the Host's `Dial`, which may not reach it.
+- A URL with no host connects to a Unix socket, in `/tmp` or the like. The
+  Host's `DialTCP` refuses a Unix socket, so the `DialFunc` dials one with a
+  `net.Dialer` of its own, on the real machine.
 
 So the URL sets every field the service uses, host, port, user, password,
 database and sslmode, and nothing is left for pgx to find. The file holds:

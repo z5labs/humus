@@ -107,7 +107,7 @@ func TestInPod_reaches_the_API_server_with_the_service_accounts_token(t *testing
 		require.NoError(t, getConfigMap(t.Context(), kc, "settings"), "the CA verifies the API server")
 
 		// The kubelet rotates the token; the Client reads it again within a minute.
-		f, err := h.FS().OpenFile("serviceaccount/token", os.O_WRONLY|os.O_TRUNC, 0)
+		f, err := h.Filesystem().OpenFile("serviceaccount/token", os.O_WRONLY|os.O_TRUNC, 0)
 		require.NoError(t, err)
 		_, err = io.WriteString(f, second+"\n")
 		require.NoError(t, err)
@@ -184,7 +184,7 @@ func TestFromKubeconfig_reaches_the_API_server_with_the_client_certificate(t *te
 			peers []string
 		)
 		api := &apiServer{}
-		l, err := h.Listen("tcp", server)
+		l, err := h.ListenTCP(t.Context(), "tcp", server)
 		require.NoError(t, err)
 		srv := &http.Server{
 			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -204,7 +204,7 @@ func TestFromKubeconfig_reaches_the_API_server_with_the_client_certificate(t *te
 		done := make(chan error, 1)
 		go func() { done <- srv.ServeTLS(l, "", "") }()
 
-		conn, err := fromKubeconfig(h.FS(), "home/.kube/config")
+		conn, err := fromKubeconfig(h.Filesystem(), "home/.kube/config")
 		require.NoError(t, err)
 		require.Equal(t, server, conn.Server)
 		require.Nil(t, conn.Token, "the client certificate authenticates")
@@ -234,11 +234,11 @@ func TestFromKubeconfig_reports_what_it_lacks(t *testing.T) {
 		"valid":      kubeconfig(t, ca, "https://"+server),
 	}))
 
-	_, err = fromKubeconfig(h.FS(), "missing")
+	_, err = fromKubeconfig(h.Filesystem(), "missing")
 	require.ErrorIs(t, err, os.ErrNotExist)
-	_, err = fromKubeconfig(h.FS(), "no-context")
+	_, err = fromKubeconfig(h.Filesystem(), "no-context")
 	require.EqualError(t, err, `the kubeconfig has no context "dev"`)
-	_, err = fromKubeconfig(h.FS(), "valid")
+	_, err = fromKubeconfig(h.Filesystem(), "valid")
 	require.NoError(t, err)
 }
 
@@ -265,7 +265,7 @@ func TestFinalizing_deletes_the_backups_before_the_Memcached_is_deleted(t *testi
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		fc := newFakeCluster(t, memcachedObject("cache", 2))
-		s := newSetup(t, humus.Host{Dial: noDial}, humustest.NewTelemetry())
+		s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
 		b := &deletes{}
 		ctrl, err := finalizing(s, testClient(t, s), testSettings(), fc.kube, b)
 		require.NoError(t, err)
@@ -322,7 +322,7 @@ func TestDefaultDeny_gives_every_Namespace_its_policy(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		fc := newFakeClusterOf(t, Namespaces.GVR, "NamespaceList", "", namespaceObject("team-a"), namespaceObject("team-b"))
-		s := newSetup(t, humus.Host{Dial: noDial}, humustest.NewTelemetry())
+		s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
 		ctrl, err := defaultDeny(s, testClient(t, s), testSettings(), fc.kube)
 		require.NoError(t, err)
 		kube.SetClients(ctrl, fc.dyn, fc.meta, fc.kube.CoordinationV1())
@@ -430,7 +430,7 @@ func TestUnderTest_a_staging_Memcached_carries_the_scenario_until_the_experiment
 		staged.SetNamespace("staging")
 		fc := newFakeCluster(t, staged, memcachedObject("cache", 2))
 		tel := humustest.NewTelemetry()
-		s := faultsSetup(t, humus.Host{Dial: noDial}, tel)
+		s := faultsSetup(t, noNetwork(t), tel)
 		rec := &abortsDeployments{}
 		ctrl, err := underTest(s, testClient(t, s), testSettings(), rec.reconciler(s))
 		require.NoError(t, err)
@@ -534,7 +534,7 @@ func TestBudget_leaves_a_Deployment_no_Memcached_controls_alone(t *testing.T) {
 
 func TestOperator_returns_a_Controller_of_Memcacheds_and_one_of_their_Deployments(t *testing.T) {
 	t.Parallel()
-	s := faultsSetup(t, humus.Host{Dial: noDial}, humustest.NewTelemetry())
+	s := faultsSetup(t, noNetwork(t), humustest.NewTelemetry())
 	budgetSettings := testSettings()
 	budgetSettings.Name = "memcached-budget"
 

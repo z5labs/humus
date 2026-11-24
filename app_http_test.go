@@ -67,7 +67,7 @@ func newHTTPSService(s *humus.Setup, addr string, cfg *tls.Config, h http.Handle
 // TLS config, and serves until Shutdown. It returns nil when Shutdown
 // stopped it, including a Shutdown called before Serve.
 func (s *httpService) Serve(context.Context) error {
-	ln, err := s.host.Listen("tcp", s.addr)
+	ln, err := s.host.ListenTCP(context.Background(), "tcp", s.addr)
 	if err != nil {
 		return fmt.Errorf("http listen: %w", err)
 	}
@@ -196,11 +196,11 @@ func requireSignalCause(t *testing.T, cause error) {
 	}
 }
 
-// requireRefused fails t unless a Dial to address is refused, as it is once
+// requireRefused fails t unless a DialTCP to address is refused, as it is once
 // nothing listens on it.
 func requireRefused(t *testing.T, h *humustest.Host, address string) {
 	t.Helper()
-	conn, err := h.Dial(t.Context(), "tcp", address)
+	conn, err := h.DialTCP(t.Context(), "tcp", address)
 	if err == nil {
 		_ = conn.Close()
 		t.Fatalf("Dial(%q) connected, want ECONNREFUSED", address)
@@ -441,7 +441,7 @@ func tlsFromPKCS12(ctx context.Context, s *humus.Setup) (*tls.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	f, err := s.Host.FS.Open(path)
+	f, err := s.Host.Filesystem.Open(path)
 	if err != nil {
 		return nil, err
 	}

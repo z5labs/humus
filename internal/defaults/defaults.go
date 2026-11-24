@@ -28,7 +28,7 @@ import (
 const ShutdownGracePeriod = 20 * time.Second
 
 // Telemetry is the App's telemetry.Builder: telemetry.New with
-// telemetry.DefaultSettings(), the Host's Dial and the Process's stdout.
+// telemetry.DefaultSettings(), the Host's DialTCP and the Process's stdout.
 // Logs go to stdout as JSON lines, and spans get real IDs without being
 // exported.
 func Telemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {

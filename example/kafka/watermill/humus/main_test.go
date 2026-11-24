@@ -12,6 +12,7 @@ import (
 	"encoding/pem"
 	"io"
 	"maps"
+	"net"
 	"net/http"
 	"slices"
 	"strconv"
@@ -162,7 +163,7 @@ func start(t *testing.T, env map[string]string) service {
 		"tls/tls.key": keyPEM,
 	}))
 	cluster, err := kfake.NewCluster(
-		kfake.ListenFn(h.Listen),
+		kfake.ListenFn(func(network, address string) (net.Listener, error) { return h.ListenTCP(t.Context(), network, address) }),
 		kfake.NumBrokers(1),
 		kfake.SeedTopics(1, ordersTopic, invoicesTopic, retryTopic, deadLetterTopic),
 	)
@@ -193,7 +194,7 @@ func start(t *testing.T, env map[string]string) service {
 	return service{
 		target: cases.Target{
 			Cluster:         cluster,
-			Kafka:           []kgo.Opt{kgo.SeedBrokers(cluster.ListenAddrs()...), kgo.Dialer(h.Dial)},
+			Kafka:           []kgo.Opt{kgo.SeedBrokers(cluster.ListenAddrs()...), kgo.Dialer(h.DialTCP)},
 			Group:           consumerGroup,
 			Consumes:        []string{ordersTopic, retryTopic},
 			OrdersTopic:     ordersTopic,

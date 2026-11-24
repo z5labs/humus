@@ -48,8 +48,8 @@ type Server struct {
 	shutdown atomic.Bool
 }
 
-// New listens on addr with s.Host.Listen("tcp", addr). A failure to listen,
-// such as EADDRINUSE, is its error, unwrapped. It registers a function with
+// New listens on addr with s.Host.ListenTCP over "tcp". A failure to
+// listen, such as EADDRINUSE, is its error, unwrapped. It registers a function with
 // s.OnStop that closes the listener, so a listener whose Server never
 // serves, because Init failed after New, is still closed.
 //
@@ -64,7 +64,7 @@ type Server struct {
 // one ERROR record through logger, and the caller must not use srv after
 // New, other than through the Server. The Server logs through logger too.
 func New(s *humus.Setup, name, addr string, srv *http.Server, logger log.Logger) (*Server, error) {
-	ln, err := s.Host.Listen("tcp", addr)
+	ln, err := s.Host.ListenTCP(context.Background(), "tcp", addr)
 	if err != nil {
 		return nil, err
 	}

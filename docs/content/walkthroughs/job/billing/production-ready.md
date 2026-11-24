@@ -34,7 +34,7 @@ The database URL and the API key are files from Secrets, read through the
 Host:
 
 ```go
-file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.FS)) }
+file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.Filesystem)) }
 ```
 
 ```go

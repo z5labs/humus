@@ -171,11 +171,11 @@ func readSettings(ctx context.Context, s *humus.Setup) (kube.Settings, error) {
 
 // inPod fills the Connection of a pod from what the kubelet gives every
 // container: the API server's address in two variables, and the service
-// account's CA and token in dir, read through s.Host.FS.
+// account's CA and token in dir, read through s.Host.Filesystem.
 func inPod(ctx context.Context, s *humus.Setup, dir string) (kube.Connection, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
-	ca, err := readFile(s.Host.FS, dir+"ca.crt")
+	ca, err := readFile(s.Host.Filesystem, dir+"ca.crt")
 	if err != nil {
 		return kube.Connection{}, err
 	}
@@ -191,7 +191,7 @@ func inPod(ctx context.Context, s *humus.Setup, dir string) (kube.Connection, er
 			TLS:    &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
 			// Read again at most once a minute, so a token the kubelet rotates is picked up.
 			Token: func(context.Context) (string, error) {
-				b, err := readFile(s.Host.FS, dir+"token")
+				b, err := readFile(s.Host.Filesystem, dir+"token")
 				return string(bytes.TrimSpace(b)), err
 			},
 		}
@@ -202,7 +202,7 @@ func inPod(ctx context.Context, s *humus.Setup, dir string) (kube.Connection, er
 // development: the API server, CA and client certificate of its current
 // context, embedded in the file, as kind and k3s write them. It reads the
 // file through fsys.
-func fromKubeconfig(fsys humus.FS, path string) (kube.Connection, error) {
+func fromKubeconfig(fsys humus.Filesystem, path string) (kube.Connection, error) {
 	b, err := readFile(fsys, path)
 	if err != nil {
 		return kube.Connection{}, err
@@ -238,7 +238,7 @@ func fromKubeconfig(fsys humus.FS, path string) (kube.Connection, error) {
 }
 
 // readFile reads the whole file name through fsys.
-func readFile(fsys humus.FS, name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem, name string) ([]byte, error) {
 	f, err := fsys.Open(name)
 	if err != nil {
 		return nil, err

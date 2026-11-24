@@ -155,17 +155,17 @@ balance:
 ## The wallet's unit tests
 
 The wallet's server tests serve a fake ledger on the humustest Host, and
-start the wallet with its real `grpcclient` Client. The Host's `Dial` sends
+start the wallet with its real `grpcclient` Client. The Host's `DialTCP` sends
 the ledger's address to whichever replica the test routes it to:
 
 ```go
 	host := e.h.Host()
-	host.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+	host.IPNetwork = hosttest.Seams{Network: host.IPNetwork, OnDialTCP: func(ctx context.Context, network, address string) (net.Conn, error) {
 		if address == ledgerAddr {
 			address = *e.route.Load()
 		}
-		return e.h.Dial(ctx, network, address)
-	}
+		return e.h.DialTCP(ctx, network, address)
+	}}
 ```
 
 So a test can start a second replica, route to it, and stop the first, and
@@ -303,7 +303,7 @@ ledger's address to one of the replicas still in its endpoints, and refuses
 the dial when there is none:
 
 ```go
-func (n *network) Dial(ctx context.Context, network, address string) (net.Conn, error) {
+func (n *network) DialTCP(ctx context.Context, network, address string) (net.Conn, error) {
 	n.mu.Lock()
 	s := n.services[address]
 	n.mu.Unlock()
@@ -344,9 +344,9 @@ func (s *service) rollout(ctx context.Context) error {
 The wallet's Host dials through it, so the wallet's `Init` doesn't change:
 
 ```go
-	n := newNetwork(pl.host.Dial)
+	n := newNetwork(pl.host.DialTCP)
 	host := pl.host
-	host.Dial = n.Dial
+	host.IPNetwork = hosttest.Seams{Network: host.IPNetwork, OnDialTCP: n.DialTCP}
 ```
 
 ```go

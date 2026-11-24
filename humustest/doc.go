@@ -60,8 +60,8 @@
 // rather than of the end user's Init, runs it with bedrocktest.Start.
 //
 // The App reaches the network and the filesystem only through the Host in
-// its Setup: its Services listen with s.Host.Listen and open files with
-// s.Host.FS, never with net.Listen or os.Open, which would reach the real
+// its Setup: its Services listen with s.Host.ListenTCP and open files with
+// s.Host.Filesystem, never with net.Listen or os.Open, which would reach the real
 // host and block where synctest can't see. Build the Host, and a CA,
 // inside the bubble that uses them, with the bubble's t.
 //
@@ -77,14 +77,14 @@
 //     127.0.0.1 are different names: a client dials the name a Service
 //     listens on, or the Service listens on every name, as ":8080" does
 //     above.
-//   - [Host.Dial] refuses rather than waits, so a test waits for the
+//   - [Host.DialTCP] refuses rather than waits, so a test waits for the
 //     listener before it dials: inside a synctest bubble with
 //     synctest.Wait, and anywhere with <-h.Listening(address), which waits
 //     for one TCP listener, like bedrocktest's Process.Notified.
 //   - The filesystem is real, in a directory from t.TempDir() and confined
 //     to it with os.Root.
 //     [github.com/z5labs/bedrock/host/hosttest.WithFiles] writes the files
-//     a test sets up before the App starts, [Host.FS] opens them, and
+//     a test sets up before the App starts, [Host.Filesystem] opens them, and
 //     [Host.Path] gives the absolute path of one to put in a setting.
 //
 // # TLS

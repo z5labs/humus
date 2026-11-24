@@ -114,7 +114,7 @@ func TestInit_never_writes_its_secrets_to_a_span_or_a_record(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			j := newJob(t, "acct-1")
 			tel := humustest.NewTelemetry()
-			l, err := j.host.Listen("tcp", "db.internal:5432")
+			l, err := j.host.ListenTCP(t.Context(), "tcp", "db.internal:5432")
 			require.NoError(t, err)
 			go func() {
 				for {

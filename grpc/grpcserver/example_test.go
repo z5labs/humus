@@ -34,7 +34,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 			Addr: r.Get(env("GRPC_ADDR").Validate(grpcserver.CheckAddr)),
 			// readFile and serverTLS are the end user's own helpers. The
 			// bundle's password is read only once the bundle has been.
-			TLS: r.Get(env("GRPC_TLS_P12_FILE").Parse(readFile(s.Host.FS)).FlatMap(func(bundle []byte) config.Value[*tls.Config] {
+			TLS: r.Get(env("GRPC_TLS_P12_FILE").Parse(readFile(s.Host.Filesystem)).FlatMap(func(bundle []byte) config.Value[*tls.Config] {
 				return env("GRPC_TLS_P12_PASSWORD").Parse(serverTLS(bundle))
 			}).Validate(grpcserver.CheckTLS)),
 		}
@@ -63,7 +63,7 @@ func (greeter) UnaryCall(context.Context, *testpb.SimpleRequest) (*testpb.Simple
 
 // readFile returns a parser for config.Value.Parse that reads the whole
 // file a variable names, through fsys.
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {

@@ -242,7 +242,7 @@ func TestApp_Run_telemetry_the_Builder_gets_the_Process_and_the_Hosts_Dial(t *te
 		var dialErr error
 		build := func(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
 			gotArgs = p.Args
-			// Nothing listens on the humustest Host, so its Dial refuses
+			// Nothing listens on the humustest Host, so its DialTCP refuses
 			// the connection; OSHost's would have dialled the real network.
 			_, dialErr = dial(ctx, "tcp", "collector:4317")
 			return telemetry.Noop(), nil

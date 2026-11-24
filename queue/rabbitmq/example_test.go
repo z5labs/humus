@@ -141,7 +141,7 @@ func Example_main() {
 
 // secureInit is an Init for a broker that requires TLS with a client
 // certificate, which is also its login. It sources the broker's CA and the
-// client's certificate from PEM files, read through s.Host.FS, and
+// client's certificate from PEM files, read through s.Host.Filesystem, and
 // publishes over the same TLS.
 func secureInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	d := rabbitmq.DefaultSettings()
@@ -151,8 +151,8 @@ func secureInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		k := d
 		k.Connection.Addr = r.Get(env("RABBITMQ_ADDR").Validate(rabbitmq.CheckAddr))
 		// The CA's file is read first, and the client's certificate only once it has been.
-		k.Connection.TLS = r.Get(env("RABBITMQ_TLS_CA_FILE").Parse(readFile(s.Host.FS)).FlatMap(func(ca []byte) config.Value[*tls.Config] {
-			return env("RABBITMQ_TLS_CERT_FILE").Parse(readFile(s.Host.FS)).Parse(clientTLS(ca))
+		k.Connection.TLS = r.Get(env("RABBITMQ_TLS_CA_FILE").Parse(readFile(s.Host.Filesystem)).FlatMap(func(ca []byte) config.Value[*tls.Config] {
+			return env("RABBITMQ_TLS_CERT_FILE").Parse(readFile(s.Host.Filesystem)).Parse(clientTLS(ca))
 		}))
 		// The client certificate is the login: RabbitMQ's rabbitmq_auth_mechanism_ssl plugin takes it.
 		k.Connection.SASL = &amqp.ExternalAuth{}
@@ -177,7 +177,7 @@ func secureInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 
 // readFile returns a parser for config.Value.Parse that reads the whole
 // file a variable names, through fsys.
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {

@@ -51,7 +51,7 @@ func newHost(t *testing.T, c *humustest.Certificate) *humustest.Host {
 
 func write(t *testing.T, h *humustest.Host, name string, data []byte) {
 	t.Helper()
-	f, err := h.FS().OpenFile(h.Path(name), os.O_WRONLY|os.O_TRUNC, 0)
+	f, err := h.Filesystem().OpenFile(h.Path(name), os.O_WRONLY|os.O_TRUNC, 0)
 	require.NoError(t, err)
 	_, err = f.Write(data)
 	require.NoError(t, err)
@@ -67,7 +67,7 @@ func renew(t *testing.T, h *humustest.Host, c *humustest.Certificate) {
 
 func config(t *testing.T, h *humustest.Host) *tls.Config {
 	t.Helper()
-	cfg, err := certfile.Config(h.FS(), h.Path(certFile), h.Path(keyFile))
+	cfg, err := certfile.Config(h.Filesystem(), h.Path(certFile), h.Path(keyFile))
 	require.NoError(t, err)
 	return cfg
 }
@@ -186,7 +186,7 @@ func TestConfig(t *testing.T) {
 		certPEM, _ := encode(t, ca.Issue(t, serverName))
 		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{certFile: certPEM}))
 
-		_, err := certfile.Config(h.FS(), h.Path(certFile), h.Path(keyFile))
+		_, err := certfile.Config(h.Filesystem(), h.Path(certFile), h.Path(keyFile))
 		require.ErrorIs(t, err, os.ErrNotExist)
 	})
 
@@ -196,20 +196,20 @@ func TestConfig(t *testing.T) {
 		_, keyPEM := encode(t, ca.Issue(t, serverName))
 		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{certFile: certPEM, keyFile: keyPEM}))
 
-		_, err := certfile.Config(h.FS(), h.Path(certFile), h.Path(keyFile))
+		_, err := certfile.Config(h.Filesystem(), h.Path(certFile), h.Path(keyFile))
 		require.ErrorContains(t, err, h.Path(certFile))
 	})
 }
 
 type renewingFS struct {
-	humus.FS
+	humus.Filesystem
 	t     *testing.T
 	name  string
 	renew atomic.Pointer[[]byte]
 }
 
 func (r *renewingFS) Open(name string) (*os.File, error) {
-	f, err := r.FS.Open(name)
+	f, err := r.Filesystem.Open(name)
 	if err != nil || name != r.name {
 		return f, err
 	}
@@ -230,7 +230,7 @@ func TestConfig_reads_a_certificate_and_its_key_from_one_file_once_per_handshake
 	old := ca.Issue(t, serverName)
 	oldCert, oldKey := encode(t, old)
 	h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{pemFile: append(oldCert, oldKey...)}))
-	fsys := &renewingFS{FS: h.FS(), t: t, name: h.Path(pemFile)}
+	fsys := &renewingFS{Filesystem: h.Filesystem(), t: t, name: h.Path(pemFile)}
 
 	cfg, err := certfile.Config(fsys, h.Path(pemFile), h.Path(pemFile))
 	require.NoError(t, err)
