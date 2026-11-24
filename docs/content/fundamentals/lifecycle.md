@@ -491,7 +491,9 @@ defines is theirs to check, in `acquire`.
 nothing open, so the host lives as long as the process, and the OS closes
 its descriptors at exit. A host that needs an orderly close registers it in
 `Init` with `s.OnStop`, which runs after the Services stop, and also when
-`Init` fails.
+`Init` fails. An App that exits before it calls `Init`, on a malformed
+setting or a failed `Builder`, has registered nothing, so the process's exit
+is all that closes its host.
 
 **A Drain that needs more than `DialTCP` closes over the host.** A Drain is
 given the host as a `humus.Network`, which has only `DialTCP`. One that
@@ -590,8 +592,8 @@ the context each is given is done when the grace period runs out.
 5. Sets OpenTelemetry's process-wide error handler, which writes each export
    error to standard error.
 6. Builds the [failure injection]({{< relref "/hardening/failure-injection" >}}), when
-   `App.Faults` is set: calls it with the context a signal cancels and the
-   `Setup` that `Init` is then given, builds the `fault.Injector` from the
+   `App.Faults` is set: calls it with the context a signal cancels, the
+   `Setup` that `Init` is then given and the App's host, builds the `fault.Injector` from the
    settings it returns with `fault.New`, and puts it in `Setup.Faults`. If
    either fails, the failure is logged as `failure injection: ` and the
    error, the OnStop functions registered so far run, within the grace

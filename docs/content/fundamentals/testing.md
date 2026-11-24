@@ -697,8 +697,9 @@ p, status := humustest.Start(t, h, initOnFiles,
 )
 ```
 
-`Start` infers the host type from `h`, and runs the `Init` and the Drain the
-end user's `main` passes to `MainOn`.
+`Start` infers the host type from `h`. It runs only the options it is
+given, so the test passes the Drain that `main` passes to `MainOn`, built on
+the test host, with `WithApp`.
 
 [The App lifecycle]({{< relref "/fundamentals/lifecycle#why-filesystem-hands-out-osfile" >}})
 explains why `Filesystem` hands out `*os.File`.

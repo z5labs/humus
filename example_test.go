@@ -7,8 +7,10 @@ package humus_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"syscall"
 	"testing"
@@ -201,8 +203,12 @@ func ExampleMainOn() {
 func drainOnFiles(h filesHost, name string) humus.Drain {
 	return func(ctx context.Context, _ *humus.Setup, _ humus.Network) error {
 		for {
-			if _, err := h.Files.ReadFile(name); err == nil {
+			_, err := h.Files.ReadFile(name)
+			if err == nil {
 				return nil
+			}
+			if !errors.Is(err, fs.ErrNotExist) {
+				return err
 			}
 			t := time.NewTimer(time.Second)
 			select {
