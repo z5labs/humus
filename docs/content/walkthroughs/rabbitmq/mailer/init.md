@@ -239,15 +239,15 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 
 	retrySettings := settings.Publisher
 	retrySettings.ForwardScenario = true
-	retries, err := rabbitmq.NewPublisher(s, retrySettings)
+	retries, err := rabbitmq.NewPublisher(s, h, retrySettings)
 	if err != nil {
 		return nil, err
 	}
-	results, err := rabbitmq.NewPublisher(s, settings.Publisher)
+	results, err := rabbitmq.NewPublisher(s, h, settings.Publisher)
 	if err != nil {
 		return nil, err
 	}
-	deadLetters, err := rabbitmq.NewPublisher(s, settings.Publisher)
+	deadLetters, err := rabbitmq.NewPublisher(s, h, settings.Publisher)
 	if err != nil {
 		return nil, err
 	}
@@ -283,7 +283,7 @@ if err != nil {
 	return nil, err
 }
 
-svc, err := rabbitmq.NewService(s, settings.Consumer, w)
+svc, err := rabbitmq.NewService(s, h, settings.Consumer, w)
 if err != nil {
 	return nil, err
 }

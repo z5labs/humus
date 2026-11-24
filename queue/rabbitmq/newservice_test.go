@@ -24,10 +24,10 @@ import (
 // noop is a Processor that does nothing.
 var noop = queue.ProcessorFunc[rabbitmq.Message](func(context.Context, rabbitmq.Message) error { return nil })
 
-// setup is a Setup with no telemetry, on a new humustest Host.
+// setup is a Setup with no telemetry.
 func setup(t *testing.T) *humus.Setup {
 	t.Helper()
-	return &humus.Setup{Host: humustest.NewHost(t).Host(), Telemetry: telemetry.Noop()}
+	return &humus.Setup{Telemetry: telemetry.Noop()}
 }
 
 func TestNewService_accepts_DefaultSettings_with_Addr_SASL_and_Queue_set(t *testing.T) {
@@ -37,7 +37,7 @@ func TestNewService_accepts_DefaultSettings_with_Addr_SASL_and_Queue_set(t *test
 	d.Connection.Addr = "rabbit:5672"
 	d.Connection.SASL = &amqp.PlainAuth{Username: "orders", Password: rand.Text()}
 	d.Queue = "orders"
-	svc, err := rabbitmq.NewService(setup(t), d, noop)
+	svc, err := rabbitmq.NewService(setup(t), humustest.NewHost(t), d, noop)
 	require.NoError(t, err)
 	require.NotNil(t, svc)
 }
@@ -48,7 +48,7 @@ func TestNewService_reports_every_bad_field_in_one_error(t *testing.T) {
 	s := settings()
 	s.Queue = ""
 	s.Prefetch = 0
-	svc, err := rabbitmq.NewService(setup(t), s, noop)
+	svc, err := rabbitmq.NewService(setup(t), humustest.NewHost(t), s, noop)
 	require.Nil(t, svc)
 	require.EqualError(t, err, "rabbitmq: NewService: Settings.Queue must not be empty\n"+
 		"Settings.Prefetch must be from 1 to 65535")
@@ -57,7 +57,7 @@ func TestNewService_reports_every_bad_field_in_one_error(t *testing.T) {
 func TestNewService_names_every_field_of_DefaultSettings_that_has_no_default(t *testing.T) {
 	t.Parallel()
 
-	_, err := rabbitmq.NewService(setup(t), rabbitmq.DefaultSettings(), noop)
+	_, err := rabbitmq.NewService(setup(t), humustest.NewHost(t), rabbitmq.DefaultSettings(), noop)
 	require.EqualError(t, err, "rabbitmq: NewService: Settings.Connection.Addr is not host:port\n"+
 		"Settings.Connection.SASL must be set\n"+
 		"Settings.Queue must not be empty")
@@ -85,7 +85,7 @@ func TestNewService_checks_every_field(t *testing.T) {
 
 			s := settings()
 			tc.change(&s)
-			_, err := rabbitmq.NewService(setup(t), s, noop)
+			_, err := rabbitmq.NewService(setup(t), humustest.NewHost(t), s, noop)
 			require.ErrorContains(t, err, "rabbitmq: NewService: "+tc.field+" ")
 		})
 	}
@@ -97,18 +97,18 @@ func TestNewService_rejects_a_Concurrency_above_Prefetch_naming_both_fields(t *t
 	s := settings()
 	s.Prefetch = 4
 	s.Concurrency = 5
-	_, err := rabbitmq.NewService(setup(t), s, noop)
+	_, err := rabbitmq.NewService(setup(t), humustest.NewHost(t), s, noop)
 	require.EqualError(t, err, "rabbitmq: NewService: Settings.Concurrency, 5, must be at most Settings.Prefetch, 4")
 
 	s.Concurrency = 4
-	_, err = rabbitmq.NewService(setup(t), s, noop)
+	_, err = rabbitmq.NewService(setup(t), humustest.NewHost(t), s, noop)
 	require.NoError(t, err, "Concurrency may equal Prefetch")
 }
 
 func TestNewService_rejects_a_nil_Processor(t *testing.T) {
 	t.Parallel()
 
-	_, err := rabbitmq.NewService(setup(t), settings(), nil)
+	_, err := rabbitmq.NewService(setup(t), humustest.NewHost(t), settings(), nil)
 	require.EqualError(t, err, "rabbitmq: NewService: the Processor must not be nil")
 }
 
@@ -131,8 +131,8 @@ func TestNewService_opens_no_connection(t *testing.T) {
 
 		// An Init that fails after NewService: the App runs no Service, and
 		// no OnStop function.
-		_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-			if _, err := rabbitmq.NewService(s, settings(), noop); err != nil {
+		_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			if _, err := rabbitmq.NewService(s, h, settings(), noop); err != nil {
 				return nil, err
 			}
 			return nil, context.Canceled

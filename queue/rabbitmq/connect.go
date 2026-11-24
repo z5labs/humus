@@ -15,20 +15,27 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
-
-	"github.com/z5labs/humus"
 )
 
 // locale is the locale every connection asks for. amqp091's DialConfig sets
 // it when a Config leaves it empty, and amqp.Open doesn't.
 const locale = "en_US"
 
-// connect opens an AMQP connection to c.Addr through host, in three steps,
+// Network is what a Publisher and a Service need of a host: a way to dial.
+// humus.Host implements it, and so does any network of the end user's with
+// this method.
+type Network interface {
+	// DialTCP connects to address over "tcp", "tcp4" or "tcp6", like
+	// net.Dialer.DialContext.
+	DialTCP(ctx context.Context, network, address string) (net.Conn, error)
+}
+
+// connect opens an AMQP connection to c.Addr through n, in three steps,
 // all bounded by c.ConnectTimeout and by ctx: the dial, the TLS handshake
 // when c.TLS is set, and the AMQP handshake.
 //
-// It dials with host.DialTCP and hands the connection to amqp.Open, so the
-// broker is reached only through the Host, and no URL is ever built: amqp091's
+// It dials with n.DialTCP and hands the connection to amqp.Open, so the
+// broker is reached only through n, and no URL is ever built: amqp091's
 // Dial, DialConfig, DialTLS and DefaultDial all take or make one, and dial the
 // real network. The TLS handshake uses a clone of c.TLS, whose ServerName is
 // Addr's host when c.TLS leaves it empty, so the end user's config is never
@@ -42,7 +49,7 @@ const locale = "en_US"
 // broker didn't say why, so a timeout would otherwise read as a wrong login.
 // When the broker refuses Connection.Open with 530 NOT_ALLOWED, the error
 // wraps a vhostRefusal.
-func connect(ctx context.Context, host humus.Host, c Connection) (*amqp.Connection, error) {
+func connect(ctx context.Context, n Network, c Connection) (*amqp.Connection, error) {
 	var cfg *tls.Config
 	if c.TLS != nil {
 		cfg = c.TLS.Clone()
@@ -60,7 +67,7 @@ func connect(ctx context.Context, host humus.Host, c Connection) (*amqp.Connecti
 	// The earlier of ConnectTimeout's end and ctx's own deadline.
 	deadline, _ := ctx.Deadline()
 
-	nc, err := host.DialTCP(ctx, "tcp", c.Addr)
+	nc, err := n.DialTCP(ctx, "tcp", c.Addr)
 	if err != nil {
 		return nil, fmt.Errorf("rabbitmq: dialling %s: %w", c.Addr, err)
 	}

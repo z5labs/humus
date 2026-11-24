@@ -95,7 +95,7 @@ func probe(t *testing.T, c *http.Client, url string) int {
 	return resp.StatusCode
 }
 
-// hostSetup returns a Setup with telemetry off and no Host, for a test that
+// hostSetup returns a Setup with telemetry off, for a test that
 // drives a Service directly rather than through an App.
 func hostSetup() *humus.Setup {
 	return &humus.Setup{Telemetry: telemetry.Noop()}

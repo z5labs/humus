@@ -142,7 +142,7 @@ func TestController_recovers_a_panic_in_Reconcile_and_never_retries_it(t *testin
 			return readyReplicas(&other)(ctx, m)
 		})
 		tel := humustest.NewTelemetry()
-		s := newSetup(t, noNetwork(t), tel)
+		s := newSetup(t, tel)
 		sv := serve(t, newController(t, s, fc, panicSettings(), rec))
 		time.Sleep(settle)
 
@@ -182,7 +182,7 @@ func TestController_reconciles_a_panicked_object_changed_while_it_ran(t *testing
 			return kube.Result[MemcachedStatus]{}, nil
 		})
 		tel := humustest.NewTelemetry()
-		s := newSetup(t, noNetwork(t), tel)
+		s := newSetup(t, tel)
 		sv := serve(t, newController(t, s, fc, panicSettings(), rec))
 
 		<-started
@@ -216,7 +216,7 @@ func TestFinalize_recovers_a_panic_in_f_and_keeps_the_finalizer(t *testing.T) {
 			return nil
 		}
 		tel := humustest.NewTelemetry()
-		s := newSetup(t, noNetwork(t), tel)
+		s := newSetup(t, tel)
 		sv := serve(t, newController(t, s, fc, panicSettings(), readyReplicas(&got), kube.Finalize(finalizerName, f)))
 		time.Sleep(settle)
 		require.Equal(t, 4, got.count(), "each object, and each one's status")

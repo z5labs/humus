@@ -21,7 +21,8 @@
 //		if err != nil {
 //			return nil, err
 //		}
-//		svc, err := kafka.NewService(s, settings, queue.ProcessorFunc[kafka.Message](h.Handle))
+//		o := &orders{} // the end user's Processor, with a Handle method
+//		svc, err := kafka.NewService(s, h, settings, queue.ProcessorFunc[kafka.Message](o.Handle))
 //		if err != nil {
 //			return nil, err
 //		}
@@ -36,7 +37,8 @@
 // returned from one Init.
 //
 // NewService opens no connection. Serve builds the franz-go client, dials
-// every broker through the Setup's Host, and joins the group.
+// every broker through the [Network] NewService is given, such as Init's
+// host, and joins the group.
 //
 // # Delivery
 //
@@ -231,11 +233,11 @@
 // Service. One Producer is safe for concurrent use, and serves every
 // Service of the process:
 //
-//	dlq, err := kafka.NewProducer(s, ps) // ps is a kafka.ProducerSettings, sourced like Settings
+//	dlq, err := kafka.NewProducer(s, h, ps) // ps is a kafka.ProducerSettings, sourced like Settings
 //	if err != nil {
 //		return nil, err
 //	}
-//	svc, err := kafka.NewService(s, settings, queue.ProcessorFunc[kafka.Message](func(ctx context.Context, m kafka.Message) error {
+//	svc, err := kafka.NewService(s, h, settings, queue.ProcessorFunc[kafka.Message](func(ctx context.Context, m kafka.Message) error {
 //		order, err := decode(m.Value)
 //		if err != nil {
 //			// A dead letter, stored before the record is committed.
@@ -245,8 +247,8 @@
 //	}))
 //
 // ProducerSettings repeats Settings' Brokers, TLS and SASL, which mean what
-// they mean there, take the same check and dial through the Setup's Host
-// the same way: a Producer may produce to a cluster other than the one a
+// they mean there, take the same check and dial through the Network
+// NewProducer is given the same way: a Producer may produce to a cluster other than the one a
 // Service consumes, so each set is sourced on its own. NewProducer builds
 // one franz-go client and opens no connection: the first call does.
 //

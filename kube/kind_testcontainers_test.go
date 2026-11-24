@@ -72,8 +72,8 @@ func TestKindController_gives_each_Namespace_a_ConfigMap_in_a_whole_App(t *testi
 		_ = kc.CoreV1().Namespaces().Delete(context.Background(), ns.Name, metav1.DeleteOptions{})
 	})
 
-	p, status := humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		client, err := kube.NewClient(s, cluster.conn)
+	p, status := humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		client, err := kube.NewClient(s, h, cluster.conn)
 		if err != nil {
 			return nil, err
 		}

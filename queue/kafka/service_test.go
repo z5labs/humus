@@ -326,9 +326,10 @@ func TestService_at_most_once(t *testing.T) {
 
 func TestService_contract(t *testing.T) {
 	humustest.TestService(t, func(t *testing.T, s *humus.Setup) humus.Service {
+		h := humustest.NewHost(t)
 		c, err := kfake.NewCluster(
 			kfake.ListenFn(func(network, address string) (net.Listener, error) {
-				return s.Host.ListenTCP(t.Context(), network, address)
+				return h.ListenTCP(t.Context(), network, address)
 			}),
 			kfake.NumBrokers(1),
 			kfake.SeedTopics(1, topic),
@@ -338,7 +339,7 @@ func TestService_contract(t *testing.T) {
 			c.Close()
 			return nil
 		})
-		svc, err := kafka.NewService(s, settings(c.ListenAddrs()...), queue.ProcessorFunc[kafka.Message](func(context.Context, kafka.Message) error {
+		svc, err := kafka.NewService(s, h, settings(c.ListenAddrs()...), queue.ProcessorFunc[kafka.Message](func(context.Context, kafka.Message) error {
 			return nil
 		}))
 		require.NoError(t, err)
@@ -778,7 +779,7 @@ func TestService_logs_the_partitions_it_is_assigned_revoked_and_loses(t *testing
 func TestNewService(t *testing.T) {
 	t.Parallel()
 
-	setup := &humus.Setup{Host: humus.OSHost(), Telemetry: telemetry.Noop()}
+	setup := &humus.Setup{Telemetry: telemetry.Noop()}
 	nop := queue.ProcessorFunc[kafka.Message](func(context.Context, kafka.Message) error { return nil })
 
 	t.Run("reports every bad field, naming each", func(t *testing.T) {
@@ -787,7 +788,7 @@ func TestNewService(t *testing.T) {
 		s := settings("127.0.0.1:9092")
 		s.GroupID = ""
 		s.MaxPollRecords = 0
-		_, err := kafka.NewService(setup, s, nop)
+		_, err := kafka.NewService(setup, humus.OSHost(), s, nop)
 		require.ErrorContains(t, err, "Settings.GroupID must not be empty")
 		require.ErrorContains(t, err, "Settings.MaxPollRecords must be positive")
 	})
@@ -810,7 +811,7 @@ func TestNewService(t *testing.T) {
 
 				s := settings("127.0.0.1:9092")
 				s.Assignors = tc.assignors
-				_, err := kafka.NewService(setup, s, nop)
+				_, err := kafka.NewService(setup, humus.OSHost(), s, nop)
 				require.ErrorContains(t, err, tc.want)
 			})
 		}
@@ -833,7 +834,7 @@ func TestNewService(t *testing.T) {
 
 				s := settings("127.0.0.1:9092")
 				s.GroupProtocol = tc.protocol
-				_, err := kafka.NewService(setup, s, nop)
+				_, err := kafka.NewService(setup, humus.OSHost(), s, nop)
 				require.ErrorContains(t, err, tc.want)
 			})
 		}
@@ -864,7 +865,7 @@ func TestNewService(t *testing.T) {
 				s := settings("127.0.0.1:9092")
 				s.GroupProtocol = tc.protocol
 				s.Assignors = tc.assignors
-				svc, err := kafka.NewService(setup, s, nop)
+				svc, err := kafka.NewService(setup, humus.OSHost(), s, nop)
 				if tc.valid {
 					require.NoError(t, err)
 					return
@@ -883,7 +884,7 @@ func TestNewService(t *testing.T) {
 		s.Assignors = []kafka.Assignor{kafka.RoundRobinAssignor}
 		s.GroupID = ""
 		s.MaxPollRecords = 0
-		_, err := kafka.NewService(setup, s, nop)
+		_, err := kafka.NewService(setup, humus.OSHost(), s, nop)
 		require.ErrorContains(t, err, "Settings.GroupID must not be empty")
 		require.ErrorContains(t, err, "Settings.MaxPollRecords must be positive")
 		require.ErrorContains(t, err, `Settings.GroupProtocol "consumer" needs the first of Settings.Assignors`)
@@ -892,14 +893,14 @@ func TestNewService(t *testing.T) {
 	t.Run("rejects a nil Processor", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := kafka.NewService(setup, settings("127.0.0.1:9092"), nil)
+		_, err := kafka.NewService(setup, humus.OSHost(), settings("127.0.0.1:9092"), nil)
 		require.ErrorContains(t, err, "the Processor must not be nil")
 	})
 
 	t.Run("accepts DefaultSettings with Brokers, GroupID and Topics set", func(t *testing.T) {
 		t.Parallel()
 
-		svc, err := kafka.NewService(setup, settings("127.0.0.1:9092"), nop)
+		svc, err := kafka.NewService(setup, humus.OSHost(), settings("127.0.0.1:9092"), nop)
 		require.NoError(t, err)
 		require.NotNil(t, svc)
 	})
@@ -918,8 +919,8 @@ func TestNewService(t *testing.T) {
 				return nil, nil, false
 			})
 			bad := errors.New("init failed after NewService")
-			_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-				if _, err := kafka.NewService(s, settings(c.ListenAddrs()...), nop); err != nil {
+			_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+				if _, err := kafka.NewService(s, h, settings(c.ListenAddrs()...), nop); err != nil {
 					return nil, err
 				}
 				return nil, bad
@@ -945,7 +946,7 @@ func TestService_Process_context_keeps_Serve_context_values(t *testing.T) {
 		produce(t, h, c, 1)
 
 		var got any
-		svc, err := kafka.NewService(&humus.Setup{Host: h.Host(), Telemetry: telemetry.Noop()}, settings(c.ListenAddrs()...),
+		svc, err := kafka.NewService(&humus.Setup{Telemetry: telemetry.Noop()}, h, settings(c.ListenAddrs()...),
 			queue.ProcessorFunc[kafka.Message](func(ctx context.Context, m kafka.Message) error {
 				got = ctx.Value(contextKey{})
 				return nil

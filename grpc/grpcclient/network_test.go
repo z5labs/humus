@@ -31,9 +31,9 @@ func TestNewClient_dials_only_through_its_Network(t *testing.T) {
 		defer stop()
 
 		n, d := recordDials(h)
-		// The App's Host, which is both the Setup's Host and Init's
-		// argument, is another host whose every dial fails, so a dial
-		// through it would fail the call rather than reach the backend.
+		// The App's Host, which is Init's argument, is another host whose
+		// every dial fails, so a dial through it would fail the call
+		// rather than reach the backend.
 		errAppHost := errors.New("dialled through the App's Host")
 		appHost := humus.Host{
 			IPNetwork: hosttest.Seams{Network: humustest.NewHost(t), OnDialTCP: func(context.Context, string, string) (net.Conn, error) {

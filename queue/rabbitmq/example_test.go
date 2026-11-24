@@ -80,7 +80,7 @@ func (o *orders) store(m rabbitmq.Message) {
 // Init is the end user's Init: it sources the Settings with config.Struct,
 // builds the Publisher and the Processor, and returns the Service from
 // NewService.
-func Init(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	d := rabbitmq.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
@@ -100,13 +100,13 @@ func Init(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, e
 		return nil, err // exit 78, naming every bad variable
 	}
 
-	pub, err := rabbitmq.NewPublisher(s, publisherOn(settings.Connection)) // opens no connection: the first Publish does
+	pub, err := rabbitmq.NewPublisher(s, h, publisherOn(settings.Connection)) // opens no connection: the first Publish does
 	if err != nil {
 		return nil, err
 	}
-	h := &orders{stored: map[string][]byte{}, events: pub}
+	o := &orders{stored: map[string][]byte{}, events: pub}
 
-	svc, err := rabbitmq.NewService(s, settings, queue.ProcessorFunc[rabbitmq.Message](h.Handle))
+	svc, err := rabbitmq.NewService(s, h, settings, queue.ProcessorFunc[rabbitmq.Message](o.Handle))
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +141,7 @@ func Example_main() {
 
 // secureInit is an Init for a broker that requires TLS with a client
 // certificate, which is also its login. It sources the broker's CA and the
-// client's certificate from PEM files, read through s.Host.Filesystem, and
+// client's certificate from PEM files, read through host.Filesystem, and
 // publishes over the same TLS.
 func secureInit(ctx context.Context, s *humus.Setup, host humus.Host) ([]humus.Service, error) {
 	d := rabbitmq.DefaultSettings()
@@ -163,12 +163,12 @@ func secureInit(ctx context.Context, s *humus.Setup, host humus.Host) ([]humus.S
 		return nil, err // exit 78, naming every bad variable
 	}
 
-	pub, err := rabbitmq.NewPublisher(s, publisherOn(settings.Connection))
+	pub, err := rabbitmq.NewPublisher(s, host, publisherOn(settings.Connection))
 	if err != nil {
 		return nil, err
 	}
 	h := &orders{stored: map[string][]byte{}, events: pub}
-	svc, err := rabbitmq.NewService(s, settings, queue.ProcessorFunc[rabbitmq.Message](h.Handle))
+	svc, err := rabbitmq.NewService(s, host, settings, queue.ProcessorFunc[rabbitmq.Message](h.Handle))
 	if err != nil {
 		return nil, err
 	}

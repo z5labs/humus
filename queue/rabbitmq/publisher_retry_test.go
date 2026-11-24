@@ -339,7 +339,7 @@ func TestPublisher_each_failed_dial_is_retried_MaxAttempts_times_in_all(t *testi
 		}}
 		settings := publisherSettings()
 		settings.MaxAttempts = 4
-		pub, err := rabbitmq.NewPublisher(&humus.Setup{Host: host, Telemetry: telemetry.Noop()}, settings)
+		pub, err := rabbitmq.NewPublisher(&humus.Setup{Telemetry: telemetry.Noop()}, host, settings)
 		require.NoError(t, err)
 
 		err = pub.Publish(t.Context(), accepted)

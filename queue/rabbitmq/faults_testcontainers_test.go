@@ -263,14 +263,14 @@ func TestPublisher_a_Service_that_trusts_the_Publishers_user_keeps_the_scenario_
 		once      sync.Once
 	)
 	tel := humustest.NewTelemetry()
-	_, status := humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		pub, err := rabbitmq.NewPublisher(s, forwarding(plainText(t)))
+	_, status := humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		pub, err := rabbitmq.NewPublisher(s, h, forwarding(plainText(t)))
 		if err != nil {
 			return nil, err
 		}
 		settings := consumerSettings(plainText(t), q)
 		settings.TrustScenario = trustedUser(user)
-		svc, err := rabbitmq.NewService(s, settings, queue.ProcessorFunc[rabbitmq.Message](func(ctx context.Context, m rabbitmq.Message) error {
+		svc, err := rabbitmq.NewService(s, h, settings, queue.ProcessorFunc[rabbitmq.Message](func(ctx context.Context, m rabbitmq.Message) error {
 			got.add(ctx, m)
 			once.Do(func() { close(processed) })
 			return nil
@@ -330,14 +330,14 @@ func TestService_a_scenario_a_Processor_forwards_is_trusted_by_the_next_Service(
 	done := make(chan struct{})
 	var once sync.Once
 	tel := humustest.NewTelemetry()
-	proc, status := humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		pub, err := rabbitmq.NewPublisher(s, forwarding(plainText(t)))
+	proc, status := humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		pub, err := rabbitmq.NewPublisher(s, h, forwarding(plainText(t)))
 		if err != nil {
 			return nil, err
 		}
 		first := consumerSettings(plainText(t), in)
 		first.TrustScenario = trustedUser(user)
-		forwarder, err := rabbitmq.NewService(s, first, queue.ProcessorFunc[rabbitmq.Message](func(ctx context.Context, m rabbitmq.Message) error {
+		forwarder, err := rabbitmq.NewService(s, h, first, queue.ProcessorFunc[rabbitmq.Message](func(ctx context.Context, m rabbitmq.Message) error {
 			got.add(ctx, m)
 			return pub.Publish(ctx, rabbitmq.Publishing{RoutingKey: out, MessageID: m.MessageID, UserID: user, Body: m.Body})
 		}))
@@ -346,7 +346,7 @@ func TestService_a_scenario_a_Processor_forwards_is_trusted_by_the_next_Service(
 		}
 		next := consumerSettings(plainText(t), out)
 		next.TrustScenario = trustedUser(user)
-		receiver, err := rabbitmq.NewService(s, next, queue.ProcessorFunc[rabbitmq.Message](func(ctx context.Context, m rabbitmq.Message) error {
+		receiver, err := rabbitmq.NewService(s, h, next, queue.ProcessorFunc[rabbitmq.Message](func(ctx context.Context, m rabbitmq.Message) error {
 			got.add(ctx, m)
 			once.Do(func() { close(done) })
 			return nil

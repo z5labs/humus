@@ -94,7 +94,7 @@ func TestOwns_reconciles_the_owner(t *testing.T) {
 				fc := newFakeCluster(t, memcachedObject("cache", 3), memcachedObject("other", 1))
 				fc.createDeployment(t, deployment("cache", tc.ref))
 				var got reconciles
-				s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
+				s := newSetup(t, humustest.NewTelemetry())
 				sv := serve(t, newController(t, s, fc, testSettings(), readyReplicas(&got), kube.Owns(deployments)))
 				time.Sleep(settle)
 				before := got.count()
@@ -121,7 +121,7 @@ func TestOwns_reconciles_the_owner(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			fc := newFakeCluster(t, memcachedObject("cache", 3))
 			var got reconciles
-			s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
+			s := newSetup(t, humustest.NewTelemetry())
 			sv := serve(t, newController(t, s, fc, testSettings(), readyReplicas(&got), kube.Owns(deployments)))
 			time.Sleep(settle)
 			before := got.count()
@@ -164,7 +164,7 @@ func TestOwns_queues_nothing(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				fc := newFakeCluster(t, memcachedObject("cache", 3))
 				var got reconciles
-				s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
+				s := newSetup(t, humustest.NewTelemetry())
 				sv := serve(t, newController(t, s, fc, testSettings(), readyReplicas(&got), kube.Owns(deployments)))
 				time.Sleep(settle)
 				before := got.count()
@@ -207,7 +207,7 @@ func TestOwns_watches_limited_to_the_namespace(t *testing.T) {
 		})
 		settings := testSettings()
 		settings.Namespace = "default"
-		s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
+		s := newSetup(t, humustest.NewTelemetry())
 		sv := serve(t, newController(t, s, fc, settings, readyReplicas(&reconciles{}), kube.Owns(deployments)))
 		time.Sleep(settle)
 		sv.cancel()
@@ -239,7 +239,7 @@ func TestOwns_Synced_waits_for_the_owned_cache(t *testing.T) {
 			return false, nil, nil
 		})
 		var got reconciles
-		s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
+		s := newSetup(t, humustest.NewTelemetry())
 		ctrl := newController(t, s, fc, testSettings(), readyReplicas(&got), kube.Owns(deployments))
 		sv := serve(t, ctrl)
 		time.Sleep(settle)
@@ -265,7 +265,7 @@ func TestOwns_Serve_fails_on_an_owned_resource_that_isnt_served(t *testing.T) {
 		fc.meta.PrependReactor("list", "deployments", func(clienttesting.Action) (bool, runtime.Object, error) {
 			return true, nil, apierrors.NewNotFound(deployments.GroupResource(), "")
 		})
-		s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
+		s := newSetup(t, humustest.NewTelemetry())
 		ctrl := newController(t, s, fc, testSettings(), readyReplicas(&reconciles{}), kube.Owns(deployments))
 		err := ctrl.Serve(t.Context())
 		require.ErrorContains(t, err, "kube: listing apps/v1, Resource=deployments, which the Controller owns: ")

@@ -29,7 +29,6 @@ type ctxKey struct{}
 func TestNewService_listens_only_through_its_Network(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
-		setupHost := humustest.NewHost(t)
 		h := humustest.NewHost(t)
 		var listens []string
 		var tags []any
@@ -38,9 +37,7 @@ func TestNewService_listens_only_through_its_Network(t *testing.T) {
 			tags = append(tags, ctx.Value(ctxKey{}))
 			return h.ListenTCP(ctx, network, address)
 		}}
-		// The Setup's Host is another host, so a listen through it would
-		// be seen there rather than through n.
-		s := &humus.Setup{Host: setupHost.Host(), Telemetry: telemetry.Noop()}
+		s := &humus.Setup{Telemetry: telemetry.Noop()}
 		ctx := context.WithValue(t.Context(), ctxKey{}, "NewService's ctx")
 
 		svc, err := grpcserver.NewService(ctx, s, n, settingsFor(t, ca, ":9090"))
@@ -54,7 +51,6 @@ func TestNewService_listens_only_through_its_Network(t *testing.T) {
 		client := testpb.NewTestServiceClient(grpcservertest.NewClient(t, h, "carts:9090", ca.Pool()))
 		_, err = client.EmptyCall(t.Context(), &testpb.Empty{})
 		require.NoError(t, err)
-		requireRefused(t, setupHost, "carts:9090")
 
 		require.NoError(t, svc.Shutdown(t.Context()))
 		require.NoError(t, <-served)

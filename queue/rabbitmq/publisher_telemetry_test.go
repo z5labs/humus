@@ -50,7 +50,7 @@ func newTracedPublisherOf(t *testing.T, settings rabbitmq.PublisherSettings) *tr
 	tel := humustest.NewTelemetry()
 	sdk, err := tel.Builder()(t.Context(), bedrock.Process{}, nil)
 	require.NoError(t, err)
-	pub, err := rabbitmq.NewPublisher(&humus.Setup{Host: humustest.NewHost(t).Host(), Telemetry: sdk}, settings)
+	pub, err := rabbitmq.NewPublisher(&humus.Setup{Telemetry: sdk}, humustest.NewHost(t), settings)
 	require.NoError(t, err)
 	s := newPubStandIn()
 	rabbitmq.SetDial(pub, s.dial)

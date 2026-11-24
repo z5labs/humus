@@ -26,7 +26,6 @@ type ctxKey struct{}
 func TestNew_listens_only_through_its_Network(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
-		setupHost := humustest.NewHost(t)
 		h := humustest.NewHost(t)
 		var listens []string
 		var tags []any
@@ -35,9 +34,7 @@ func TestNew_listens_only_through_its_Network(t *testing.T) {
 			tags = append(tags, ctx.Value(ctxKey{}))
 			return h.ListenTCP(ctx, network, address)
 		}}
-		// The Setup's Host is another host, so a listen through it would
-		// be seen there rather than through n.
-		s := &humus.Setup{Host: setupHost.Host(), Telemetry: telemetry.Noop()}
+		s := &humus.Setup{Telemetry: telemetry.Noop()}
 		ctx := context.WithValue(t.Context(), ctxKey{}, "New's ctx")
 
 		srv, err := newServer(ctx, s, n, ":8443", tlsConfig(t, ca), hello)
@@ -50,7 +47,6 @@ func TestNew_listens_only_through_its_Network(t *testing.T) {
 		r := <-get(client(h, ca), "https://localhost:8443/")
 		require.NoError(t, r.err)
 		require.Equal(t, "hello", r.body)
-		requireRefused(t, setupHost, "localhost:8443")
 
 		require.NoError(t, srv.Shutdown(t.Context()))
 		require.NoError(t, <-served)

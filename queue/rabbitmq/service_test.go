@@ -78,7 +78,7 @@ func newUnit(t *testing.T, settings rabbitmq.Settings, p queue.ProcessorFunc[rab
 	sdk, err := tel.Builder()(t.Context(), bedrock.Process{}, nil)
 	require.NoError(t, err)
 	h := humustest.NewHost(t)
-	svc, err := rabbitmq.NewService(&humus.Setup{Host: h.Host(), Telemetry: sdk}, settings, p)
+	svc, err := rabbitmq.NewService(&humus.Setup{Telemetry: sdk}, h, settings, p)
 	require.NoError(t, err)
 	u := &unit{svc: svc, ch: newStandIn(), tel: tel}
 	rabbitmq.SetOpen(svc, u.open)
@@ -767,8 +767,8 @@ func TestService_SIGTERM_while_reconnecting_exits_0_at_once(t *testing.T) {
 		ch := newStandIn()
 		tel := humustest.NewTelemetry()
 		var attempts atomic.Int32
-		p, status := humustest.Start(t, humustest.NewHost(t).Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-			svc, err := rabbitmq.NewService(s, settings(), queue.ProcessorFunc[rabbitmq.Message](func(context.Context, rabbitmq.Message) error {
+		p, status := humustest.Start(t, humustest.NewHost(t).Host(), func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			svc, err := rabbitmq.NewService(s, h, settings(), queue.ProcessorFunc[rabbitmq.Message](func(context.Context, rabbitmq.Message) error {
 				return nil
 			}))
 			if err != nil {
@@ -912,8 +912,8 @@ func (r refusingConsume) ConsumeWithContext(context.Context, string, string, boo
 // standInInit returns an Init whose only Service consumes settings with p, on
 // ch.
 func standInInit(settings rabbitmq.Settings, ch *standIn, p queue.ProcessorFunc[rabbitmq.Message]) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		svc, err := rabbitmq.NewService(s, settings, p)
+	return func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		svc, err := rabbitmq.NewService(s, h, settings, p)
 		if err != nil {
 			return nil, err
 		}
@@ -956,8 +956,8 @@ func TestService_waits_for_a_broker_that_is_down_and_returns_nil_on_SIGTERM(t *t
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t) // nothing listens at rabbit:5672
 		tel := humustest.NewTelemetry()
-		p, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-			svc, err := rabbitmq.NewService(s, settings(), queue.ProcessorFunc[rabbitmq.Message](func(context.Context, rabbitmq.Message) error {
+		p, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			svc, err := rabbitmq.NewService(s, h, settings(), queue.ProcessorFunc[rabbitmq.Message](func(context.Context, rabbitmq.Message) error {
 				return nil
 			}))
 			if err != nil {
@@ -986,7 +986,7 @@ func TestService_waits_for_a_broker_that_is_down_and_returns_nil_on_SIGTERM(t *t
 
 func TestService_passes_the_Service_contract_with_no_broker(t *testing.T) {
 	humustest.TestService(t, func(t *testing.T, s *humus.Setup) humus.Service {
-		svc, err := rabbitmq.NewService(s, settings(), queue.ProcessorFunc[rabbitmq.Message](func(context.Context, rabbitmq.Message) error {
+		svc, err := rabbitmq.NewService(s, humustest.NewHost(t), settings(), queue.ProcessorFunc[rabbitmq.Message](func(context.Context, rabbitmq.Message) error {
 			return nil
 		}))
 		require.NoError(t, err)

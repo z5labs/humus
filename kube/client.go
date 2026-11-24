@@ -59,7 +59,7 @@ type Connection struct {
 	TLS *tls.Config
 
 	// Token returns the bearer token every request carries, such as the
-	// pod's service account token, read through the Host's Filesystem. nil sends
+	// pod's service account token, read through the host's Filesystem. nil sends
 	// none, for a client that authenticates with a certificate. The Client
 	// calls it at most once a minute, and keeps its last token while a call
 	// fails, so a token the kubelet rotates is picked up within a minute. A
@@ -110,14 +110,23 @@ func checkConnection(c Connection) error {
 	return errors.Join(errs...)
 }
 
-// Client reaches one API server through the Host.
+// Network is what a Client needs of a host: a way to dial. humus.Host
+// implements it, and so does any network of the end user's with this
+// method.
+type Network interface {
+	// DialTCP connects to address over "tcp", "tcp4" or "tcp6", like
+	// net.Dialer.DialContext.
+	DialTCP(ctx context.Context, network, address string) (net.Conn, error)
+}
+
+// Client reaches one API server through the Network it is given.
 type Client struct {
 	server    string
 	transport http.RoundTripper
 	conns     *http.Transport
 }
 
-// NewClient returns a Client that dials c.Server with s.Host.DialTCP, and
+// NewClient returns a Client that dials c.Server with n.DialTCP, and
 // traces and measures every request with s.Telemetry. It opens no
 // connection.
 //
@@ -139,7 +148,7 @@ type Client struct {
 // strips the failure scenario from every request it sends. In a reconcile
 // that carries a scenario, it sets the scenario's annotation on each child
 // the reconcile applies. The package doc says how.
-func NewClient(s *humus.Setup, c Connection) (*Client, error) {
+func NewClient(s *humus.Setup, n Network, c Connection) (*Client, error) {
 	if s == nil {
 		return nil, errors.New("kube: NewClient: the Setup must not be nil")
 	}
@@ -158,7 +167,7 @@ func NewClient(s *humus.Setup, c Connection) (*Client, error) {
 	protocols.SetHTTP1(true)
 	protocols.SetHTTP2(true)
 	tr := &http.Transport{
-		DialContext:         s.Host.DialTCP,
+		DialContext:         n.DialTCP,
 		Proxy:               nil,
 		TLSClientConfig:     tlsConfig,
 		Protocols:           &protocols,

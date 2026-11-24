@@ -90,7 +90,7 @@ func k3sClient(t *testing.T) *kube.Client {
 	})
 	require.NoError(t, cluster.err, "starting k3s in a container")
 
-	c, err := kube.NewClient(&humus.Setup{Host: humus.OSHost(), Telemetry: telemetry.Noop()}, cluster.conn)
+	c, err := kube.NewClient(&humus.Setup{Telemetry: telemetry.Noop()}, humus.OSHost(), cluster.conn)
 	require.NoError(t, err)
 	return c
 }

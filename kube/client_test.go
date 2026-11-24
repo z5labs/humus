@@ -150,12 +150,12 @@ func recordDials(h *humustest.Host) (humus.Host, *dials) {
 	return host, d
 }
 
-// newSetup returns a Setup on host whose telemetry tel records.
-func newSetup(t *testing.T, host humus.Host, tel *humustest.Telemetry) *humus.Setup {
+// newSetup returns a Setup whose telemetry tel records.
+func newSetup(t *testing.T, tel *humustest.Telemetry) *humus.Setup {
 	t.Helper()
 	sdk, err := tel.Builder()(t.Context(), bedrock.Process{}, nil)
 	require.NoError(t, err)
-	return &humus.Setup{Host: host, Telemetry: sdk}
+	return &humus.Setup{Telemetry: sdk}
 }
 
 // newClientset returns a clientset from c's Config.
@@ -252,14 +252,14 @@ func TestNewClient_reports_every_bad_field(t *testing.T) {
 	t.Parallel()
 
 	h := humustest.NewHost(t)
-	s := &humus.Setup{Host: h.Host(), Telemetry: telemetry.Noop()}
+	s := &humus.Setup{Telemetry: telemetry.Noop()}
 
-	_, err := kube.NewClient(s, kube.Connection{Server: "apiserver"})
+	_, err := kube.NewClient(s, h, kube.Connection{Server: "apiserver"})
 	require.ErrorContains(t, err, "kube: NewClient")
 	require.ErrorContains(t, err, "Connection.Server")
 	require.ErrorContains(t, err, "Connection.TLS")
 
-	_, err = kube.NewClient(s, kube.Connection{Server: server, TLS: &tls.Config{}})
+	_, err = kube.NewClient(s, h, kube.Connection{Server: server, TLS: &tls.Config{}})
 	require.NoError(t, err)
 }
 
@@ -268,7 +268,7 @@ func TestNewClient_rejects_a_bad_Setup(t *testing.T) {
 
 	conn := kube.Connection{Server: server, TLS: &tls.Config{}}
 
-	_, err := kube.NewClient(nil, conn)
+	_, err := kube.NewClient(nil, humus.OSHost(), conn)
 	require.ErrorContains(t, err, "the Setup must not be nil")
 }
 
@@ -283,7 +283,7 @@ func TestClient_dials_through_the_Host(t *testing.T) {
 
 		host, dialled := recordDials(h)
 		tlsConfig := &tls.Config{RootCAs: ca.Pool()}
-		c, err := kube.NewClient(newSetup(t, host, humustest.NewTelemetry()), kube.Connection{Server: server, TLS: tlsConfig})
+		c, err := kube.NewClient(newSetup(t, humustest.NewTelemetry()), host, kube.Connection{Server: server, TLS: tlsConfig})
 		require.NoError(t, err)
 
 		require.NoError(t, getConfigMap(t.Context(), newClientset(t, c), "settings"))
@@ -308,7 +308,7 @@ func TestClient_keeps_the_end_users_ServerName(t *testing.T) {
 		// only with the end user's ServerName, not Server's host.
 		defer startAPIServer(t, h, ca, server, api, "kubernetes")()
 
-		c, err := kube.NewClient(newSetup(t, h.Host(), humustest.NewTelemetry()), kube.Connection{
+		c, err := kube.NewClient(newSetup(t, humustest.NewTelemetry()), h.Host(), kube.Connection{
 			Server: server,
 			TLS:    &tls.Config{RootCAs: ca.Pool(), ServerName: "kubernetes"},
 		})
@@ -335,7 +335,7 @@ func TestClient_uses_no_proxy(t *testing.T) {
 		defer startAPIServer(t, h, ca, server, api, "apiserver")()
 
 		host, dialled := recordDials(h)
-		c, err := kube.NewClient(newSetup(t, host, humustest.NewTelemetry()), kube.Connection{
+		c, err := kube.NewClient(newSetup(t, humustest.NewTelemetry()), host, kube.Connection{
 			Server: server,
 			TLS:    &tls.Config{RootCAs: ca.Pool()},
 		})
@@ -359,7 +359,7 @@ func TestClient_sends_the_bearer_token(t *testing.T) {
 
 			first, second := newToken(), newToken()
 			tk := &tokens{queue: []string{first, second}}
-			c, err := kube.NewClient(newSetup(t, h.Host(), humustest.NewTelemetry()), kube.Connection{
+			c, err := kube.NewClient(newSetup(t, humustest.NewTelemetry()), h.Host(), kube.Connection{
 				Server: server,
 				TLS:    &tls.Config{RootCAs: ca.Pool()},
 				Token:  tk.token,
@@ -405,7 +405,7 @@ func TestClient_sends_the_bearer_token(t *testing.T) {
 			tel := humustest.NewTelemetry()
 			last := newToken()
 			tk := &tokens{queue: []string{last}, err: errors.New("the token file is gone")}
-			c, err := kube.NewClient(newSetup(t, h.Host(), tel), kube.Connection{
+			c, err := kube.NewClient(newSetup(t, tel), h, kube.Connection{
 				Server: server,
 				TLS:    &tls.Config{RootCAs: ca.Pool()},
 				Token:  tk.token,
@@ -449,7 +449,7 @@ func TestClient_sends_the_bearer_token(t *testing.T) {
 
 			tel := humustest.NewTelemetry()
 			tk := &tokens{err: errors.New("the token file isn't mounted yet")}
-			c, err := kube.NewClient(newSetup(t, h.Host(), tel), kube.Connection{
+			c, err := kube.NewClient(newSetup(t, tel), h, kube.Connection{
 				Server: server,
 				TLS:    &tls.Config{RootCAs: ca.Pool()},
 				Token:  tk.token,
@@ -486,7 +486,7 @@ func TestClient_sends_the_bearer_token(t *testing.T) {
 
 			last := newToken()
 			tk := &tokens{queue: []string{"", last, ""}}
-			c, err := kube.NewClient(newSetup(t, h.Host(), humustest.NewTelemetry()), kube.Connection{
+			c, err := kube.NewClient(newSetup(t, humustest.NewTelemetry()), h.Host(), kube.Connection{
 				Server: server,
 				TLS:    &tls.Config{RootCAs: ca.Pool()},
 				Token:  tk.token,
@@ -522,7 +522,7 @@ func TestClient_sends_the_bearer_token(t *testing.T) {
 			api := &apiServer{}
 			defer startAPIServer(t, h, ca, server, api, "apiserver")()
 
-			c, err := kube.NewClient(newSetup(t, h.Host(), humustest.NewTelemetry()), kube.Connection{
+			c, err := kube.NewClient(newSetup(t, humustest.NewTelemetry()), h.Host(), kube.Connection{
 				Server: server,
 				TLS:    &tls.Config{RootCAs: ca.Pool()},
 			})
@@ -544,7 +544,7 @@ func TestClient_sends_the_bearer_token(t *testing.T) {
 			defer startAPIServer(t, h, ca, server, api, "apiserver")()
 
 			tk := &tokens{queue: []string{newToken()}}
-			c, err := kube.NewClient(newSetup(t, h.Host(), humustest.NewTelemetry()), kube.Connection{
+			c, err := kube.NewClient(newSetup(t, humustest.NewTelemetry()), h.Host(), kube.Connection{
 				Server: server,
 				TLS:    &tls.Config{RootCAs: ca.Pool()},
 				Token:  tk.token,
@@ -575,7 +575,7 @@ func TestClient_traces_every_request_but_a_watch(t *testing.T) {
 		defer startAPIServer(t, h, ca, server, api, "apiserver")()
 
 		tel := humustest.NewTelemetry()
-		c, err := kube.NewClient(newSetup(t, h.Host(), tel), kube.Connection{
+		c, err := kube.NewClient(newSetup(t, tel), h, kube.Connection{
 			Server: server,
 			TLS:    &tls.Config{RootCAs: ca.Pool()},
 		})
@@ -638,7 +638,7 @@ func TestClient_Config_reaches_the_API_server_the_same_way(t *testing.T) {
 		host, dialled := recordDials(h)
 		tel := humustest.NewTelemetry()
 		token := newToken()
-		c, err := kube.NewClient(newSetup(t, host, tel), kube.Connection{
+		c, err := kube.NewClient(newSetup(t, tel), host, kube.Connection{
 			Server: server,
 			TLS:    &tls.Config{RootCAs: ca.Pool()},
 			Token:  func(context.Context) (string, error) { return token, nil },
@@ -696,7 +696,7 @@ func TestClient_gives_up_on_a_connection_whose_ping_goes_unanswered(t *testing.T
 		defer startAPIServer(t, h, ca, server, api, "apiserver")()
 
 		host, conns := stallableDials(h)
-		c, err := kube.NewClient(newSetup(t, host, humustest.NewTelemetry()), kube.Connection{
+		c, err := kube.NewClient(newSetup(t, humustest.NewTelemetry()), host, kube.Connection{
 			Server: server,
 			TLS:    &tls.Config{RootCAs: ca.Pool()},
 		})
@@ -737,8 +737,8 @@ func TestClient_closes_its_idle_connections_at_OnStop(t *testing.T) {
 
 		host, conns := stallableDials(h)
 		var openWhileRunning bool
-		_, status := humustest.Start(t, host, func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-			c, err := kube.NewClient(s, kube.Connection{Server: server, TLS: &tls.Config{RootCAs: ca.Pool()}})
+		_, status := humustest.Start(t, host, func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			c, err := kube.NewClient(s, h, kube.Connection{Server: server, TLS: &tls.Config{RootCAs: ca.Pool()}})
 			if err != nil {
 				return nil, err
 			}

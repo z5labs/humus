@@ -33,8 +33,8 @@ func TestNewClient_the_transport(t *testing.T) {
 	n.OnDialTCP = func(context.Context, string, string) (net.Conn, error) {
 		return nil, errors.New("no network")
 	}
-	s := &humus.Setup{Host: humus.Host{IPNetwork: n, Filesystem: th.Filesystem()}, Telemetry: telemetry.Noop()}
-	c, err := NewClient(s, Connection{Server: "apiserver:6443", TLS: &tls.Config{}})
+	s := &humus.Setup{Telemetry: telemetry.Noop()}
+	c, err := NewClient(s, n, Connection{Server: "apiserver:6443", TLS: &tls.Config{}})
 	require.NoError(t, err)
 
 	tr := c.conns

@@ -39,7 +39,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 		return nil, err
 	}
 
-	client, err := kube.NewClient(s, settings.Connection)
+	client, err := kube.NewClient(s, h, settings.Connection)
 	if err != nil {
 		return nil, err
 	}

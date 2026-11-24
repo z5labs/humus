@@ -46,8 +46,8 @@ func publishErrs(t *testing.T, c rabbitmq.Connection, ms ...rabbitmq.Publishing)
 	settings := rabbitmq.DefaultPublisherSettings()
 	settings.Connection = c
 	errs := make([]error, len(ms))
-	_, status := humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		pub, err := rabbitmq.NewPublisher(s, settings)
+	_, status := humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		pub, err := rabbitmq.NewPublisher(s, h, settings)
 		if err != nil {
 			return nil, err
 		}
@@ -153,8 +153,8 @@ func TestPublisher_a_UserID_that_isnt_the_login_is_406_PRECONDITION_FAILED_once_
 	settings.Connection = plainText(t)
 	var errs [2]error
 	tel := humustest.NewTelemetry()
-	_, status := humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		pub, err := rabbitmq.NewPublisher(s, settings)
+	_, status := humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		pub, err := rabbitmq.NewPublisher(s, h, settings)
 		if err != nil {
 			return nil, err
 		}
@@ -206,14 +206,14 @@ func TestPublisher_carries_its_trace_to_the_Service_that_consumes_the_message(t 
 		pubErr    error
 	)
 	tel := humustest.NewTelemetry()
-	_, status := humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	_, status := humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		settings := rabbitmq.DefaultPublisherSettings()
 		settings.Connection = plainText(t)
-		pub, err := rabbitmq.NewPublisher(s, settings)
+		pub, err := rabbitmq.NewPublisher(s, h, settings)
 		if err != nil {
 			return nil, err
 		}
-		svc, err := rabbitmq.NewService(s, consumerSettings(plainText(t), q), queue.ProcessorFunc[rabbitmq.Message](func(ctx context.Context, m rabbitmq.Message) error {
+		svc, err := rabbitmq.NewService(s, h, consumerSettings(plainText(t), q), queue.ProcessorFunc[rabbitmq.Message](func(ctx context.Context, m rabbitmq.Message) error {
 			mu.Lock()
 			inSpan = trace.SpanContextFromContext(ctx)
 			mu.Unlock()
@@ -287,8 +287,8 @@ func TestPublisher_a_Publish_right_after_close_all_connections_is_confirmed_on_a
 		published           = make(chan struct{})
 		closed              = make(chan struct{})
 	)
-	_, status := humustest.Start(t, host, func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		pub, err := rabbitmq.NewPublisher(s, settings)
+	_, status := humustest.Start(t, host, func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		pub, err := rabbitmq.NewPublisher(s, h, settings)
 		if err != nil {
 			return nil, err
 		}

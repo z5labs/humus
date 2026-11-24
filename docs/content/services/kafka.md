@@ -16,7 +16,7 @@ weight: 40
 The [`queue/kafka`](https://pkg.go.dev/github.com/z5labs/humus/queue/kafka)
 package consumes Kafka topics as a `humus.Service`, with
 [franz-go](https://github.com/twmb/franz-go). The Service joins a consumer
-group, dials the brokers through the Setup's Host, and hands each record to
+group, dials the brokers through the network it is given, and hands each record to
 the end user's `queue.Processor`, one record at a time per partition, in
 offset order. The end user's `Init` sources its `Settings`, builds the Service
 with `kafka.NewService`, and returns it to `humus.Main`, whose defaults are a
@@ -144,7 +144,7 @@ builds. This one also sources `kafka.ProducerSettings` and builds the
 // Init is the end user's Init: it sources the Settings and the
 // ProducerSettings with config.Struct, builds the Producer and the
 // Processor, and returns the Service from NewService.
-func Init(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	d := kafka.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 	list := func(v string) []string { return strings.Split(v, ",") }
@@ -174,13 +174,13 @@ func Init(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, e
 	if err != nil {
 		return nil, err // exit 78, naming every bad variable
 	}
-	dlq, err := kafka.NewProducer(s, producer) // opens no connection: the first Produce does
+	dlq, err := kafka.NewProducer(s, h, producer) // opens no connection: the first Produce does
 	if err != nil {
 		return nil, err
 	}
 
-	h := &orders{stored: map[string]bool{}, out: s.Process.Stdout, dlq: dlq}
-	svc, err := kafka.NewService(s, settings, queue.ProcessorFunc[kafka.Message](h.Handle))
+	o := &orders{stored: map[string]bool{}, out: s.Process.Stdout, dlq: dlq}
+	svc, err := kafka.NewService(s, h, settings, queue.ProcessorFunc[kafka.Message](o.Handle))
 	if err != nil {
 		return nil, err
 	}
@@ -204,8 +204,8 @@ humus.Main(Init, humus.WithTelemetry(buildTelemetry))
 again, rejects a nil `Processor`, and builds the Service's instruments. It
 builds no client and registers no `OnStop` function, so an `Init` that fails
 after it leaks nothing. `Serve` builds the franz-go client, dials every
-broker through `s.Host.DialTCP`, joins the group and starts processing. Dialling
-through the Host is what puts the Service on a test's network, with no
+broker through the `DialTCP` of the network `NewService` is given, joins the
+group and starts processing. Dialling through that network is what puts the Service on a test's network, with no
 test-only seam.
 
 `Init` returns the consumer along with any other Service the process runs,
@@ -310,10 +310,10 @@ topic, so one `Processor` can dispatch on it. Two topics that need different
 `Settings.TLS` is the `*tls.Config` the Service dials the brokers with, and
 `nil` means plaintext. A client certificate in its `Certificates` makes it
 mTLS. The Service runs the TLS handshake itself over the connection
-`s.Host.DialTCP` returns, and sets `ServerName` from the broker's host when the
+its network's `DialTCP` returns, and sets `ServerName` from the broker's host when the
 config leaves it empty, without changing the end user's config.
 
-The end user decodes the certificates from files, read through `s.Host.Filesystem`
+The end user decodes the certificates from files, read through `host.Filesystem`
 so that a test reads them from its own directory and production from the
 real disk, as [Reading a file]({{< relref "/fundamentals/configuration#reading-a-file" >}})
 describes. How they are stored and encoded is the end user's decision. This
@@ -759,11 +759,11 @@ clicks.GroupID = "clicks-consumer"
 clicks.Topics = []string{"clicks"}
 clicks.Delivery = queue.AtMostOnce // a click lost to a crash is not worth a second count
 
-paymentsSvc, err := kafka.NewService(s, payments, p)
+paymentsSvc, err := kafka.NewService(s, h, payments, p)
 if err != nil {
 	return nil, err
 }
-clicksSvc, err := kafka.NewService(s, clicks, p)
+clicksSvc, err := kafka.NewService(s, h, clicks, p)
 if err != nil {
 	return nil, err
 }
@@ -825,7 +825,7 @@ producer, err := config.Struct(func(r *config.Resolver) kafka.ProducerSettings {
 if err != nil {
 	return nil, err // exit 78, naming every bad variable
 }
-dlq, err := kafka.NewProducer(s, producer) // opens no connection: the first Produce does
+dlq, err := kafka.NewProducer(s, h, producer) // opens no connection: the first Produce does
 if err != nil {
 	return nil, err
 }
@@ -839,7 +839,7 @@ such as `KAFKA_DELIVERY_TIMEOUT=0s`, fails the same way, with exit 78.
 
 **`Brokers`, `TLS` and `SASL` are the consumer's fields, repeated.** They
 mean what they mean in `Settings`, take the same check, and dial through the
-Setup's Host the same way, with the same TLS handshake. They are repeated
+network the `Producer` is given the same way, with the same TLS handshake. They are repeated
 rather than shared because a `Producer` may produce to a cluster other than
 the one a Service consumes, so each set is sourced on its own:
 
@@ -1756,15 +1756,16 @@ tested the same way: `queue/kafka`'s own tests run each `Produce` inside a
 `queue/kafka`'s own tests hold `kafka.Service` to the Service contract with
 [`humustest.TestService`]({{< relref "/fundamentals/testing#checking-a-service" >}}), and a
 Service of your own that wraps a consumer is checked the same way. The
-constructor builds a cluster on `s.Host.ListenTCP` and closes it with
-`s.OnStop`:
+constructor builds a cluster on a humustest Host's `ListenTCP`, gives the
+`Service` the same Host, and closes the cluster with `s.OnStop`:
 
 ```go
 func TestService_contract(t *testing.T) {
 	humustest.TestService(t, func(t *testing.T, s *humus.Setup) humus.Service {
+		h := humustest.NewHost(t)
 		c, err := kfake.NewCluster(
 			kfake.ListenFn(func(network, address string) (net.Listener, error) {
-				return s.Host.ListenTCP(t.Context(), network, address)
+				return h.ListenTCP(t.Context(), network, address)
 			}),
 			kfake.NumBrokers(1),
 			kfake.SeedTopics(1, topic),
@@ -1774,7 +1775,7 @@ func TestService_contract(t *testing.T) {
 			c.Close()
 			return nil
 		})
-		svc, err := kafka.NewService(s, settings(c.ListenAddrs()...), queue.ProcessorFunc[kafka.Message](func(context.Context, kafka.Message) error {
+		svc, err := kafka.NewService(s, h, settings(c.ListenAddrs()...), queue.ProcessorFunc[kafka.Message](func(context.Context, kafka.Message) error {
 			return nil
 		}))
 		require.NoError(t, err)

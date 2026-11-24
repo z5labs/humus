@@ -524,7 +524,7 @@ func TestService_ALPN_order(t *testing.T) {
 	})
 }
 
-// newSetup returns a Setup with telemetry off and no Host, for a test that
+// newSetup returns a Setup with telemetry off, for a test that
 // drives a Service directly rather than through an App.
 func newSetup() *humus.Setup {
 	return &humus.Setup{Telemetry: telemetry.Noop()}

@@ -48,7 +48,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 	if err != nil {
 		return nil, err
 	}
-	publisher, err := rabbitmq.NewPublisher(s, settings.Publisher)
+	publisher, err := rabbitmq.NewPublisher(s, h, settings.Publisher)
 	if err != nil {
 		return nil, err
 	}

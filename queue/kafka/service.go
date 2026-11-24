@@ -108,7 +108,8 @@ type call struct {
 var notServed = &call{}
 
 // NewService checks settings and returns a Service. It opens no connection:
-// Serve builds the client and joins the group.
+// Serve builds the client and joins the group. The Service dials every
+// broker through n.
 //
 // The Service reports through s.Telemetry: its spans, the three messaging
 // instruments and its own logs under the scope
@@ -120,7 +121,7 @@ var notServed = &call{}
 // names each one, and it rejects a nil Processor. It builds no client and
 // registers no OnStop function, so an Init that fails after it leaks
 // nothing.
-func NewService(s *humus.Setup, settings Settings, p queue.Processor[Message]) (*Service, error) {
+func NewService(s *humus.Setup, n Network, settings Settings, p queue.Processor[Message]) (*Service, error) {
 	if err := checkSettings(settings, p); err != nil {
 		return nil, fmt.Errorf("kafka: NewService: %w", err)
 	}
@@ -135,7 +136,7 @@ func NewService(s *humus.Setup, settings Settings, p queue.Processor[Message]) (
 	return &Service{
 		settings:   settings,
 		proc:       p,
-		dial:       tlsDialer(s.Host.DialTCP, settings.TLS),
+		dial:       tlsDialer(n.DialTCP, settings.TLS),
 		logger:     s.Telemetry.LoggerProvider.Logger(scopeName),
 		kgoLogger:  s.Telemetry.LoggerProvider.Logger(kgoScope),
 		tracer:     s.Telemetry.TracerProvider.Tracer(scopeName),

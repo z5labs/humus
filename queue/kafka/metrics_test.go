@@ -315,12 +315,12 @@ func TestProducer_metrics_of_two_clusters_are_two_series(t *testing.T) {
 
 		tel := humustest.NewTelemetry()
 		var during map[string]int64
-		_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-			fp, err := kafka.NewProducer(s, failingSettings)
+		_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			fp, err := kafka.NewProducer(s, h, failingSettings)
 			if err != nil {
 				return nil, err
 			}
-			hp, err := kafka.NewProducer(s, producerSettings(healthyAt))
+			hp, err := kafka.NewProducer(s, h, producerSettings(healthyAt))
 			if err != nil {
 				return nil, err
 			}

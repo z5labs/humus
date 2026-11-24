@@ -40,8 +40,8 @@ func producerSettings(brokers ...string) kafka.ProducerSettings {
 // produces returns an Init that builds a Producer with settings, and whose
 // only Service is a job that calls run with it.
 func produces(settings kafka.ProducerSettings, run func(ctx context.Context, p *kafka.Producer) error) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		p, err := kafka.NewProducer(s, settings)
+	return func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		p, err := kafka.NewProducer(s, h, settings)
 		if err != nil {
 			return nil, err
 		}
@@ -586,9 +586,9 @@ func TestNewProducer_Init_failing_after_it_closes_the_client(t *testing.T) {
 
 		bad := errors.New("init failed after NewProducer")
 		var pr *kafka.Producer
-		_, status := humustest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+		_, status := humustest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 			var err error
-			pr, err = kafka.NewProducer(s, producerSettings(c.ListenAddrs()...))
+			pr, err = kafka.NewProducer(s, h, producerSettings(c.ListenAddrs()...))
 			if err != nil {
 				return nil, err
 			}
@@ -612,14 +612,14 @@ func TestNewProducer_Init_failing_after_it_closes_the_client(t *testing.T) {
 func TestNewProducer(t *testing.T) {
 	t.Parallel()
 
-	setup := func() *humus.Setup { return &humus.Setup{Host: humus.OSHost(), Telemetry: telemetry.Noop()} }
+	setup := func() *humus.Setup { return &humus.Setup{Telemetry: telemetry.Noop()} }
 
 	t.Run("reports every bad field, naming each", func(t *testing.T) {
 		t.Parallel()
 
 		ps := kafka.DefaultProducerSettings()
 		ps.DeliveryTimeout = 0
-		_, err := kafka.NewProducer(setup(), ps)
+		_, err := kafka.NewProducer(setup(), humus.OSHost(), ps)
 		require.ErrorContains(t, err, "ProducerSettings.Brokers must list at least one")
 		require.ErrorContains(t, err, "ProducerSettings.DeliveryTimeout must be positive")
 	})
@@ -630,7 +630,7 @@ func TestNewProducer(t *testing.T) {
 		ps := producerSettings("127.0.0.1:9092")
 		ps.Breaker = circuit.Config{Window: 0, Probes: circuit.MaxCount + 1, OpenFor: 0, ProbeTimeout: -time.Second}
 		ps.BreakerPolicy = circuit.Policy{}
-		_, err := kafka.NewProducer(setup(), ps)
+		_, err := kafka.NewProducer(setup(), humus.OSHost(), ps)
 		require.ErrorContains(t, err, "ProducerSettings.Breaker.Window must be from 1 to 65536")
 		require.ErrorContains(t, err, "ProducerSettings.Breaker.Probes must be from 1 to 65536")
 		require.ErrorContains(t, err, "ProducerSettings.Breaker.OpenFor must be positive")
@@ -644,14 +644,14 @@ func TestNewProducer(t *testing.T) {
 
 		ps := producerSettings("127.0.0.1:9092")
 		ps.BreakerPolicy.Probe = nil
-		_, err := kafka.NewProducer(setup(), ps)
+		_, err := kafka.NewProducer(setup(), humus.OSHost(), ps)
 		require.EqualError(t, err, "kafka: NewProducer: ProducerSettings.BreakerPolicy.Probe must be set")
 	})
 
 	t.Run("names each bad broker", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := kafka.NewProducer(setup(), producerSettings("kafka-0:9092", "kafka-1"))
+		_, err := kafka.NewProducer(setup(), humus.OSHost(), producerSettings("kafka-0:9092", "kafka-1"))
 		require.ErrorContains(t, err, `ProducerSettings.Brokers "kafka-1" is not host:port`)
 	})
 
@@ -659,7 +659,7 @@ func TestNewProducer(t *testing.T) {
 		t.Parallel()
 
 		s := setup()
-		p, err := kafka.NewProducer(s, producerSettings("127.0.0.1:9092"))
+		p, err := kafka.NewProducer(s, humus.OSHost(), producerSettings("127.0.0.1:9092"))
 		require.NoError(t, err)
 		require.NotNil(t, p)
 		kafka.CloseProducer(p)
@@ -676,8 +676,8 @@ func TestNewProducer(t *testing.T) {
 				return nil, nil, false
 			})
 			bad := errors.New("init failed after NewProducer")
-			_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-				if _, err := kafka.NewProducer(s, producerSettings(c.ListenAddrs()...)); err != nil {
+			_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+				if _, err := kafka.NewProducer(s, h, producerSettings(c.ListenAddrs()...)); err != nil {
 					return nil, err
 				}
 				return nil, bad

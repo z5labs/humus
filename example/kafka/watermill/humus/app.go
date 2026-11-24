@@ -43,11 +43,11 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 		return nil, err
 	}
 
-	producer, err := kafka.NewProducer(s, settings.Producer)
+	producer, err := kafka.NewProducer(s, h, settings.Producer)
 	if err != nil {
 		return nil, err
 	}
-	consumer, err := kafka.NewService(s, settings.Consumer, &invoicer{producer: producer, retry: settings.Retry})
+	consumer, err := kafka.NewService(s, h, settings.Consumer, &invoicer{producer: producer, retry: settings.Retry})
 	if err != nil {
 		return nil, err
 	}

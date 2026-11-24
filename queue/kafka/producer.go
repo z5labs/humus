@@ -105,7 +105,7 @@ type Producer struct {
 // breaker. A BreakerPolicy with a nil Trip or Probe is a bad field, reported
 // with the others.
 //
-// The Producer dials every broker through s.Host. It reports through
+// The Producer dials every broker through n. It reports through
 // s.Telemetry: its spans, the two messaging instruments and its own logs
 // under the scope github.com/z5labs/humus/queue/kafka, franz-go's logs under
 // github.com/twmb/franz-go/pkg/kgo, and franz-go's broker metrics, from
@@ -122,7 +122,7 @@ type Producer struct {
 // refusal, and every later Produce returns it at once, with nothing sent.
 // Credentials don't fix themselves while the process runs, so the Producer
 // never tries them again.
-func NewProducer(s *humus.Setup, settings ProducerSettings) (*Producer, error) {
+func NewProducer(s *humus.Setup, n Network, settings ProducerSettings) (*Producer, error) {
 	if err := checkProducerSettings(settings); err != nil {
 		return nil, fmt.Errorf("kafka: NewProducer: %w", err)
 	}
@@ -151,7 +151,7 @@ func NewProducer(s *humus.Setup, settings ProducerSettings) (*Producer, error) {
 	p.breaker = breaker
 	opts := []kgo.Opt{
 		kgo.SeedBrokers(settings.Brokers...),
-		kgo.Dialer(tlsDialer(s.Host.DialTCP, settings.TLS)),
+		kgo.Dialer(tlsDialer(n.DialTCP, settings.TLS)),
 		kgo.WithLogger(kgoLogger{ctx: context.Background(), logger: s.Telemetry.LoggerProvider.Logger(kgoScope)}),
 		kgo.WithHooks(
 			sendHook{sent: sent, operations: operations},

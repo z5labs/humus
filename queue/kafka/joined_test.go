@@ -47,8 +47,8 @@ func joinedConsumer(settings kafka.Settings) (func(context.Context, *humus.Setup
 	svcs := make(chan *kafka.Service, 1)
 	inInit := make(chan check, 1)
 	nop := queue.ProcessorFunc[kafka.Message](func(context.Context, kafka.Message) error { return nil })
-	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		svc, err := kafka.NewService(s, settings, nop)
+	return func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		svc, err := kafka.NewService(s, h, settings, nop)
 		if err != nil {
 			return nil, err
 		}
@@ -218,7 +218,7 @@ func TestService_Joined(t *testing.T) {
 func probedConsumer(settings kafka.Settings, probeSettings httphealth.Settings) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 	nop := queue.ProcessorFunc[kafka.Message](func(context.Context, kafka.Message) error { return nil })
 	return func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
-		consumer, err := kafka.NewService(s, settings, nop)
+		consumer, err := kafka.NewService(s, h, settings, nop)
 		if err != nil {
 			return nil, err
 		}

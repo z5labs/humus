@@ -20,7 +20,7 @@
 // [Connection] the end user's Init fills. [NewClient] builds it, and opens
 // no connection:
 //
-//	client, err := kube.NewClient(s, conn)
+//	client, err := kube.NewClient(s, h, conn)
 //	if err != nil {
 //		return nil, err
 //	}
@@ -34,7 +34,8 @@
 // clients. Every one of them reaches the API server through the Client's
 // transport, which:
 //
-//   - dials with s.Host.DialTCP;
+//   - dials with the DialTCP of the [Network] NewClient is given, such as
+//     Init's host;
 //   - runs TLS with a clone of Connection.TLS, whose ServerName defaults to
 //     Connection.Server's host;
 //   - uses no proxy, whatever the environment says;

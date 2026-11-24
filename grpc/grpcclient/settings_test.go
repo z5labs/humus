@@ -295,7 +295,7 @@ func TestDefaultSettings(t *testing.T) {
 	})
 }
 
-// newSetup returns a Setup with telemetry off and no Host, for a test that
+// newSetup returns a Setup with telemetry off, for a test that
 // builds a Client and makes no RPC.
 func newSetup() *humus.Setup {
 	return &humus.Setup{Telemetry: telemetry.Noop()}

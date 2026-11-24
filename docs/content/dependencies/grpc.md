@@ -18,15 +18,15 @@ The [`grpcclient`](https://pkg.go.dev/github.com/z5labs/humus/grpc/grpcclient)
 package calls another service over gRPC. `grpcclient.NewClient` builds a
 `Client` for one dependency in the end user's `Init`, from `Settings` the end
 user sources. The `Client` is a `grpc.ClientConnInterface`, so generated code
-takes it as it takes a `*grpc.ClientConn`. Its calls go through the Setup's
-Host, are traced and measured with the Setup's telemetry, are retried as the
+takes it as it takes a `*grpc.ClientConn`. Its calls go through the network
+it is given, are traced and measured with the Setup's telemetry, are retried as the
 end user's `Classify` decides, and fail at once while a circuit breaker says
 the dependency keeps failing.
 
 The package is in the nested module `github.com/z5labs/humus/grpc`, next to
 [`grpcserver`]({{< relref "/services/grpc/serving" >}}): `grpcserver` is the server half, and
-`grpcclient` the client half. The `Client` dials only through the Setup's
-Host, so a test runs the end user's whole App, its outbound calls included,
+`grpcclient` the client half. The `Client` dials only through the network it
+is given, so a test runs the end user's whole App, its outbound calls included,
 on humustest's network, as [Testing](#testing) shows.
 
 The design behind everything on this page is in
@@ -227,7 +227,7 @@ explains the exit codes.
 `Client` dials with a clone of it, so the end user's config is never
 changed. grpc-go adds `h2` to its ALPN and enforces it, and `CheckTLS`
 rejects a config that allows nothing from TLS 1.2 on, which HTTP/2 requires.
-`Init` above reads the dependency's CA from a file, through `s.Host.Filesystem`, as
+`Init` above reads the dependency's CA from a file, through `h.Filesystem`, as
 [Reading a file]({{< relref "/fundamentals/configuration#reading-a-file" >}}) describes,
 and trusts only that CA:
 
@@ -275,9 +275,9 @@ in `NewClient`'s options. A `Client` of `10.0.0.7:9090` whose `TLS` has the
 ## Names, addresses and load
 
 `NewClient` targets `passthrough:///` and `Settings.Addr`, and dials with the
-Setup's `Host.DialTCP`. The passthrough resolver hands `Addr` to the dialler as
-it is, so grpc-go looks no name up: the Host resolves the name when it
-dials. In `main`, `humus.OSHost`'s `DialTCP` looks the name up as `net.Dial`
+`DialTCP` of the network it is given. The passthrough resolver hands `Addr` to
+the dialler as it is, so grpc-go looks no name up: the network resolves the
+name when it dials. In `main`, `humus.OSHost`'s `DialTCP` looks the name up as `net.Dial`
 does, each time it dials. grpc-go's `dns` resolver, the default for a target
 with no scheme, is never used: it would look the name up around the Host,
 and inside a `testing/synctest` bubble it crashes the test binary, as
@@ -919,7 +919,7 @@ how to test a scenario.
 
 A service that calls a dependency is tested whole, inside
 `testing/synctest`, as [Testing a humus App]({{< relref "/fundamentals/testing" >}})
-describes for any App. The `Client` dials through the Setup's Host, so the
+describes for any App. The `Client` dials through the host `Init` is given, so the
 dependency is a second App on the same humustest Host: a `grpcserver`
 Service that answers as the dependency would, with a certificate from a CA
 that [`humustest.NewCA`]({{< relref "/fundamentals/testing#tls" >}}) generates for the

@@ -53,7 +53,7 @@ func (testServer) EmptyCall(context.Context, *testpb.Empty) (*testpb.Empty, erro
 // the package building a Server passes its own import path.
 const callerScope = "example.com/caller"
 
-// newSetup returns a Setup with telemetry off and no Host, for a test that
+// newSetup returns a Setup with telemetry off, for a test that
 // drives a Server directly rather than through an App.
 func newSetup() *humus.Setup {
 	return &humus.Setup{Telemetry: telemetry.Noop()}

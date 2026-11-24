@@ -206,8 +206,8 @@ func TestService_Consuming_stays_unhealthy_with_nothing_listening(t *testing.T) 
 		h := humustest.NewHost(t) // nothing listens at rabbit:5672
 		tel := humustest.NewTelemetry()
 		svcs := make(chan *rabbitmq.Service, 1)
-		p, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-			svc, err := rabbitmq.NewService(s, settings(), nop)
+		p, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			svc, err := rabbitmq.NewService(s, h, settings(), nop)
 			if err != nil {
 				return nil, err
 			}
@@ -244,7 +244,7 @@ func TestService_Consuming_stays_unhealthy_with_nothing_listening(t *testing.T) 
 // the consumer to consume.
 func probedConsumer(settings rabbitmq.Settings, ch *standIn, probeSettings httphealth.Settings) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 	return func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
-		consumer, err := rabbitmq.NewService(s, settings, nop)
+		consumer, err := rabbitmq.NewService(s, h, settings, nop)
 		if err != nil {
 			return nil, err
 		}

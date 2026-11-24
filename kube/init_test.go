@@ -59,11 +59,11 @@ func caPEM(t *testing.T, ca *humustest.CA) []byte {
 	return certPEM(chain[len(chain)-1])
 }
 
-// podSetup returns a Setup on h whose environment holds env, as the
-// kubelet sets it.
-func podSetup(t *testing.T, h *humustest.Host, env map[string]string) *humus.Setup {
+// podSetup returns a Setup whose environment holds env, as the kubelet
+// sets it.
+func podSetup(t *testing.T, env map[string]string) *humus.Setup {
 	t.Helper()
-	s := newSetup(t, h.Host(), humustest.NewTelemetry())
+	s := newSetup(t, humustest.NewTelemetry())
 	s.Process.Environment = bedrock.NewStaticEnvironment(env)
 	return s
 }
@@ -93,7 +93,7 @@ func TestInPod_reaches_the_API_server_with_the_service_accounts_token(t *testing
 		api := &apiServer{}
 		defer startAPIServer(t, h, ca, server, api, "apiserver")()
 
-		s := podSetup(t, h, map[string]string{
+		s := podSetup(t, map[string]string{
 			"KUBERNETES_SERVICE_HOST": "apiserver",
 			"KUBERNETES_SERVICE_PORT": "6443",
 		})
@@ -101,7 +101,7 @@ func TestInPod_reaches_the_API_server_with_the_service_accounts_token(t *testing
 		require.NoError(t, err)
 		require.Equal(t, server, conn.Server)
 
-		c, err := kube.NewClient(s, conn)
+		c, err := kube.NewClient(s, h, conn)
 		require.NoError(t, err)
 		kc := newClientset(t, c)
 		require.NoError(t, getConfigMap(t.Context(), kc, "settings"), "the CA verifies the API server")
@@ -128,7 +128,7 @@ func TestInPod_brackets_an_IPv6_host(t *testing.T) {
 		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 			"serviceaccount/ca.crt": caPEM(t, humustest.NewCA(t)),
 		}))
-		conn, err := inPod(t.Context(), podSetup(t, h, map[string]string{
+		conn, err := inPod(t.Context(), podSetup(t, map[string]string{
 			"KUBERNETES_SERVICE_HOST": "fd00:10:96::1",
 			"KUBERNETES_SERVICE_PORT": "443",
 		}), h.Host(), h.Path("serviceaccount")+"/")
@@ -142,7 +142,7 @@ func TestInPod_without_the_service_accounts_CA_fails(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
-		_, err := inPod(t.Context(), podSetup(t, h, nil), h.Host(), h.Path("serviceaccount")+"/")
+		_, err := inPod(t.Context(), podSetup(t, nil), h.Host(), h.Path("serviceaccount")+"/")
 		require.ErrorIs(t, err, os.ErrNotExist)
 	})
 }
@@ -209,7 +209,7 @@ func TestFromKubeconfig_reaches_the_API_server_with_the_client_certificate(t *te
 		require.Equal(t, server, conn.Server)
 		require.Nil(t, conn.Token, "the client certificate authenticates")
 
-		c, err := kube.NewClient(newSetup(t, h.Host(), humustest.NewTelemetry()), conn)
+		c, err := kube.NewClient(newSetup(t, humustest.NewTelemetry()), h.Host(), conn)
 		require.NoError(t, err)
 		require.NoError(t, getConfigMap(t.Context(), newClientset(t, c), "settings"))
 		reqs := api.received()
@@ -265,7 +265,7 @@ func TestFinalizing_deletes_the_backups_before_the_Memcached_is_deleted(t *testi
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		fc := newFakeCluster(t, memcachedObject("cache", 2))
-		s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
+		s := newSetup(t, humustest.NewTelemetry())
 		b := &deletes{}
 		ctrl, err := finalizing(s, testClient(t, s), testSettings(), fc.kube, b)
 		require.NoError(t, err)
@@ -322,7 +322,7 @@ func TestDefaultDeny_gives_every_Namespace_its_policy(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		fc := newFakeClusterOf(t, Namespaces.GVR, "NamespaceList", "", namespaceObject("team-a"), namespaceObject("team-b"))
-		s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
+		s := newSetup(t, humustest.NewTelemetry())
 		ctrl, err := defaultDeny(s, testClient(t, s), testSettings(), fc.kube)
 		require.NoError(t, err)
 		kube.SetClients(ctrl, fc.dyn, fc.meta, fc.kube.CoordinationV1())
@@ -430,7 +430,7 @@ func TestUnderTest_a_staging_Memcached_carries_the_scenario_until_the_experiment
 		staged.SetNamespace("staging")
 		fc := newFakeCluster(t, staged, memcachedObject("cache", 2))
 		tel := humustest.NewTelemetry()
-		s := faultsSetup(t, noNetwork(t), tel)
+		s := faultsSetup(t, tel)
 		rec := &abortsDeployments{}
 		ctrl, err := underTest(s, testClient(t, s), testSettings(), rec.reconciler(s))
 		require.NoError(t, err)
@@ -534,7 +534,7 @@ func TestBudget_leaves_a_Deployment_no_Memcached_controls_alone(t *testing.T) {
 
 func TestOperator_returns_a_Controller_of_Memcacheds_and_one_of_their_Deployments(t *testing.T) {
 	t.Parallel()
-	s := faultsSetup(t, noNetwork(t), humustest.NewTelemetry())
+	s := faultsSetup(t, humustest.NewTelemetry())
 	budgetSettings := testSettings()
 	budgetSettings.Name = "memcached-budget"
 

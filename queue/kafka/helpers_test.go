@@ -122,8 +122,8 @@ func members(c *kfake.Cluster) int {
 
 // consumes returns an Init whose only Service consumes settings with p.
 func consumes(settings kafka.Settings, p queue.ProcessorFunc[kafka.Message]) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		svc, err := kafka.NewService(s, settings, p)
+	return func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		svc, err := kafka.NewService(s, h, settings, p)
 		if err != nil {
 			return nil, err
 		}

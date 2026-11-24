@@ -69,7 +69,7 @@ func (o *orders) store(m kafka.Message) error {
 // Init is the end user's Init: it sources the Settings and the
 // ProducerSettings with config.Struct, builds the Producer and the
 // Processor, and returns the Service from NewService.
-func Init(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	d := kafka.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 	list := func(v string) []string { return strings.Split(v, ",") }
@@ -99,13 +99,13 @@ func Init(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, e
 	if err != nil {
 		return nil, err // exit 78, naming every bad variable
 	}
-	dlq, err := kafka.NewProducer(s, producer) // opens no connection: the first Produce does
+	dlq, err := kafka.NewProducer(s, h, producer) // opens no connection: the first Produce does
 	if err != nil {
 		return nil, err
 	}
 
-	h := &orders{stored: map[string]bool{}, out: s.Process.Stdout, dlq: dlq}
-	svc, err := kafka.NewService(s, settings, queue.ProcessorFunc[kafka.Message](h.Handle))
+	o := &orders{stored: map[string]bool{}, out: s.Process.Stdout, dlq: dlq}
+	svc, err := kafka.NewService(s, h, settings, queue.ProcessorFunc[kafka.Message](o.Handle))
 	if err != nil {
 		return nil, err
 	}
@@ -135,14 +135,14 @@ func Example_main() {
 // the same Option. Nothing is served here, so the consumer hasn't joined,
 // and the health Service isn't ready.
 func ExampleService_Joined() {
-	s := &humus.Setup{Host: humus.OSHost(), Telemetry: telemetry.Noop()}
+	s := &humus.Setup{Telemetry: telemetry.Noop()}
 	settings := kafka.DefaultSettings()
 	settings.Brokers = []string{"localhost:9092"}
 	settings.GroupID = "orders-consumer"
 	settings.Topics = []string{"orders"}
-	h := &orders{stored: map[string]bool{}, out: io.Discard}
+	o := &orders{stored: map[string]bool{}, out: io.Discard}
 
-	consumer, err := kafka.NewService(s, settings, queue.ProcessorFunc[kafka.Message](h.Handle))
+	consumer, err := kafka.NewService(s, humus.OSHost(), settings, queue.ProcessorFunc[kafka.Message](o.Handle))
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -160,7 +160,7 @@ func ExampleService_Joined() {
 
 // secureInit is an Init for brokers that require TLS with a client
 // certificate, and SASL. It sources the brokers' CA and the client's
-// certificate from PEM files, read through s.Host.Filesystem, and SCRAM-SHA-512
+// certificate from PEM files, read through host.Filesystem, and SCRAM-SHA-512
 // credentials, and produces its dead letters to the same cluster with the
 // same ones.
 func secureInit(ctx context.Context, s *humus.Setup, host humus.Host) ([]humus.Service, error) {
@@ -191,13 +191,13 @@ func secureInit(ctx context.Context, s *humus.Setup, host humus.Host) ([]humus.S
 	producer := kafka.DefaultProducerSettings()
 	// The same cluster, over the same TLS and with the same credentials.
 	producer.Brokers, producer.TLS, producer.SASL = settings.Brokers, settings.TLS, settings.SASL
-	dlq, err := kafka.NewProducer(s, producer)
+	dlq, err := kafka.NewProducer(s, host, producer)
 	if err != nil {
 		return nil, err
 	}
 
 	h := &orders{stored: map[string]bool{}, out: s.Process.Stdout, dlq: dlq}
-	svc, err := kafka.NewService(s, settings, queue.ProcessorFunc[kafka.Message](h.Handle))
+	svc, err := kafka.NewService(s, host, settings, queue.ProcessorFunc[kafka.Message](h.Handle))
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +242,7 @@ func clientTLS(caPEM []byte) func(certPEM []byte) (*tls.Config, error) {
 // Delivery values: two Services, each with a group ID of its own, returned
 // together. Either one returning ends the App.
 func twoDeliveries(brokers []string, p queue.ProcessorFunc[kafka.Message]) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	return func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		payments := kafka.DefaultSettings()
 		payments.Brokers = brokers
 		payments.GroupID = "payments-consumer"
@@ -254,11 +254,11 @@ func twoDeliveries(brokers []string, p queue.ProcessorFunc[kafka.Message]) func(
 		clicks.Topics = []string{"clicks"}
 		clicks.Delivery = queue.AtMostOnce // a click lost to a crash is not worth a second count
 
-		paymentsSvc, err := kafka.NewService(s, payments, p)
+		paymentsSvc, err := kafka.NewService(s, h, payments, p)
 		if err != nil {
 			return nil, err
 		}
-		clicksSvc, err := kafka.NewService(s, clicks, p)
+		clicksSvc, err := kafka.NewService(s, h, clicks, p)
 		if err != nil {
 			return nil, err
 		}
