@@ -81,6 +81,11 @@ type Producer struct {
 	// to close it, and a Produce after that fails at once.
 	calls admitted
 
+	// inClient are the records handed to the client whose results the
+	// Producer's hook has yet to record, which the OnStop function waits
+	// for once it has closed the client.
+	inClient admitted
+
 	// faults is the App's failure injection, from the Setup, and forward
 	// is ProducerSettings.ForwardScenario.
 	faults  fault.Injector
@@ -96,9 +101,10 @@ type Producer struct {
 // one error that names each one, and builds the franz-go client and the
 // circuit breaker. It opens no connection: the first Produce does. It
 // registers a function with s.OnStop that flushes the client, closes it,
-// and waits for the breaker to count every call it admitted, and for
-// kotel's produce counters to count every record the cluster acknowledged,
-// so the telemetry SDK's Shutdown collects them.
+// and waits for the Producer's hook to end the span of every record the
+// client held, and measure it, for the breaker to count every call it
+// admitted, and for kotel's produce counters to count every record the
+// cluster acknowledged, so the telemetry SDK's Shutdown collects them.
 //
 // The breaker, built with settings.Breaker and settings.BreakerPolicy,
 // guards the cluster: one Producer is one client to one cluster, with one
@@ -154,7 +160,7 @@ func NewProducer(s *humus.Setup, n Network, settings ProducerSettings) (*Produce
 		kgo.Dialer(tlsDialer(n.DialTCP, settings.TLS)),
 		kgo.WithLogger(kgoLogger{ctx: context.Background(), logger: s.Telemetry.LoggerProvider.Logger(kgoScope)}),
 		kgo.WithHooks(
-			sendHook{sent: sent, operations: operations},
+			sendHook{sent: sent, operations: operations, inClient: &p.inClient},
 			connectHook{onRefusal: p.refuse},
 			p.kotel,
 		),
@@ -236,23 +242,33 @@ func (p *Producer) refusalErr() error {
 }
 
 // stop flushes the client with ctx, which the lifecycle bounds by the grace
-// period, closes it, and then waits, with ctx, until the breaker has
-// counted every call it admitted, and kotel has counted every record the
-// cluster acknowledged in its produce counters, so the SDK's Shutdown,
-// which runs after the OnStop functions, collects the breaker's log
-// records and counts and kotel's. It returns once every admitted call has
-// been counted, not only once the client holds no records: franz-go hands
-// a record its result before Flush sees it gone, and the call is counted
-// on Produce's goroutine after that.
+// period, closes it, and waits until the Producer's hook has ended the
+// span of every record handed to the client, and measured it. Then it
+// waits, with ctx, until the breaker has counted every call it admitted,
+// and kotel has counted every record the cluster acknowledged in its
+// produce counters. So the SDK's Shutdown, which runs after the OnStop
+// functions, collects every record's span and messaging counts, the
+// breaker's log records and counts, and kotel's. It returns once every
+// admitted call has been counted, not only once the client holds no
+// records: franz-go hands a record its result before Flush sees it gone,
+// and the call is counted on Produce's goroutine after that.
 //
 // When ctx is done first, Close fails the records still in the client with
-// ErrProducerClosed, the breaker may not count the calls of those
-// records, kotel's counters may miss records franz-go has yet to report to
-// it, and stop returns an error that wraps ctx's error.
+// ErrProducerClosed, and stop still waits for the hook to end their spans
+// and measure them, which runs on a goroutine franz-go starts and doesn't
+// wait for. That wait isn't bounded by ctx, which is already done, and
+// needs no bound: once the client is closed, franz-go fails every record
+// it holds or is handed at once, without waiting on the cluster. A call
+// that hands its records to the client only after that wait, such as one
+// still in a fault's Delay, isn't waited for. The breaker may not count the calls of those records, kotel's counters may
+// miss records franz-go has yet to report to it, and stop returns an error
+// that wraps ctx's error.
 func (p *Producer) stop(ctx context.Context) error {
 	err := p.client.Flush(ctx)
 	p.calls.close()
 	p.client.Close()
+	// The wait can't fail: its context is never done.
+	_ = p.inClient.wait(context.WithoutCancel(ctx))
 	if err != nil {
 		return fmt.Errorf("kafka: flushing the Producer: %w", err)
 	}
@@ -267,7 +283,8 @@ func (p *Producer) stop(ctx context.Context) error {
 
 // admitted counts the calls to Produce that are past the closed check and
 // not yet counted by the breaker, or rejected by it. Its zero value is
-// ready to use.
+// ready to use. The Producer's inClient is one too, counting the records
+// handed to the client and not yet through the hook, and is never closed.
 //
 // The closed check and the count are one step under one lock, so once
 // close returns, every call that will ever be counted already is, and wait
@@ -578,7 +595,8 @@ const (
 )
 
 // produce hands krs to the client with call, and returns their results
-// once every record has one.
+// once every record has one. Each record is counted in p.inClient before it
+// is handed to the client, and the hook settles it.
 //
 // franz-go checks a record's context only when it tries the record's
 // partition. After a retriable error such as NOT_ENOUGH_REPLICAS it marks
@@ -595,6 +613,9 @@ const (
 // deadline itself: a record left in the client with its context done would
 // fail the records a later call buffers behind it on its partition.
 func (p *Producer) produce(call context.Context, krs []*kgo.Record) kgo.ProduceResults {
+	for range krs {
+		p.inClient.add()
+	}
 	synced := make(chan kgo.ProduceResults, 1)
 	go func() {
 		synced <- p.client.ProduceSync(call, krs...)
@@ -668,10 +689,12 @@ func (p *Producer) send(ctx, call context.Context, start time.Time, fields []str
 }
 
 // sendHook ends the span of each record the Producer produced, and
-// measures it, as the record's result arrives.
+// measures it, as the record's result arrives. Then it settles the record
+// in inClient, the Producer's.
 type sendHook struct {
 	sent       messagingconv.ClientSentMessages
 	operations messagingconv.ClientOperationDuration
+	inClient   *admitted
 }
 
 var _ kgo.HookProduceRecordUnbuffered = sendHook{}
@@ -680,12 +703,20 @@ var _ kgo.HookProduceRecordUnbuffered = sendHook{}
 // handed to ProduceSync. An acknowledged record's span gets its partition
 // and offset, and a failed record's span gets the error. Both instruments
 // get the record's partition when one was chosen, and error.type when it
-// failed, of the error as recordError translates it.
+// failed, of the error as recordError translates it. The record is settled
+// in inClient once its span has ended and both instruments have measured
+// it, so the OnStop function's wait for inClient covers all three.
+//
+// franz-go calls it on a goroutine of its own, which nothing waits for.
+// A closed client's records get their results, and so this call, only
+// after Close has started that goroutine, and it may run after Close has
+// returned.
 func (h sendHook) OnProduceRecordUnbuffered(r *kgo.Record, err error) {
 	s, ok := r.Context.Value(sendingKey{}).(*sending)
 	if !ok {
 		return
 	}
+	defer h.inClient.settled()
 	elapsed := time.Since(s.start).Seconds()
 
 	attrs := []attribute.KeyValue{semconv.MessagingDestinationName(r.Topic)}

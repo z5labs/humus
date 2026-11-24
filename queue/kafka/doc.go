@@ -409,15 +409,25 @@
 // returned the credentials' refusal, one whose context was done after its
 // records were handed to the client, and one whose caller is still
 // waiting. When the grace period runs out first, closing the client fails
-// what is left with [ErrProducerClosed], those records are lost, the
-// breaker may not count their calls, kotel's counters may miss records
-// franz-go had yet to report to it, and the function returns an error that
-// wraps the context's error, which the lifecycle reports as a
+// what is left with [ErrProducerClosed], and those records are lost. The
+// function still waits for each of them to have its send span, with
+// [ErrProducerClosed]'s error.type and an error status, and its counts in
+// messaging.client.sent.messages and messaging.client.operation.duration,
+// so the telemetry SDK's last collection shows which records the shutdown
+// lost, and why. franz-go hands a closed client's records their results on
+// a goroutine nothing waits for, which can run after Close has returned.
+// That wait isn't bounded by the grace period, which is over, and needs no
+// bound: a closed client fails every record at once, without waiting on
+// the cluster. A call that hands its records to the client only after
+// that wait, such as one still in a fault's Delay, isn't waited for. The
+// breaker may not count those records' calls, kotel's counters may miss
+// records franz-go had yet to report to it, and the function returns an
+// error that wraps the context's error, which the lifecycle reports as a
 // *humus.GracePeriodError. A Produce after that, from a goroutine the end
 // user left running, fails at once with an error that wraps
-// [ErrProducerClosed]. If the end user's Init fails after
-// NewProducer, the lifecycle runs the function too, so the client is
-// closed and none of franz-go's goroutines outlive the App.
+// [ErrProducerClosed]. If the end user's Init fails after NewProducer, the
+// lifecycle runs the function too, so the client is closed and none of
+// franz-go's goroutines outlive the App.
 //
 // The Producer's client logs through the Setup's LoggerProvider, under the
 // scope github.com/twmb/franz-go/pkg/kgo, as the Service's does.
@@ -595,7 +605,10 @@
 // record's key is not recorded. The span ends when the record is
 // acknowledged or fails, as its result arrives, which may be after Produce
 // returns. A failure is recorded on it as an exception event, with
-// error.type and an error status.
+// error.type and an error status. The Producer's OnStop function waits for
+// the span of every record the client held to end, the records the grace
+// period cut short among them, so the telemetry SDK's Shutdown collects
+// it.
 //
 // The span's context goes into the record's headers. Before injecting, the
 // Producer removes every header of the record whose key is one of the

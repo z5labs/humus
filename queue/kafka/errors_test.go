@@ -15,7 +15,10 @@ import (
 	"net"
 	"reflect"
 	"regexp"
+	"runtime"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -25,12 +28,16 @@ import (
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/kmsg"
+	"github.com/z5labs/bedrock"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/queue/kafka"
+	"github.com/z5labs/humus/telemetry"
 )
 
 // The Kafka error codes the tests expect, as the package reports them.
@@ -424,4 +431,238 @@ func TestProducer_a_closed_Producer_fails_records_with_ErrProducerClosed(t *test
 			requireErrorTypeNotFranzGo(t, spanAttrs(spanNamed(t, tel, sendSpan))["error.type"].AsString())
 		})
 	})
+}
+
+// cutShortRuns is how many times each test of a record the grace period cut
+// short shuts the App down.
+const cutShortRuns = 10
+
+// cutShortRun is what one shutdown of cutShort's App showed.
+type cutShortRun struct {
+	code int
+	err  error
+	// spans is the number of send spans recorded, and errType and status
+	// the error.type and status code of the first.
+	spans   int
+	errType string
+	status  codes.Code
+	// sent is the sum of messaging.client.sent.messages, and durations the
+	// count of messaging.client.operation.duration, as the SDK's Shutdown
+	// collected them. sentErrTypes and durationErrTypes are the error.type
+	// of each of their data points.
+	sent             int64
+	durations        uint64
+	sentErrTypes     []string
+	durationErrTypes []string
+	// events are the steps of the shutdown, in the order they happened.
+	events []string
+}
+
+// shutdownSteps is the order in which the steps of one shutdown happened.
+type shutdownSteps struct {
+	mu   sync.Mutex
+	list []string
+}
+
+func (e *shutdownSteps) add(format string, args ...any) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.list = append(e.list, fmt.Sprintf(format, args...))
+}
+
+func (e *shutdownSteps) all() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]string(nil), e.list...)
+}
+
+// watchedProvider is a TracerProvider that adds a step when a send span
+// ends, before the span is handed to the SDK.
+type watchedProvider struct {
+	trace.TracerProvider
+	ev *shutdownSteps
+}
+
+func (p watchedProvider) Tracer(name string, opts ...trace.TracerOption) trace.Tracer {
+	return watchedTracer{Tracer: p.TracerProvider.Tracer(name, opts...), ev: p.ev}
+}
+
+type watchedTracer struct {
+	trace.Tracer
+	ev *shutdownSteps
+}
+
+func (t watchedTracer) Start(ctx context.Context, name string, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
+	ctx, span := t.Tracer.Start(ctx, name, opts...)
+	if name != sendSpan {
+		return ctx, span
+	}
+	w := watchedSpan{Span: span, ev: t.ev}
+	return trace.ContextWithSpan(ctx, w), w
+}
+
+type watchedSpan struct {
+	trace.Span
+	ev *shutdownSteps
+}
+
+func (s watchedSpan) End(opts ...trace.SpanEndOption) {
+	s.ev.add("the send span ends")
+	s.Span.End(opts...)
+}
+
+// watched returns tel's Builder, whose SDK adds a step when a send span
+// ends and when its Shutdown starts and returns.
+func watched(tel *humustest.Telemetry, ev *shutdownSteps) telemetry.Builder {
+	build := tel.Builder()
+	return func(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
+		sdk, err := build(ctx, p, n)
+		if err != nil {
+			return sdk, err
+		}
+		sdk.TracerProvider = watchedProvider{TracerProvider: sdk.TracerProvider, ev: ev}
+		shutdown := sdk.Shutdown
+		sdk.Shutdown = func(ctx context.Context) error {
+			ev.add("the telemetry SDK's Shutdown starts")
+			defer ev.add("the telemetry SDK's Shutdown returns")
+			return shutdown(ctx)
+		}
+		return sdk, nil
+	}
+}
+
+// cutShort runs, in a bubble of its own, the App of the subtest "a record
+// the grace period cut short": a job hands one record to a Producer whose
+// cluster holds every Produce request, and returns once the cluster holds
+// it, so the Producer's OnStop function's flush runs out the 2s grace
+// period and closing the client fails the record.
+func cutShort(t *testing.T) cutShortRun {
+	t.Helper()
+	var run cutShortRun
+	synctest.Test(t, func(t *testing.T) {
+		h := humustest.NewHost(t)
+		c := cluster(t, h, 1)
+		held, _ := holdProduce(t, c) // released when the test ends
+
+		ev := &shutdownSteps{}
+		tel := humustest.NewTelemetry()
+		produced := make(chan error, 1)
+		job := produces(producerSettings(c.ListenAddrs()...), func(_ context.Context, p *kafka.Producer) error {
+			go func() {
+				err := p.Produce(context.Background(), value(0))
+				ev.add("Produce returns: %v", err)
+				produced <- err
+			}()
+			<-held
+			ev.add("the cluster holds the Produce request")
+			return nil
+		})
+		init := func(ctx context.Context, s *humus.Setup, n humus.Host) ([]humus.Service, error) {
+			// OnStop functions run in reverse order of registration, so this
+			// one runs right after the Producer's.
+			s.OnStop(func(context.Context) error {
+				ev.add("the Producer's OnStop function has returned")
+				return nil
+			})
+			return job(ctx, s, n)
+		}
+		_, status := humustest.Start(t, h.Host(), init,
+			humustest.WithApp(humus.WithTelemetry(watched(tel, ev))),
+			humustest.WithEnv(map[string]string{"HUMUS_SHUTDOWN_GRACE_PERIOD": "2s"}),
+		)
+
+		run.code = (<-status).Code()
+		ev.add("the App has exited")
+		run.err = <-produced
+
+		spans := spansNamed(tel, sendSpan)
+		run.spans = len(spans)
+		if len(spans) > 0 {
+			run.errType = spanAttrs(spans[0])["error.type"].AsString()
+			run.status = spans[0].Status().Code
+		}
+		rm, err := tel.Metrics(t.Context())
+		require.NoError(t, err)
+		for _, sm := range rm.ScopeMetrics {
+			if sm.Scope.Name != serviceScope {
+				continue
+			}
+			for _, m := range sm.Metrics {
+				switch data := m.Data.(type) {
+				case metricdata.Sum[int64]:
+					if m.Name == "messaging.client.sent.messages" {
+						for _, dp := range data.DataPoints {
+							run.sent += dp.Value
+							run.sentErrTypes = append(run.sentErrTypes, setAttrs(dp.Attributes)["error.type"])
+						}
+					}
+				case metricdata.Histogram[float64]:
+					if m.Name == "messaging.client.operation.duration" {
+						for _, dp := range data.DataPoints {
+							run.durations += dp.Count
+							run.durationErrTypes = append(run.durationErrTypes, setAttrs(dp.Attributes)["error.type"])
+						}
+					}
+				}
+			}
+		}
+		run.events = ev.all()
+	})
+	return run
+}
+
+// cutShortOnOneCore shuts cutShort's App down cutShortRuns times with
+// GOMAXPROCS at 1, so no goroutine runs beside the lifecycle's while it
+// goes from the Producer's OnStop function to the telemetry SDK's
+// Shutdown, and franz-go's goroutine that hands the closed client's
+// records their results runs only once Close has returned. It requires
+// every shutdown to exit 1 with the record failed with ErrProducerClosed,
+// and logs what each showed. Each shutdown is a bubble of its own, and
+// the assertions are outside them, so every shutdown is counted.
+func cutShortOnOneCore(t *testing.T) []cutShortRun {
+	t.Helper()
+	prev := runtime.GOMAXPROCS(1)
+	t.Cleanup(func() { runtime.GOMAXPROCS(prev) })
+
+	runs := make([]cutShortRun, cutShortRuns)
+	for i := range runs {
+		runs[i] = cutShort(t)
+	}
+	for i, run := range runs {
+		t.Logf("shutdown %d: exit %d, send spans %d (error.type %q, status %v), sent.messages %d %q, operation.duration count %d %q",
+			i, run.code, run.spans, run.errType, run.status, run.sent, run.sentErrTypes, run.durations, run.durationErrTypes)
+		t.Logf("shutdown %d: %s", i, strings.Join(run.events, " -> "))
+	}
+	for i, run := range runs {
+		require.Equal(t, humus.ExitFailure, run.code, "shutdown %d", i)
+		require.ErrorIs(t, run.err, kafka.ErrProducerClosed, "shutdown %d", i)
+	}
+	return runs
+}
+
+// producerClosedType is ErrProducerClosed's error.type.
+var producerClosedType = semconv.ErrorType(kafka.ErrProducerClosed).Value.AsString()
+
+func TestProducer_records_the_send_span_of_a_record_the_grace_period_cut_short(t *testing.T) {
+	runs := cutShortOnOneCore(t)
+	var lost []int
+	for i, run := range runs {
+		if run.spans != 1 || run.errType != producerClosedType || run.status != codes.Error {
+			lost = append(lost, i)
+		}
+	}
+	require.Empty(t, lost, "shutdowns that recorded no send span with ErrProducerClosed's error.type and an error status, of %d", len(runs))
+}
+
+func TestProducer_counts_a_record_the_grace_period_cut_short_in_its_messaging_instruments(t *testing.T) {
+	runs := cutShortOnOneCore(t)
+	var lost []int
+	for i, run := range runs {
+		if run.sent != 1 || run.durations != 1 ||
+			!slices.Equal(run.sentErrTypes, []string{producerClosedType}) ||
+			!slices.Equal(run.durationErrTypes, []string{producerClosedType}) {
+			lost = append(lost, i)
+		}
+	}
+	require.Empty(t, lost, "shutdowns whose last collection missed the record, with ErrProducerClosed's error.type, in messaging.client.sent.messages or messaging.client.operation.duration, of %d", len(runs))
 }
