@@ -548,7 +548,7 @@ for range 2 {
 }
 ```
 
-The `Client` dials through its Setup's Host, which is the test's, so it
+The `Client` dials through the host `Init` is given, which is the test's, so it
 reaches `carts:9090` on the Host's network, and the dependency's certificate
 verifies against the CA the test wrote. Each App waits for its own
 listener: the test waits for `carts:9090` before it starts the end user's
@@ -814,7 +814,7 @@ test of its own:
 ```go
 func TestHTTPService(t *testing.T) {
 	humustest.TestService(t, func(t *testing.T, s *humus.Setup) humus.Service {
-		return newHTTPService(s, s.Host, ":8080", http.NotFoundHandler())
+		return newHTTPService(s, humustest.NewHost(t).Host(), ":8080", http.NotFoundHandler())
 	})
 }
 ```
@@ -829,8 +829,9 @@ rule in a subtest named after it:
   twice.
 - No goroutine the Service started outlives `Serve`.
 
-The Service must reach the network and the filesystem only through the
-`Setup`'s Host. A goroutine blocked on a real socket is one `synctest` can't
+The Service must reach the network and the filesystem only through a
+humustest Host, such as one the constructor builds with `humustest.NewHost(t)`.
+A goroutine blocked on a real socket is one `synctest` can't
 see, and the test then hangs until its timeout.
 
 ## For package authors

@@ -97,7 +97,7 @@ the `Setup` that `Init` is then given, builds the `Injector` with
 `fault.New`, and puts it in `Setup.Faults`. Every humus server and client
 takes the `Injector` from the `Setup` it is built with, so none can miss
 it, and `Init` hands it on by handing on the `Setup`. The function is given
-the `Setup`, so a `Decoder` can load what it needs through `s.Host`, such as
+the `Setup` and the host, so a `Decoder` can load what it needs through `h`, such as
 a registry of scenarios from a file, and register its release with
 `s.OnStop`.
 

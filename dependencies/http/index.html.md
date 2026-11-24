@@ -4,14 +4,14 @@ The [`httpclient`](https://pkg.go.dev/github.com/z5labs/humus/httpclient)
 package calls another service over HTTP. `httpclient.NewClient` builds a
 client for one dependency in the end user's `Init`, from `Settings` the end
 user sources, and returns a plain `*http.Client`. Its calls go through the
-Setup's Host, are traced and measured with the Setup's telemetry, are retried
+network it is given, are traced and measured with the Setup's telemetry, are retried
 when that is safe, and fail at once while a circuit breaker says the
 dependency keeps failing.
 
 Service code, generated clients and SDKs take the `*http.Client` as they
 take any other, and depend on `net/http`'s type rather than on this package,
 so a unit test of that code passes any client. The client dials only
-through the Setup's Host, so a test runs the end user's whole App, its
+through the network it is given, so a test runs the end user's whole App, its
 outbound calls included, on humustest's network, as [Testing](#testing)
 shows.
 
@@ -231,7 +231,7 @@ explains the exit codes.
 it trusts in `RootCAs`, and for mTLS, a client certificate in
 `Certificates`. The client dials with a clone of it, so the end user's
 config is never changed. `Init` above reads the dependency's CA from a file,
-through `s.Host.Filesystem`, as [Reading a file](/humus/fundamentals/configuration/#reading-a-file)
+through `h.Filesystem`, as [Reading a file](/humus/fundamentals/configuration/#reading-a-file)
 describes, and trusts only that CA:
 
 ```go
@@ -740,7 +740,7 @@ scenario.
 
 A service that calls a dependency is tested whole, inside
 `testing/synctest`, as [Testing a humus App](/humus/fundamentals/testing/)
-describes for any App. The client dials through the Setup's Host, so the
+describes for any App. The client dials through the host `Init` is given, so the
 fake dependency is a second App on the same humustest Host: an
 `httpserver` Service whose handler answers as the dependency would, with a
 certificate from a CA that [`humustest.NewCA`](/humus/fundamentals/testing/#tls)

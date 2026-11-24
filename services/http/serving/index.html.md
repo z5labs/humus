@@ -75,8 +75,8 @@ httpserver.Main(Init, humus.WithTelemetry(buildTelemetry))
 ```
 
 `NewService` runs every check on the `Settings` again, rejects a nil
-handler, and then listens on `Settings.Addr` through the Setup's Host, in
-`Init`. So a port that is already taken fails `Init`, and the App exits 1,
+handler, and then listens on `Settings.Addr` through the network it is given,
+in `Init`. So a port that is already taken fails `Init`, and the App exits 1,
 and a connection that arrives before `Serve` runs waits in the backlog
 rather than being refused. The listener's close is registered with
 `s.OnStop`, so an `Init` that fails after `NewService` still closes it. An
@@ -144,7 +144,7 @@ than starting and failing every request.
 
 ### The certificate
 
-The end user decodes the certificate from a file, read through `s.Host.Filesystem`
+The end user decodes the certificate from a file, read through `h.Filesystem`
 so that a test reads it from its own directory and production from the real
 disk, as [Reading a file](/humus/fundamentals/configuration/#reading-a-file)
 describes. How the certificate is stored and encoded is the end user's

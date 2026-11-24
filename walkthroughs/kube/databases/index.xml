@@ -284,7 +284,7 @@ it:&lt;/p&gt;</description></item><item><title>Production-ready</title><link>htt
  &lt;/tr&gt;
  &lt;tr&gt;
  &lt;td&gt;No secret in the environment, the logs or the spans&lt;/td&gt;
- &lt;td&gt;the admin DSN, the service account&amp;rsquo;s token and CA, and the probes&amp;rsquo; key are files read through &lt;code&gt;s.Host.Filesystem&lt;/code&gt;. A role&amp;rsquo;s password reaches PostgreSQL as a SCRAM verifier, and a statement&amp;rsquo;s span carries its summary, never its SQL. A test of the App checks that no password, DSN or token is in a span, a record or a metric&lt;/td&gt;
+ &lt;td&gt;the admin DSN, the service account&amp;rsquo;s token and CA, and the probes&amp;rsquo; key are files read through &lt;code&gt;h.Filesystem&lt;/code&gt;. A role&amp;rsquo;s password reaches PostgreSQL as a SCRAM verifier, and a statement&amp;rsquo;s span carries its summary, never its SQL. A test of the App checks that no password, DSN or token is in a span, a record or a metric&lt;/td&gt;
  &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/kube/databases/init/#the-secrets-as-files"&gt;The secrets, as files&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/kube/databases/postgres/#keeping-the-password-out-of-the-sql"&gt;Keeping the password out of the SQL&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/kube/databases/postgres/#keeping-credentials-out-of-the-spans"&gt;Keeping credentials out of the spans&lt;/a&gt;&lt;/td&gt;
  &lt;/tr&gt;
  &lt;tr&gt;

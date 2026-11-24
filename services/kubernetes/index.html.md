@@ -96,7 +96,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 		return nil, err
 	}
 
-	client, err := kube.NewClient(s, conn) // opens no connection: Serve does
+	client, err := kube.NewClient(s, h, conn) // opens no connection: Serve does
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +154,7 @@ The kubelet sets `KUBERNETES_SERVICE_HOST` and `KUBERNETES_SERVICE_PORT` in
 every container, and mounts the service account's CA and token in
 `/var/run/secrets/kubernetes.io/serviceaccount/`. The end user's `inPod`
 sources `Server` from the two variables, and reads the CA and the token
-through `s.Host.Filesystem`:
+through `h.Filesystem`:
 
 ```go
 // serviceAccount is where the kubelet mounts the pod's service account: its
@@ -165,7 +165,7 @@ const serviceAccount = "/var/run/secrets/kubernetes.io/serviceaccount/"
 ```go
 // inPod fills the Connection of a pod from what the kubelet gives every
 // container: the API server's address in two variables, and the service
-// account's CA and token in dir, read through s.Host.Filesystem.
+// account's CA and token in dir, read through h.Filesystem.
 func inPod(ctx context.Context, s *humus.Setup, h humus.Host, dir string) (kube.Connection, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
@@ -290,7 +290,7 @@ clientset `kubernetes.NewForConfig` returns, as `Init` builds, and the
 dynamic and metadata clients. Every one of them reaches the API server
 through the Client's transport, which:
 
-- dials with `s.Host.DialTCP`;
+- dials with the `DialTCP` of the network `NewClient` is given;
 - runs TLS with a clone of `Connection.TLS`;
 - uses no proxy, whatever the environment says;
 - over HTTP/2, sends a ping after 30s without a frame, and gives up on the
@@ -1853,8 +1853,8 @@ CEL rules and enforces its constraints, which `CRD()` leaves to it. The App
 under test is an `Init` of the same shape as the end user's:
 
 ```go
-return humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-	client, err := kube.NewClient(s, cluster.conn)
+return humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	client, err := kube.NewClient(s, h, cluster.conn)
 	if err != nil {
 		return nil, err
 	}

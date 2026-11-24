@@ -231,7 +231,7 @@ against them:&lt;/p&gt;
  &lt;/tr&gt;
  &lt;tr&gt;
  &lt;td&gt;No secret in the environment, the logs or the spans&lt;/td&gt;
- &lt;td&gt;PostgreSQL&amp;rsquo;s password and the private keys are files, read through &lt;code&gt;s.Host.Filesystem&lt;/code&gt;. The token is metadata, which otelgrpc doesn&amp;rsquo;t record, and no handler logs it, which a test of the Apps checks&lt;/td&gt;
+ &lt;td&gt;PostgreSQL&amp;rsquo;s password and the private keys are files, read through &lt;code&gt;h.Filesystem&lt;/code&gt;. The token is metadata, which otelgrpc doesn&amp;rsquo;t record, and no handler logs it, which a test of the Apps checks&lt;/td&gt;
  &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/grpc/wallet/init/#the-secrets-as-files"&gt;The secrets, as files&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/grpc/wallet/observing/#their-log-records"&gt;Their log records&lt;/a&gt;&lt;/td&gt;
  &lt;/tr&gt;
  &lt;tr&gt;

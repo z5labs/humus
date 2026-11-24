@@ -57,13 +57,13 @@ status. Put it in &lt;code&gt;main.go&lt;/code&gt;:&lt;/p&gt;</description></ite
 package calls another service over HTTP. &lt;code&gt;httpclient.NewClient&lt;/code&gt; builds a
 client for one dependency in the end user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt;, from &lt;code&gt;Settings&lt;/code&gt; the end
 user sources, and returns a plain &lt;code&gt;*http.Client&lt;/code&gt;. Its calls go through the
-Setup&amp;rsquo;s Host, are traced and measured with the Setup&amp;rsquo;s telemetry, are retried
+network it is given, are traced and measured with the Setup&amp;rsquo;s telemetry, are retried
 when that is safe, and fail at once while a circuit breaker says the
 dependency keeps failing.&lt;/p&gt;
 &lt;p&gt;Service code, generated clients and SDKs take the &lt;code&gt;*http.Client&lt;/code&gt; as they
 take any other, and depend on &lt;code&gt;net/http&lt;/code&gt;&amp;rsquo;s type rather than on this package,
 so a unit test of that code passes any client. The client dials only
-through the Setup&amp;rsquo;s Host, so a test runs the end user&amp;rsquo;s whole App, its
+through the network it is given, so a test runs the end user&amp;rsquo;s whole App, its
 outbound calls included, on humustest&amp;rsquo;s network, as &lt;a href="#testing"&gt;Testing&lt;/a&gt;
 shows.&lt;/p&gt;</description></item><item><title>Migrating from kubebuilder</title><link>https://z5labs.github.io/humus/migrating/kube/kubebuilder/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/migrating/kube/kubebuilder/</guid><description>&lt;p&gt;This guide moves a small &lt;a href="https://book.kubebuilder.io"&gt;kubebuilder&lt;/a&gt; v4
 operator to humus&amp;rsquo;s &lt;code&gt;kube&lt;/code&gt; module. Its reconciler runs on client-go through
@@ -159,8 +159,8 @@ operation serves to its &lt;code&gt;Unmatched&lt;/code&gt; handlers, which can b
 package calls another service over gRPC. &lt;code&gt;grpcclient.NewClient&lt;/code&gt; builds a
 &lt;code&gt;Client&lt;/code&gt; for one dependency in the end user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt;, from &lt;code&gt;Settings&lt;/code&gt; the end
 user sources. The &lt;code&gt;Client&lt;/code&gt; is a &lt;code&gt;grpc.ClientConnInterface&lt;/code&gt;, so generated code
-takes it as it takes a &lt;code&gt;*grpc.ClientConn&lt;/code&gt;. Its calls go through the Setup&amp;rsquo;s
-Host, are traced and measured with the Setup&amp;rsquo;s telemetry, are retried as the
+takes it as it takes a &lt;code&gt;*grpc.ClientConn&lt;/code&gt;. Its calls go through the network
+it is given, are traced and measured with the Setup&amp;rsquo;s telemetry, are retried as the
 end user&amp;rsquo;s &lt;code&gt;Classify&lt;/code&gt; decides, and fail at once while a circuit breaker says
 the dependency keeps failing.&lt;/p&gt;</description></item><item><title>Serving an API with OpenAPI</title><link>https://z5labs.github.io/humus/services/http/openapi/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/services/http/openapi/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/openapi/v3"&gt;&lt;code&gt;openapi/v3&lt;/code&gt;&lt;/a&gt;
 package serves an API of typed operations, and its OpenAPI document. The end
@@ -558,7 +558,7 @@ Two things let the operations move a few at a time. A Huma API on its
 operation serves to its &lt;code&gt;Unmatched&lt;/code&gt; handlers, which can be that ServeMux.&lt;/p&gt;</description></item><item><title>Consuming and producing Kafka</title><link>https://z5labs.github.io/humus/services/kafka/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/services/kafka/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/queue/kafka"&gt;&lt;code&gt;queue/kafka&lt;/code&gt;&lt;/a&gt;
 package consumes Kafka topics as a &lt;code&gt;humus.Service&lt;/code&gt;, with
 &lt;a href="https://github.com/twmb/franz-go"&gt;franz-go&lt;/a&gt;. The Service joins a consumer
-group, dials the brokers through the Setup&amp;rsquo;s Host, and hands each record to
+group, dials the brokers through the network it is given, and hands each record to
 the end user&amp;rsquo;s &lt;code&gt;queue.Processor&lt;/code&gt;, one record at a time per partition, in
 offset order. The end user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt; sources its &lt;code&gt;Settings&lt;/code&gt;, builds the Service
 with &lt;code&gt;kafka.NewService&lt;/code&gt;, and returns it to &lt;code&gt;humus.Main&lt;/code&gt;, whose defaults are a
@@ -896,7 +896,7 @@ the job exits 78, naming its variable:&lt;/p&gt;
 through the Host&amp;rsquo;s &lt;code&gt;Filesystem&lt;/code&gt;, so the tests can give the job files of their own:&lt;/p&gt;</description></item><item><title>Consuming and publishing with RabbitMQ</title><link>https://z5labs.github.io/humus/services/rabbitmq/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/services/rabbitmq/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/queue/rabbitmq"&gt;&lt;code&gt;queue/rabbitmq&lt;/code&gt;&lt;/a&gt;
 package consumes a RabbitMQ queue as a &lt;code&gt;humus.Service&lt;/code&gt;, with
 &lt;a href="https://github.com/rabbitmq/amqp091-go"&gt;amqp091-go&lt;/a&gt;, RabbitMQ&amp;rsquo;s own Go
-client. The Service dials the broker through the Setup&amp;rsquo;s Host, consumes one
+client. The Service dials the broker through the network it is given, consumes one
 queue with manual acks, and hands each delivery to the end user&amp;rsquo;s
 &lt;code&gt;queue.Processor&lt;/code&gt;, in the order the queue delivered them. The end user&amp;rsquo;s
 &lt;code&gt;Init&lt;/code&gt; sources its &lt;code&gt;Settings&lt;/code&gt;, builds the Service with &lt;code&gt;rabbitmq.NewService&lt;/code&gt;,
@@ -2054,7 +2054,7 @@ so in &lt;strong&gt;Explore&lt;/strong&gt;, with &lt;strong&gt;Tempo&lt;/strong&
  &lt;/tr&gt;
  &lt;tr&gt;
  &lt;td&gt;No secret in the environment, the logs or the spans&lt;/td&gt;
- &lt;td&gt;the client certificate, PostgreSQL&amp;rsquo;s password and the probes&amp;rsquo; key are files read through &lt;code&gt;s.Host.Filesystem&lt;/code&gt;. The record&amp;rsquo;s key, an order&amp;rsquo;s ID, isn&amp;rsquo;t recorded, as &lt;code&gt;queue/kafka&lt;/code&gt; doesn&amp;rsquo;t record it&lt;/td&gt;
+ &lt;td&gt;the client certificate, PostgreSQL&amp;rsquo;s password and the probes&amp;rsquo; key are files read through &lt;code&gt;h.Filesystem&lt;/code&gt;. The record&amp;rsquo;s key, an order&amp;rsquo;s ID, isn&amp;rsquo;t recorded, as &lt;code&gt;queue/kafka&lt;/code&gt; doesn&amp;rsquo;t record it&lt;/td&gt;
  &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/kafka/orderstatus/init/#the-secrets-as-files"&gt;The secrets, as files&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/kafka/orderstatus/observing/#a-records-trace"&gt;A record&amp;rsquo;s trace&lt;/a&gt;&lt;/td&gt;
  &lt;/tr&gt;
  &lt;tr&gt;
@@ -2130,7 +2130,7 @@ so in &lt;strong&gt;Explore&lt;/strong&gt;, with &lt;strong&gt;Tempo&lt;/strong&
  &lt;/tr&gt;
  &lt;tr&gt;
  &lt;td&gt;No secret in the environment, the logs or the spans&lt;/td&gt;
- &lt;td&gt;the admin DSN, the service account&amp;rsquo;s token and CA, and the probes&amp;rsquo; key are files read through &lt;code&gt;s.Host.Filesystem&lt;/code&gt;. A role&amp;rsquo;s password reaches PostgreSQL as a SCRAM verifier, and a statement&amp;rsquo;s span carries its summary, never its SQL. A test of the App checks that no password, DSN or token is in a span, a record or a metric&lt;/td&gt;
+ &lt;td&gt;the admin DSN, the service account&amp;rsquo;s token and CA, and the probes&amp;rsquo; key are files read through &lt;code&gt;h.Filesystem&lt;/code&gt;. A role&amp;rsquo;s password reaches PostgreSQL as a SCRAM verifier, and a statement&amp;rsquo;s span carries its summary, never its SQL. A test of the App checks that no password, DSN or token is in a span, a record or a metric&lt;/td&gt;
  &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/kube/databases/init/#the-secrets-as-files"&gt;The secrets, as files&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/kube/databases/postgres/#keeping-the-password-out-of-the-sql"&gt;Keeping the password out of the SQL&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/kube/databases/postgres/#keeping-credentials-out-of-the-spans"&gt;Keeping credentials out of the spans&lt;/a&gt;&lt;/td&gt;
  &lt;/tr&gt;
  &lt;tr&gt;
@@ -2206,7 +2206,7 @@ so in &lt;strong&gt;Explore&lt;/strong&gt;, with &lt;strong&gt;Tempo&lt;/strong&
  &lt;/tr&gt;
  &lt;tr&gt;
  &lt;td&gt;No secret in the environment, the logs or the spans&lt;/td&gt;
- &lt;td&gt;the RabbitMQ password, the provider&amp;rsquo;s key and the probes&amp;rsquo; certificate are files read through &lt;code&gt;s.Host.Filesystem&lt;/code&gt;&lt;/td&gt;
+ &lt;td&gt;the RabbitMQ password, the provider&amp;rsquo;s key and the probes&amp;rsquo; certificate are files read through &lt;code&gt;h.Filesystem&lt;/code&gt;&lt;/td&gt;
  &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/rabbitmq/mailer/init/#the-secrets-as-files"&gt;The secrets, as files&lt;/a&gt;&lt;/td&gt;
  &lt;/tr&gt;
  &lt;tr&gt;
@@ -2304,7 +2304,7 @@ against them:&lt;/p&gt;
  &lt;/tr&gt;
  &lt;tr&gt;
  &lt;td&gt;No secret in the environment, the logs or the spans&lt;/td&gt;
- &lt;td&gt;PostgreSQL&amp;rsquo;s password and the private keys are files, read through &lt;code&gt;s.Host.Filesystem&lt;/code&gt;. The token is metadata, which otelgrpc doesn&amp;rsquo;t record, and no handler logs it, which a test of the Apps checks&lt;/td&gt;
+ &lt;td&gt;PostgreSQL&amp;rsquo;s password and the private keys are files, read through &lt;code&gt;h.Filesystem&lt;/code&gt;. The token is metadata, which otelgrpc doesn&amp;rsquo;t record, and no handler logs it, which a test of the Apps checks&lt;/td&gt;
  &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/grpc/wallet/init/#the-secrets-as-files"&gt;The secrets, as files&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/grpc/wallet/observing/#their-log-records"&gt;Their log records&lt;/a&gt;&lt;/td&gt;
  &lt;/tr&gt;
  &lt;tr&gt;
@@ -2390,7 +2390,7 @@ against them:&lt;/p&gt;
  &lt;/tr&gt;
  &lt;tr&gt;
  &lt;td&gt;No secret in the environment, the logs or the spans&lt;/td&gt;
- &lt;td&gt;the database URLs and the keys are files, read through &lt;code&gt;s.Host.Filesystem&lt;/code&gt;. No token is recorded, which a test of the App checks&lt;/td&gt;
+ &lt;td&gt;the database URLs and the keys are files, read through &lt;code&gt;h.Filesystem&lt;/code&gt;. No token is recorded, which a test of the App checks&lt;/td&gt;
  &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/http/shoppingcart/init/#the-secrets-as-files"&gt;The secrets, as files&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/http/shoppingcart/observing/#their-log-records"&gt;Their log records&lt;/a&gt;&lt;/td&gt;
  &lt;/tr&gt;
  &lt;tr&gt;
@@ -2471,7 +2471,7 @@ against them:&lt;/p&gt;
  &lt;/tr&gt;
  &lt;tr&gt;
  &lt;td&gt;No secret in the environment, the logs or the spans&lt;/td&gt;
- &lt;td&gt;the database URL and the certificate&amp;rsquo;s key are files, read through &lt;code&gt;s.Host.Filesystem&lt;/code&gt;. No voter cookie or database password is recorded, which a test of the App checks&lt;/td&gt;
+ &lt;td&gt;the database URL and the certificate&amp;rsquo;s key are files, read through &lt;code&gt;h.Filesystem&lt;/code&gt;. No voter cookie or database password is recorded, which a test of the App checks&lt;/td&gt;
  &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/init/#the-secrets-and-certificates-as-files"&gt;The secrets and certificates, as files&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/observing/#its-log-records"&gt;Its log records&lt;/a&gt;&lt;/td&gt;
  &lt;/tr&gt;
  &lt;tr&gt;

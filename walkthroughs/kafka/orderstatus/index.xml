@@ -383,7 +383,7 @@ for a record retried once, then dead-lettered:&lt;/p&gt;</description></item><it
  &lt;/tr&gt;
  &lt;tr&gt;
  &lt;td&gt;No secret in the environment, the logs or the spans&lt;/td&gt;
- &lt;td&gt;the client certificate, PostgreSQL&amp;rsquo;s password and the probes&amp;rsquo; key are files read through &lt;code&gt;s.Host.Filesystem&lt;/code&gt;. The record&amp;rsquo;s key, an order&amp;rsquo;s ID, isn&amp;rsquo;t recorded, as &lt;code&gt;queue/kafka&lt;/code&gt; doesn&amp;rsquo;t record it&lt;/td&gt;
+ &lt;td&gt;the client certificate, PostgreSQL&amp;rsquo;s password and the probes&amp;rsquo; key are files read through &lt;code&gt;h.Filesystem&lt;/code&gt;. The record&amp;rsquo;s key, an order&amp;rsquo;s ID, isn&amp;rsquo;t recorded, as &lt;code&gt;queue/kafka&lt;/code&gt; doesn&amp;rsquo;t record it&lt;/td&gt;
  &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/kafka/orderstatus/init/#the-secrets-as-files"&gt;The secrets, as files&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/kafka/orderstatus/observing/#a-records-trace"&gt;A record&amp;rsquo;s trace&lt;/a&gt;&lt;/td&gt;
  &lt;/tr&gt;
  &lt;tr&gt;

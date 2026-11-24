@@ -204,7 +204,7 @@ so in &lt;strong&gt;Explore&lt;/strong&gt;, with &lt;strong&gt;Tempo&lt;/strong&
  &lt;/tr&gt;
  &lt;tr&gt;
  &lt;td&gt;No secret in the environment, the logs or the spans&lt;/td&gt;
- &lt;td&gt;the database URLs and the keys are files, read through &lt;code&gt;s.Host.Filesystem&lt;/code&gt;. No token is recorded, which a test of the App checks&lt;/td&gt;
+ &lt;td&gt;the database URLs and the keys are files, read through &lt;code&gt;h.Filesystem&lt;/code&gt;. No token is recorded, which a test of the App checks&lt;/td&gt;
  &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/http/shoppingcart/init/#the-secrets-as-files"&gt;The secrets, as files&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/http/shoppingcart/observing/#their-log-records"&gt;Their log records&lt;/a&gt;&lt;/td&gt;
  &lt;/tr&gt;
  &lt;tr&gt;

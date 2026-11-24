@@ -260,7 +260,7 @@ shows. Each server span is named after its method and its route, so in
  &lt;/tr&gt;
  &lt;tr&gt;
  &lt;td&gt;No secret in the environment, the logs or the spans&lt;/td&gt;
- &lt;td&gt;the database URL and the certificate&amp;rsquo;s key are files, read through &lt;code&gt;s.Host.Filesystem&lt;/code&gt;. No voter cookie or database password is recorded, which a test of the App checks&lt;/td&gt;
+ &lt;td&gt;the database URL and the certificate&amp;rsquo;s key are files, read through &lt;code&gt;h.Filesystem&lt;/code&gt;. No voter cookie or database password is recorded, which a test of the App checks&lt;/td&gt;
  &lt;td&gt;&lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/init/#the-secrets-and-certificates-as-files"&gt;The secrets and certificates, as files&lt;/a&gt;, &lt;a href="https://z5labs.github.io/humus/walkthroughs/http/polls/observing/#its-log-records"&gt;Its log records&lt;/a&gt;&lt;/td&gt;
  &lt;/tr&gt;
  &lt;tr&gt;

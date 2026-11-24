@@ -11,7 +11,7 @@ that finished.&lt;/p&gt;
 &lt;a href="https://github.com/z5labs/humus/discussions/682#discussioncomment-18988201"&gt;its revision&lt;/a&gt;.&lt;/p&gt;</description></item><item><title>Consuming and producing Kafka</title><link>https://z5labs.github.io/humus/services/kafka/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/services/kafka/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/queue/kafka"&gt;&lt;code&gt;queue/kafka&lt;/code&gt;&lt;/a&gt;
 package consumes Kafka topics as a &lt;code&gt;humus.Service&lt;/code&gt;, with
 &lt;a href="https://github.com/twmb/franz-go"&gt;franz-go&lt;/a&gt;. The Service joins a consumer
-group, dials the brokers through the Setup&amp;rsquo;s Host, and hands each record to
+group, dials the brokers through the network it is given, and hands each record to
 the end user&amp;rsquo;s &lt;code&gt;queue.Processor&lt;/code&gt;, one record at a time per partition, in
 offset order. The end user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt; sources its &lt;code&gt;Settings&lt;/code&gt;, builds the Service
 with &lt;code&gt;kafka.NewService&lt;/code&gt;, and returns it to &lt;code&gt;humus.Main&lt;/code&gt;, whose defaults are a
@@ -23,7 +23,7 @@ to another topic, an HTTP handler that publishes an event, a job.
 &lt;a href="#producing"&gt;Producing&lt;/a&gt; describes it.&lt;/p&gt;</description></item><item><title>Consuming and publishing with RabbitMQ</title><link>https://z5labs.github.io/humus/services/rabbitmq/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/services/rabbitmq/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/queue/rabbitmq"&gt;&lt;code&gt;queue/rabbitmq&lt;/code&gt;&lt;/a&gt;
 package consumes a RabbitMQ queue as a &lt;code&gt;humus.Service&lt;/code&gt;, with
 &lt;a href="https://github.com/rabbitmq/amqp091-go"&gt;amqp091-go&lt;/a&gt;, RabbitMQ&amp;rsquo;s own Go
-client. The Service dials the broker through the Setup&amp;rsquo;s Host, consumes one
+client. The Service dials the broker through the network it is given, consumes one
 queue with manual acks, and hands each delivery to the end user&amp;rsquo;s
 &lt;code&gt;queue.Processor&lt;/code&gt;, in the order the queue delivered them. The end user&amp;rsquo;s
 &lt;code&gt;Init&lt;/code&gt; sources its &lt;code&gt;Settings&lt;/code&gt;, builds the Service with &lt;code&gt;rabbitmq.NewService&lt;/code&gt;,
