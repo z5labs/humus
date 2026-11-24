@@ -14,7 +14,7 @@
 // from [Settings] the end user sources, and generated code takes it, since
 // it is a grpc.ClientConnInterface:
 //
-//	func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+//	func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 //		settings, err := readCartsSettings(ctx, s) // grpcclient.Settings, sourced with config.Struct
 //		if err != nil {
 //			return nil, err

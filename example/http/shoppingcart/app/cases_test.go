@@ -100,8 +100,8 @@ func startShoppingcartWith(t *testing.T, cartEnv map[string]string, cartTelemetr
 		"JWT_AUDIENCE": audience,
 	}
 	products := productsInMemory()
-	catalog := run(t, "catalog", h, func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-		return catalogapp.InitWith(ctx, s, products.open)
+	catalog := run(t, "catalog", h, func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		return catalogapp.InitWith(ctx, s, h, products.open)
 	}, []humus.Option{humus.WithFaults(catalogapp.Faults), humus.WithTelemetry(catalogTelemetry)}, tokens, map[string]string{
 		"ADDR":              ":10443",
 		"TLS_CERT_FILE":     "catalog/tls.crt",
@@ -111,8 +111,8 @@ func startShoppingcartWith(t *testing.T, cartEnv map[string]string, cartTelemetr
 	})
 	catalog.listening(t, h, catalogHost)
 
-	cart := run(t, "cart", h, func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-		return initWith(ctx, s, inMemory, openCatalog)
+	cart := run(t, "cart", h, func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		return initWith(ctx, s, h, inMemory, openCatalog)
 	}, []humus.Option{humus.WithFaults(Faults), humus.WithTelemetry(cartTelemetry)}, tokens, cartEnv, map[string]string{
 		"ADDR":                     ":8443",
 		"TLS_CERT_FILE":            "cart/tls.crt",
@@ -144,14 +144,14 @@ func startShoppingcartWith(t *testing.T, cartEnv map[string]string, cartTelemetr
 	}
 }
 
-func run(t *testing.T, name string, h *humustest.Host, init func(context.Context, *humus.Setup) ([]humus.Service, error), app []humus.Option, envs ...map[string]string) running {
+func run(t *testing.T, name string, h *humustest.Host, init func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error), app []humus.Option, envs ...map[string]string) running {
 	t.Helper()
 	env := map[string]string{}
 	for _, e := range envs {
 		maps.Copy(env, e)
 	}
-	p, status := httpservertest.Start(t, init,
-		humustest.WithApp(append([]humus.Option{humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)}, app...)...),
+	p, status := httpservertest.Start(t, h.Host(), init,
+		humustest.WithApp(append([]humus.Option{humus.WithTelemetry(telemetry.NoopBuilder)}, app...)...),
 		humustest.WithEnv(env),
 	)
 	return running{name: name, p: p, status: status}

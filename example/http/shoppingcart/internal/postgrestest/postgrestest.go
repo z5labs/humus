@@ -115,8 +115,8 @@ func (db Database) Migrate(t *testing.T, migrations string) <-chan bedrock.ExitS
 	_, err = f.WriteString(db.OwnerURL + "\n")
 	require.NoError(t, errors.Join(err, f.Close()))
 
-	_, status := humustest.Start(t, migrate.Init,
-		humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(telemetry.NoopBuilder)),
+	_, status := humustest.Start(t, humus.OSHost(), migrate.Init,
+		humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		humustest.WithEnv(map[string]string{
 			"DATABASE_URL_FILE": f.Name(),
 			"MIGRATIONS":        migrations,

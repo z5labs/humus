@@ -17,8 +17,10 @@ import (
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/bedrocktest"
 	"github.com/z5labs/bedrock/config"
+	"github.com/z5labs/bedrock/host"
 
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/fault"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/telemetry"
 )
@@ -105,10 +107,10 @@ func (s *server) Shutdown(ctx context.Context) error {
 	return err
 }
 
-// Init is the Init of the App in Example_main. It registers the release of
+// Init is the Init of the App in ExampleMain. It registers the release of
 // each dependency with OnStop as soon as it has built it, so that a failure
 // later in Init still releases everything built before it.
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	out := s.Process.Stdout
 	s.OnStop(func(context.Context) error {
 		_, err := fmt.Fprintln(out, "on stop: close the cache")
@@ -128,25 +130,65 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 // buildTelemetry is the App's telemetry.Builder. It starts from the
 // telemetry package's defaults, which write log records to stdout, and names
 // the service.
-func buildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+func buildTelemetry(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 	s := telemetry.DefaultSettings()
 	s.ServiceName = "greeter"
-	return telemetry.New(ctx, s, dial, p.Stdout)
+	return telemetry.New(ctx, s, n, p.Stdout)
 }
 
 // The main function of a humus service is one call to humus.Main, with the
 // end user's Init and the options that change Main's defaults. This example
 // has no Output comment, so it is compiled but never run: running it would
 // exit the test binary.
-func Example_main() {
+func ExampleMain() {
 	humus.Main(Init, humus.WithTelemetry(buildTelemetry))
 }
 
+// filesHost is an App's own host: humus's network, embedded so that the
+// host is a humus.Network, and a filesystem that offers ReadFile, which
+// humus.Filesystem doesn't.
+type filesHost struct {
+	humus.IPNetwork
+	Files interface {
+		ReadFile(name string) ([]byte, error)
+	}
+}
+
+// newFilesHost is filesHost's acquire.
+func newFilesHost() (filesHost, error) {
+	return filesHost{IPNetwork: host.IPNetwork{}, Files: host.OSFilesystem{}}, nil
+}
+
+// initOnFiles is the Init of an App on filesHost. It reads its greeting
+// through its own host's filesystem, with no type assertion.
+func initOnFiles(ctx context.Context, s *humus.Setup, h filesHost) ([]humus.Service, error) {
+	if _, err := h.Files.ReadFile("/etc/greeter/greeting"); err != nil {
+		return nil, err
+	}
+	return []humus.Service{newServer(s.Process.Stdout)}, nil
+}
+
+// faultsOnFiles is the Faults function of an App on filesHost.
+func faultsOnFiles(context.Context, *humus.Setup, filesHost) (fault.Settings, error) {
+	return fault.DefaultSettings(), nil
+}
+
+// An App on a host of its own runs with humus.MainOn, which acquires the
+// host before it runs the App. Every Option goes in one list with no type
+// argument: WithFaults infers the host from its argument. Like ExampleMain,
+// this example is compiled but never run.
+func ExampleMainOn() {
+	humus.MainOn(newFilesHost, initOnFiles,
+		humus.WithFaults(faultsOnFiles),
+		humus.WithShutdownGracePeriod(30*time.Second),
+	)
+}
+
 // A main that wants none of humus.Main's defaults runs an App literal with
-// bedrock.Main, and sets every field itself. Like Example_main, it is
+// bedrock.Main, and sets every field itself. Like ExampleMain, it is
 // compiled but never run.
 func Example_withoutDefaults() {
-	bedrock.Main(humus.App{
+	bedrock.Main(humus.App[humus.Host]{
 		Host:                humus.OSHost(),
 		ShutdownGracePeriod: 30 * time.Second,                  // when HUMUS_SHUTDOWN_GRACE_PERIOD is not set
 		Drain:               humus.DrainDelay(5 * time.Second), // when HUMUS_SHUTDOWN_DRAIN_DELAY is not set
@@ -160,11 +202,11 @@ func Example_withoutDefaults() {
 // the App runs on a bedrocktest Process, which delivers a fake SIGTERM.
 func ExampleApp() {
 	srv := newServer(nil)
-	app := humus.App{
+	app := humus.App[humus.Host]{
 		Host:                humus.OSHost(), // the Service never uses it
 		ShutdownGracePeriod: 10 * time.Second,
 		Telemetry:           telemetry.NoopBuilder,
-		Init: func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+		Init: func(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			srv.out = s.Process.Stdout
 			s.OnStop(func(context.Context) error {
 				_, err := fmt.Fprintln(s.Process.Stdout, "on stop: released")
@@ -205,7 +247,7 @@ func ExampleApp() {
 // through its telemetry, recorded here by humustest.
 func ExampleSetup_OnStop() {
 	tel := humustest.NewTelemetry()
-	app := humus.App{
+	app := humus.App[humus.Host]{
 		Host:                humus.OSHost(),
 		ShutdownGracePeriod: 10 * time.Second,
 		Telemetry:           tel.Builder(),

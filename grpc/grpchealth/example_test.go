@@ -26,7 +26,7 @@ import (
 // probes can use TLS: it registers the health server on its own
 // grpcserver.Service, next to its own services, and returns the health
 // Service whose Probes the server answers from next to it.
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
 	settings, err := config.Struct(func(r *config.Resolver) grpcserver.Settings {
@@ -35,7 +35,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 			// readFile and serverTLS are the end user's own helpers. The
 			// config requires no client certificate, so the kubelet's
 			// probes reach the Service.
-			TLS: r.Get(env("GRPC_TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(grpcserver.CheckTLS)),
+			TLS: r.Get(env("GRPC_TLS_PEM_FILE").Parse(readFile(h.Filesystem)).Parse(serverTLS).Validate(grpcserver.CheckTLS)),
 		}
 	}).Read(ctx)
 	if err != nil {
@@ -101,7 +101,7 @@ func ExampleNewServer() {
 // grpcserver.Service, over TLS, and the probes on a plaintext port of their
 // own. It returns the two Services, and no health Service: the probes
 // Service owns readiness.
-func ProbesInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func ProbesInit(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
 	type settings struct {
@@ -112,7 +112,7 @@ func ProbesInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		return settings{
 			grpc: grpcserver.Settings{
 				Addr: r.Get(env("GRPC_ADDR").Validate(grpcserver.CheckAddr)),
-				TLS:  r.Get(env("GRPC_TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(grpcserver.CheckTLS)),
+				TLS:  r.Get(env("GRPC_TLS_PEM_FILE").Parse(readFile(h.Filesystem)).Parse(serverTLS).Validate(grpcserver.CheckTLS)),
 			},
 			probes: grpchealth.Settings{
 				// No .Default: the field is required.

@@ -62,7 +62,7 @@ func (carts) UnaryCall(context.Context, *testpb.SimpleRequest) (*testpb.SimpleRe
 func startCarts(t *testing.T, h *humustest.Host, ca *humustest.CA) (stop func()) {
 	t.Helper()
 	cert := ca.Issue(t, "carts")
-	p, exit := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	p, exit := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		svc, err := grpcserver.NewService(s, grpcserver.Settings{
 			Addr: "carts:9090",
 			TLS:  &tls.Config{Certificates: []tls.Certificate{cert.TLS()}},
@@ -72,7 +72,7 @@ func startCarts(t *testing.T, h *humustest.Host, ca *humustest.CA) (stop func())
 		}
 		testpb.RegisterTestServiceServer(svc, carts{})
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+	}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 	<-h.Listening("carts:9090")
 	return func() {
 		<-p.Notified(syscall.SIGTERM)
@@ -93,8 +93,8 @@ func TestInit_calls_carts_for_each_RPC(t *testing.T) {
 		stop := startCarts(t, h, ca)
 		defer stop()
 
-		p, exit := grpcservertest.Start(t, Init,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		p, exit := grpcservertest.Start(t, h.Host(), Init,
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			humustest.WithEnv(map[string]string{
 				"GRPC_ADDR":         ":8443",
 				"GRPC_TLS_PEM_FILE": "tls.pem",
@@ -120,8 +120,8 @@ func TestInit_calls_carts_for_each_RPC(t *testing.T) {
 	t.Run("fails with exit 78 when CARTS_ADDR is not set", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
-			_, exit := grpcservertest.Start(t, Init,
-				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+			_, exit := grpcservertest.Start(t, h.Host(), Init,
+				humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 				humustest.WithEnv(map[string]string{"CARTS_CA_FILE": "carts-ca.pem"}),
 			)
 			st := <-exit
@@ -133,8 +133,8 @@ func TestInit_calls_carts_for_each_RPC(t *testing.T) {
 	t.Run("fails with exit 78 when CARTS_ADDR names a scheme", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
-			_, exit := grpcservertest.Start(t, Init,
-				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+			_, exit := grpcservertest.Start(t, h.Host(), Init,
+				humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 				humustest.WithEnv(map[string]string{"CARTS_ADDR": "dns:///carts:9090"}),
 			)
 			st := <-exit

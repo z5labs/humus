@@ -97,8 +97,8 @@ func (c carts) greet(ctx context.Context, _ openapi.Request[openapi.EmptyBody]) 
 // CartsInit serves a carts API that requires a JWT bearer token from idp,
 // and carts:write to delete a cart, with a greeting whose authentication
 // is optional, its document public, and its health probes open beside it.
-func CartsInit(idp IdP, tlsConfig *tls.Config) func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+func CartsInit(idp IdP, tlsConfig *tls.Config) func(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		// The key set's client is for its origin alone, and fetches
 		// nothing until the Verifier's first token.
 		clientSettings := httpclient.DefaultSettings()

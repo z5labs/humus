@@ -110,14 +110,14 @@ func newFixture(t *testing.T) fixture {
 
 func (f fixture) exit(t *testing.T) bedrock.ExitStatus {
 	t.Helper()
-	_, status := httpservertest.Start(t, Init,
-		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+	_, status := httpservertest.Start(t, f.h.Host(), Init,
+		humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		humustest.WithEnv(f.env),
 	)
 	return <-status
 }
 
-func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error)) *service {
+func start(t *testing.T, init func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error)) *service {
 	t.Helper()
 	f := newFixture(t)
 
@@ -125,8 +125,8 @@ func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Servi
 	stopIdP := provider.serve(t, f.h.Host(), idpHost, f.idpCert)
 	<-f.h.Listening(idpHost)
 
-	p, status := httpservertest.Start(t, init,
-		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+	p, status := httpservertest.Start(t, f.h.Host(), init,
+		humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		humustest.WithEnv(f.env),
 	)
 	select {
@@ -491,8 +491,8 @@ func (f failingStore) RemoveItem(context.Context, string, uuid.UUID, uuid.UUID) 
 func TestInit_answers_a_failure_without_its_text(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		secret := rand.Text()
-		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
-			return initWith(ctx, setup, func(context.Context, *humus.Setup, *pgxpool.Config) (endpoint.Store, func(context.Context) error, error) {
+		s := start(t, func(ctx context.Context, setup *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			return initWith(ctx, setup, h, func(context.Context, *humus.Setup, humus.Host, *pgxpool.Config) (endpoint.Store, func(context.Context) error, error) {
 				return failingStore{err: errors.New("the database said " + secret)}, func(context.Context) error { return nil }, nil
 			}, fakePrices().open)
 		})
@@ -587,8 +587,8 @@ func TestInit_answers_a_catalog_that_is_down_with_503(t *testing.T) {
 
 func TestInit_answers_a_database_that_is_down_with_503(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
-			return initWith(ctx, setup, func(context.Context, *humus.Setup, *pgxpool.Config) (endpoint.Store, func(context.Context) error, error) {
+		s := start(t, func(ctx context.Context, setup *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			return initWith(ctx, setup, h, func(context.Context, *humus.Setup, humus.Host, *pgxpool.Config) (endpoint.Store, func(context.Context) error, error) {
 				return failingStore{err: fmt.Errorf("creating a cart: %w: dial tcp %s: connection refused", database.ErrUnavailable, dbHost)}, func(context.Context) error { return nil }, nil
 			}, fakePrices().open)
 		})
@@ -630,8 +630,8 @@ func TestInit_answers_a_body_over_64_KiB_with_413(t *testing.T) {
 
 func TestInit_gets_a_price_from_the_catalog_with_its_client_certificate(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
-			return initWith(ctx, setup, inMemory, openCatalog)
+		s := start(t, func(ctx context.Context, setup *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			return initWith(ctx, setup, h, inMemory, openCatalog)
 		})
 		catalog := &catalogServer{prices: map[string]float64{"sku-1": 12.5}}
 		stopCatalog := catalog.serve(t, s.h.Host(), catalogHost, s.ca.Issue(t, "catalog.internal"), s.ca.Pool())
@@ -662,8 +662,8 @@ func TestInit_without_a_catalog_setting_exits_78(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
 				delete(f.env, name)
-				_, status := httpservertest.Start(t, Init,
-					humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+				_, status := httpservertest.Start(t, f.h.Host(), Init,
+					humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 					humustest.WithEnv(f.env),
 				)
 
@@ -695,8 +695,8 @@ func TestInit_with_a_bad_catalog_setting_exits_78(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
 				f.env[tc.name] = tc.value
-				_, status := httpservertest.Start(t, Init,
-					humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+				_, status := httpservertest.Start(t, f.h.Host(), Init,
+					humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 					humustest.WithEnv(f.env),
 				)
 
@@ -790,10 +790,10 @@ func TestInit_reads_its_files_only_through_the_Host(t *testing.T) {
 func TestInit_reads_the_database_URL_from_its_file(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var cfg *pgxpool.Config
-		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
-			return initWith(ctx, setup, func(ctx context.Context, setup *humus.Setup, c *pgxpool.Config) (endpoint.Store, func(context.Context) error, error) {
+		s := start(t, func(ctx context.Context, setup *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			return initWith(ctx, setup, h, func(ctx context.Context, setup *humus.Setup, h humus.Host, c *pgxpool.Config) (endpoint.Store, func(context.Context) error, error) {
 				cfg = c
-				return inMemory(ctx, setup, c)
+				return inMemory(ctx, setup, h, c)
 			}, fakePrices().open)
 		})
 
@@ -813,8 +813,8 @@ type fakeDatabase struct {
 	pings int
 }
 
-func (db *fakeDatabase) open(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (endpoint.Store, func(context.Context) error, error) {
-	store, _, err := inMemory(ctx, s, cfg)
+func (db *fakeDatabase) open(ctx context.Context, s *humus.Setup, h humus.Host, cfg *pgxpool.Config) (endpoint.Store, func(context.Context) error, error) {
+	store, _, err := inMemory(ctx, s, h, cfg)
 	return store, db.ping, err
 }
 
@@ -848,8 +848,8 @@ func (s *service) probe(t *testing.T, path string) response {
 func TestInit_is_ready_once_the_database_and_the_catalog_answer_and_stays_ready(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		db := &fakeDatabase{down: true}
-		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
-			return initWith(ctx, setup, db.open, openCatalog)
+		s := start(t, func(ctx context.Context, setup *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			return initWith(ctx, setup, h, db.open, openCatalog)
 		})
 		catalog := &catalogServer{down: true}
 		stopCatalog := catalog.serve(t, s.h.Host(), catalogHost, s.ca.Issue(t, "catalog.internal"), s.ca.Pool())
@@ -907,8 +907,8 @@ func TestInit_stays_unready_on_a_catalog_it_cant_trust_or_that_rejects_its_certi
 	} {
 		t.Run(name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
-					return initWith(ctx, setup, (&fakeDatabase{}).open, openCatalog)
+				s := start(t, func(ctx context.Context, setup *humus.Setup, h humus.Host) ([]humus.Service, error) {
+					return initWith(ctx, setup, h, (&fakeDatabase{}).open, openCatalog)
 				})
 				catalog := &catalogServer{}
 				stopCatalog := catalog.serve(t, s.h.Host(), catalogHost, tc.cert(s), tc.clientCAs(s))
@@ -971,8 +971,8 @@ func TestInit_dials_Postgres_through_the_Host(t *testing.T) {
 
 func TestInit_without_its_settings_exits_78(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		_, status := httpservertest.Start(t, Init,
-			humustest.WithApp(humus.WithHost(humustest.NewHost(t).Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		_, status := httpservertest.Start(t, humustest.NewHost(t).Host(), Init,
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		)
 
 		st := <-status
@@ -992,8 +992,8 @@ func TestInit_with_a_bad_key_set_URL_exits_78(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				_, status := httpservertest.Start(t, Init,
-					humustest.WithApp(humus.WithHost(humustest.NewHost(t).Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+				_, status := httpservertest.Start(t, humustest.NewHost(t).Host(), Init,
+					humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 					humustest.WithEnv(map[string]string{"JWKS_URL": jwksURL}),
 				)
 

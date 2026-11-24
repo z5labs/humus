@@ -80,8 +80,8 @@ func settingsFor(t *testing.T, ca *humustest.CA, addr string) grpcserver.Setting
 
 // serves returns an Init whose only Service serves ts on settings, built
 // with opts.
-func serves(settings grpcserver.Settings, ts testpb.TestServiceServer, opts ...grpc.ServerOption) func(context.Context, *humus.Setup) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+func serves(settings grpcserver.Settings, ts testpb.TestServiceServer, opts ...grpc.ServerOption) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
+	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		svc, err := grpcserver.NewService(s, settings, opts...)
 		if err != nil {
 			return nil, err
@@ -91,11 +91,10 @@ func serves(settings grpcserver.Settings, ts testpb.TestServiceServer, opts ...g
 	}
 }
 
-// onHost returns the App options of a test App on h: no telemetry, and the
+// appOptions returns the App options of a test App: no telemetry, and the
 // 5s drain a gRPC service runs with.
-func onHost(h *humustest.Host) humustest.Option {
+func appOptions() humustest.Option {
 	return humustest.WithApp(
-		humus.WithHost(h.Host()),
 		humus.WithTelemetry(telemetry.NoopBuilder),
 		humus.WithDrain(humus.DrainDelay(5*time.Second)),
 	)
@@ -171,7 +170,7 @@ func TestService_the_grace_period_cuts_off_an_RPC_that_never_returns(t *testing.
 		// Never released: the handler returns only when its context is done.
 		ts := &testServer{entered: make(chan struct{}), cancelled: make(chan time.Time, 1)}
 
-		p, exit := humustest.Start(t, serves(settingsFor(t, ca, ":9090"), ts), onHost(h),
+		p, exit := humustest.Start(t, h.Host(), serves(settingsFor(t, ca, ":9090"), ts), appOptions(),
 			humustest.WithEnv(map[string]string{"HUMUS_SHUTDOWN_GRACE_PERIOD": "2s"}),
 		)
 		<-h.Listening("carts:9090")
@@ -200,7 +199,7 @@ func TestService_serves_an_RPC_during_the_drain(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
 		h := humustest.NewHost(t)
-		p, exit := humustest.Start(t, serves(settingsFor(t, ca, ":9090"), &testServer{}), onHost(h))
+		p, exit := humustest.Start(t, h.Host(), serves(settingsFor(t, ca, ":9090"), &testServer{}), appOptions())
 		<-h.Listening("carts:9090")
 
 		<-p.Notified(syscall.SIGTERM)
@@ -222,9 +221,9 @@ func TestService_TLS_cannot_be_turned_off(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
 		h := humustest.NewHost(t)
-		p, exit := humustest.Start(t,
+		p, exit := humustest.Start(t, h.Host(),
 			serves(settingsFor(t, ca, ":9090"), &testServer{}, grpc.Creds(insecure.NewCredentials())),
-			onHost(h),
+			appOptions(),
 		)
 		<-h.Listening("carts:9090")
 
@@ -261,7 +260,7 @@ func TestNewService_settings(t *testing.T) {
 			ca := humustest.NewCA(t)
 			h := humustest.NewHost(t)
 
-			_, exit := humustest.Start(t, serves(settingsFor(t, ca, "nope"), &testServer{}), onHost(h))
+			_, exit := humustest.Start(t, h.Host(), serves(settingsFor(t, ca, "nope"), &testServer{}), appOptions())
 
 			st := <-exit
 			require.Equal(t, humus.ExitFailure, st.Code())
@@ -339,7 +338,7 @@ func TestNewService_the_listener(t *testing.T) {
 			ca := humustest.NewCA(t)
 			h := humustest.NewHost(t)
 			settings := settingsFor(t, ca, ":9090")
-			init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+			init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 				first, err := grpcserver.NewService(s, settings)
 				if err != nil {
 					return nil, err
@@ -350,7 +349,7 @@ func TestNewService_the_listener(t *testing.T) {
 				}
 				return []humus.Service{first, second}, nil
 			}
-			_, exit := humustest.Start(t, init, onHost(h))
+			_, exit := humustest.Start(t, h.Host(), init, appOptions())
 
 			st := <-exit
 			require.Equal(t, humus.ExitFailure, st.Code())
@@ -365,20 +364,20 @@ func TestNewService_the_listener(t *testing.T) {
 			h := humustest.NewHost(t)
 			settings := settingsFor(t, ca, ":9090")
 			errInit := errors.New("the database is unreachable")
-			failing := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+			failing := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 				if _, err := grpcserver.NewService(s, settings); err != nil {
 					return nil, err
 				}
 				return nil, errInit
 			}
-			_, exit := humustest.Start(t, failing, onHost(h))
+			_, exit := humustest.Start(t, h.Host(), failing, appOptions())
 
 			st := <-exit
 			require.Equal(t, humus.ExitFailure, st.Code())
 			require.ErrorIs(t, st.Cause(), errInit)
 			requireRefused(t, h, "carts:9090")
 
-			p, exit := humustest.Start(t, serves(settings, &testServer{}), onHost(h))
+			p, exit := humustest.Start(t, h.Host(), serves(settings, &testServer{}), appOptions())
 			<-h.Listening("carts:9090")
 			client := testpb.NewTestServiceClient(grpcservertest.NewClient(t, h, "carts:9090", ca.Pool()))
 			_, err := client.EmptyCall(t.Context(), &testpb.Empty{})
@@ -396,7 +395,7 @@ func TestService_Addr_reports_the_port_the_Host_picked(t *testing.T) {
 		h := humustest.NewHost(t)
 		settings := settingsFor(t, ca, ":0")
 		addrs := make(chan net.Addr, 1)
-		init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			svc, err := grpcserver.NewService(s, settings)
 			if err != nil {
 				return nil, err
@@ -405,7 +404,7 @@ func TestService_Addr_reports_the_port_the_Host_picked(t *testing.T) {
 			addrs <- svc.Addr()
 			return []humus.Service{svc}, nil
 		}
-		p, exit := humustest.Start(t, init, onHost(h))
+		p, exit := humustest.Start(t, h.Host(), init, appOptions())
 
 		_, port, err := net.SplitHostPort((<-addrs).String())
 		require.NoError(t, err)
@@ -427,7 +426,7 @@ func TestService_works_with_reflection(t *testing.T) {
 		ca := humustest.NewCA(t)
 		h := humustest.NewHost(t)
 		settings := settingsFor(t, ca, ":9090")
-		init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			svc, err := grpcserver.NewService(s, settings)
 			if err != nil {
 				return nil, err
@@ -436,7 +435,7 @@ func TestService_works_with_reflection(t *testing.T) {
 			reflection.Register(svc)
 			return []humus.Service{svc}, nil
 		}
-		p, exit := humustest.Start(t, init, onHost(h))
+		p, exit := humustest.Start(t, h.Host(), init, appOptions())
 		<-h.Listening("carts:9090")
 
 		conn := grpcservertest.NewClient(t, h, "carts:9090", ca.Pool())

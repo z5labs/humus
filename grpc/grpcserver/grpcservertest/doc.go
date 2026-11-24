@@ -43,8 +43,7 @@
 //	bundle, password := ca.Issue(t, "carts").PKCS12(t)
 //	h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{"tls.p12": bundle}))
 //
-//	p, exit := grpcservertest.Start(t, app.Init,
-//		humustest.WithApp(humus.WithHost(h.Host())),
+//	p, exit := grpcservertest.Start(t, h.Host(), app.Init,
 //		humustest.WithEnv(map[string]string{
 //			"GRPC_ADDR":             ":9090",
 //			"GRPC_TLS_P12_FILE":     "tls.p12",

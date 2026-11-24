@@ -39,7 +39,7 @@ type causeDrain struct {
 	derived error
 }
 
-func (d *causeDrain) Drain(ctx context.Context, _ *humus.Setup) error {
+func (d *causeDrain) Drain(ctx context.Context, _ *humus.Setup, n humus.Network) error {
 	child, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	d.mu.Lock()
@@ -273,11 +273,11 @@ func targetState(ctx context.Context, client *http.Client) (string, error) {
 
 // deregisteringDrain is the Drain of revision 2's example: it returns at
 // once when no signal came, and waits for the load balancer otherwise.
-func deregisteringDrain(ctx context.Context, s *humus.Setup) error {
+func deregisteringDrain(ctx context.Context, s *humus.Setup, n humus.Network) error {
 	if errors.Is(humus.ShutdownCause(ctx), humus.ErrServiceReturned) {
 		return nil // no signal came, so nothing is deregistering the pod
 	}
-	return waitUntilDeregistered(ctx, s.Host.DialTCP)
+	return waitUntilDeregistered(ctx, n.DialTCP)
 }
 
 func TestApp_Run_a_Drain_that_waits_on_a_load_balancer(t *testing.T) {

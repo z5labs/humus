@@ -86,8 +86,8 @@ func runPanics(t *testing.T, ts testpb.TestServiceServer, rpcs func(testpb.TestS
 	ca := humustest.NewCA(t)
 	h := humustest.NewHost(t)
 	tel := humustest.NewTelemetry()
-	p, exit := humustest.Start(t, serves(settingsFor(t, ca, ":9090"), ts, opts...),
-		humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+	p, exit := humustest.Start(t, h.Host(), serves(settingsFor(t, ca, ":9090"), ts, opts...),
+		humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 	)
 	<-h.Listening("carts:9090")
 

@@ -46,7 +46,7 @@ type ownedCart struct {
 	endpoint.Cart
 }
 
-func inMemory(_ context.Context, s *humus.Setup, _ *pgxpool.Config) (endpoint.Store, func(context.Context) error, error) {
+func inMemory(_ context.Context, s *humus.Setup, _ humus.Host, _ *pgxpool.Config) (endpoint.Store, func(context.Context) error, error) {
 	return &memoryStore{faults: s.Faults, carts: map[uuid.UUID]*ownedCart{}}, func(context.Context) error { return nil }, nil
 }
 
@@ -185,7 +185,7 @@ func productsInMemory() *productMemory {
 	return &productMemory{products: map[string]catalogendpoint.Product{}}
 }
 
-func (m *productMemory) open(_ context.Context, s *humus.Setup, _ *pgxpool.Config) (catalogendpoint.Store, func(context.Context) error, error) {
+func (m *productMemory) open(_ context.Context, s *humus.Setup, _ humus.Host, _ *pgxpool.Config) (catalogendpoint.Store, func(context.Context) error, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.faults = s.Faults

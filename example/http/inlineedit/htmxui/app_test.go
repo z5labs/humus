@@ -36,8 +36,8 @@ func TestInit_htmx_edits_a_row_in_place_and_ends_its_feed_at_shutdown(t *testing
 			"tls.pem": pemFile(t, ca.Issue(t, "contacts.internal")),
 		}))
 		tel := humustest.NewTelemetry()
-		p, status := httpservertest.Start(t, Init,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+		p, status := httpservertest.Start(t, h.Host(), Init,
+			humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 			humustest.WithEnv(map[string]string{
 				"ADDR":         "contacts.internal:8443",
 				"TLS_PEM_FILE": h.Path("tls.pem"),

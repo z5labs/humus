@@ -43,11 +43,11 @@ type check struct {
 // joinedConsumer returns an Init whose only Service consumes settings. It
 // sends the Service on the first channel it returns, and the check of its
 // Joined monitor in Init, before Serve, on the second.
-func joinedConsumer(settings kafka.Settings) (func(context.Context, *humus.Setup) ([]humus.Service, error), <-chan *kafka.Service, <-chan check) {
+func joinedConsumer(settings kafka.Settings) (func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error), <-chan *kafka.Service, <-chan check) {
 	svcs := make(chan *kafka.Service, 1)
 	inInit := make(chan check, 1)
 	nop := queue.ProcessorFunc[kafka.Message](func(context.Context, kafka.Message) error { return nil })
-	return func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		svc, err := kafka.NewService(s, settings, nop)
 		if err != nil {
 			return nil, err
@@ -66,7 +66,7 @@ func TestService_Joined(t *testing.T) {
 			c := cluster(t, h, 1)
 
 			consume, svcs, inInit := joinedConsumer(settings(c.ListenAddrs()...))
-			p, status := humustest.Start(t, consume, humustest.WithApp(humus.WithHost(h.Host())))
+			p, status := humustest.Start(t, h.Host(), consume)
 			before := <-inInit
 			require.NoError(t, before.err, "Joined's monitor never returns an error")
 			require.False(t, before.healthy, "unhealthy in Init, before Serve")
@@ -87,7 +87,7 @@ func TestService_Joined(t *testing.T) {
 			produce(t, h, c, 1)
 
 			consume, svcs, _ := joinedConsumer(settings(c.ListenAddrs()...))
-			p, status := humustest.Start(t, consume, humustest.WithApp(humus.WithHost(h.Host())))
+			p, status := humustest.Start(t, h.Host(), consume)
 			svc := <-svcs
 
 			synctest.Wait()
@@ -106,14 +106,14 @@ func TestService_Joined(t *testing.T) {
 			c := cluster(t, h, 1) // one partition, for two members
 
 			first, firstSvcs, _ := joinedConsumer(settings(c.ListenAddrs()...))
-			p1, status1 := humustest.Start(t, first, humustest.WithApp(humus.WithHost(h.Host())))
+			p1, status1 := humustest.Start(t, h.Host(), first)
 			svc1 := <-firstSvcs
 			synctest.Wait()
 			require.True(t, joined(t, svc1))
 
 			second, secondSvcs, _ := joinedConsumer(settings(c.ListenAddrs()...))
 			tel := humustest.NewTelemetry()
-			p2, status2 := humustest.Start(t, second, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+			p2, status2 := humustest.Start(t, h.Host(), second, humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 			svc2 := <-secondSvcs
 			time.Sleep(time.Minute) // the group rebalances
 			synctest.Wait()
@@ -147,7 +147,7 @@ func TestService_Joined(t *testing.T) {
 			c := cluster(t, h, 1)
 
 			consume, svcs, _ := joinedConsumer(settings(c.ListenAddrs()...))
-			p, status := humustest.Start(t, consume, humustest.WithApp(humus.WithHost(h.Host())))
+			p, status := humustest.Start(t, h.Host(), consume)
 			svc := <-svcs
 			synctest.Wait()
 			require.True(t, joined(t, svc))
@@ -173,7 +173,7 @@ func TestService_Joined(t *testing.T) {
 			h := humustest.NewHost(t) // nothing listens on it
 
 			consume, svcs, _ := joinedConsumer(settings("127.0.0.1:9092"))
-			p, status := humustest.Start(t, consume, humustest.WithApp(humus.WithHost(h.Host())))
+			p, status := humustest.Start(t, h.Host(), consume)
 			svc := <-svcs
 
 			time.Sleep(time.Minute)
@@ -197,7 +197,7 @@ func TestService_Joined(t *testing.T) {
 			c := cluster(t, h, 1)
 
 			consume, svcs, _ := joinedConsumer(settings(c.ListenAddrs()...))
-			p, status := humustest.Start(t, consume, humustest.WithApp(humus.WithHost(h.Host())))
+			p, status := humustest.Start(t, h.Host(), consume)
 			svc := <-svcs
 			synctest.Wait()
 			require.True(t, joined(t, svc))
@@ -215,9 +215,9 @@ func TestService_Joined(t *testing.T) {
 // of its own: it consumes settings, and serves its probes on probeSettings
 // with httphealth's probes server, whose readiness waits for the consumer to
 // join its group.
-func probedConsumer(settings kafka.Settings, probeSettings httphealth.Settings) func(context.Context, *humus.Setup) ([]humus.Service, error) {
+func probedConsumer(settings kafka.Settings, probeSettings httphealth.Settings) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 	nop := queue.ProcessorFunc[kafka.Message](func(context.Context, kafka.Message) error { return nil })
-	return func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		consumer, err := kafka.NewService(s, settings, nop)
 		if err != nil {
 			return nil, err
@@ -258,9 +258,7 @@ func TestInit_a_consumers_probes_server_is_ready_once_it_has_joined(t *testing.T
 			h := humustest.NewHost(t)
 			c := cluster(t, h, 1)
 
-			p, status := humustest.Start(t, probedConsumer(settings(c.ListenAddrs()...), probeSettings(t, ca)),
-				humustest.WithApp(humus.WithHost(h.Host())),
-			)
+			p, status := humustest.Start(t, h.Host(), probedConsumer(settings(c.ListenAddrs()...), probeSettings(t, ca)))
 			<-h.Listening("localhost:8081")
 			synctest.Wait()
 			require.Equal(t, 1, members(c), "the consumer joined the group")
@@ -277,9 +275,7 @@ func TestInit_a_consumers_probes_server_is_ready_once_it_has_joined(t *testing.T
 			ca := humustest.NewCA(t)
 			h := humustest.NewHost(t) // no broker listens on it
 
-			p, status := humustest.Start(t, probedConsumer(settings("127.0.0.1:9092"), probeSettings(t, ca)),
-				humustest.WithApp(humus.WithHost(h.Host())),
-			)
+			p, status := humustest.Start(t, h.Host(), probedConsumer(settings("127.0.0.1:9092"), probeSettings(t, ca)))
 			<-h.Listening("localhost:8081")
 			time.Sleep(time.Minute)
 			require.Equal(t, http.StatusServiceUnavailable, probe(t, h, ca, readiness), "ready without joining")

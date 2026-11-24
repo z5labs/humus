@@ -116,7 +116,7 @@ func (p *idp) sign(subject string, scopes ...string) (string, error) {
 
 func (p *idp) serve(t *testing.T, host humus.Host, addr string, cert *humustest.Certificate) (*bedrocktest.Process, <-chan bedrock.ExitStatus) {
 	t.Helper()
-	return humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	return humustest.Start(t, host, func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = addr
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
@@ -127,5 +127,5 @@ func (p *idp) serve(t *testing.T, host humus.Host, addr string, cert *humustest.
 			return nil, err
 		}
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(telemetry.NoopBuilder)))
+	}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 }

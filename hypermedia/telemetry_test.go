@@ -86,7 +86,7 @@ func TestSite_names_its_span_after_the_route_under_the_handlers_it_is_wrapped_in
 				cert := ca.Issue(t, "localhost")
 				h := humustest.NewHost(t)
 				tel := humustest.NewTelemetry()
-				p, status := httpservertest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+				p, status := httpservertest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 					site, err := hypermedia.NewSite(s, func(w http.ResponseWriter, _ *http.Request, _ error) error {
 						w.WriteHeader(http.StatusNotFound)
 						return nil
@@ -106,7 +106,7 @@ func TestSite_names_its_span_after_the_route_under_the_handlers_it_is_wrapped_in
 						return nil, err
 					}
 					return []humus.Service{svc}, nil
-				}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+				}, humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 				select {
 				case <-h.Listening("localhost:8443"):
 				case st := <-status:

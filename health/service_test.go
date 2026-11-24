@@ -41,12 +41,12 @@ func TestServiceIsNotReadyDuringTheDrainDelay(t *testing.T) {
 		hs := health.NewService()
 		readiness := hs.Probes().Readiness
 		api := newServer() // keeps serving, so the drain lasts its whole delay
-		app := humus.App{
+		app := humus.App[humus.Host]{
 			Host:                humustest.NewHost(t).Host(),
 			Telemetry:           telemetry.NoopBuilder,
 			ShutdownGracePeriod: 10 * time.Second,
 			Drain:               humus.DrainDelay(5 * time.Second),
-			Init: func(context.Context, *humus.Setup) ([]humus.Service, error) {
+			Init: func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 				return []humus.Service{api, hs}, nil
 			},
 		}
@@ -382,12 +382,12 @@ func TestService_returned_from_Init(t *testing.T) {
 		working.MarkHealthy()
 
 		probes := make(chan health.Probes, 1)
-		app := humus.App{
+		app := humus.App[humus.Host]{
 			Host:                humustest.NewHost(t).Host(),
 			Telemetry:           telemetry.NoopBuilder,
 			ShutdownGracePeriod: 10 * time.Second,
 			Drain:               humus.DrainDelay(5 * time.Second),
-			Init: func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+			Init: func(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 				hs := health.NewService(
 					health.Liveness(&working),
 					health.Readiness(health.MonitorFunc(func(ctx context.Context) (bool, error) {
@@ -427,11 +427,11 @@ func TestService_not_returned_from_Init_never_turns_ready(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		forgotten := health.NewService()
 		served := health.NewService()
-		app := humus.App{
+		app := humus.App[humus.Host]{
 			Host:                humustest.NewHost(t).Host(),
 			Telemetry:           telemetry.NoopBuilder,
 			ShutdownGracePeriod: 10 * time.Second,
-			Init: func(context.Context, *humus.Setup) ([]humus.Service, error) {
+			Init: func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 				return []humus.Service{served}, nil // forgotten is not returned
 			},
 		}

@@ -60,7 +60,7 @@ func newFakeDatabase(down bool) *fakeDatabase {
 	return &fakeDatabase{products: map[string]endpoint.Product{}, down: down}
 }
 
-func (db *fakeDatabase) open(_ context.Context, s *humus.Setup, cfg *pgxpool.Config) (endpoint.Store, func(context.Context) error, error) {
+func (db *fakeDatabase) open(_ context.Context, s *humus.Setup, _ humus.Host, cfg *pgxpool.Config) (endpoint.Store, func(context.Context) error, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	db.cfg = cfg
@@ -127,9 +127,9 @@ func (db *fakeDatabase) PutProduct(ctx context.Context, p endpoint.Product) (end
 	return p, nil
 }
 
-func onFake(db *fakeDatabase) func(context.Context, *humus.Setup) ([]humus.Service, error) {
-	return func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-		return InitWith(ctx, s, db.open)
+func onFake(db *fakeDatabase) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
+	return func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		return InitWith(ctx, s, h, db.open)
 	}
 }
 
@@ -177,8 +177,8 @@ func newFixture(t *testing.T) fixture {
 
 func (f fixture) exit(t *testing.T) bedrock.ExitStatus {
 	t.Helper()
-	_, status := httpservertest.Start(t, Init,
-		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(Faults)),
+	_, status := httpservertest.Start(t, f.h.Host(), Init,
+		humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(Faults)),
 		humustest.WithEnv(f.env),
 	)
 	return <-status
@@ -194,7 +194,7 @@ type catalog struct {
 	status    <-chan bedrock.ExitStatus
 }
 
-func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error)) *catalog {
+func start(t *testing.T, init func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error)) *catalog {
 	t.Helper()
 	f := newFixture(t)
 
@@ -202,8 +202,8 @@ func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Servi
 	stopIdP := provider.serve(t, f.h.Host(), idpHost, f.idpCert)
 	<-f.h.Listening(idpHost)
 
-	p, status := httpservertest.Start(t, init,
-		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(Faults)),
+	p, status := httpservertest.Start(t, f.h.Host(), init,
+		humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(Faults)),
 		humustest.WithEnv(f.env),
 	)
 	select {

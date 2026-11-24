@@ -10,8 +10,7 @@
 // It sits beside httpserver as net/http/httptest sits beside net/http. It
 // has two functions:
 //
-//	p, status := httpservertest.Start(t, Init,
-//		humustest.WithApp(humus.WithHost(h.Host())),
+//	p, status := httpservertest.Start(t, h.Host(), Init,
 //		humustest.WithEnv(env),
 //	)
 //	<-h.Listening("localhost:8443")
@@ -28,7 +27,7 @@
 // cancelled 15s after SIGTERM, once the drain and the grace period are both
 // up.
 //
-// The test passes its Host, its telemetry and its environment as it would to
+// The test passes its host, its telemetry and its environment as it would to
 // humustest.Start. Options given with humustest.WithApp come after the
 // defaults, so they win: with
 // humustest.WithApp(humus.WithShutdownGracePeriod(2*time.Second)), the same
@@ -50,8 +49,7 @@
 //	bundle, password := ca.Issue(t, "localhost").PKCS12(t)
 //	h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{"tls.p12": bundle}))
 //
-//	p, status := httpservertest.Start(t, Init,
-//		humustest.WithApp(humus.WithHost(h.Host())),
+//	p, status := httpservertest.Start(t, h.Host(), Init,
 //		humustest.WithEnv(map[string]string{
 //			"ADDR":                ":8443",
 //			"TLS_PKCS12_FILE":     "tls.p12",

@@ -103,8 +103,8 @@ func (f *fixture) args(args []string) []string {
 
 func (f *fixture) begin(t *testing.T, build telemetry.Builder, args ...string) (*bedrocktest.Process, <-chan bedrock.ExitStatus) {
 	t.Helper()
-	return humustest.Start(t, Init,
-		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(build)),
+	return humustest.Start(t, f.h.Host(), Init,
+		humustest.WithApp(humus.WithTelemetry(build)),
 		humustest.WithArgs(f.args(args)...),
 	)
 }
@@ -126,14 +126,14 @@ func (f *fixture) output(t *testing.T, args ...string) string {
 
 func (f *fixture) serve(t *testing.T, addr string, tlsConfig *tls.Config, register func(grpc.ServiceRegistrar)) {
 	t.Helper()
-	_, status := grpcservertest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	_, status := grpcservertest.Start(t, f.h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		svc, err := grpcserver.NewService(s, grpcserver.Settings{Addr: addr, TLS: tlsConfig})
 		if err != nil {
 			return nil, err
 		}
 		register(svc)
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+	}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 	t.Cleanup(func() { <-status })
 	select {
 	case <-f.h.Listening(addr):

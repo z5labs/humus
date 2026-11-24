@@ -68,8 +68,8 @@ func TestInit_passes_the_cases(t *testing.T) {
 	certPEM, keyPEM := pemPair(t, ca.Issue(t, "127.0.0.1"))
 	dir := t.TempDir()
 	probesAddr := freeAddr(t)
-	p, status := humustest.Start(t, Init,
-		humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(telemetry.NoopBuilder)),
+	p, status := humustest.Start(t, humus.OSHost(), Init,
+		humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		humustest.WithEnv(map[string]string{
 			"KUBERNETES_SERVICE_HOST": server.Hostname(),
 			"KUBERNETES_SERVICE_PORT": server.Port(),

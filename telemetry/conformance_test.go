@@ -103,7 +103,7 @@ func testEnvironmentIsIgnored(t *testing.T, protocol telemetry.Protocol) {
 	tenant := rand.Text()
 	s.OTLP.Headers = map[string]string{"x-tenant": tenant}
 
-	sdk, err := telemetry.New(t.Context(), s, dialer.Dial, nil)
+	sdk, err := telemetry.New(t.Context(), s, dialer, nil)
 	require.NoError(t, err)
 
 	long := strings.Repeat("x", 64)

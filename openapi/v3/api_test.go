@@ -132,7 +132,7 @@ func serveOn(t *testing.T, host func(humus.Host) humus.Host, build func(s *humus
 	h := humustest.NewHost(t)
 	tel := humustest.NewTelemetry()
 
-	p, status := httpservertest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	p, status := httpservertest.Start(t, host(h.Host()), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		api, err := build(s)
 		if err != nil {
 			return nil, err
@@ -145,7 +145,7 @@ func serveOn(t *testing.T, host func(humus.Host) humus.Host, build func(s *humus
 			return nil, err
 		}
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(host(h.Host())), humus.WithTelemetry(tel.Builder())))
+	}, humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 	select {
 	case <-h.Listening("localhost:8443"):
 	case st := <-status:

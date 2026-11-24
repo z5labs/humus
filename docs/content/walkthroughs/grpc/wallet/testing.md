@@ -256,7 +256,7 @@ func (p *idp) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 synctest too:
 
 ```go
-	return humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	return humustest.Start(t, host, func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = addr
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
@@ -267,7 +267,7 @@ synctest too:
 			return nil, err
 		}
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(telemetry.NoopBuilder)))
+	}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 ```
 
 The same key signs the tests' tokens:

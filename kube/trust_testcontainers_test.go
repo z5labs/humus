@@ -68,7 +68,7 @@ func startFaultsController(t *testing.T, r kube.Resource[MemcachedSpec, Memcache
 	t.Helper()
 	k3sClient(t) // k3s is started
 	codec := faultsCodec(t)
-	return humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	return humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		client, err := kube.NewClient(s, cluster.conn)
 		if err != nil {
 			return nil, err
@@ -83,8 +83,7 @@ func startFaultsController(t *testing.T, r kube.Resource[MemcachedSpec, Memcache
 		}
 		return []humus.Service{ctrl}, nil
 	}, humustest.WithApp(
-		humus.WithHost(humus.OSHost()),
-		humus.WithFaults(func(context.Context, *humus.Setup) (fault.Settings, error) {
+		humus.WithFaults(func(context.Context, *humus.Setup, humus.Host) (fault.Settings, error) {
 			settings := fault.DefaultSettings()
 			settings.Decoder = codec
 			return settings, nil

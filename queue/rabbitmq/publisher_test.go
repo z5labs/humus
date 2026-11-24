@@ -458,7 +458,7 @@ func TestPublisher_fails_with_the_dial_error_when_nothing_listens(t *testing.T) 
 func runPublisher(t *testing.T, s *pubStandIn, settings rabbitmq.PublisherSettings, run func(ctx context.Context, pub *rabbitmq.Publisher) error) (*rabbitmq.Publisher, int) {
 	t.Helper()
 	var pub *rabbitmq.Publisher
-	_, status := humustest.Start(t, func(_ context.Context, setup *humus.Setup) ([]humus.Service, error) {
+	_, status := humustest.Start(t, humustest.NewHost(t).Host(), func(_ context.Context, setup *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		p, err := rabbitmq.NewPublisher(setup, settings)
 		if err != nil {
 			return nil, err
@@ -498,7 +498,7 @@ func TestPublisher_OnStop_runs_when_Init_fails_after_NewPublisher(t *testing.T) 
 		s := newPubStandIn()
 		s.autoAck = true
 		errInit := errors.New("init failed")
-		_, status := humustest.Start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), func(ctx context.Context, setup *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			pub, err := rabbitmq.NewPublisher(setup, publisherSettings())
 			if err != nil {
 				return nil, err
@@ -561,12 +561,12 @@ func TestNewPublisher_opens_no_connection(t *testing.T) {
 
 		// An Init that fails after NewPublisher: its OnStop function runs,
 		// with no connection to close.
-		_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			if _, err := rabbitmq.NewPublisher(s, publisherSettings()); err != nil {
 				return nil, err
 			}
 			return nil, context.Canceled
-		}, humustest.WithApp(humus.WithHost(h.Host())))
+		})
 		st := <-status
 		require.ErrorIs(t, st.Cause(), context.Canceled)
 		synctest.Wait()

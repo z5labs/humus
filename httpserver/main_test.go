@@ -33,17 +33,17 @@ func funcPointer(f any) uintptr {
 }
 
 // noServices is an Init that returns no Services.
-func noServices(context.Context, *humus.Setup) ([]humus.Service, error) { return nil, nil }
+func noServices(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) { return nil, nil }
 
 func TestDefaults_leaves_the_rest_of_the_App_unchanged(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		host := humustest.NewHost(t).Host()
-		a := humus.App{
+		a := humus.App[humus.Host]{
 			Host:      host,
 			Telemetry: telemetry.NoopBuilder,
 			Init:      noServices,
 		}
-		httpserver.Defaults()(&a)
+		require.NoError(t, a.Apply(httpserver.Defaults()...))
 
 		require.Equal(t, host, a.Host, "Host")
 		require.Equal(t, funcPointer(telemetry.NoopBuilder), funcPointer(a.Telemetry), "Telemetry")
@@ -54,8 +54,8 @@ func TestDefaults_leaves_the_rest_of_the_App_unchanged(t *testing.T) {
 	})
 
 	t.Run("including an App with none of them set", func(t *testing.T) {
-		var a humus.App
-		httpserver.Defaults()(&a)
+		var a humus.App[humus.Host]
+		require.NoError(t, a.Apply(httpserver.Defaults()...))
 		require.Zero(t, a.Host)
 		require.Nil(t, a.Telemetry)
 		require.Nil(t, a.Init)
@@ -87,9 +87,9 @@ func TestDefaults_on_a_whole_App(t *testing.T) {
 				// 10s after it arrived: only the shutdown cancels it.
 				settings := settingsFor(t, ca)
 				settings.WriteTimeout = 0
-				p, status := humustest.Start(t, serves(settings, handler),
-					humustest.WithApp(httpserver.Defaults()),
-					humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+				p, status := humustest.Start(t, h.Host(), serves(settings, handler),
+					humustest.WithApp(httpserver.Defaults()...),
+					humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 					humustest.WithEnv(c.env),
 				)
 				<-h.Listening("localhost:8443")
@@ -132,9 +132,9 @@ func TestInit_serves_over_TLS_with_the_defaults(t *testing.T) {
 		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 			"tls.pem": pemFile(t, ca.Issue(t, "localhost")),
 		}))
-		p, status := humustest.Start(t, Init,
-			humustest.WithApp(httpserver.Defaults()),
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		p, status := humustest.Start(t, h.Host(), Init,
+			humustest.WithApp(httpserver.Defaults()...),
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			humustest.WithEnv(map[string]string{"ADDR": ":8443", "TLS_PEM_FILE": "tls.pem"}),
 		)
 		<-h.Listening("localhost:8443")
@@ -156,9 +156,9 @@ func TestInit_serves_over_TLS_with_the_defaults(t *testing.T) {
 	t.Run("fails with exit 78 when TLS_PEM_FILE is not set", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
-			_, status := humustest.Start(t, Init,
-				humustest.WithApp(httpserver.Defaults()),
-				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+			_, status := humustest.Start(t, h.Host(), Init,
+				humustest.WithApp(httpserver.Defaults()...),
+				humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 				humustest.WithEnv(map[string]string{"ADDR": ":8443"}),
 			)
 			st := <-status

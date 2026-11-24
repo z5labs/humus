@@ -69,7 +69,7 @@ func (o *orders) store(m kafka.Message) error {
 // Init is the end user's Init: it sources the Settings and the
 // ProducerSettings with config.Struct, builds the Producer and the
 // Processor, and returns the Service from NewService.
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 	d := kafka.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 	list := func(v string) []string { return strings.Split(v, ",") }
@@ -114,10 +114,10 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 
 // buildTelemetry is the consumer's telemetry.Builder, which names the
 // service.
-func buildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+func buildTelemetry(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 	s := telemetry.DefaultSettings()
 	s.ServiceName = "orders-consumer"
-	return telemetry.New(ctx, s, dial, p.Stdout)
+	return telemetry.New(ctx, s, n, p.Stdout)
 }
 
 // A consumer's main is one call to humus.Main, whose defaults are a
@@ -163,7 +163,7 @@ func ExampleService_Joined() {
 // certificate from PEM files, read through s.Host.Filesystem, and SCRAM-SHA-512
 // credentials, and produces its dead letters to the same cluster with the
 // same ones.
-func secureInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func secureInit(ctx context.Context, s *humus.Setup, host humus.Host) ([]humus.Service, error) {
 	d := kafka.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 	list := func(v string) []string { return strings.Split(v, ",") }
@@ -174,8 +174,8 @@ func secureInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		k.GroupID = r.Get(env("KAFKA_GROUP_ID").Validate(kafka.CheckGroupID))
 		k.Topics = r.Get(env("KAFKA_TOPICS").Map(list).Validate(kafka.CheckTopics))
 		// The CA's file is read first, and the client's certificate only once it has been.
-		k.TLS = r.Get(env("KAFKA_TLS_CA_FILE").Parse(readFile(s.Host.Filesystem)).FlatMap(func(ca []byte) config.Value[*tls.Config] {
-			return env("KAFKA_TLS_CERT_FILE").Parse(readFile(s.Host.Filesystem)).Parse(clientTLS(ca))
+		k.TLS = r.Get(env("KAFKA_TLS_CA_FILE").Parse(readFile(host.Filesystem)).FlatMap(func(ca []byte) config.Value[*tls.Config] {
+			return env("KAFKA_TLS_CERT_FILE").Parse(readFile(host.Filesystem)).Parse(clientTLS(ca))
 		}))
 		k.SASL = r.Get(env("KAFKA_SASL_USER").FlatMap(func(user string) config.Value[kafka.SASLMechanism] {
 			return env("KAFKA_SASL_PASSWORD").Map(func(password string) kafka.SASLMechanism {
@@ -241,8 +241,8 @@ func clientTLS(caPEM []byte) func(certPEM []byte) (*tls.Config, error) {
 // twoDeliveries is an Init that consumes two topics with different
 // Delivery values: two Services, each with a group ID of its own, returned
 // together. Either one returning ends the App.
-func twoDeliveries(brokers []string, p queue.ProcessorFunc[kafka.Message]) func(context.Context, *humus.Setup) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+func twoDeliveries(brokers []string, p queue.ProcessorFunc[kafka.Message]) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
+	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		payments := kafka.DefaultSettings()
 		payments.Brokers = brokers
 		payments.GroupID = "payments-consumer"

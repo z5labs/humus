@@ -31,13 +31,13 @@ import (
 
 // serves returns an Init whose only Service serves h on DefaultSettings on
 // :8443, over TLS with cert.
-func serves(cert *humustest.Certificate, h http.Handler) func(context.Context, *humus.Setup) ([]humus.Service, error) {
+func serves(cert *humustest.Certificate, h http.Handler) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 	return servesWith(cert, h, func(*httpserver.Settings) {})
 }
 
 // servesWith is serves, with the Settings changed by edit.
-func servesWith(cert *humustest.Certificate, h http.Handler, edit func(*httpserver.Settings)) func(context.Context, *humus.Setup) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+func servesWith(cert *humustest.Certificate, h http.Handler, edit func(*httpserver.Settings)) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
+	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = ":8443"
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
@@ -83,8 +83,8 @@ func TestMain_serves_HTTP2_and_records_the_span(t *testing.T) {
 		mux := http.NewServeMux()
 		mux.HandleFunc("GET /hello/{name}", greet)
 
-		p, status := httpservertest.Start(t, serves(ca.Issue(t, "localhost"), mux),
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+		p, status := httpservertest.Start(t, h.Host(), serves(ca.Issue(t, "localhost"), mux),
+			humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 		)
 		<-h.Listening("localhost:8443")
 
@@ -110,7 +110,7 @@ func TestMain_serves_HTTP2_and_records_the_span(t *testing.T) {
 
 func TestInit_without_an_address_or_a_certificate_exits_78(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		_, status := httpservertest.Start(t, Init)
+		_, status := httpservertest.Start(t, humustest.NewHost(t).Host(), Init)
 
 		st := <-status
 		require.Equal(t, humus.ExitConfig, st.Code())
@@ -125,8 +125,8 @@ func TestInit_serves_with_a_certificate_from_a_PKCS12_file(t *testing.T) {
 		bundle, password := ca.Issue(t, "localhost").PKCS12(t)
 		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{"tls.p12": bundle}))
 
-		p, status := httpservertest.Start(t, InitPKCS12,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		p, status := httpservertest.Start(t, h.Host(), InitPKCS12,
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			humustest.WithEnv(map[string]string{
 				"ADDR":                ":8443",
 				"TLS_PKCS12_FILE":     "tls.p12",
@@ -153,8 +153,8 @@ func TestInit_serves_with_a_certificate_from_a_PKCS12_file(t *testing.T) {
 			bundle, password := ca.Issue(t, "localhost").PKCS12(t)
 			h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{"tls.p12": bundle}))
 
-			_, status := httpservertest.Start(t, InitPKCS12,
-				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+			_, status := httpservertest.Start(t, h.Host(), InitPKCS12,
+				humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 				humustest.WithEnv(map[string]string{
 					"ADDR":                ":8443",
 					"TLS_PKCS12_FILE":     "tls.p12",
@@ -203,9 +203,9 @@ func TestStart_applies_the_defaults_before_the_test_options(t *testing.T) {
 				// 10s after it arrived: only the shutdown cancels it.
 				init := servesWith(ca.Issue(t, "localhost"), handler, func(s *httpserver.Settings) { s.WriteTimeout = 0 })
 				opts := append([]humustest.Option{
-					humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+					humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 				}, c.opts...)
-				p, status := httpservertest.Start(t, init, opts...)
+				p, status := httpservertest.Start(t, h.Host(), init, opts...)
 				<-h.Listening("localhost:8443")
 
 				got := get(httpservertest.NewClient(h, ca.Pool()), "https://localhost:8443/")

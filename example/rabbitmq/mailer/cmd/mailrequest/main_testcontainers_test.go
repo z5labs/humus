@@ -160,8 +160,8 @@ func TestMain_publishes_a_request_to_mail_send_over_TLS(t *testing.T) {
 	}
 	publish := func(t *testing.T, args ...string) string {
 		t.Helper()
-		p, status := humustest.Start(t, Init,
-			humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(buildTelemetry)),
+		p, status := humustest.Start(t, humus.OSHost(), Init,
+			humustest.WithApp(humus.WithTelemetry(buildTelemetry)),
 			humustest.WithEnv(env),
 			humustest.WithArgs(args...),
 		)

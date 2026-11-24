@@ -82,7 +82,7 @@ func faultsCodec(t *testing.T) jsonscenario.Codec {
 func withFaults(t *testing.T) humus.Option {
 	t.Helper()
 	codec := faultsCodec(t)
-	return humus.WithFaults(func(context.Context, *humus.Setup) (fault.Settings, error) {
+	return humus.WithFaults(func(context.Context, *humus.Setup, humus.Host) (fault.Settings, error) {
 		d := fault.DefaultSettings()
 		d.Decoder = codec
 		return d, nil
@@ -106,7 +106,7 @@ func scenarioBaggage(t *testing.T, s fit.Scenario) string {
 // and, when faults is true, failure injection.
 func appOptions(t *testing.T, tel *humustest.Telemetry, faults bool) []humus.Option {
 	t.Helper()
-	opts := []humus.Option{humus.WithHost(humustest.NewHost(t).Host()), humus.WithTelemetry(tel.Builder())}
+	opts := []humus.Option{humus.WithTelemetry(tel.Builder())}
 	if faults {
 		opts = append(opts, withFaults(t))
 	}
@@ -119,7 +119,7 @@ func appOptions(t *testing.T, tel *humustest.Telemetry, faults bool) []humus.Opt
 // to exit 0. faults turns failure injection on.
 func publishesUnder(t *testing.T, tel *humustest.Telemetry, faults bool, bag string, settings rabbitmq.PublisherSettings, s *pubStandIn, run func(ctx context.Context, p *rabbitmq.Publisher)) {
 	t.Helper()
-	init := func(_ context.Context, setup *humus.Setup) ([]humus.Service, error) {
+	init := func(_ context.Context, setup *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		pub, err := rabbitmq.NewPublisher(setup, settings)
 		if err != nil {
 			return nil, err
@@ -130,7 +130,7 @@ func publishesUnder(t *testing.T, tel *humustest.Telemetry, faults bool, bag str
 			return nil
 		})}, nil
 	}
-	_, status := humustest.Start(t, init,
+	_, status := humustest.Start(t, humustest.NewHost(t).Host(), init,
 		humustest.WithApp(appOptions(t, tel, faults)...),
 		humustest.WithEnv(map[string]string{"BAGGAGE": bag}),
 	)
@@ -430,7 +430,7 @@ func TestPublisher_strips_the_scenario_unless_ForwardScenario_is_set(t *testing.
 // SIGTERM and requires it to exit 0. faults turns failure injection on.
 func consumeUnder(t *testing.T, tel *humustest.Telemetry, faults bool, settings rabbitmq.Settings, ch *standIn, p queue.ProcessorFunc[rabbitmq.Message]) {
 	t.Helper()
-	init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		svc, err := rabbitmq.NewService(s, settings, p)
 		if err != nil {
 			return nil, err
@@ -438,7 +438,7 @@ func consumeUnder(t *testing.T, tel *humustest.Telemetry, faults bool, settings 
 		rabbitmq.SetOpen(svc, ch.open)
 		return []humus.Service{svc}, nil
 	}
-	proc, status := humustest.Start(t, init, humustest.WithApp(appOptions(t, tel, faults)...))
+	proc, status := humustest.Start(t, humustest.NewHost(t).Host(), init, humustest.WithApp(appOptions(t, tel, faults)...))
 	synctest.Wait()
 	proc.Signal(syscall.SIGTERM)
 	st := <-status

@@ -10,10 +10,10 @@
 // one from a plain [Settings] value, which the end user's [Builder] sources
 // however it likes, starting from [DefaultSettings]:
 //
-//	func buildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+//	func buildTelemetry(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 //		s := telemetry.DefaultSettings()
 //		s.ServiceName = "carts"
-//		return telemetry.New(ctx, s, dial, p.Stdout)
+//		return telemetry.New(ctx, s, n, p.Stdout)
 //	}
 //
 // The package reads no environment variables. With the defaults, log

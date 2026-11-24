@@ -51,7 +51,7 @@ const reasonKeysUnavailable = "KEYS_UNAVAILABLE"
 
 const scenarioKey = "acme.fault"
 
-func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
+func Faults(ctx context.Context, s *humus.Setup, h humus.Host) (fault.Settings, error) {
 	codec, err := jsonscenario.New(scenarioKey)
 	if err != nil {
 		return fault.Settings{}, err
@@ -65,7 +65,7 @@ func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
 	}).Read(ctx)
 }
 
-func BuildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+func BuildTelemetry(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 	d := telemetry.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(p.Environment, name) }
 	exporter := func(name string, def telemetry.Exporter) config.Value[telemetry.Exporter] {
@@ -88,11 +88,11 @@ func BuildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Diale
 	if err != nil {
 		return telemetry.SDK{}, err
 	}
-	return telemetry.New(ctx, s, dial, p.Stdout)
+	return telemetry.New(ctx, s, n, p.Stdout)
 }
 
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	set, err := readSettings(ctx, s)
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	set, err := readSettings(ctx, s, h)
 	if err != nil {
 		return nil, err
 	}
@@ -207,10 +207,10 @@ type (
 	clientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error)
 )
 
-func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
+func readSettings(ctx context.Context, s *humus.Setup, h humus.Host) (settings, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
-	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.Filesystem)) }
-	pemFile := func(name string) config.Value[*tls.Config] { return env(name).Parse(pemTLS(s.Host.Filesystem)) }
+	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(h.Filesystem)) }
+	pemFile := func(name string) config.Value[*tls.Config] { return env(name).Parse(pemTLS(h.Filesystem)) }
 
 	got, err := config.Struct(func(r *config.Resolver) settings {
 		ledger := grpcclient.DefaultSettings()

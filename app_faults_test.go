@@ -74,7 +74,7 @@ func underTest(t *testing.T) context.Context {
 
 // faultsSettings is a Faults function that sources MaxDelay from
 // FAULT_MAX_DELAY, as an end user's does, with abortPayments as its Decoder.
-func faultsSettings(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
+func faultsSettings(ctx context.Context, s *humus.Setup, h humus.Host) (fault.Settings, error) {
 	d := fault.DefaultSettings()
 	return config.Struct(func(r *config.Resolver) fault.Settings {
 		c := d
@@ -89,9 +89,9 @@ func faultsSettings(ctx context.Context, s *humus.Setup) (fault.Settings, error)
 // then builds tel's SDK.
 func recordedBuilder(tel *humustest.Telemetry, order *[]string) telemetry.Builder {
 	build := tel.Builder()
-	return func(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+	return func(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 		*order = append(*order, "telemetry")
-		return build(ctx, p, dial)
+		return build(ctx, p, n)
 	}
 }
 
@@ -100,17 +100,17 @@ func TestApp_Run_faults_runs_after_telemetry_and_before_Init_with_the_same_Setup
 		tel := humustest.NewTelemetry()
 		var order []string
 		var faultsSetup *humus.Setup
-		faults := func(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
+		faults := func(ctx context.Context, s *humus.Setup, h humus.Host) (fault.Settings, error) {
 			order = append(order, "faults")
 			require.NotNil(t, s.Telemetry.TracerProvider, "telemetry is built before Faults runs")
 			require.Zero(t, s.Faults, "the Injector is built from what Faults returns")
 			faultsSetup = s
-			return faultsSettings(ctx, s)
+			return faultsSettings(ctx, s, h)
 		}
 		var initSetup *humus.Setup
 		var f fit.Fault
 		var stripped bool
-		init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			order = append(order, "init")
 			initSetup = s
 			ctx := underTest(t)
@@ -119,7 +119,7 @@ func TestApp_Run_faults_runs_after_telemetry_and_before_Init_with_the_same_Setup
 			return nil, nil
 		}
 
-		_, status := humustest.Start(t, init, humustest.WithApp(
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), init, humustest.WithApp(
 			humus.WithTelemetry(recordedBuilder(tel, &order)),
 			humus.WithFaults(faults),
 		))
@@ -138,20 +138,20 @@ func TestApp_Run_faults_a_config_Error_exits_78_and_runs_OnStop(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		tel := humustest.NewTelemetry()
 		var stopped []string
-		faults := func(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
+		faults := func(ctx context.Context, s *humus.Setup, h humus.Host) (fault.Settings, error) {
 			s.OnStop(func(context.Context) error {
 				stopped = append(stopped, "registry")
 				return nil
 			})
-			return faultsSettings(ctx, s)
+			return faultsSettings(ctx, s, h)
 		}
 		initCalled := false
-		init := func(context.Context, *humus.Setup) ([]humus.Service, error) {
+		init := func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 			initCalled = true
 			return nil, nil
 		}
 
-		p, status := humustest.Start(t, init,
+		p, status := humustest.Start(t, humustest.NewHost(t).Host(), init,
 			humustest.WithApp(humus.WithTelemetry(tel.Builder()), humus.WithFaults(faults)),
 			humustest.WithEnv(map[string]string{"FAULT_MAX_DELAY": "0s"}),
 		)
@@ -172,7 +172,7 @@ func TestApp_Run_faults_any_other_error_exits_1_and_runs_OnStop(t *testing.T) {
 		tel := humustest.NewTelemetry()
 		errRegistry := errors.New("load scenario registry: connection refused")
 		var stopped []int
-		faults := func(_ context.Context, s *humus.Setup) (fault.Settings, error) {
+		faults := func(_ context.Context, s *humus.Setup, _ humus.Host) (fault.Settings, error) {
 			for i := range 2 {
 				s.OnStop(func(context.Context) error {
 					stopped = append(stopped, i)
@@ -182,12 +182,12 @@ func TestApp_Run_faults_any_other_error_exits_1_and_runs_OnStop(t *testing.T) {
 			return fault.Settings{}, errRegistry
 		}
 		initCalled := false
-		init := func(context.Context, *humus.Setup) ([]humus.Service, error) {
+		init := func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 			initCalled = true
 			return nil, nil
 		}
 
-		p, status := humustest.Start(t, init,
+		p, status := humustest.Start(t, humustest.NewHost(t).Host(), init,
 			humustest.WithApp(humus.WithTelemetry(tel.Builder()), humus.WithFaults(faults)),
 		)
 		st := <-status
@@ -204,15 +204,15 @@ func TestApp_Run_faults_any_other_error_exits_1_and_runs_OnStop(t *testing.T) {
 func TestApp_Run_faults_bad_Settings_exit_1(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		tel := humustest.NewTelemetry()
-		faults := func(context.Context, *humus.Setup) (fault.Settings, error) {
+		faults := func(context.Context, *humus.Setup, humus.Host) (fault.Settings, error) {
 			return fault.DefaultSettings(), nil // no Decoder
 		}
-		init := func(context.Context, *humus.Setup) ([]humus.Service, error) {
+		init := func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 			t.Error("Init is called")
 			return nil, nil
 		}
 
-		_, status := humustest.Start(t, init,
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), init,
 			humustest.WithApp(humus.WithTelemetry(tel.Builder()), humus.WithFaults(faults)),
 		)
 		st := <-status
@@ -228,7 +228,7 @@ func TestApp_Run_faults_nil_leaves_the_zero_Injector(t *testing.T) {
 		var faults fault.Injector
 		var f fit.Fault
 		var stripped bool
-		init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			faults = s.Faults
 			ctx := underTest(t)
 			f = s.Faults.Eval(ctx, "http:payments:8443")
@@ -236,7 +236,7 @@ func TestApp_Run_faults_nil_leaves_the_zero_Injector(t *testing.T) {
 			return nil, nil
 		}
 
-		_, status := humustest.Start(t, init, humustest.WithApp(humus.WithTelemetry(tel.Builder())))
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), init, humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 		st := <-status
 
 		require.Equal(t, 0, st.Code(), "cause: %v", st.Cause())
@@ -249,16 +249,16 @@ func TestApp_Run_faults_nil_leaves_the_zero_Injector(t *testing.T) {
 func TestApp_Run_faults_a_signal_during_a_slow_Faults_cancels_its_context(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		tel := humustest.NewTelemetry()
-		faults := func(ctx context.Context, _ *humus.Setup) (fault.Settings, error) {
+		faults := func(ctx context.Context, _ *humus.Setup, _ humus.Host) (fault.Settings, error) {
 			<-ctx.Done()
 			return fault.Settings{}, context.Cause(ctx)
 		}
-		init := func(context.Context, *humus.Setup) ([]humus.Service, error) {
+		init := func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 			t.Error("Init is called")
 			return nil, nil
 		}
 
-		p, status := humustest.Start(t, init,
+		p, status := humustest.Start(t, humustest.NewHost(t).Host(), init,
 			humustest.WithApp(humus.WithTelemetry(tel.Builder()), humus.WithFaults(faults)),
 		)
 		synctest.Wait()

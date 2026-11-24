@@ -184,8 +184,8 @@ func startSharedMailer(t *testing.T) *sharedMailer {
 	dir := t.TempDir()
 	probesAddr := freeAddr(t)
 	tel := humustest.NewTelemetry()
-	p, status := humustest.Start(t, app.Init,
-		humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(tel.Builder()), humus.WithFaults(app.Faults)),
+	p, status := humustest.Start(t, humus.OSHost(), app.Init,
+		humustest.WithApp(humus.WithTelemetry(tel.Builder()), humus.WithFaults(app.Faults)),
 		humustest.WithEnv(map[string]string{
 			"RABBITMQ_ADDR":           broker.addr,
 			"RABBITMQ_USERNAME":       mailer.username,

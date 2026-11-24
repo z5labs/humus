@@ -26,39 +26,38 @@ import (
 // file, and TestDocs_code_samples checks that every quote still matches it.
 //
 // httpDefaults, grpcDefaults and httpMain stand in for what a runtime
-// package whose Services need a drain exports, as Proposal: humus.Main
-// sketches it: its defaults as one humus.Option, and a Main built on
-// humus.Main. The durations are the HTTP server foundation's and gRPC
-// services' proposed ones, which those proposals decide.
+// package whose Services need a drain exports, as httpserver and grpcserver
+// do: its defaults as a slice of humus.Option, and a Main built on
+// humus.Main.
 
 // httpDefaults stands in for a runtime package's defaults, such as
 // httpserver.Defaults: a 5s drain and a 10s grace period over humus.Main's.
-func httpDefaults() humus.Option {
-	return func(a *humus.App) {
-		a.Drain = humus.DrainDelay(5 * time.Second)
-		a.ShutdownGracePeriod = 10 * time.Second
+func httpDefaults() []humus.Option {
+	return []humus.Option{
+		humus.WithDrain(humus.DrainDelay(5 * time.Second)),
+		humus.WithShutdownGracePeriod(10 * time.Second),
 	}
 }
 
 // httpMain stands in for a runtime package's Main, such as httpserver.Main:
 // humus.Main with the package's defaults applied before the end user's
 // options, so that the end user's options win.
-func httpMain(init func(ctx context.Context, s *humus.Setup) ([]humus.Service, error), opts ...humus.Option) {
-	humus.Main(init, append([]humus.Option{httpDefaults()}, opts...)...)
+func httpMain(init humus.Init[humus.Host], opts ...humus.Option) {
+	humus.Main(init, append(httpDefaults(), opts...)...)
 }
 
 // grpcDefaults stands in for a second runtime package's defaults: a 5s
 // drain and a 15s grace period over humus.Main's.
-func grpcDefaults() humus.Option {
-	return func(a *humus.App) {
-		a.Drain = humus.DrainDelay(5 * time.Second)
-		a.ShutdownGracePeriod = 15 * time.Second
+func grpcDefaults() []humus.Option {
+	return []humus.Option{
+		humus.WithDrain(humus.DrainDelay(5 * time.Second)),
+		humus.WithShutdownGracePeriod(15 * time.Second),
 	}
 }
 
 // A runtime package whose Services need a drain wraps humus.Main with its
 // defaults, and the end user's main calls the package's Main. Like
-// Example_main, this example is compiled but never run.
+// ExampleMain, this example is compiled but never run.
 func Example_runtimeMain() {
 	httpMain(Init, humus.WithTelemetry(buildTelemetry))
 }
@@ -73,7 +72,7 @@ func mainOptions() []humus.Option {
 }
 
 // A main whose options a test should keep takes them from one function,
-// which the test calls too. Like Example_main, this example is compiled but
+// which the test calls too. Like ExampleMain, this example is compiled but
 // never run.
 func Example_mainOptions() {
 	humus.Main(Init, mainOptions()...)
@@ -81,7 +80,7 @@ func Example_mainOptions() {
 
 // An end user's own Drain is passed with humus.WithDrain. This one waits
 // for a load balancer to deregister the pod, but only after a signal. Like
-// Example_main, this example is compiled but never run.
+// ExampleMain, this example is compiled but never run.
 func Example_drain() {
 	humus.Main(Init, humus.WithDrain(deregisteringDrain))
 }
@@ -108,7 +107,7 @@ func stopApp(p *bedrocktest.Process, status <-chan bedrock.ExitStatus) bedrock.E
 func TestInit_runs_with_mains_options(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		tel := humustest.NewTelemetry()
-		p, status := humustest.Start(t, Init,
+		p, status := humustest.Start(t, humustest.NewHost(t).Host(), Init,
 			humustest.WithApp(mainOptions()...),
 			humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 			withEnv(nil),
@@ -134,9 +133,9 @@ func TestStart_a_runtime_packages_defaults(t *testing.T) {
 		drain time.Duration
 		grace time.Duration
 	}{
-		{"set the drain and the grace period", []humus.Option{httpDefaults()}, 5 * time.Second, 10 * time.Second},
-		{"come before the end user's options", []humus.Option{httpDefaults(), humus.WithShutdownGracePeriod(15 * time.Second)}, 5 * time.Second, 15 * time.Second},
-		{"are replaced by another package's", []humus.Option{httpDefaults(), grpcDefaults()}, 5 * time.Second, 15 * time.Second},
+		{"set the drain and the grace period", httpDefaults(), 5 * time.Second, 10 * time.Second},
+		{"come before the end user's options", append(httpDefaults(), humus.WithShutdownGracePeriod(15*time.Second)), 5 * time.Second, 15 * time.Second},
+		{"are replaced by another package's", append(httpDefaults(), grpcDefaults()...), 5 * time.Second, 15 * time.Second},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -150,7 +149,7 @@ func TestStart_a_runtime_packages_defaults(t *testing.T) {
 					return nil
 				})
 
-				p, status := humustest.Start(t, servicesOf(api),
+				p, status := humustest.Start(t, humustest.NewHost(t).Host(), servicesOf(api),
 					humustest.WithApp(c.opts...),
 					humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 				)
@@ -201,7 +200,7 @@ func TestStart_a_whole_App(t *testing.T) {
 		}}
 
 		var poolClosedAt time.Time
-		init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			s.OnStop(func(context.Context) error {
 				poolClosedAt = time.Now()
 				return nil
@@ -209,7 +208,7 @@ func TestStart_a_whole_App(t *testing.T) {
 			return []humus.Service{api, consumer}, nil
 		}
 
-		p, status := humustest.Start(t, init,
+		p, status := humustest.Start(t, humustest.NewHost(t).Host(), init,
 			humustest.WithApp(humus.WithDrain(humus.DrainDelay(5*time.Second))),
 		)
 		<-p.Notified(syscall.SIGTERM)

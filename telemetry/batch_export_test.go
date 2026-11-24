@@ -244,7 +244,7 @@ func TestNew_ScheduleDelay_sets_when_the_first_export_starts(t *testing.T) {
 					sig.set(&s, func(b *telemetry.BatchSettings) { b.ScheduleDelay = delay })
 
 					origin := time.Now()
-					sdk, err := telemetry.New(t.Context(), s, host.DialTCP, nil)
+					sdk, err := telemetry.New(t.Context(), s, host, nil)
 					require.NoError(t, err)
 					sig.emit(t.Context(), sdk)
 
@@ -280,7 +280,7 @@ func TestNew_MaxExportBatchSize_bounds_each_export(t *testing.T) {
 					s := batchSettings(sig, protocol)
 					s.SpanBatch.MaxExportBatchSize = 2
 					s.LogBatch.MaxExportBatchSize = 2
-					sdk, err := telemetry.New(t.Context(), s, host.DialTCP, nil)
+					sdk, err := telemetry.New(t.Context(), s, host, nil)
 					require.NoError(t, err)
 					for range 5 {
 						sig.emit(t.Context(), sdk)
@@ -332,7 +332,7 @@ func TestNew_ExportTimeout_and_OTLP_Timeout_bound_the_same_export(t *testing.T) 
 							b.ExportTimeout = tc.exportTimeout
 						})
 						origin := time.Now()
-						sdk, err := telemetry.New(t.Context(), s, host.DialTCP, nil)
+						sdk, err := telemetry.New(t.Context(), s, host, nil)
 						require.NoError(t, err)
 						sig.emit(t.Context(), sdk)
 

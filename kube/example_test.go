@@ -125,12 +125,12 @@ const serviceAccount = "/var/run/secrets/kubernetes.io/serviceaccount/"
 // Init is the end user's Init: it sources the Settings and the Connection,
 // builds the Client, a clientset on it and the Reconciler, and returns the
 // Controller, which reconciles Memcacheds and the Deployments they own.
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	settings, err := readSettings(ctx, s)
 	if err != nil {
 		return nil, err // exit 78, naming every bad variable
 	}
-	conn, err := inPod(ctx, s, serviceAccount)
+	conn, err := inPod(ctx, s, h, serviceAccount)
 	if err != nil {
 		return nil, err
 	}
@@ -172,10 +172,10 @@ func readSettings(ctx context.Context, s *humus.Setup) (kube.Settings, error) {
 // inPod fills the Connection of a pod from what the kubelet gives every
 // container: the API server's address in two variables, and the service
 // account's CA and token in dir, read through s.Host.Filesystem.
-func inPod(ctx context.Context, s *humus.Setup, dir string) (kube.Connection, error) {
+func inPod(ctx context.Context, s *humus.Setup, h humus.Host, dir string) (kube.Connection, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
-	ca, err := readFile(s.Host.Filesystem, dir+"ca.crt")
+	ca, err := readFile(h.Filesystem, dir+"ca.crt")
 	if err != nil {
 		return kube.Connection{}, err
 	}
@@ -191,7 +191,7 @@ func inPod(ctx context.Context, s *humus.Setup, dir string) (kube.Connection, er
 			TLS:    &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
 			// Read again at most once a minute, so a token the kubelet rotates is picked up.
 			Token: func(context.Context) (string, error) {
-				b, err := readFile(s.Host.Filesystem, dir+"token")
+				b, err := readFile(h.Filesystem, dir+"token")
 				return string(bytes.TrimSpace(b)), err
 			},
 		}
@@ -249,10 +249,10 @@ func readFile(fsys humus.Filesystem, name string) ([]byte, error) {
 
 // buildTelemetry is the controller's telemetry.Builder, which names the
 // service.
-func buildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+func buildTelemetry(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 	s := telemetry.DefaultSettings()
 	s.ServiceName = "memcached-controller"
-	return telemetry.New(ctx, s, dial, p.Stdout)
+	return telemetry.New(ctx, s, n, p.Stdout)
 }
 
 // A controller's main is one call to humus.Main, whose defaults fit a

@@ -47,8 +47,8 @@ func settingsFor(t *testing.T, ca *humustest.CA) httpserver.Settings {
 }
 
 // serves returns an Init whose only Service serves h on settings.
-func serves(settings httpserver.Settings, h http.Handler) func(context.Context, *humus.Setup) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+func serves(settings httpserver.Settings, h http.Handler) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
+	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		svc, err := httpserver.NewService(s, settings, h)
 		if err != nil {
 			return nil, err
@@ -163,8 +163,8 @@ func TestService_serves_HTTP2_to_a_client_that_offers_it(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
 		h := humustest.NewHost(t)
-		p, status := humustest.Start(t, serves(settingsFor(t, ca), hello),
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		p, status := humustest.Start(t, h.Host(), serves(settingsFor(t, ca), hello),
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		)
 		<-h.Listening("localhost:8443")
 
@@ -190,9 +190,8 @@ func TestService_an_in_flight_request_finishes_during_shutdown(t *testing.T) {
 			time.Sleep(3 * time.Second)
 			_, _ = io.WriteString(w, "finished")
 		})
-		p, status := humustest.Start(t, serves(settingsFor(t, ca), handler),
+		p, status := humustest.Start(t, h.Host(), serves(settingsFor(t, ca), handler),
 			humustest.WithApp(
-				humus.WithHost(h.Host()),
 				humus.WithTelemetry(telemetry.NoopBuilder),
 				humus.WithDrain(humus.DrainDelay(5*time.Second)),
 			),
@@ -220,9 +219,8 @@ func TestService_serves_a_request_during_the_drain(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
 		h := humustest.NewHost(t)
-		p, status := humustest.Start(t, serves(settingsFor(t, ca), hello),
+		p, status := humustest.Start(t, h.Host(), serves(settingsFor(t, ca), hello),
 			humustest.WithApp(
-				humus.WithHost(h.Host()),
 				humus.WithTelemetry(telemetry.NoopBuilder),
 				humus.WithDrain(humus.DrainDelay(5*time.Second)),
 			),
@@ -255,9 +253,8 @@ func TestService_the_grace_period_closes_what_it_could_not_drain(t *testing.T) {
 			<-r.Context().Done()
 			cancelled <- time.Now()
 		})
-		p, status := humustest.Start(t, serves(settingsFor(t, ca), handler),
+		p, status := humustest.Start(t, h.Host(), serves(settingsFor(t, ca), handler),
 			humustest.WithApp(
-				humus.WithHost(h.Host()),
 				humus.WithTelemetry(telemetry.NoopBuilder),
 				humus.WithDrain(humus.DrainDelay(5*time.Second)),
 			),
@@ -289,8 +286,8 @@ func TestService_logs(t *testing.T) {
 			ca := humustest.NewCA(t)
 			h := humustest.NewHost(t)
 			tel := humustest.NewTelemetry()
-			p, status := humustest.Start(t, serves(settingsFor(t, ca), hello),
-				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+			p, status := humustest.Start(t, h.Host(), serves(settingsFor(t, ca), hello),
+				humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 			)
 			<-h.Listening("localhost:8443")
 			synctest.Wait()
@@ -314,8 +311,8 @@ func TestService_logs(t *testing.T) {
 			ca := humustest.NewCA(t)
 			h := humustest.NewHost(t)
 			tel := humustest.NewTelemetry()
-			p, status := humustest.Start(t, serves(settingsFor(t, ca), hello),
-				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+			p, status := humustest.Start(t, h.Host(), serves(settingsFor(t, ca), hello),
+				humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 			)
 			<-h.Listening("localhost:8443")
 
@@ -348,8 +345,8 @@ func TestService_protocols(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			ca := humustest.NewCA(t)
 			h := humustest.NewHost(t)
-			p, status := humustest.Start(t, serves(settingsFor(t, ca), hello),
-				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+			p, status := humustest.Start(t, h.Host(), serves(settingsFor(t, ca), hello),
+				humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			)
 			<-h.Listening("localhost:8443")
 
@@ -370,8 +367,8 @@ func TestService_protocols(t *testing.T) {
 			tel := humustest.NewTelemetry()
 			settings := settingsFor(t, ca)
 			settings.HTTP2Only = true
-			p, status := humustest.Start(t, serves(settings, hello),
-				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+			p, status := humustest.Start(t, h.Host(), serves(settings, hello),
+				humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 			)
 			<-h.Listening("localhost:8443")
 
@@ -416,8 +413,8 @@ func TestService_protocols(t *testing.T) {
 			ca := humustest.NewCA(t)
 			h := humustest.NewHost(t)
 			tel := humustest.NewTelemetry()
-			p, status := humustest.Start(t, serves(settingsFor(t, ca), hello),
-				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+			p, status := humustest.Start(t, h.Host(), serves(settingsFor(t, ca), hello),
+				humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 			)
 			<-h.Listening("localhost:8443")
 
@@ -464,8 +461,8 @@ func TestService_ALPN_order(t *testing.T) {
 			h := humustest.NewHost(t)
 			settings := settingsFor(t, ca)
 			settings.TLS.NextProtos = []string{"http/1.1"}
-			p, status := humustest.Start(t, serves(settings, hello),
-				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+			p, status := humustest.Start(t, h.Host(), serves(settings, hello),
+				humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			)
 			<-h.Listening("localhost:8443")
 
@@ -484,8 +481,8 @@ func TestService_ALPN_order(t *testing.T) {
 			h := humustest.NewHost(t)
 			settings := settingsFor(t, ca)
 			settings.TLS.NextProtos = []string{"acme-tls/1"}
-			p, status := humustest.Start(t, serves(settings, hello),
-				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+			p, status := humustest.Start(t, h.Host(), serves(settings, hello),
+				humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			)
 			<-h.Listening("localhost:8443")
 
@@ -508,8 +505,8 @@ func TestService_ALPN_order(t *testing.T) {
 			settings.TLS.NextProtos = []string{"acme-tls/1", "http/1.1"}
 			settings.HTTP2Only = true
 			cfg := settings.TLS
-			p, status := humustest.Start(t, serves(settings, hello),
-				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+			p, status := humustest.Start(t, h.Host(), serves(settings, hello),
+				humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			)
 			<-h.Listening("localhost:8443")
 
@@ -590,7 +587,7 @@ func TestNewService_the_listener(t *testing.T) {
 			ca := humustest.NewCA(t)
 			h := humustest.NewHost(t)
 			settings := settingsFor(t, ca)
-			init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+			init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 				first, err := httpserver.NewService(s, settings, hello)
 				if err != nil {
 					return nil, err
@@ -601,8 +598,8 @@ func TestNewService_the_listener(t *testing.T) {
 				}
 				return []humus.Service{first, second}, nil
 			}
-			_, status := humustest.Start(t, init,
-				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+			_, status := humustest.Start(t, h.Host(), init,
+				humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			)
 
 			st := <-status
@@ -618,14 +615,14 @@ func TestNewService_the_listener(t *testing.T) {
 			h := humustest.NewHost(t)
 			errInit := errors.New("the database is unreachable")
 			settings := settingsFor(t, ca)
-			init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+			init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 				if _, err := httpserver.NewService(s, settings, hello); err != nil {
 					return nil, err
 				}
 				return nil, errInit
 			}
-			_, status := humustest.Start(t, init,
-				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+			_, status := humustest.Start(t, h.Host(), init,
+				humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			)
 
 			st := <-status
@@ -643,7 +640,7 @@ func TestService_Addr_reports_the_port_the_Host_picked(t *testing.T) {
 		settings := settingsFor(t, ca)
 		settings.Addr = ":0"
 		addrs := make(chan net.Addr, 1)
-		init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			svc, err := httpserver.NewService(s, settings, hello)
 			if err != nil {
 				return nil, err
@@ -651,8 +648,8 @@ func TestService_Addr_reports_the_port_the_Host_picked(t *testing.T) {
 			addrs <- svc.Addr()
 			return []humus.Service{svc}, nil
 		}
-		p, status := humustest.Start(t, init,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		p, status := humustest.Start(t, h.Host(), init,
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		)
 
 		_, port, err := net.SplitHostPort((<-addrs).String())

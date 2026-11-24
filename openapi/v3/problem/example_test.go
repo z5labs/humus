@@ -30,8 +30,8 @@ import (
 
 // Init is the end user's Init: it sources the server's Settings, builds the
 // orders API with NewAPI, and serves it with httpserver.NewService.
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	settings, err := readSettings(ctx, s)
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	settings, err := readSettings(ctx, s, h)
 	if err != nil {
 		return nil, err // exit 78, naming every bad variable
 	}
@@ -61,12 +61,12 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 
 // readSettings sources the server's address and certificate, and keeps
 // DefaultSettings' every other field.
-func readSettings(ctx context.Context, s *humus.Setup) (httpserver.Settings, error) {
+func readSettings(ctx context.Context, s *humus.Setup, h humus.Host) (httpserver.Settings, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 	return config.Struct(func(r *config.Resolver) httpserver.Settings {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = r.Get(env("ADDR").Validate(httpserver.CheckAddr))
-		settings.TLS = r.Get(env("TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS))
+		settings.TLS = r.Get(env("TLS_PEM_FILE").Parse(readFile(h.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS))
 		return settings
 	}).Read(ctx)
 }

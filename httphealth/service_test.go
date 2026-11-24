@@ -61,8 +61,8 @@ func probeSettings(t *testing.T, ca *humustest.CA) httphealth.Settings {
 
 // probes returns an Init whose only Service is a probes server on settings,
 // with opts.
-func probes(settings httphealth.Settings, opts ...health.Option) func(context.Context, *humus.Setup) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+func probes(settings httphealth.Settings, opts ...health.Option) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
+	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		svc, err := httphealth.NewService(s, settings, opts...)
 		if err != nil {
 			return nil, err
@@ -142,7 +142,7 @@ func TestInit_is_not_ready_during_the_drain(t *testing.T) {
 
 		// apiInit returns an API on :8443 and a probes server on :8081, and
 		// no health Service: the probes server owns readiness.
-		apiInit := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		apiInit := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			settings := httpserver.DefaultSettings()
 			settings.Addr = ":8443"
 			settings.TLS = &tls.Config{Certificates: []tls.Certificate{ca.Issue(t, "localhost").TLS()}}
@@ -157,8 +157,8 @@ func TestInit_is_not_ready_during_the_drain(t *testing.T) {
 			return []humus.Service{api, probes}, nil
 		}
 
-		p, status := humustest.Start(t, apiInit,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder), httpserver.Defaults()),
+		p, status := humustest.Start(t, h.Host(), apiInit,
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)), humustest.WithApp(httpserver.Defaults()...),
 		)
 		<-h.Listening("localhost:8081")
 		synctest.Wait()
@@ -182,9 +182,8 @@ func TestService_readiness(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			ca := humustest.NewCA(t)
 			h := humustest.NewHost(t)
-			p, status := humustest.Start(t, probes(probeSettings(t, ca)),
+			p, status := humustest.Start(t, h.Host(), probes(probeSettings(t, ca)),
 				humustest.WithApp(
-					humus.WithHost(h.Host()),
 					humus.WithTelemetry(telemetry.NoopBuilder),
 					humus.WithDrain(humus.DrainDelay(5*time.Second)),
 				),
@@ -218,8 +217,8 @@ func TestService_readiness(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			ca := humustest.NewCA(t)
 			h := humustest.NewHost(t)
-			p, status := humustest.Start(t, probes(probeSettings(t, ca), health.Readiness(result(false, nil))),
-				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+			p, status := humustest.Start(t, h.Host(), probes(probeSettings(t, ca), health.Readiness(result(false, nil))),
+				humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			)
 			<-h.Listening("localhost:8081")
 			synctest.Wait()
@@ -237,8 +236,8 @@ func TestService_readiness(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			ca := humustest.NewCA(t)
 			h := humustest.NewHost(t)
-			p, status := humustest.Start(t, probes(probeSettings(t, ca), health.Liveness(result(false, nil))),
-				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+			p, status := humustest.Start(t, h.Host(), probes(probeSettings(t, ca), health.Liveness(result(false, nil))),
+				humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			)
 			<-h.Listening("localhost:8081")
 			synctest.Wait()
@@ -259,7 +258,7 @@ func TestService_answers_no_probe_before_Init_returns(t *testing.T) {
 		h := humustest.NewHost(t)
 		settings := probeSettings(t, ca)
 		start := time.Now()
-		init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			svc, err := httphealth.NewService(s, settings)
 			if err != nil {
 				return nil, err
@@ -267,8 +266,8 @@ func TestService_answers_no_probe_before_Init_returns(t *testing.T) {
 			time.Sleep(30 * time.Second) // a slow Init, such as one that runs migrations
 			return []humus.Service{svc}, nil
 		}
-		p, status := humustest.Start(t, init,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		p, status := humustest.Start(t, h.Host(), init,
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		)
 		<-h.Listening("localhost:8081")
 
@@ -298,8 +297,8 @@ func TestService_refuses_plain_text(t *testing.T) {
 		ca := humustest.NewCA(t)
 		h := humustest.NewHost(t)
 		tel := humustest.NewTelemetry()
-		p, status := humustest.Start(t, probes(probeSettings(t, ca)),
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+		p, status := humustest.Start(t, h.Host(), probes(probeSettings(t, ca)),
+			humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 		)
 		<-h.Listening("localhost:8081")
 
@@ -331,8 +330,8 @@ func TestService_logs_listening(t *testing.T) {
 		ca := humustest.NewCA(t)
 		h := humustest.NewHost(t)
 		tel := humustest.NewTelemetry()
-		p, status := humustest.Start(t, probes(probeSettings(t, ca)),
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+		p, status := humustest.Start(t, h.Host(), probes(probeSettings(t, ca)),
+			humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 		)
 		<-h.Listening("localhost:8081")
 		synctest.Wait()
@@ -370,8 +369,8 @@ func TestService_speaks_HTTP1_only(t *testing.T) {
 		settings := probeSettings(t, ca)
 		settings.TLS.NextProtos = []string{"h2", "acme-tls/1"}
 		cfg := settings.TLS
-		p, status := humustest.Start(t, probes(settings),
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		p, status := humustest.Start(t, h.Host(), probes(settings),
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		)
 		<-h.Listening("localhost:8081")
 		synctest.Wait()
@@ -468,14 +467,14 @@ func TestNewService_the_listener(t *testing.T) {
 			h := humustest.NewHost(t)
 			errInit := errors.New("the brokers are misconfigured")
 			settings := probeSettings(t, ca)
-			init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+			init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 				if _, err := httphealth.NewService(s, settings); err != nil {
 					return nil, err
 				}
 				return nil, errInit
 			}
-			_, status := humustest.Start(t, init,
-				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+			_, status := humustest.Start(t, h.Host(), init,
+				humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			)
 
 			st := <-status
@@ -507,7 +506,7 @@ func TestService_Addr_reports_the_port_the_Host_picked(t *testing.T) {
 		settings := probeSettings(t, ca)
 		settings.Addr = ":0"
 		addrs := make(chan net.Addr, 1)
-		init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			svc, err := httphealth.NewService(s, settings)
 			if err != nil {
 				return nil, err
@@ -515,8 +514,8 @@ func TestService_Addr_reports_the_port_the_Host_picked(t *testing.T) {
 			addrs <- svc.Addr()
 			return []humus.Service{svc}, nil
 		}
-		p, status := humustest.Start(t, init,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		p, status := humustest.Start(t, h.Host(), init,
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		)
 
 		_, port, err := net.SplitHostPort((<-addrs).String())
@@ -609,8 +608,8 @@ func TestService_records_no_span_and_no_metric(t *testing.T) {
 		ca := humustest.NewCA(t)
 		h := humustest.NewHost(t)
 		tel := humustest.NewTelemetry()
-		p, status := humustest.Start(t, probes(probeSettings(t, ca), health.Liveness(result(false, errSecret))),
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+		p, status := humustest.Start(t, h.Host(), probes(probeSettings(t, ca), health.Liveness(result(false, errSecret))),
+			humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 		)
 		<-h.Listening("localhost:8081")
 		synctest.Wait()
@@ -660,8 +659,8 @@ func TestService_uses_no_OpenTelemetry_globals(t *testing.T) {
 		ca := humustest.NewCA(t)
 		h := humustest.NewHost(t)
 		tel := humustest.NewTelemetry()
-		p, status := humustest.Start(t, probes(probeSettings(t, ca), health.Liveness(result(false, errSecret))),
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+		p, status := humustest.Start(t, h.Host(), probes(probeSettings(t, ca), health.Liveness(result(false, errSecret))),
+			humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 		)
 		<-h.Listening("localhost:8081")
 		synctest.Wait()
@@ -707,8 +706,8 @@ func TestInit_serves_the_probes_next_to_a_worker(t *testing.T) {
 		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 			"tls.pem": pemFile(t, ca.Issue(t, "localhost")),
 		}))
-		p, status := humustest.Start(t, Init,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		p, status := humustest.Start(t, h.Host(), Init,
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			humustest.WithEnv(map[string]string{"PROBES_ADDR": ":8081", "PROBES_TLS_PEM_FILE": "tls.pem"}),
 		)
 		<-h.Listening("localhost:8081")
@@ -726,8 +725,8 @@ func TestInit_serves_the_probes_next_to_a_worker(t *testing.T) {
 	t.Run("fails with exit 78 when PROBES_TLS_PEM_FILE is not set", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
-			_, status := humustest.Start(t, Init,
-				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+			_, status := humustest.Start(t, h.Host(), Init,
+				humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 				humustest.WithEnv(map[string]string{"PROBES_ADDR": ":8081"}),
 			)
 			st := <-status

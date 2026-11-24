@@ -453,8 +453,8 @@ func drain(statuses <-chan healthpb.HealthCheckResponse_ServingStatus) []healthp
 // watchesInit is an Init that registers NewServer's server on a
 // grpcserver.Service on :9090, with settings' TLS, answering from a health
 // Service's Probes.
-func watchesInit(settings grpcserver.Settings) func(context.Context, *humus.Setup) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+func watchesInit(settings grpcserver.Settings) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
+	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		svc, err := grpcserver.NewService(s, settings)
 		if err != nil {
 			return nil, err
@@ -475,7 +475,7 @@ func TestNewServer_Watch_follows_a_health_Service_through_shutdown(t *testing.T)
 					Addr: ":9090",
 					TLS:  tlsFor(t, ca),
 				}
-				p, exit := grpcservertest.Start(t, watchesInit(settings), humustest.WithApp(humus.WithHost(h.Host())))
+				p, exit := grpcservertest.Start(t, h.Host(), watchesInit(settings))
 				<-h.Listening("carts:9090")
 				synctest.Wait() // every Service is serving
 
@@ -507,7 +507,7 @@ func TestNewServer_Watch_follows_a_health_Service_through_shutdown(t *testing.T)
 				Addr: ":9090",
 				TLS:  tlsFor(t, ca),
 			}
-			p, exit := grpcservertest.Start(t, watchesInit(settings), humustest.WithApp(humus.WithHost(h.Host())))
+			p, exit := grpcservertest.Start(t, h.Host(), watchesInit(settings))
 			<-h.Listening("carts:9090")
 			synctest.Wait()
 

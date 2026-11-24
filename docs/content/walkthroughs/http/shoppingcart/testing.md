@@ -16,11 +16,11 @@ weight: 80
 The cart's `Init` opens its Store and its Catalog through two functions:
 
 ```go
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	return initWith(ctx, s, openPostgres, openCatalog)
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	return initWith(ctx, s, h, openPostgres, openCatalog)
 }
 
-type openStore func(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (store endpoint.Store, ping func(context.Context) error, err error)
+type openStore func(ctx context.Context, s *humus.Setup, h humus.Host, cfg *pgxpool.Config) (store endpoint.Store, ping func(context.Context) error, err error)
 
 type newCatalog func(s *humus.Setup, settings httpclient.Settings) (catalog endpoint.Catalog, ready func(context.Context) error, err error)
 ```
@@ -54,9 +54,9 @@ func (c *fakeCatalog) Price(_ context.Context, productID string) (float64, error
 ```
 
 ```go
-func onFakes(catalog *fakeCatalog) func(context.Context, *humus.Setup) ([]humus.Service, error) {
-	return func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
-		return initWith(ctx, setup, inMemory, catalog.open)
+func onFakes(catalog *fakeCatalog) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
+	return func(ctx context.Context, setup *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		return initWith(ctx, setup, h, inMemory, catalog.open)
 	}
 }
 ```
@@ -66,8 +66,8 @@ of its own that serves its key set, and calls it over HTTP/2 with a token
 the provider signed:
 
 ```go
-	p, status := httpservertest.Start(t, init,
-		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+	p, status := httpservertest.Start(t, f.h.Host(), init,
+		humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		humustest.WithEnv(f.env),
 	)
 ```
@@ -331,8 +331,8 @@ The catalog keeps its products in memory, and the cart its carts, and the
 cart calls the catalog with its real client, over mTLS:
 
 ```go
-	cart := run(t, "cart", h, func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-		return initWith(ctx, s, inMemory, openCatalog)
+	cart := run(t, "cart", h, func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		return initWith(ctx, s, h, inMemory, openCatalog)
 	}, []humus.Option{humus.WithFaults(Faults), humus.WithTelemetry(cartTelemetry)}, tokens, cartEnv, map[string]string{
 ```
 

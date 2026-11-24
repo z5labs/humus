@@ -48,7 +48,7 @@ the end user's service, served with `grpcserver`, calls `carts`:
 // Init is the end user's Init: it sources the carts dependency's Settings,
 // builds its Client with NewClient, and hands the Client to generated code,
 // in the end user's service, which it serves with grpcserver.
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	d := grpcclient.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
@@ -57,7 +57,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		// No .Default: Addr is required, and carts serves TLS, so
 		// CARTS_CA_FILE is too.
 		c.Addr = r.Get(env("CARTS_ADDR").Validate(grpcclient.CheckAddr))
-		c.TLS = r.Get(env("CARTS_CA_FILE").Parse(readFile(s.Host.Filesystem)).Parse(clientTLS).Validate(grpcclient.CheckTLS))
+		c.TLS = r.Get(env("CARTS_CA_FILE").Parse(readFile(h.Filesystem)).Parse(clientTLS).Validate(grpcclient.CheckTLS))
 		c.Timeout = r.Get(env("CARTS_TIMEOUT").Parse(time.ParseDuration).Default(d.Timeout).Validate(grpcclient.CheckTimeout))
 		return c
 	}).Read(ctx)
@@ -67,7 +67,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	serverSettings, err := config.Struct(func(r *config.Resolver) grpcserver.Settings {
 		return grpcserver.Settings{
 			Addr: r.Get(env("GRPC_ADDR").Validate(grpcserver.CheckAddr)),
-			TLS:  r.Get(env("GRPC_TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(grpcserver.CheckTLS)),
+			TLS:  r.Get(env("GRPC_TLS_PEM_FILE").Parse(readFile(h.Filesystem)).Parse(serverTLS).Validate(grpcserver.CheckTLS)),
 		}
 	}).Read(ctx)
 	if err != nil {
@@ -932,7 +932,7 @@ test. `grpcclient`'s own tests start one with a helper:
 func startCarts(t *testing.T, h *humustest.Host, ca *humustest.CA) (stop func()) {
 	t.Helper()
 	cert := ca.Issue(t, "carts")
-	p, exit := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	p, exit := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		svc, err := grpcserver.NewService(s, grpcserver.Settings{
 			Addr: "carts:9090",
 			TLS:  &tls.Config{Certificates: []tls.Certificate{cert.TLS()}},
@@ -942,7 +942,7 @@ func startCarts(t *testing.T, h *humustest.Host, ca *humustest.CA) (stop func())
 		}
 		testpb.RegisterTestServiceServer(svc, carts{})
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+	}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 	<-h.Listening("carts:9090")
 	return func() {
 		<-p.Notified(syscall.SIGTERM)
@@ -980,8 +980,8 @@ synctest.Test(t, func(t *testing.T) {
 	stop := startCarts(t, h, ca)
 	defer stop()
 
-	p, exit := grpcservertest.Start(t, Init,
-		humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+	p, exit := grpcservertest.Start(t, h.Host(), Init,
+		humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		humustest.WithEnv(map[string]string{
 			"GRPC_ADDR":         ":8443",
 			"GRPC_TLS_PEM_FILE": "tls.pem",

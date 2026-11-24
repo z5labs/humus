@@ -47,8 +47,8 @@ builds the API with `NewAPI`, and returns the Service that
 ```go
 // Init is the end user's Init: it sources the server's Settings, builds the
 // orders API with NewAPI, and serves it with httpserver.NewService.
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	settings, err := readSettings(ctx, s)
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	settings, err := readSettings(ctx, s, h)
 	if err != nil {
 		return nil, err // exit 78, naming every bad variable
 	}
@@ -894,7 +894,7 @@ of the test's own and signs the tokens the test sends. A `newFixture` helper
 makes the Host, its files and the variables:
 
 ```go
-func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error)) *service {
+func start(t *testing.T, init func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error)) *service {
 	t.Helper()
 	f := newFixture(t)
 
@@ -902,8 +902,8 @@ func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Servi
 	stopIdP := provider.serve(t, f.h.Host(), idpHost, f.idpCert)
 	<-f.h.Listening(idpHost)
 
-	p, status := httpservertest.Start(t, init,
-		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+	p, status := httpservertest.Start(t, f.h.Host(), init,
+		humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		humustest.WithEnv(f.env),
 	)
 	select {

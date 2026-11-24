@@ -84,7 +84,7 @@ func newFakeStore(down bool) *fakeStore {
 }
 
 func (f *fakeStore) opener() OpenStore {
-	return func(_ context.Context, s *humus.Setup, cfg *pgxpool.Config) (server.Store, func(context.Context) error, error) {
+	return func(_ context.Context, s *humus.Setup, _ humus.Host, cfg *pgxpool.Config) (server.Store, func(context.Context) error, error) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.cfg = cfg
@@ -215,7 +215,7 @@ func newFixture(t *testing.T, files map[string][]byte) fixture {
 	}
 }
 
-func (f fixture) start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error), env map[string]string) (*bedrocktest.Process, <-chan bedrock.ExitStatus) {
+func (f fixture) start(t *testing.T, init func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error), env map[string]string) (*bedrocktest.Process, <-chan bedrock.ExitStatus) {
 	t.Helper()
 	merged := maps.Clone(f.env)
 	for name, value := range env {
@@ -225,8 +225,8 @@ func (f fixture) start(t *testing.T, init func(context.Context, *humus.Setup) ([
 		}
 		merged[name] = value
 	}
-	return grpcservertest.Start(t, init,
-		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(f.tel), humus.WithFaults(Faults)),
+	return grpcservertest.Start(t, f.h.Host(), init,
+		humustest.WithApp(humus.WithTelemetry(f.tel), humus.WithFaults(Faults)),
 		humustest.WithEnv(merged),
 	)
 }
@@ -237,12 +237,12 @@ type ledger struct {
 	status <-chan bedrock.ExitStatus
 }
 
-func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error)) *ledger {
+func start(t *testing.T, init func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error)) *ledger {
 	t.Helper()
 	return startOn(t, newFixture(t, nil), init)
 }
 
-func startOn(t *testing.T, f fixture, init func(context.Context, *humus.Setup) ([]humus.Service, error)) *ledger {
+func startOn(t *testing.T, f fixture, init func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error)) *ledger {
 	t.Helper()
 	p, status := f.start(t, init, nil)
 	for _, addr := range []string{ledgerAddr, probesAddr} {
@@ -256,9 +256,9 @@ func startOn(t *testing.T, f fixture, init func(context.Context, *humus.Setup) (
 	return &ledger{f: f, p: p, status: status}
 }
 
-func onFake(st *fakeStore) func(context.Context, *humus.Setup) ([]humus.Service, error) {
-	return func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-		return InitWith(ctx, s, st.opener())
+func onFake(st *fakeStore) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
+	return func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		return InitWith(ctx, s, h, st.opener())
 	}
 }
 

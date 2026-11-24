@@ -153,7 +153,7 @@ func start(t *testing.T) *catalog {
 		tel:   humustest.NewTelemetry(),
 	}
 	serverCert := ca.Issue(t, "localhost")
-	c.p, c.status = httpservertest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	c.p, c.status = httpservertest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		settings := jwt.DefaultSettings()
 		settings.Issuer = issuer
 		settings.Audience = audience
@@ -177,7 +177,7 @@ func start(t *testing.T) *catalog {
 			return nil, err
 		}
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(c.tel.Builder())))
+	}, humustest.WithApp(humus.WithTelemetry(c.tel.Builder())))
 	select {
 	case <-h.Listening("localhost:8443"):
 	case st := <-c.status:

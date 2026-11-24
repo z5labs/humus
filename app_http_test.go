@@ -37,7 +37,7 @@ import (
 // outside its own temp directory.
 
 // httpService is a test-only humus.Service: an http.Server serving on a
-// listener from the Setup's Host. It keeps serving after Serve's context is
+// listener from the App's host. It keeps serving after Serve's context is
 // done, as an HTTP Service does, until Shutdown stops it.
 type httpService struct {
 	host humus.Host
@@ -46,19 +46,19 @@ type httpService struct {
 	srv  *http.Server
 }
 
-// newHTTPService returns an httpService that serves h on addr of s.Host.
-func newHTTPService(s *humus.Setup, addr string, h http.Handler) *httpService {
+// newHTTPService returns an httpService that serves h on addr of host.
+func newHTTPService(_ *humus.Setup, host humus.Host, addr string, h http.Handler) *httpService {
 	return &httpService{
-		host: s.Host,
+		host: host,
 		addr: addr,
 		srv:  &http.Server{Handler: h},
 	}
 }
 
 // newHTTPSService returns an httpService that serves h with TLS on addr of
-// s.Host.
-func newHTTPSService(s *humus.Setup, addr string, cfg *tls.Config, h http.Handler) *httpService {
-	srv := newHTTPService(s, addr, h)
+// host.
+func newHTTPSService(s *humus.Setup, host humus.Host, addr string, cfg *tls.Config, h http.Handler) *httpService {
+	srv := newHTTPService(s, host, addr, h)
 	srv.tls = cfg
 	return srv
 }
@@ -102,7 +102,7 @@ func (s *httpService) Shutdown(ctx context.Context) error {
 
 func TestHTTPService(t *testing.T) {
 	humustest.TestService(t, func(t *testing.T, s *humus.Setup) humus.Service {
-		return newHTTPService(s, ":8080", http.NotFoundHandler())
+		return newHTTPService(s, s.Host, ":8080", http.NotFoundHandler())
 	})
 }
 
@@ -136,13 +136,13 @@ func (j *job) Shutdown(context.Context) error {
 
 // httpApp returns an App on h whose Init returns an httpService serving
 // handler on :8080, followed by more.
-func httpApp(h *humustest.Host, handler http.Handler, more ...humus.Service) humus.App {
-	return humus.App{
+func httpApp(h *humustest.Host, handler http.Handler, more ...humus.Service) humus.App[humus.Host] {
+	return humus.App[humus.Host]{
 		Host:                h.Host(),
 		ShutdownGracePeriod: 10 * time.Second,
 		Telemetry:           telemetry.NoopBuilder,
-		Init: func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
-			return append([]humus.Service{newHTTPService(s, ":8080", handler)}, more...), nil
+		Init: func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			return append([]humus.Service{newHTTPService(s, h, ":8080", handler)}, more...), nil
 		},
 	}
 }
@@ -313,12 +313,12 @@ func TestApp_Run_HTTP_a_job_ends_the_App_and_stops_the_other_Services(t *testing
 		probe := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = io.WriteString(w, "ok")
 		})
-		app := humus.App{
+		app := humus.App[humus.Host]{
 			Host:                h.Host(),
 			ShutdownGracePeriod: 10 * time.Second,
 			Telemetry:           telemetry.NoopBuilder,
-			Init: func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
-				return []humus.Service{newJob(time.Second), newHTTPService(s, ":8081", probe)}, nil
+			Init: func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+				return []humus.Service{newJob(time.Second), newHTTPService(s, h, ":8081", probe)}, nil
 			},
 		}
 		begin := time.Now()
@@ -432,7 +432,7 @@ func TestApp_Run_HTTP_a_whole_App_on_a_test_Host(t *testing.T) {
 // tlsFromPKCS12 reads the PKCS#12 bundle that TLS_PKCS12_FILE names,
 // through the Setup's Host, and decrypts it with TLS_PKCS12_PASSWORD. The
 // setting names are only for illustration.
-func tlsFromPKCS12(ctx context.Context, s *humus.Setup) (*tls.Config, error) {
+func tlsFromPKCS12(ctx context.Context, s *humus.Setup, h humus.Host) (*tls.Config, error) {
 	path, err := config.Env(s.Process.Environment, "TLS_PKCS12_FILE").Read(ctx)
 	if err != nil {
 		return nil, err
@@ -441,7 +441,7 @@ func tlsFromPKCS12(ctx context.Context, s *humus.Setup) (*tls.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	f, err := s.Host.Filesystem.Open(path)
+	f, err := h.Filesystem.Open(path)
 	if err != nil {
 		return nil, err
 	}
@@ -471,15 +471,15 @@ func TestApp_Run_HTTPS_with_a_PKCS12_bundle_from_NewCA(t *testing.T) {
 		hello := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = io.WriteString(w, "hello over TLS")
 		})
-		init := func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-			cfg, err := tlsFromPKCS12(ctx, s)
+		init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			cfg, err := tlsFromPKCS12(ctx, s, h)
 			if err != nil {
 				return nil, err
 			}
-			return []humus.Service{newHTTPSService(s, ":8443", cfg, hello)}, nil
+			return []humus.Service{newHTTPSService(s, h, ":8443", cfg, hello)}, nil
 		}
-		p, status := humustest.Start(t, init,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		p, status := humustest.Start(t, h.Host(), init,
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			humustest.WithEnv(map[string]string{
 				"TLS_PKCS12_FILE":     h.Path("etc/tls/server.p12"),
 				"TLS_PKCS12_PASSWORD": password,
@@ -521,12 +521,12 @@ func TestApp_Run_HTTPS_a_wrong_password_exits_1_with_the_cause(t *testing.T) {
 		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 			"etc/tls/server.p12": bundle,
 		}))
-		app := humus.App{
+		app := humus.App[humus.Host]{
 			Host:                h.Host(),
 			ShutdownGracePeriod: 10 * time.Second,
 			Telemetry:           telemetry.NoopBuilder,
-			Init: func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-				if _, err := tlsFromPKCS12(ctx, s); err != nil {
+			Init: func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+				if _, err := tlsFromPKCS12(ctx, s, h); err != nil {
 					return nil, err
 				}
 				return nil, nil

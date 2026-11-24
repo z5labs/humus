@@ -58,9 +58,9 @@ func TestInit_calls_payments_for_each_request(t *testing.T) {
 		}))
 		defer stop()
 
-		p, status := humustest.Start(t, Init,
-			humustest.WithApp(httpserver.Defaults()),
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		p, status := humustest.Start(t, h.Host(), Init,
+			humustest.WithApp(httpserver.Defaults()...),
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			humustest.WithEnv(map[string]string{
 				"ADDR":             ":9443",
 				"TLS_PEM_FILE":     "tls.pem",
@@ -89,8 +89,8 @@ func TestInit_calls_payments_for_each_request(t *testing.T) {
 	t.Run("fails with exit 78 when PAYMENTS_URL is not set", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
-			_, status := humustest.Start(t, Init,
-				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+			_, status := humustest.Start(t, h.Host(), Init,
+				humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 				humustest.WithEnv(map[string]string{"PAYMENTS_CA_FILE": "payments-ca.pem"}),
 			)
 			st := <-status

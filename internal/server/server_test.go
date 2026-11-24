@@ -57,8 +57,8 @@ func newServer(s *humus.Setup, addr string, cfg *tls.Config, h http.Handler) (*s
 }
 
 // serves returns an Init whose only Service is a Server serving h on :8443.
-func serves(cfg *tls.Config, h http.Handler) func(context.Context, *humus.Setup) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+func serves(cfg *tls.Config, h http.Handler) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
+	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		srv, err := newServer(s, ":8443", cfg, h)
 		if err != nil {
 			return nil, err
@@ -157,8 +157,8 @@ func TestServer_serves_a_request_over_TLS(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
 		h := humustest.NewHost(t)
-		p, status := humustest.Start(t, serves(tlsConfig(t, ca), hello),
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		p, status := humustest.Start(t, h.Host(), serves(tlsConfig(t, ca), hello),
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		)
 		<-h.Listening("localhost:8443")
 
@@ -333,14 +333,14 @@ func TestNew_the_listener(t *testing.T) {
 			h := humustest.NewHost(t)
 			errInit := errors.New("the database is unreachable")
 			cfg := tlsConfig(t, ca)
-			init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+			init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 				if _, err := newServer(s, ":8443", cfg, hello); err != nil {
 					return nil, err
 				}
 				return nil, errInit
 			}
-			_, status := humustest.Start(t, init,
-				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+			_, status := humustest.Start(t, h.Host(), init,
+				humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			)
 
 			st := <-status
@@ -405,8 +405,8 @@ func TestServer_logs(t *testing.T) {
 			ca := humustest.NewCA(t)
 			h := humustest.NewHost(t)
 			tel := humustest.NewTelemetry()
-			p, status := humustest.Start(t, serves(tlsConfig(t, ca), hello),
-				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+			p, status := humustest.Start(t, h.Host(), serves(tlsConfig(t, ca), hello),
+				humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 			)
 			<-h.Listening("localhost:8443")
 			synctest.Wait()
@@ -430,8 +430,8 @@ func TestServer_logs(t *testing.T) {
 			ca := humustest.NewCA(t)
 			h := humustest.NewHost(t)
 			tel := humustest.NewTelemetry()
-			p, status := humustest.Start(t, serves(tlsConfig(t, ca), hello),
-				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+			p, status := humustest.Start(t, h.Host(), serves(tlsConfig(t, ca), hello),
+				humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 			)
 			<-h.Listening("localhost:8443")
 

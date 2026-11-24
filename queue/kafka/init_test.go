@@ -39,8 +39,8 @@ func TestInit_processes_and_commits_a_produced_record(t *testing.T) {
 		produce(t, h, c, 1) // key-0, with the value 0
 
 		tel := humustest.NewTelemetry() // keeps the App's logs off p.Stdout()
-		p, status := humustest.Start(t, Init,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+		p, status := humustest.Start(t, h.Host(), Init,
+			humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 			humustest.WithEnv(map[string]string{
 				"KAFKA_BROKERS":  strings.Join(c.ListenAddrs(), ","),
 				"KAFKA_GROUP_ID": "orders-consumer",
@@ -81,8 +81,8 @@ func TestInit_produces_an_order_it_cannot_read_as_a_dead_letter(t *testing.T) {
 		})
 
 		tel := humustest.NewTelemetry()
-		p, status := humustest.Start(t, Init,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+		p, status := humustest.Start(t, h.Host(), Init,
+			humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 			humustest.WithEnv(map[string]string{
 				"KAFKA_BROKERS":  strings.Join(c.ListenAddrs(), ","),
 				"KAFKA_GROUP_ID": "orders-consumer",
@@ -106,7 +106,7 @@ func TestInit_produces_an_order_it_cannot_read_as_a_dead_letter(t *testing.T) {
 
 func TestInit_with_a_bad_delivery_timeout_exits_78_naming_the_variable(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		_, status := humustest.Start(t, Init, humustest.WithEnv(map[string]string{
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), Init, humustest.WithEnv(map[string]string{
 			"KAFKA_BROKERS":          "kafka-0:9092",
 			"KAFKA_GROUP_ID":         "orders-consumer",
 			"KAFKA_TOPICS":           "orders",
@@ -123,7 +123,7 @@ func TestInit_with_a_bad_delivery_timeout_exits_78_naming_the_variable(t *testin
 
 func TestInit_without_its_brokers_group_and_topics_exits_78(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		_, status := humustest.Start(t, Init)
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), Init)
 
 		st := <-status
 		require.Equal(t, humus.ExitConfig, st.Code(), "cause: %v", st.Cause())
@@ -135,7 +135,7 @@ func TestInit_without_its_brokers_group_and_topics_exits_78(t *testing.T) {
 
 func TestInit_with_a_bad_broker_exits_78_naming_the_variable(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		_, status := humustest.Start(t, Init, humustest.WithEnv(map[string]string{
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), Init, humustest.WithEnv(map[string]string{
 			"KAFKA_BROKERS":  "kafka-0:9092,kafka-1",
 			"KAFKA_GROUP_ID": "orders-consumer",
 			"KAFKA_TOPICS":   "orders",
@@ -202,8 +202,8 @@ func TestSecureInit_consumes_over_mTLS_with_SASL(t *testing.T) {
 		produceRecords(t, h, c, []*kgo.Record{{Topic: topic, Key: []byte("key-1"), Value: []byte("{")}}, secure...)
 
 		tel := humustest.NewTelemetry()
-		p, status := humustest.Start(t, secureInit,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+		p, status := humustest.Start(t, h.Host(), secureInit,
+			humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 			humustest.WithEnv(map[string]string{
 				"KAFKA_BROKERS":       strings.Join(c.ListenAddrs(), ","),
 				"KAFKA_GROUP_ID":      "orders-consumer",
@@ -232,8 +232,7 @@ func TestSecureInit_without_the_client_certificate_exits_78(t *testing.T) {
 		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 			"etc/kafka/ca.pem": []byte("not a certificate"),
 		}))
-		_, status := humustest.Start(t, secureInit,
-			humustest.WithApp(humus.WithHost(h.Host())),
+		_, status := humustest.Start(t, h.Host(), secureInit,
 			humustest.WithEnv(map[string]string{
 				"KAFKA_BROKERS":       "127.0.0.1:9092",
 				"KAFKA_GROUP_ID":      "orders-consumer",
@@ -271,12 +270,12 @@ func TestTwoDeliveries_are_two_Services_with_two_group_IDs(t *testing.T) {
 			mu   sync.Mutex
 			seen = map[string]int{}
 		)
-		p, status := humustest.Start(t, twoDeliveries(c.ListenAddrs(), func(_ context.Context, m kafka.Message) error {
+		p, status := humustest.Start(t, h.Host(), twoDeliveries(c.ListenAddrs(), func(_ context.Context, m kafka.Message) error {
 			mu.Lock()
 			defer mu.Unlock()
 			seen[m.Topic]++
 			return nil
-		}), humustest.WithApp(humus.WithHost(h.Host())))
+		}))
 		synctest.Wait()
 		p.Signal(syscall.SIGTERM)
 

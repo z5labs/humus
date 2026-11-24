@@ -206,14 +206,14 @@ func TestService_Consuming_stays_unhealthy_with_nothing_listening(t *testing.T) 
 		h := humustest.NewHost(t) // nothing listens at rabbit:5672
 		tel := humustest.NewTelemetry()
 		svcs := make(chan *rabbitmq.Service, 1)
-		p, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		p, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			svc, err := rabbitmq.NewService(s, settings(), nop)
 			if err != nil {
 				return nil, err
 			}
 			svcs <- svc
 			return []humus.Service{svc}, nil
-		}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+		}, humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 		svc := <-svcs
 		m := svc.Consuming()
 
@@ -242,8 +242,8 @@ func TestService_Consuming_stays_unhealthy_with_nothing_listening(t *testing.T) 
 // of its own: it consumes settings on ch, and serves its probes on
 // probeSettings with httphealth's probes server, whose readiness waits for
 // the consumer to consume.
-func probedConsumer(settings rabbitmq.Settings, ch *standIn, probeSettings httphealth.Settings) func(context.Context, *humus.Setup) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+func probedConsumer(settings rabbitmq.Settings, ch *standIn, probeSettings httphealth.Settings) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
+	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		consumer, err := rabbitmq.NewService(s, settings, nop)
 		if err != nil {
 			return nil, err
@@ -284,9 +284,7 @@ func TestInit_a_consumers_probes_server_is_ready_once_it_consumes(t *testing.T) 
 			TLS:  &tls.Config{Certificates: []tls.Certificate{ca.Issue(t, "localhost").TLS()}},
 		}
 
-		p, status := humustest.Start(t, probedConsumer(settings(), ch, probeSettings),
-			humustest.WithApp(humus.WithHost(h.Host())),
-		)
+		p, status := humustest.Start(t, h.Host(), probedConsumer(settings(), ch, probeSettings))
 		<-h.Listening("localhost:8081")
 		synctest.Wait()
 		require.Equal(t, []string{qos10, consume}, ch.Calls(), "the consumer sent its basic.consume")

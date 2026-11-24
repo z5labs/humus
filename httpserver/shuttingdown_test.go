@@ -53,9 +53,9 @@ func streamSettings(t *testing.T, ca *humustest.CA) httpserver.Settings {
 // handler with settings, and waits for it to listen.
 func startOnDefaults(t *testing.T, h *humustest.Host, settings httpserver.Settings, handler http.Handler) (signal func(), status func() bedrock.ExitStatus) {
 	t.Helper()
-	p, st := humustest.Start(t, serves(settings, handler),
-		humustest.WithApp(httpserver.Defaults()),
-		humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+	p, st := humustest.Start(t, h.Host(), serves(settings, handler),
+		humustest.WithApp(httpserver.Defaults()...),
+		humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 	)
 	<-h.Listening("localhost:8443")
 	signal = func() {
@@ -240,7 +240,7 @@ func TestShuttingDown_ends_an_openapi_feed_whose_encoder_watches_it(t *testing.T
 		ended := make(chan time.Time, 1)
 		settings := streamSettings(t, ca)
 		textErrors := func() openapi.Encoder[textError] { return textErrorCodec{} }
-		p, st := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		p, st := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 			api, err := openapi.NewAPI(s,
 				openapi.Info{Title: "Feeds", Version: "1.0.0"},
 				openapi.Unmatched{NotFound: http.NotFoundHandler(), MethodNotAllowed: http.NotFoundHandler()},
@@ -255,10 +255,10 @@ func TestShuttingDown_ends_an_openapi_feed_whose_encoder_watches_it(t *testing.T
 			if err != nil {
 				return nil, err
 			}
-			return serves(settings, api)(context.Background(), s)
+			return serves(settings, api)(context.Background(), s, h)
 		},
-			humustest.WithApp(httpserver.Defaults()),
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+			humustest.WithApp(httpserver.Defaults()...),
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		)
 		<-h.Listening("localhost:8443")
 

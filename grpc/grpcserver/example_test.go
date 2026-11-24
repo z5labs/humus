@@ -25,7 +25,7 @@ import (
 // Init is the end user's Init: it sources the Settings, builds the Service
 // with NewService, registers the end user's service on it and returns it,
 // with any other Service the process runs.
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
 	settings, err := config.Struct(func(r *config.Resolver) grpcserver.Settings {
@@ -34,7 +34,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 			Addr: r.Get(env("GRPC_ADDR").Validate(grpcserver.CheckAddr)),
 			// readFile and serverTLS are the end user's own helpers. The
 			// bundle's password is read only once the bundle has been.
-			TLS: r.Get(env("GRPC_TLS_P12_FILE").Parse(readFile(s.Host.Filesystem)).FlatMap(func(bundle []byte) config.Value[*tls.Config] {
+			TLS: r.Get(env("GRPC_TLS_P12_FILE").Parse(readFile(h.Filesystem)).FlatMap(func(bundle []byte) config.Value[*tls.Config] {
 				return env("GRPC_TLS_P12_PASSWORD").Parse(serverTLS(bundle))
 			}).Validate(grpcserver.CheckTLS)),
 		}
@@ -93,10 +93,10 @@ func serverTLS(bundle []byte) func(password string) (*tls.Config, error) {
 
 // buildTelemetry is the service's telemetry.Builder, which names the
 // service.
-func buildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+func buildTelemetry(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 	s := telemetry.DefaultSettings()
 	s.ServiceName = "greeter"
-	return telemetry.New(ctx, s, dial, p.Stdout)
+	return telemetry.New(ctx, s, n, p.Stdout)
 }
 
 // A gRPC service's main is one call to grpcserver.Main, with an Init that

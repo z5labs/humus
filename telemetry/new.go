@@ -99,8 +99,8 @@ const (
 //
 // The console exporters share stdout and their writes to it are
 // serialized, so stdout need not be safe for concurrent use. The OTLP
-// exporters connect through dial, and share one connection, or one HTTP
-// client, between them; dial is called only once something is exported.
+// exporters connect through n's DialTCP, and share one connection, or one
+// HTTP client, between them; n is dialled only once something is exported.
 //
 // The resource is built from s.ResourceOptions, and then service.name is
 // set to s.ServiceName, so it wins over anything a detector finds. If a
@@ -120,7 +120,7 @@ const (
 // it. What does still take effect is OpenTelemetry's experimental
 // OTEL_GO_X_* features, its internal logger, and any resource detector
 // s.ResourceOptions opts in to.
-func New(ctx context.Context, s Settings, dial Dialer, stdout io.Writer) (SDK, error) {
+func New(ctx context.Context, s Settings, n Network, stdout io.Writer) (SDK, error) {
 	if s.Disabled {
 		return Noop(), nil
 	}
@@ -128,8 +128,8 @@ func New(ctx context.Context, s Settings, dial Dialer, stdout io.Writer) (SDK, e
 		return SDK{}, err
 	}
 	uses := func(e Exporter) bool { return s.Traces == e || s.Metrics == e || s.Logs == e }
-	if dial == nil && uses(ExporterOTLP) {
-		return SDK{}, errors.New("telemetry: New: dial is nil, and a signal is exported over OTLP")
+	if n == nil && uses(ExporterOTLP) {
+		return SDK{}, errors.New("telemetry: New: n is nil, and a signal is exported over OTLP")
 	}
 	if stdout == nil && uses(ExporterConsole) {
 		return SDK{}, errors.New("telemetry: New: stdout is nil, and a signal is written to the console")
@@ -142,7 +142,7 @@ func New(ctx context.Context, s Settings, dial Dialer, stdout io.Writer) (SDK, e
 
 	b := &builder{
 		s:      s,
-		dial:   dial,
+		net:    n,
 		stdout: &syncWriter{w: stdout},
 		res:    res,
 	}
@@ -167,7 +167,7 @@ func newResource(ctx context.Context, s Settings) (*resource.Resource, error) {
 // finished or not.
 type builder struct {
 	s      Settings
-	dial   Dialer
+	net    Network
 	stdout io.Writer
 	res    *resource.Resource
 
@@ -440,8 +440,8 @@ func (b *builder) url(path string) string {
 // connection takes its compression from it, so neither New's options nor
 // OTEL_EXPORTER_OTLP_COMPRESSION compress gRPC exports.
 //
-// The passthrough resolver hands the endpoint to dial as it is, so that a
-// name is resolved by the Host, not by DNS, and no proxy is used, so that
+// The passthrough resolver hands the endpoint to the Network as it is, so
+// that a name is resolved by the host, not by DNS, and no proxy is used, so that
 // none is read from the environment.
 func (b *builder) grpcConn() (*grpc.ClientConn, error) {
 	if b.conn != nil {
@@ -453,7 +453,7 @@ func (b *builder) grpcConn() (*grpc.ClientConn, error) {
 	}
 	conn, err := grpc.NewClient("passthrough:///"+b.s.OTLP.Endpoint,
 		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
-			return b.dial(ctx, "tcp", addr)
+			return b.net.DialTCP(ctx, "tcp", addr)
 		}),
 		grpc.WithTransportCredentials(creds),
 		grpc.WithNoProxy(),
@@ -467,14 +467,14 @@ func (b *builder) grpcConn() (*grpc.ClientConn, error) {
 }
 
 // httpClient returns the HTTP client the OTLP exporters share, making it on
-// the first call. Its transport dials through dial and uses no proxy, so
+// the first call. Its transport dials through the Network and uses no proxy, so
 // that none is read from the environment.
 func (b *builder) httpClient() *http.Client {
 	if b.client != nil {
 		return b.client
 	}
 	b.transport = &http.Transport{
-		DialContext:     b.dial,
+		DialContext:     b.net.DialTCP,
 		TLSClientConfig: b.s.OTLP.TLS.Clone(),
 	}
 	b.client = &http.Client{

@@ -33,8 +33,8 @@ func TestNewClient_speaks_only_HTTP2(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
 		h := humustest.NewHost(t)
-		p, status := httpservertest.Start(t, serves(ca.Issue(t, "localhost"), hello),
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		p, status := httpservertest.Start(t, h.Host(), serves(ca.Issue(t, "localhost"), hello),
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		)
 		<-h.Listening("localhost:8443")
 
@@ -103,8 +103,8 @@ func TestNewClient_fails_the_handshake_against_another_CA(t *testing.T) {
 		ca := humustest.NewCA(t)
 		other := humustest.NewCA(t)
 		h := humustest.NewHost(t)
-		p, status := httpservertest.Start(t, serves(ca.Issue(t, "localhost"), hello),
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		p, status := httpservertest.Start(t, h.Host(), serves(ca.Issue(t, "localhost"), hello),
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		)
 		<-h.Listening("localhost:8443")
 
@@ -124,8 +124,8 @@ func TestNewClient_works_next_to_humustest_Start(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
 		h := humustest.NewHost(t)
-		p, status := humustest.Start(t, serves(ca.Issue(t, "localhost"), hello),
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		p, status := humustest.Start(t, h.Host(), serves(ca.Issue(t, "localhost"), hello),
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		)
 		<-h.Listening("localhost:8443")
 

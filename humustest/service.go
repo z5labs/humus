@@ -195,11 +195,11 @@ func (st *subtest) run(newService func(*testing.T, *humus.Setup) humus.Service, 
 		serving: make(chan context.Context, 1),
 		done:    make(chan struct{}),
 	}
-	app := humus.App{
+	app := humus.App[humus.Host]{
 		Host:                host.Host(),
 		ShutdownGracePeriod: waitLimit,
 		Telemetry:           telemetry.NoopBuilder,
-		Init: func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+		Init: func(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			select {
 			case setups <- s:
 			case <-ctx.Done():

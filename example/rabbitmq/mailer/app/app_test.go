@@ -86,8 +86,8 @@ func (m *mailer) start(t *testing.T, env map[string]string, opts ...humus.Option
 		}
 		merged[name] = value
 	}
-	p, st := humustest.Start(t, app.Init,
-		humustest.WithApp(append([]humus.Option{humus.WithHost(m.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)}, opts...)...),
+	p, st := humustest.Start(t, m.h.Host(), app.Init,
+		humustest.WithApp(append([]humus.Option{humus.WithTelemetry(telemetry.NoopBuilder)}, opts...)...),
 		humustest.WithEnv(merged),
 	)
 	return p.Signal, st
@@ -298,8 +298,8 @@ func TestBuildTelemetry_with_a_bad_variable_exits_78(t *testing.T) {
 func TestBuildTelemetry_writes_the_logs_to_stdout_by_default(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		m := newMailer(t, nil)
-		p, status := humustest.Start(t, app.Init,
-			humustest.WithApp(humus.WithHost(m.h.Host()), humus.WithTelemetry(app.BuildTelemetry)),
+		p, status := humustest.Start(t, m.h.Host(), app.Init,
+			humustest.WithApp(humus.WithTelemetry(app.BuildTelemetry)),
 			humustest.WithEnv(m.env),
 		)
 		<-m.h.Listening(probesAddr)

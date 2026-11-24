@@ -44,9 +44,7 @@ func TestMain_shutdown_ends_a_stream_with_Unavailable(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
 		h := humustest.NewHost(t)
-		p, exit := grpcservertest.Start(t, serves(settingsFor(t, ca, ":9090"), subscriber{}),
-			humustest.WithApp(humus.WithHost(h.Host())),
-		)
+		p, exit := grpcservertest.Start(t, h.Host(), serves(settingsFor(t, ca, ":9090"), subscriber{}))
 		<-h.Listening("carts:9090")
 
 		client := testpb.NewTestServiceClient(grpcservertest.NewClient(t, h, "carts:9090", ca.Pool()))
@@ -101,9 +99,7 @@ func TestMain_a_client_reconnects_when_shutdown_ends_its_stream(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
 		h := humustest.NewHost(t)
-		p, exit := grpcservertest.Start(t, serves(settingsFor(t, ca, ":9090"), subscriber{}),
-			humustest.WithApp(humus.WithHost(h.Host())),
-		)
+		p, exit := grpcservertest.Start(t, h.Host(), serves(settingsFor(t, ca, ":9090"), subscriber{}))
 		<-h.Listening("carts:9090")
 
 		client := testpb.NewTestServiceClient(grpcservertest.NewClient(t, h, "carts:9090", ca.Pool()))
@@ -133,9 +129,7 @@ func TestMain_a_client_reconnects_when_shutdown_ends_its_stream(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			ca := humustest.NewCA(t)
 			h := humustest.NewHost(t)
-			p, exit := grpcservertest.Start(t, serves(settingsFor(t, ca, ":9090"), finite{}),
-				humustest.WithApp(humus.WithHost(h.Host())),
-			)
+			p, exit := grpcservertest.Start(t, h.Host(), serves(settingsFor(t, ca, ":9090"), finite{}))
 			<-h.Listening("carts:9090")
 
 			client := testpb.NewTestServiceClient(grpcservertest.NewClient(t, h, "carts:9090", ca.Pool()))
@@ -160,9 +154,7 @@ func TestMain_a_client_reconnects_when_shutdown_ends_its_stream(t *testing.T) {
 				entered: make(chan struct{}),
 				end:     func(context.Context) error { return status.Error(codes.Aborted, "gone") },
 			}
-			p, exit := grpcservertest.Start(t, serves(settingsFor(t, ca, ":9090"), ws),
-				humustest.WithApp(humus.WithHost(h.Host())),
-			)
+			p, exit := grpcservertest.Start(t, h.Host(), serves(settingsFor(t, ca, ":9090"), ws))
 			<-h.Listening("carts:9090")
 
 			client := testpb.NewTestServiceClient(grpcservertest.NewClient(t, h, "carts:9090", ca.Pool()))
@@ -272,9 +264,7 @@ func endStream(t *testing.T, kind streamKind, end func(ctx context.Context) erro
 	ca := humustest.NewCA(t)
 	h := humustest.NewHost(t)
 	ws := &waitingServer{entered: make(chan struct{}), end: end}
-	p, exit := grpcservertest.Start(t, serves(settingsFor(t, ca, ":9090"), ws),
-		humustest.WithApp(humus.WithHost(h.Host())),
-	)
+	p, exit := grpcservertest.Start(t, h.Host(), serves(settingsFor(t, ca, ":9090"), ws))
 	<-h.Listening("carts:9090")
 
 	client := testpb.NewTestServiceClient(grpcservertest.NewClient(t, h, "carts:9090", ca.Pool()))
@@ -359,9 +349,7 @@ func TestService_Shutdown_does_not_cancel_a_unary_RPC(t *testing.T) {
 		ca := humustest.NewCA(t)
 		h := humustest.NewHost(t)
 		ts := &testServer{entered: make(chan struct{}), release: make(chan struct{}), cancelled: make(chan time.Time, 1)}
-		p, exit := grpcservertest.Start(t, serves(settingsFor(t, ca, ":9090"), unaryAndStream{ts}),
-			humustest.WithApp(humus.WithHost(h.Host())),
-		)
+		p, exit := grpcservertest.Start(t, h.Host(), serves(settingsFor(t, ca, ":9090"), unaryAndStream{ts}))
 		<-h.Listening("carts:9090")
 
 		client := testpb.NewTestServiceClient(grpcservertest.NewClient(t, h, "carts:9090", ca.Pool()))
@@ -419,8 +407,7 @@ func TestService_a_handler_blocked_in_Recv_holds_Shutdown_until_the_grace_period
 		ca := humustest.NewCA(t)
 		h := humustest.NewHost(t)
 		r := receiver{entered: make(chan struct{}), returned: make(chan time.Time, 1)}
-		p, exit := grpcservertest.Start(t, serves(settingsFor(t, ca, ":9090"), r),
-			humustest.WithApp(humus.WithHost(h.Host())),
+		p, exit := grpcservertest.Start(t, h.Host(), serves(settingsFor(t, ca, ":9090"), r),
 			humustest.WithEnv(map[string]string{"HUMUS_SHUTDOWN_GRACE_PERIOD": "2s"}),
 		)
 		<-h.Listening("carts:9090")
@@ -450,8 +437,8 @@ func TestService_a_stream_ended_by_Shutdown_records_an_Error_span(t *testing.T) 
 		ca := humustest.NewCA(t)
 		h := humustest.NewHost(t)
 		tel := humustest.NewTelemetry()
-		p, exit := grpcservertest.Start(t, serves(settingsFor(t, ca, ":9090"), subscriber{}),
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+		p, exit := grpcservertest.Start(t, h.Host(), serves(settingsFor(t, ca, ":9090"), subscriber{}),
+			humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 		)
 		<-h.Listening("carts:9090")
 
@@ -488,9 +475,7 @@ func TestService_the_end_users_stream_interceptors_see_the_context_Shutdown_canc
 			<-ss.Context().Done()
 			return ss.Context().Err()
 		}
-		p, exit := grpcservertest.Start(t, serves(settingsFor(t, ca, ":9090"), subscriber{}, grpc.ChainStreamInterceptor(waits)),
-			humustest.WithApp(humus.WithHost(h.Host())),
-		)
+		p, exit := grpcservertest.Start(t, h.Host(), serves(settingsFor(t, ca, ":9090"), subscriber{}, grpc.ChainStreamInterceptor(waits)))
 		<-h.Listening("carts:9090")
 
 		client := testpb.NewTestServiceClient(grpcservertest.NewClient(t, h, "carts:9090", ca.Pool()))

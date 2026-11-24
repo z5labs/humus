@@ -30,7 +30,7 @@ import (
 // Init is the end user's Init: it sources the payments dependency's
 // Settings, builds its client with NewClient, and hands the client to the
 // handler of an httpserver Service.
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	d := httpclient.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
@@ -39,7 +39,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		// No .Default: BaseURL is required, and the dependency is https,
 		// so PAYMENTS_CA_FILE is too.
 		c.BaseURL = r.Get(env("PAYMENTS_URL").Parse(url.Parse).Validate(httpclient.CheckBaseURL))
-		c.TLS = r.Get(env("PAYMENTS_CA_FILE").Parse(readFile(s.Host.Filesystem)).Parse(trusting).Validate(httpclient.CheckTLS))
+		c.TLS = r.Get(env("PAYMENTS_CA_FILE").Parse(readFile(h.Filesystem)).Parse(trusting).Validate(httpclient.CheckTLS))
 		c.Timeout = r.Get(env("PAYMENTS_TIMEOUT").Parse(time.ParseDuration).Default(d.Timeout).Validate(httpclient.CheckTimeout))
 		return c
 	}).Read(ctx)
@@ -49,7 +49,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	serverSettings, err := config.Struct(func(r *config.Resolver) httpserver.Settings {
 		c := httpserver.DefaultSettings()
 		c.Addr = r.Get(env("ADDR").Validate(httpserver.CheckAddr))
-		c.TLS = r.Get(env("TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS))
+		c.TLS = r.Get(env("TLS_PEM_FILE").Parse(readFile(h.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS))
 		return c
 	}).Read(ctx)
 	if err != nil {
@@ -134,10 +134,10 @@ func serverTLS(pem []byte) (*tls.Config, error) {
 
 // buildTelemetry is the service's telemetry.Builder, which names the
 // service.
-func buildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+func buildTelemetry(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 	s := telemetry.DefaultSettings()
 	s.ServiceName = "orders"
-	return telemetry.New(ctx, s, dial, p.Stdout)
+	return telemetry.New(ctx, s, n, p.Stdout)
 }
 
 // A service that calls a dependency builds the dependency's client in its

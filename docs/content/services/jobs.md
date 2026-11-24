@@ -59,7 +59,7 @@ dependency is a buffered writer, flushed once the job has stopped:
 ```go
 // Init is the end user's Init: it builds the run's dependencies, releases
 // them with s.OnStop, and returns the job's Service.
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	bucket, err := config.Env(s.Process.Environment, "EXPORT_BUCKET").Read(ctx)
 	if err != nil {
 		return nil, err // exit 78
@@ -392,8 +392,8 @@ an `Init` whose only Service is a job that runs the given run:
 
 ```go
 // runs returns an Init whose only Service is a job that runs run.
-func runs(run func(context.Context) error) func(context.Context, *humus.Setup) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+func runs(run func(context.Context) error) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
+	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		return []humus.Service{job.NewService(s, run)}, nil
 	}
 }
@@ -410,7 +410,7 @@ nothing:
 func TestService_SIGTERM_interrupts_the_run_and_exits_1(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		tel := humustest.NewTelemetry()
-		p, status := humustest.Start(t, runs(func(ctx context.Context) error {
+		p, status := humustest.Start(t, humustest.NewHost(t).Host(), runs(func(ctx context.Context) error {
 			<-ctx.Done()
 			return context.Cause(ctx)
 		}), humustest.WithApp(humus.WithTelemetry(tel.Builder())))
@@ -439,7 +439,7 @@ test sets `TRACEPARENT`, `TRACESTATE` and `BAGGAGE` with `humustest.WithEnv`,
 and reads the span's trace ID and parent from the recorder:
 
 ```go
-_, status := humustest.Start(t, runs(func(ctx context.Context) error {
+_, status := humustest.Start(t, humustest.NewHost(t).Host(), runs(func(ctx context.Context) error {
 	schedule = baggage.FromContext(ctx).Member("schedule").Value()
 	return nil
 }),

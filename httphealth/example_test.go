@@ -81,13 +81,13 @@ func ExampleNewHandler() {
 // to the mux the API is served on, and returns the health Service whose
 // Probes they answer from next to the API's Service. The pod needs no
 // second port: the kubelet probes the API's own, with scheme: HTTPS.
-func APIInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func APIInit(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
 	settings, err := config.Struct(func(r *config.Resolver) httpserver.Settings {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = r.Get(env("ADDR").Validate(httpserver.CheckAddr))
-		settings.TLS = r.Get(env("TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS))
+		settings.TLS = r.Get(env("TLS_PEM_FILE").Parse(readFile(h.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS))
 		return settings
 	}).Read(ctx)
 	if err != nil {
@@ -134,14 +134,14 @@ func hello(w http.ResponseWriter, _ *http.Request) {
 // a worker, and a probes server whose readiness waits for the worker to
 // connect. It returns the two Services, and no health Service: the probes
 // server owns readiness.
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
 	probeSettings, err := config.Struct(func(r *config.Resolver) httphealth.Settings {
 		return httphealth.Settings{
 			// No .Default: both fields are required.
 			Addr: r.Get(env("PROBES_ADDR").Validate(httphealth.CheckAddr)),
-			TLS:  r.Get(env("PROBES_TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(httphealth.CheckTLS)),
+			TLS:  r.Get(env("PROBES_TLS_PEM_FILE").Parse(readFile(h.Filesystem)).Parse(serverTLS).Validate(httphealth.CheckTLS)),
 		}
 	}).Read(ctx)
 	if err != nil {

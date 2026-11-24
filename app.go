@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"slices"
 	"strings"
@@ -62,15 +63,34 @@ type Service interface {
 	Shutdown(ctx context.Context) error
 }
 
-// App is a bedrock.App that runs Services with humus's lifecycle. Host,
-// Telemetry and Init are required. Main runs one on the OS process, with
-// defaults for every field but Init; a main that wants no defaults runs an
-// App literal with bedrock.Main.
-type App struct {
-	// Host is the network and filesystem the App runs on: OSHost(), which
-	// is Main's default, in main, and a Host built from the test host's
-	// parts in a test. Its IPNetwork and its Filesystem are both required.
-	Host Host
+// Network is what humus itself dials through an App's host: the OTLP
+// collector, through the telemetry Builder, before Init, and whatever the
+// Drain dials. An App's host satisfies it by embedding its network, as Host
+// does, or by forwarding DialTCP.
+type Network interface {
+	// DialTCP connects to address over "tcp", "tcp4" or "tcp6", like
+	// net.Dialer.DialContext.
+	DialTCP(ctx context.Context, network, address string) (net.Conn, error)
+}
+
+// Init builds an App's dependencies on its host h, and returns the Services
+// to run. Its ctx is done when the App receives an interrupt or SIGTERM, so
+// a slow Init, such as one retrying a database connection, is cancelled by a
+// signal.
+type Init[H any] = func(ctx context.Context, s *Setup, h H) ([]Service, error)
+
+// App is a bedrock.App that runs Services with humus's lifecycle, on a host
+// of type H. Host, Telemetry and Init are required. Main and MainOn run one
+// on the OS process, with Defaults for every field but Host and Init; a main
+// that wants no defaults runs an App literal with bedrock.Main.
+type App[H Network] struct {
+	// Host is the network and filesystem the App runs on, handed to Init,
+	// to Faults, to the telemetry Builder and to the Drain. For the default
+	// host, Host, it is OSHost(), which is Main's, in main, and a Host built
+	// from the test host's parts in a test; its IPNetwork and its Filesystem
+	// are both required. An App on a host of its own gets it from MainOn's
+	// acquire.
+	Host H
 
 	// ShutdownGracePeriod is the grace period when the environment does not
 	// set HUMUS_SHUTDOWN_GRACE_PERIOD. The grace period bounds the whole
@@ -104,33 +124,36 @@ type App struct {
 	// humustest.Telemetry, in tests.
 	//
 	// Run calls it after it starts listening for signals and before Init,
-	// with a context that a signal cancels, the Process, and the Host's
-	// DialTCP. The SDK it returns is handed to Init in Setup.Telemetry, the
-	// lifecycle logs through its LoggerProvider, and it is shut down last,
-	// after the OnStop functions.
+	// with a context that a signal cancels, the Process, and the App's Host
+	// as its telemetry.Network. The SDK it returns is handed to Init in
+	// Setup.Telemetry, the lifecycle logs through its LoggerProvider, and it
+	// is shut down last, after the OnStop functions.
 	Telemetry telemetry.Builder
 
-	// Init builds the App's dependencies and returns the Services to run.
-	// Its ctx is done when the App receives an interrupt or SIGTERM, so a
-	// slow Init, such as one retrying a database connection, is cancelled
-	// by a signal.
-	Init func(ctx context.Context, s *Setup) ([]Service, error)
+	// Init builds the App's dependencies on its Host and returns the
+	// Services to run.
+	Init Init[H]
 
 	// Faults returns the App's failure injection settings. Run calls it
-	// after building telemetry and before Init, with the Setup that Init is
-	// then given. Run builds the Injector with fault.New, and puts it in
-	// Setup.Faults. An error from either fails startup the way an error
-	// from Init does: ExitConfig for a *config.Error, ExitFailure
+	// after building telemetry and before Init, with the Setup and the Host
+	// that Init is then given. Run builds the Injector with fault.New, and
+	// puts it in Setup.Faults. An error from either fails startup the way an
+	// error from Init does: ExitConfig for a *config.Error, ExitFailure
 	// otherwise. nil, Main's default, means no failure injection.
-	Faults func(ctx context.Context, s *Setup) (fault.Settings, error)
+	Faults func(ctx context.Context, s *Setup, h H) (fault.Settings, error)
 }
 
-// Setup is what Init is given.
+// Setup is what Init is given besides its host. It isn't generic, so a
+// helper that takes a *Setup works with every host.
 type Setup struct {
 	// Process is the bedrock.Process the App is run with.
 	Process bedrock.Process
 
-	// Host is the App's Host.
+	// Host is the App's Host when the App's host is the default host,
+	// Host, and the zero Host otherwise. It is here only for the runtime
+	// packages that don't yet take the network they use, and it goes once
+	// none reads it: the end user's code takes the host from the argument
+	// Init is given.
 	Host Host
 
 	// Telemetry is the App's SDK, built by App.Telemetry. Init and the
@@ -200,8 +223,9 @@ func (e *GracePeriodError) Unwrap() error {
 
 // Run implements bedrock.App. In order, it:
 //
-//  1. checks the App's Host, and exits ExitFailure, naming each field at
-//     fault, when its IPNetwork or its Filesystem is nil;
+//  1. when the App's host is the default host, Host, checks it, and exits
+//     ExitFailure, naming each field at fault, when its IPNetwork or its
+//     Filesystem is nil. A host of the App's own is the App's to check;
 //  2. reads the grace period from HUMUS_SHUTDOWN_GRACE_PERIOD in
 //     p.Environment, a time.ParseDuration string such as "30s" defaulting to
 //     the App's ShutdownGracePeriod, and the drain: DrainDelay of
@@ -212,18 +236,18 @@ func (e *GracePeriodError) Unwrap() error {
 //     its default, or HUMUS_SHUTDOWN_DRAIN_DELAY is negative;
 //  3. listens for an interrupt and SIGTERM through p.NotifyContext;
 //  4. builds the App's telemetry by calling App.Telemetry with the context
-//     a signal cancels, p and Host.DialTCP. It exits ExitConfig when a
+//     a signal cancels, p and the App's Host. It exits ExitConfig when a
 //     *config.Error is in the Builder's error chain, and ExitFailure for any
 //     other failure or for an SDK with a nil field;
 //  5. sets OpenTelemetry's process-wide error handler to one that writes
 //     each error to p.Stderr, as one line starting with "telemetry: ";
-//  6. when App.Faults is set, calls it with the context a signal cancels
-//     and the Setup that Init is then given, builds the Injector from the
+//  6. when App.Faults is set, calls it with the context a signal cancels,
+//     and the Setup and the Host that Init is then given, builds the Injector from the
 //     Settings it returns with fault.New, and puts it in Setup.Faults. If
 //     either fails, it runs the OnStop functions registered so far and
 //     exits ExitConfig when a *config.Error is in the error chain, or
 //     ExitFailure otherwise, without calling Init;
-//  7. calls Init, and if it fails, runs the OnStop functions registered so
+//  7. calls Init with the App's Host, and if it fails, runs the OnStop functions registered so
 //     far and exits ExitConfig when a *config.Error is in Init's error
 //     chain, or ExitFailure otherwise;
 //  8. calls Serve on every Service concurrently, and logs "serving";
@@ -236,7 +260,7 @@ func (e *GracePeriodError) Unwrap() error {
 //     action, cancels the context passed to Serve, and logs "shutting
 //     down";
 //  11. when it hasn't yet received every Serve's result, calls the drain
-//     with the Setup that Init was given and a context that keeps ctx's
+//     with the Setup that Init was given, the App's Host and a context that keeps ctx's
 //     values, is not cancelled with it, is done once every Serve has
 //     returned, and gives ShutdownCause the shutdown's cause: the signal's
 //     cause after a signal, ctx's cause when ctx was cancelled, and an
@@ -274,7 +298,7 @@ func (e *GracePeriodError) Unwrap() error {
 // step 5 writes; and a failure to shut telemetry down, which is joined into
 // the cause and turns an exit 0 into ExitFailure. Run never recovers a
 // panic, including one in the drain.
-func (a App) Run(ctx context.Context, p bedrock.Process) bedrock.ExitStatus {
+func (a App[H]) Run(ctx context.Context, p bedrock.Process) bedrock.ExitStatus {
 	stderr := &lockedWriter{w: p.Stderr}
 	if err := a.checkHost(); err != nil {
 		return fail(stderr, ExitFailure, err)
@@ -324,13 +348,17 @@ func (a App) Run(ctx context.Context, p bedrock.Process) bedrock.ExitStatus {
 }
 
 // checkHost returns an error naming each field of the App's Host that is
-// nil.
-func (a App) checkHost() error {
+// nil, when the App's host is the default host, Host.
+func (a App[H]) checkHost() error {
+	h, ok := any(a.Host).(Host)
+	if !ok {
+		return nil
+	}
 	var errs []error
-	if a.Host.IPNetwork == nil {
+	if h.IPNetwork == nil {
 		errs = append(errs, errors.New("humus: Host.IPNetwork is nil: build the Host with OSHost, or from the test host's parts"))
 	}
-	if a.Host.Filesystem == nil {
+	if h.Filesystem == nil {
 		errs = append(errs, errors.New("humus: Host.Filesystem is nil: build the Host with OSHost, or from the test host's parts"))
 	}
 	return errors.Join(errs...)
@@ -342,11 +370,11 @@ const loggerName = "github.com/z5labs/humus"
 // buildTelemetry calls App.Telemetry with sigCtx and checks the SDK it
 // returns. An SDK with a nil field is shut down, if it can be, with a
 // context that keeps ctx's values but not its cancellation, and is an error.
-func (a App) buildTelemetry(ctx, sigCtx context.Context, p bedrock.Process) (telemetry.SDK, error) {
+func (a App[H]) buildTelemetry(ctx, sigCtx context.Context, p bedrock.Process) (telemetry.SDK, error) {
 	if a.Telemetry == nil {
 		return telemetry.SDK{}, errors.New("build telemetry: App.Telemetry is nil")
 	}
-	sdk, err := a.Telemetry(sigCtx, p, a.Host.DialTCP)
+	sdk, err := a.Telemetry(sigCtx, p, a.Host)
 	if err != nil {
 		return telemetry.SDK{}, fmt.Errorf("build telemetry: %w", err)
 	}
@@ -381,8 +409,11 @@ func (a App) buildTelemetry(ctx, sigCtx context.Context, p bedrock.Process) (tel
 // run is Run from building the failure injection on, up to shutting the
 // telemetry down. It returns the exit code and its cause, and logs every
 // failure in the cause through l.
-func (a App) run(ctx, sigCtx context.Context, stop context.CancelFunc, p bedrock.Process, settings settings, sdk telemetry.SDK, l *lifecycleLog) (int, error) {
-	setup := &Setup{Process: p, Host: a.Host, Telemetry: sdk}
+func (a App[H]) run(ctx, sigCtx context.Context, stop context.CancelFunc, p bedrock.Process, settings settings, sdk telemetry.SDK, l *lifecycleLog) (int, error) {
+	setup := &Setup{Process: p, Telemetry: sdk}
+	if h, ok := any(a.Host).(Host); ok {
+		setup.Host = h
+	}
 	// startupFailed fails the startup with err, which step prefixes: it runs
 	// the OnStop functions registered so far, and logs the cause.
 	startupFailed := func(step string, err error) (int, error) {
@@ -399,13 +430,13 @@ func (a App) run(ctx, sigCtx context.Context, stop context.CancelFunc, p bedrock
 	}
 
 	if a.Faults != nil {
-		faults, err := buildFaults(sigCtx, a.Faults, setup)
+		faults, err := buildFaults(sigCtx, a.Faults, setup, a.Host)
 		if err != nil {
 			return startupFailed("failure injection", err)
 		}
 		setup.Faults = faults
 	}
-	services, err := a.Init(sigCtx, setup)
+	services, err := a.Init(sigCtx, setup, a.Host)
 	if err != nil {
 		return startupFailed("init", err)
 	}
@@ -471,7 +502,7 @@ func (a App) run(ctx, sigCtx context.Context, stop context.CancelFunc, p bedrock
 		if !signalled {
 			why = returned
 		}
-		drainErrs, left, err := drain(ctx, settings.drain, setup, served, pending, why)
+		drainErrs, left, err := drain(ctx, settings.drain, setup, a.Host, served, pending, why)
 		errs = append(errs, drainErrs...)
 		pending = left
 		if err != nil {
@@ -508,10 +539,10 @@ type serveResult struct {
 	signalled bool
 }
 
-// buildFaults calls f with ctx and setup, and builds the Injector of the
+// buildFaults calls f with ctx, setup and h, and builds the Injector of the
 // Settings it returns.
-func buildFaults(ctx context.Context, f func(context.Context, *Setup) (fault.Settings, error), setup *Setup) (fault.Injector, error) {
-	s, err := f(ctx, setup)
+func buildFaults[H any](ctx context.Context, f func(context.Context, *Setup, H) (fault.Settings, error), setup *Setup, h H) (fault.Injector, error) {
+	s, err := f(ctx, setup, h)
 	if err != nil {
 		return fault.Injector{}, err
 	}

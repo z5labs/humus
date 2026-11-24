@@ -74,8 +74,8 @@ func newFaultsMailer(t *testing.T, broker *rabbitMQ, provider *url.URL, mailer l
 
 func (m *faultsMailer) start(t *testing.T) (*bedrocktest.Process, <-chan bedrock.ExitStatus) {
 	t.Helper()
-	return humustest.Start(t, app.Init,
-		humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(app.Faults)),
+	return humustest.Start(t, humus.OSHost(), app.Init,
+		humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(app.Faults)),
 		humustest.WithEnv(m.env),
 	)
 }

@@ -238,7 +238,7 @@ func runFront(t *testing.T, run frontRun) frontResult {
 
 	b := &scenarioBackend{t: t}
 	backendCert := ca.Issue(t, "backend")
-	bp, backendExit := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	bp, backendExit := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		svc, err := grpcserver.NewService(s, grpcserver.Settings{
 			Addr: "backend:9090",
 			TLS:  &tls.Config{Certificates: []tls.Certificate{backendCert.TLS()}},
@@ -248,12 +248,12 @@ func runFront(t *testing.T, run frontRun) frontResult {
 		}
 		testpb.RegisterTestServiceServer(svc, b)
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+	}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 	<-h.Listening("backend:9090")
 
 	f := &front{codec: codec}
 	frontCert := ca.Issue(t, "front")
-	init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		settings := settingsFor(ca, "backend:9090")
 		if run.change != nil {
 			run.change(&settings)
@@ -274,15 +274,15 @@ func runFront(t *testing.T, run frontRun) frontResult {
 		testpb.RegisterTestServiceServer(svc, f)
 		return []humus.Service{svc}, nil
 	}
-	opts := []humus.Option{humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())}
+	opts := []humus.Option{humus.WithTelemetry(tel.Builder())}
 	if run.faults {
-		opts = append(opts, humus.WithFaults(func(context.Context, *humus.Setup) (fault.Settings, error) {
+		opts = append(opts, humus.WithFaults(func(context.Context, *humus.Setup, humus.Host) (fault.Settings, error) {
 			d := fault.DefaultSettings()
 			d.Decoder = codec
 			return d, nil
 		}))
 	}
-	fp, frontExit := humustest.Start(t, init, humustest.WithApp(opts...))
+	fp, frontExit := humustest.Start(t, h.Host(), init, humustest.WithApp(opts...))
 	<-h.Listening("front:8443")
 
 	edge := testpb.NewTestServiceClient(grpcservertest.NewClient(t, h, "front:8443", ca.Pool()))

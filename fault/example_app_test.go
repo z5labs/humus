@@ -31,7 +31,7 @@ import (
 // Faults is the orders service's failure injection: a scenario is JSON in
 // the baggage member acme.fault, and an operator sets MaxDelay with
 // FAULT_MAX_DELAY.
-func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
+func Faults(ctx context.Context, s *humus.Setup, h humus.Host) (fault.Settings, error) {
 	codec, err := jsonscenario.New("acme.fault")
 	if err != nil {
 		return fault.Settings{}, err
@@ -49,12 +49,12 @@ func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
 // Init is the orders service's Init. Its API trusts the scenario of a
 // caller whose client certificate the mesh's CA verified, and its client of
 // payments, another service of the end user's, sends the scenario on.
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 	payments, err := config.Struct(func(r *config.Resolver) httpclient.Settings {
 		c := httpclient.DefaultSettings()
 		c.BaseURL = r.Get(env("PAYMENTS_URL").Parse(url.Parse).Validate(httpclient.CheckBaseURL))
-		c.TLS = r.Get(env("PAYMENTS_CA_FILE").Parse(readFile(s.Host.Filesystem)).Parse(trusting).Validate(httpclient.CheckTLS))
+		c.TLS = r.Get(env("PAYMENTS_CA_FILE").Parse(readFile(h.Filesystem)).Parse(trusting).Validate(httpclient.CheckTLS))
 		return c
 	}).Read(ctx)
 	if err != nil {
@@ -63,13 +63,13 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	api, err := config.Struct(func(r *config.Resolver) httpserver.Settings {
 		c := httpserver.DefaultSettings()
 		c.Addr = r.Get(env("ADDR").Validate(httpserver.CheckAddr))
-		c.TLS = r.Get(env("TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS))
+		c.TLS = r.Get(env("TLS_PEM_FILE").Parse(readFile(h.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS))
 		return c
 	}).Read(ctx)
 	if err != nil {
 		return nil, err
 	}
-	meshCAs, err := env("MESH_CA_FILE").Parse(readFile(s.Host.Filesystem)).Parse(certPool).Read(ctx)
+	meshCAs, err := env("MESH_CA_FILE").Parse(readFile(h.Filesystem)).Parse(certPool).Read(ctx)
 	if err != nil {
 		return nil, err
 	}

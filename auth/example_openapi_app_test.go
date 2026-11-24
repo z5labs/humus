@@ -106,7 +106,7 @@ func (p *identityProvider) token(t *testing.T, subject, scope string) string {
 func serveIdentityProvider(t *testing.T, h *humustest.Host, ca *humustest.CA, p *identityProvider) func() {
 	t.Helper()
 	cert := ca.Issue(t, "idp.internal")
-	proc, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	proc, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = ":443"
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
@@ -115,7 +115,7 @@ func serveIdentityProvider(t *testing.T, h *humustest.Host, ca *humustest.CA, p 
 			return nil, err
 		}
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+	}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 	select {
 	case <-h.Listening("idp.internal:443"):
 	case st := <-status:
@@ -141,8 +141,8 @@ func startCarts(t *testing.T, h *humustest.Host, ca *humustest.CA) *server {
 	tlsConfig := &tls.Config{Certificates: []tls.Certificate{ca.Issue(t, "localhost").TLS()}}
 
 	tel := humustest.NewTelemetry()
-	p, status := httpservertest.Start(t, CartsInit(idp, tlsConfig),
-		humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+	p, status := httpservertest.Start(t, h.Host(), CartsInit(idp, tlsConfig),
+		humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 	select {
 	case <-h.Listening("localhost:8443"):
 	case st := <-status:

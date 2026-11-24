@@ -38,8 +38,8 @@ var tmpl = template.Must(template.New("htmx").Funcs(template.FuncMap{
 	},
 }).ParseFS(templates, "templates/*.html"))
 
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	settings, err := readSettings(ctx, s)
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	settings, err := readSettings(ctx, s, h)
 	if err != nil {
 		return nil, err
 	}
@@ -59,13 +59,13 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	return []humus.Service{svc}, nil
 }
 
-func readSettings(ctx context.Context, s *humus.Setup) (httpserver.Settings, error) {
+func readSettings(ctx context.Context, s *humus.Setup, h humus.Host) (httpserver.Settings, error) {
 	d := httpserver.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 	return config.Struct(func(r *config.Resolver) httpserver.Settings {
 		return httpserver.Settings{
 			Addr:              r.Get(env("ADDR").Validate(httpserver.CheckAddr)),
-			TLS:               r.Get(env("TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS)),
+			TLS:               r.Get(env("TLS_PEM_FILE").Parse(readFile(h.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS)),
 			HTTP2Only:         r.Get(env("HTTP2_ONLY").Parse(strconv.ParseBool).Default(d.HTTP2Only)),
 			ReadHeaderTimeout: r.Get(env("READ_HEADER_TIMEOUT").Parse(time.ParseDuration).Default(d.ReadHeaderTimeout).Validate(httpserver.CheckReadHeaderTimeout)),
 			ReadTimeout:       r.Get(env("READ_TIMEOUT").Parse(time.ParseDuration).Default(d.ReadTimeout).Validate(httpserver.CheckReadTimeout)),

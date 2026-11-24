@@ -147,7 +147,7 @@ func serve(t *testing.T, schemes map[string]auth.Scheme[user], rules []grpcauth.
 	h := humustest.NewHost(t)
 	tel := humustest.NewTelemetry()
 
-	p, status := grpcservertest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	p, status := grpcservertest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		unary, stream, err := grpcauth.Interceptors(s, rules...)
 		if err != nil {
 			return nil, err
@@ -167,7 +167,7 @@ func serve(t *testing.T, schemes map[string]auth.Scheme[user], rules []grpcauth.
 		hs := health.NewService()
 		healthpb.RegisterHealthServer(svc, grpchealth.NewServer(s, hs.Probes()))
 		return []humus.Service{svc, hs}, nil
-	}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+	}, humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 	select {
 	case <-h.Listening("carts:9090"):
 	case st := <-status:

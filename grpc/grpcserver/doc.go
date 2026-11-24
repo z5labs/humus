@@ -12,7 +12,7 @@
 // the end user sources. The end user registers their generated services on
 // it, as they would on a *grpc.Server, and returns it:
 //
-//	func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+//	func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 //		settings, err := readSettings(ctx, s) // grpcserver.Settings, sourced with config.Struct
 //		if err != nil {
 //			return nil, err
@@ -374,7 +374,7 @@
 //		return grpcserver.Settings{
 //			// No .Default: both fields are required, so an unset variable fails as not found.
 //			Addr: r.Get(env("GRPC_ADDR").Validate(grpcserver.CheckAddr)),
-//			TLS:  r.Get(env("GRPC_TLS_P12_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(grpcserver.CheckTLS)),
+//			TLS:  r.Get(env("GRPC_TLS_P12_FILE").Parse(readFile(h.Filesystem)).Parse(serverTLS).Validate(grpcserver.CheckTLS)),
 //		}
 //	}).Read(ctx)
 //

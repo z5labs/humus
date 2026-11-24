@@ -59,8 +59,8 @@ func runPanic(t *testing.T, h http.Handler, p protocols) panicRun {
 	ca := humustest.NewCA(t)
 	host := humustest.NewHost(t)
 	tel := humustest.NewTelemetry()
-	proc, status := humustest.Start(t, serves(settingsFor(t, ca), h),
-		humustest.WithApp(humus.WithHost(host.Host()), humus.WithTelemetry(tel.Builder())),
+	proc, status := humustest.Start(t, host.Host(), serves(settingsFor(t, ca), h),
+		humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 	)
 	<-host.Listening("localhost:8443")
 

@@ -71,7 +71,7 @@ import (
 func startServing(t *testing.T, h *humustest.Host, ca *humustest.CA, name, addr string, b *backend, hs *grpcgohealth.Server, opts ...grpc.ServerOption) (stop func()) {
 	t.Helper()
 	cert := ca.Issue(t, name)
-	p, exit := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	p, exit := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		settings := grpcserver.Settings{
 			Addr: addr,
 			TLS:  &tls.Config{Certificates: []tls.Certificate{cert.TLS()}},
@@ -85,7 +85,7 @@ func startServing(t *testing.T, h *humustest.Host, ca *humustest.CA, name, addr 
 			healthpb.RegisterHealthServer(svc, hs)
 		}
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+	}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 	<-h.Listening(addr)
 	return func() {
 		<-p.Notified(syscall.SIGTERM)
@@ -152,7 +152,7 @@ func TestClient_two_Clients_of_one_address_have_a_breaker_each(t *testing.T) {
 			paymentsAfter  error
 			ledgerResponse error
 		)
-		_, exit := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		_, exit := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			// Two Clients of one address, each with its own Settings, and
 			// so its own breaker, built once in Init and shared by
 			// everything that calls them.
@@ -176,7 +176,7 @@ func TestClient_two_Clients_of_one_address_have_a_breaker_each(t *testing.T) {
 				_, ledgerResponse = testpb.NewTestServiceClient(ledger).UnaryCall(ctx, &testpb.SimpleRequest{})
 				return nil
 			})}, nil
-		}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+		}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 		st := <-exit
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
 
@@ -203,7 +203,7 @@ func TestClient_moves_when_the_servers_MaxConnectionAge_passes(t *testing.T) {
 
 		counter := &rpcCounter{}
 		var errs []error
-		_, exit := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		_, exit := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			carts, err := grpcclient.NewClient(s, settingsFor(ca, "carts:9090"), grpc.WithStatsHandler(counter))
 			if err != nil {
 				return nil, err
@@ -217,7 +217,7 @@ func TestClient_moves_when_the_servers_MaxConnectionAge_passes(t *testing.T) {
 				}
 				return nil
 			})}, nil
-		}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+		}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 		st := <-exit
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
 
@@ -235,7 +235,7 @@ func TestInit_turns_ready_once_its_Client_has_connected(t *testing.T) {
 		serverSettings := grpcserver.Settings{Addr: ":8443", TLS: serving(t, ca, "orders")}
 		probeSettings := grpchealth.Settings{Addr: ":8081"}
 
-		init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			carts, err := grpcclient.NewClient(s, cartsSettings)
 			if err != nil {
 				return nil, err
@@ -255,8 +255,8 @@ func TestInit_turns_ready_once_its_Client_has_connected(t *testing.T) {
 			}
 			return []humus.Service{svc, probes}, nil
 		}
-		p, exit := grpcservertest.Start(t, init,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		p, exit := grpcservertest.Start(t, h.Host(), init,
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		)
 		<-h.Listening("orders:8081")
 		synctest.Wait()
@@ -313,7 +313,7 @@ func TestClient_a_monitor_of_the_dependencys_grpc_health_v1(t *testing.T) {
 
 		checked, stopped := make(chan struct{}), make(chan struct{})
 		var before, after struct{ monitor, connected bool }
-		_, exit := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		_, exit := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			carts, err := grpcclient.NewClient(s, settingsFor(ca, "carts:9090"))
 			if err != nil {
 				return nil, err
@@ -329,7 +329,7 @@ func TestClient_a_monitor_of_the_dependencys_grpc_health_v1(t *testing.T) {
 				after.monitor, after.connected = healthyWithin(monitor), healthyWithin(carts.Connected())
 				return nil
 			})}, nil
-		}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+		}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 
 		<-checked
 		stopCarts()
@@ -407,9 +407,15 @@ func startPod(t *testing.T, h *humustest.Host, ca *humustest.CA, name string, op
 // the function again returns the same status.
 func startPodServing(t *testing.T, host humus.Host, ca *humustest.CA, addr string, srv testpb.TestServiceServer, listening <-chan struct{}, opts []grpc.ServerOption, app ...humus.Option) (stop func() bedrock.ExitStatus) {
 	t.Helper()
+	return startWrappedPod(t, func(init humus.Init[humus.Host]) humus.Init[humus.Host] { return init }, host, ca, addr, srv, listening, opts, app...)
+}
+
+// startWrappedPod is startPodServing with the pod's Init wrapped by wrap.
+func startWrappedPod(t *testing.T, wrap func(humus.Init[humus.Host]) humus.Init[humus.Host], host humus.Host, ca *humustest.CA, addr string, srv testpb.TestServiceServer, listening <-chan struct{}, opts []grpc.ServerOption, app ...humus.Option) (stop func() bedrock.ExitStatus) {
+	t.Helper()
 	cert := ca.Issue(t, "ledger")
 	life := &podLife{inited: make(chan struct{})}
-	p, exit := grpcservertest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	p, exit := grpcservertest.Start(t, host, wrap(func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		defer close(life.inited)
 		settings := grpcserver.Settings{
 			Addr: addr,
@@ -424,7 +430,7 @@ func startPodServing(t *testing.T, host humus.Host, ca *humustest.CA, addr strin
 		life.serving = true
 		life.mu.Unlock()
 		return []humus.Service{podService{Service: svc, life: life}}, nil
-	}, humustest.WithApp(append([]humus.Option{humus.WithHost(host), humus.WithTelemetry(telemetry.NoopBuilder)}, app...)...))
+	}), humustest.WithApp(append([]humus.Option{humus.WithTelemetry(telemetry.NoopBuilder)}, app...)...))
 	select {
 	case <-listening:
 	case st := <-exit:
@@ -687,7 +693,7 @@ func (s *subscriptions) log(t *testing.T, tel *humustest.Telemetry) {
 func subscriber(t *testing.T, host humus.Host, tel *humustest.Telemetry, ca *humustest.CA, subs *subscriptions, done <-chan struct{}) (*grpcclient.Client, <-chan bedrock.ExitStatus) {
 	t.Helper()
 	built := make(chan *grpcclient.Client, 1)
-	_, exit := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	_, exit := humustest.Start(t, host, func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		ledger, err := grpcclient.NewClient(s, settingsFor(ca, "ledger:9090"))
 		if err != nil {
 			return nil, err
@@ -709,7 +715,7 @@ func subscriber(t *testing.T, host humus.Host, tel *humustest.Telemetry, ca *hum
 			<-ran
 			return nil
 		})}, nil
-	}, humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(tel.Builder())))
+	}, humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 	return <-built, exit
 }
 
@@ -981,7 +987,7 @@ func reopenOnce(t *testing.T, host humus.Host, ca *humustest.CA, n int, open ope
 	t.Helper()
 	got := make(chan []reopened, 1)
 	counter := &rpcCounter{}
-	_, exit := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	_, exit := humustest.Start(t, host, func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		ledger, err := grpcclient.NewClient(s, settingsFor(ca, "ledger:9090"), grpc.WithStatsHandler(counter))
 		if err != nil {
 			return nil, err
@@ -1029,7 +1035,7 @@ func reopenOnce(t *testing.T, host humus.Host, ca *humustest.CA, n int, open ope
 			got <- rs
 			return nil
 		})}, nil
-	}, humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(telemetry.NoopBuilder)))
+	}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 	out := make(chan []reopened, 1)
 	go func() {
 		rs := <-got
@@ -1377,10 +1383,9 @@ func TestClient_a_pods_stop_called_once_its_App_has_failed_on_its_own_returns_it
 
 		failed, release := make(chan struct{}), make(chan struct{})
 		var signalled error
-		holdFailedInit := func(a *humus.App) {
-			init := a.Init
-			a.Init = func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-				svcs, err := init(ctx, s)
+		holdFailedInit := func(init humus.Init[humus.Host]) humus.Init[humus.Host] {
+			return func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+				svcs, err := init(ctx, s, h)
 				if err != nil {
 					close(failed)
 					<-release
@@ -1389,7 +1394,7 @@ func TestClient_a_pods_stop_called_once_its_App_has_failed_on_its_own_returns_it
 				return svcs, err
 			}
 		}
-		stopA := startPodServing(t, h.Host(), ca, "ledger-a:9090", &pod{name: "ledger-a"}, h.Listening("ledger-a:9090"), nil, holdFailedInit)
+		stopA := startWrappedPod(t, holdFailedInit, h.Host(), ca, "ledger-a:9090", &pod{name: "ledger-a"}, h.Listening("ledger-a:9090"), nil)
 		<-failed
 
 		exit := make(chan bedrock.ExitStatus, 1)

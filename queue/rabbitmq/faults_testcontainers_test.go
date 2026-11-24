@@ -263,7 +263,7 @@ func TestPublisher_a_Service_that_trusts_the_Publishers_user_keeps_the_scenario_
 		once      sync.Once
 	)
 	tel := humustest.NewTelemetry()
-	_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	_, status := humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		pub, err := rabbitmq.NewPublisher(s, forwarding(plainText(t)))
 		if err != nil {
 			return nil, err
@@ -297,7 +297,7 @@ func TestPublisher_a_Service_that_trusts_the_Publishers_user_keeps_the_scenario_
 			return nil
 		})}, nil
 	},
-		humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(tel.Builder()), withFaults(t)),
+		humustest.WithApp(humus.WithTelemetry(tel.Builder()), withFaults(t)),
 		humustest.WithEnv(map[string]string{"BAGGAGE": scenarioBaggage(t, sparesAccepted)}),
 	)
 	st := exit(t, status)
@@ -330,7 +330,7 @@ func TestService_a_scenario_a_Processor_forwards_is_trusted_by_the_next_Service(
 	done := make(chan struct{})
 	var once sync.Once
 	tel := humustest.NewTelemetry()
-	proc, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	proc, status := humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		pub, err := rabbitmq.NewPublisher(s, forwarding(plainText(t)))
 		if err != nil {
 			return nil, err
@@ -355,7 +355,7 @@ func TestService_a_scenario_a_Processor_forwards_is_trusted_by_the_next_Service(
 			return nil, err
 		}
 		return []humus.Service{forwarder, receiver}, nil
-	}, humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(tel.Builder()), withFaults(t)))
+	}, humustest.WithApp(humus.WithTelemetry(tel.Builder()), withFaults(t)))
 
 	select {
 	case <-done:

@@ -95,8 +95,8 @@ func producerSpanContext(t *testing.T) trace.SpanContext {
 // with SIGTERM and returns its exit status's code.
 func consumeAll(t *testing.T, h *humustest.Host, tel *humustest.Telemetry, s kafka.Settings, p queue.ProcessorFunc[kafka.Message]) int {
 	t.Helper()
-	proc, status := humustest.Start(t, consumes(s, p),
-		humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+	proc, status := humustest.Start(t, h.Host(), consumes(s, p),
+		humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 	synctest.Wait()
 	proc.Signal(syscall.SIGTERM)
 	st := <-status
@@ -375,12 +375,12 @@ func recordsAProcessingError(t *testing.T, d queue.Delivery, prepare func(*kfake
 	s.Delivery = d
 	bad := errors.New("cannot process")
 	tel := humustest.NewTelemetry()
-	proc, status := humustest.Start(t, consumes(s, func(_ context.Context, m kafka.Message) error {
+	proc, status := humustest.Start(t, h.Host(), consumes(s, func(_ context.Context, m kafka.Message) error {
 		if m.Offset == 1 {
 			return bad
 		}
 		return nil
-	}), humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+	}), humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 	if d == queue.AtMostOnce {
 		synctest.Wait()
 		proc.Signal(syscall.SIGTERM)

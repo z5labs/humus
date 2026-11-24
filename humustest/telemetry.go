@@ -105,9 +105,9 @@ func (t *Telemetry) shutdown(ctx context.Context, tp *sdktrace.TracerProvider, m
 // the first call's result.
 //
 // Every call of the Builder returns the same SDK, which ignores the
-// process and the Dialer it is given.
+// process and the Network it is given.
 func (t *Telemetry) Builder() telemetry.Builder {
-	return func(context.Context, bedrock.Process, telemetry.Dialer) (telemetry.SDK, error) {
+	return func(context.Context, bedrock.Process, telemetry.Network) (telemetry.SDK, error) {
 		return t.sdk, nil
 	}
 }

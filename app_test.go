@@ -74,8 +74,8 @@ func (s *fakeService) calls() int {
 
 // appWith returns an App on OSHost with a 10s ShutdownGracePeriod and no-op
 // telemetry whose Init is init.
-func appWith(init func(ctx context.Context, s *humus.Setup) ([]humus.Service, error)) humus.App {
-	return humus.App{
+func appWith(init func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error)) humus.App[humus.Host] {
+	return humus.App[humus.Host]{
 		Host:                humus.OSHost(),
 		ShutdownGracePeriod: 10 * time.Second,
 		Telemetry:           telemetry.NoopBuilder,
@@ -85,7 +85,7 @@ func appWith(init func(ctx context.Context, s *humus.Setup) ([]humus.Service, er
 
 // recorded returns app with its telemetry recorded by a new
 // humustest.Telemetry, and the Telemetry.
-func recorded(app humus.App) (humus.App, *humustest.Telemetry) {
+func recorded(app humus.App[humus.Host]) (humus.App[humus.Host], *humustest.Telemetry) {
 	tel := humustest.NewTelemetry()
 	app.Telemetry = tel.Builder()
 	return app, tel
@@ -104,15 +104,15 @@ func errorLogs(tel *humustest.Telemetry) []string {
 }
 
 // servicesOf returns an Init that returns svcs.
-func servicesOf(svcs ...humus.Service) func(context.Context, *humus.Setup) ([]humus.Service, error) {
-	return func(context.Context, *humus.Setup) ([]humus.Service, error) {
+func servicesOf(svcs ...humus.Service) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
+	return func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 		return svcs, nil
 	}
 }
 
 // start runs app on p in a goroutine and returns the channel its status
 // arrives on.
-func start(t *testing.T, app humus.App, p *bedrocktest.Process) <-chan bedrock.ExitStatus {
+func start(t *testing.T, app humus.App[humus.Host], p *bedrocktest.Process) <-chan bedrock.ExitStatus {
 	t.Helper()
 	status := make(chan bedrock.ExitStatus, 1)
 	go func() { status <- app.Run(t.Context(), p.Process()) }()
@@ -148,12 +148,12 @@ func TestApp_Run_a_whole_App(t *testing.T) {
 		}}
 
 		var poolClosedAt time.Time
-		app := humus.App{
+		app := humus.App[humus.Host]{
 			Host:                humus.OSHost(), // the fake Services never use it
 			ShutdownGracePeriod: 10 * time.Second,
 			Drain:               humus.DrainDelay(5 * time.Second),
 			Telemetry:           telemetry.NoopBuilder,
-			Init: func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+			Init: func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 				s.OnStop(func(context.Context) error {
 					poolClosedAt = time.Now()
 					return nil
@@ -334,7 +334,7 @@ func TestApp_Run_OnStop_shares_the_grace_period(t *testing.T) {
 			return nil
 		}}
 		var remaining time.Duration
-		init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			s.OnStop(func(ctx context.Context) error {
 				deadline, _ := ctx.Deadline()
 				remaining = time.Until(deadline)
@@ -363,7 +363,7 @@ func TestApp_Run_OnStop_shares_the_grace_period(t *testing.T) {
 
 func TestApp_Run_OnStop_running_past_the_grace_period(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			s.OnStop(func(ctx context.Context) error {
 				<-ctx.Done()
 				return nil
@@ -405,7 +405,7 @@ func TestApp_Run_OnStop_running_past_the_grace_period(t *testing.T) {
 func TestApp_Run_malformed_grace_period_exits_78_without_calling_Init(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		initCalled := false
-		app := appWith(func(context.Context, *humus.Setup) ([]humus.Service, error) {
+		app := appWith(func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 			initCalled = true
 			return nil, nil
 		})
@@ -437,7 +437,7 @@ func TestApp_Run_malformed_grace_period_exits_78_without_calling_Init(t *testing
 func TestApp_Run_missing_config_in_Init_exits_78_and_runs_OnStop_in_reverse(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var stopped []int
-		app := appWith(func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+		app := appWith(func(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			for i := range 3 {
 				s.OnStop(func(context.Context) error {
 					stopped = append(stopped, i)
@@ -478,7 +478,7 @@ func TestApp_Run_failed_Init_exits_1(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		errInit := errors.New("dial database: connection refused")
 		errStop := errors.New("close pool")
-		app := appWith(func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		app := appWith(func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			s.OnStop(func(context.Context) error { return errStop })
 			return nil, errInit
 		})
@@ -506,7 +506,7 @@ func TestApp_Run_failed_Init_exits_1(t *testing.T) {
 func TestApp_Run_failed_Init_OnStop_is_bounded_by_the_grace_period(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		errInit := errors.New("boom")
-		app := appWith(func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		app := appWith(func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			s.OnStop(func(ctx context.Context) error {
 				<-ctx.Done()
 				return ctx.Err()
@@ -645,7 +645,7 @@ func TestApp_Run_joins_every_error(t *testing.T) {
 			},
 			shutdown: func(context.Context) error { return errShutdown },
 		}
-		init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			s.OnStop(func(context.Context) error { return errStop })
 			return []humus.Service{failing, late}, nil
 		}
@@ -672,7 +672,7 @@ func TestApp_Run_SIGTERM_during_a_slow_Init_cancels_its_context(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		started := make(chan struct{})
 		var initCtxErr error
-		app := appWith(func(ctx context.Context, _ *humus.Setup) ([]humus.Service, error) {
+		app := appWith(func(ctx context.Context, _ *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			close(started)
 			<-ctx.Done()
 			initCtxErr = context.Cause(ctx)
@@ -701,7 +701,7 @@ func TestApp_Run_SIGTERM_during_a_slow_Init_cancels_its_context(t *testing.T) {
 func TestApp_Run_no_Services_exits_0_and_runs_OnStop(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		stopped := false
-		app := appWith(func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		app := appWith(func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			s.OnStop(func(context.Context) error {
 				stopped = true
 				return nil
@@ -726,9 +726,9 @@ func TestApp_Run_gives_Init_the_Process_and_Host(t *testing.T) {
 		p := bedrocktest.NewProcess(t, bedrocktest.WithArgs("-v"))
 		var gotArgs []string
 		var gotHost humus.Host
-		app := appWith(func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		app := appWith(func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 			gotArgs = s.Process.Args
-			gotHost = s.Host
+			gotHost = h
 			return nil, nil
 		})
 
@@ -750,12 +750,12 @@ func TestApp_Run_rejects_a_Host_with_nil_fields(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		p := bedrocktest.NewProcess(t)
 		var built, ran bool
-		app := appWith(func(context.Context, *humus.Setup) ([]humus.Service, error) {
+		app := appWith(func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 			ran = true
 			return nil, nil
 		})
 		app.Host = humus.Host{}
-		app.Telemetry = func(context.Context, bedrock.Process, telemetry.Dialer) (telemetry.SDK, error) {
+		app.Telemetry = func(context.Context, bedrock.Process, telemetry.Network) (telemetry.SDK, error) {
 			built = true
 			return telemetry.Noop(), nil
 		}
@@ -781,7 +781,7 @@ func TestApp_Run_rejects_a_Host_with_nil_fields(t *testing.T) {
 
 func TestApp_Run_does_not_recover_a_panic(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		app := appWith(func(context.Context, *humus.Setup) ([]humus.Service, error) {
+		app := appWith(func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 			panic("init exploded")
 		})
 		p := bedrocktest.NewProcess(t)
@@ -799,7 +799,7 @@ func TestApp_Run_does_not_recover_a_panic(t *testing.T) {
 }
 
 func TestApp_is_a_bedrock_App(t *testing.T) {
-	var _ bedrock.App = humus.App{}
+	var _ bedrock.App = humus.App[humus.Host]{}
 }
 
 func TestSetup_OnStop_panics_on_nil(t *testing.T) {
@@ -906,7 +906,7 @@ func (p hookProvider) Logger(string, ...log.LoggerOption) log.Logger {
 // hookedTelemetry returns a Builder of no-op telemetry that logs through l
 // and whose Shutdown returns shutdownErr.
 func hookedTelemetry(l *hookLogger, shutdownErr error) telemetry.Builder {
-	return func(context.Context, bedrock.Process, telemetry.Dialer) (telemetry.SDK, error) {
+	return func(context.Context, bedrock.Process, telemetry.Network) (telemetry.SDK, error) {
 		sdk := telemetry.Noop()
 		sdk.LoggerProvider = hookProvider{logger: l}
 		sdk.Shutdown = func(context.Context) error { return shutdownErr }
@@ -995,7 +995,7 @@ func TestApp_Run_a_job_that_returns_nil_after_a_SIGTERM_as_the_App_starts_servin
 		synctest.Test(t, func(t *testing.T) {
 			p := bedrocktest.NewProcess(t)
 			logs := sigtermAsServing(p, nil)
-			init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+			init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 				run := func(ctx context.Context) error {
 					<-ctx.Done()
 					return nil // treats stopping early as done

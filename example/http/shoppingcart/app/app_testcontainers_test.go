@@ -143,14 +143,14 @@ type started struct {
 	status <-chan bedrock.ExitStatus
 }
 
-func startApp(t *testing.T, name string, init func(context.Context, *humus.Setup) ([]humus.Service, error), faults humus.Option, envs ...map[string]string) started {
+func startApp(t *testing.T, name string, init func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error), faults humus.Option, envs ...map[string]string) started {
 	t.Helper()
 	env := map[string]string{}
 	for _, e := range envs {
 		maps.Copy(env, e)
 	}
-	p, status := humustest.Start(t, init,
-		humustest.WithApp(httpserver.Defaults(), humus.WithHost(humus.OSHost()), humus.WithTelemetry(telemetry.NoopBuilder), faults),
+	p, status := humustest.Start(t, humus.OSHost(), init,
+		humustest.WithApp(httpserver.Defaults()...), humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder), faults),
 		humustest.WithEnv(env),
 	)
 	return started{

@@ -57,17 +57,22 @@ func newPropagator() propagation.TextMapPropagator {
 	return propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{})
 }
 
-// Dialer opens connections, like (*net.Dialer).DialContext. It is the Dial
-// field of humus.Host, so the OTLP exporters reach the collector through the
-// App's Host.
-type Dialer func(ctx context.Context, network, address string) (net.Conn, error)
+// Network is what the OTLP exporters need of a host: a way to dial the
+// collector. humus hands a Builder the App's host as its Network, so the
+// exporters reach the collector through the App's host.
+type Network interface {
+	// DialTCP connects to address over "tcp", "tcp4" or "tcp6", like
+	// net.Dialer.DialContext.
+	DialTCP(ctx context.Context, network, address string) (net.Conn, error)
+}
 
 // Builder builds an App's SDK. The end user writes it: it sources Settings
-// from p however it likes and calls New with dial and p.Stdout.
-type Builder func(ctx context.Context, p bedrock.Process, dial Dialer) (SDK, error)
+// from p however it likes and calls New with n and p.Stdout. n is the App's
+// host.
+type Builder func(ctx context.Context, p bedrock.Process, n Network) (SDK, error)
 
 // NoopBuilder is a Builder that returns Noop() and a nil error, for tests
 // that do not assert on telemetry.
-func NoopBuilder(context.Context, bedrock.Process, Dialer) (SDK, error) {
+func NoopBuilder(context.Context, bedrock.Process, Network) (SDK, error) {
 	return Noop(), nil
 }

@@ -429,8 +429,8 @@ func (c slowCounter) Add(ctx context.Context, incr int64, opts ...metric.AddOpti
 // slowCallsBuilder is tel's Builder, with slowCalls in front of its
 // MeterProvider.
 func slowCallsBuilder(tel *humustest.Telemetry) telemetry.Builder {
-	return func(ctx context.Context, proc bedrock.Process, d telemetry.Dialer) (telemetry.SDK, error) {
-		sdk, err := tel.Builder()(ctx, proc, d)
+	return func(ctx context.Context, proc bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
+		sdk, err := tel.Builder()(ctx, proc, n)
 		sdk.MeterProvider = slowCalls{sdk.MeterProvider}
 		return sdk, err
 	}
@@ -518,10 +518,10 @@ func TestProduce_the_App_stops_once_a_refused_call_is_counted(t *testing.T) {
 
 		var first error
 		tel := humustest.NewTelemetry()
-		_, status := humustest.Start(t, produces(refusedProducer(c, user), func(ctx context.Context, p *kafka.Producer) error {
+		_, status := humustest.Start(t, h.Host(), produces(refusedProducer(c, user), func(ctx context.Context, p *kafka.Producer) error {
 			first = p.Produce(ctx, value(0))
 			return nil
-		}), humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(slowCallsBuilder(tel))))
+		}), humustest.WithApp(humus.WithTelemetry(slowCallsBuilder(tel))))
 		st := <-status
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
 
@@ -553,12 +553,12 @@ func TestProduce_the_App_stops_once_a_call_whose_caller_gave_up_is_counted(t *te
 		tel := humustest.NewTelemetry()
 		ps := producerSettings(c.ListenAddrs()...)
 		ps.BreakerPolicy = tripOnFirstFailure
-		_, status := humustest.Start(t, produces(ps, func(ctx context.Context, p *kafka.Producer) error {
+		_, status := humustest.Start(t, h.Host(), produces(ps, func(ctx context.Context, p *kafka.Producer) error {
 			ctx, cancel := context.WithTimeout(ctx, time.Second)
 			defer cancel()
 			first = p.Produce(ctx, value(0))
 			return nil
-		}), humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(slowCallsBuilder(tel))))
+		}), humustest.WithApp(humus.WithTelemetry(slowCallsBuilder(tel))))
 		st := <-status
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
 

@@ -136,7 +136,7 @@ builds the `Publisher` and the `Processor`, and returns the Service that
 // Init is the end user's Init: it sources the Settings with config.Struct,
 // builds the Publisher and the Processor, and returns the Service from
 // NewService.
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 	d := rabbitmq.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
@@ -299,8 +299,8 @@ certificate:
 
 ```go
 // The CA's file is read first, and the client's certificate only once it has been.
-k.Connection.TLS = r.Get(env("RABBITMQ_TLS_CA_FILE").Parse(readFile(s.Host.Filesystem)).FlatMap(func(ca []byte) config.Value[*tls.Config] {
-	return env("RABBITMQ_TLS_CERT_FILE").Parse(readFile(s.Host.Filesystem)).Parse(clientTLS(ca))
+k.Connection.TLS = r.Get(env("RABBITMQ_TLS_CA_FILE").Parse(readFile(host.Filesystem)).FlatMap(func(ca []byte) config.Value[*tls.Config] {
+	return env("RABBITMQ_TLS_CERT_FILE").Parse(readFile(host.Filesystem)).Parse(clientTLS(ca))
 }))
 // The client certificate is the login: RabbitMQ's rabbitmq_auth_mechanism_ssl plugin takes it.
 k.Connection.SASL = &amqp.ExternalAuth{}
@@ -1352,7 +1352,7 @@ listening at its address it waits for the broker and exits 0 on SIGTERM.
 ### The whole App, against a container
 
 **The whole App runs against RabbitMQ in a container.** Its test runs the
-App with `humustest.Start` and `humus.WithHost(humus.OSHost())`, so the
+App with `humustest.Start` on `humus.OSHost()`, so the
 Service dials the container through the real network, in real time, and
 the App still reads its environment from humustest's process. This test runs
 an `Init` that sources its `Settings` as [`Init`](#a-consumer) does, with a
@@ -1371,14 +1371,13 @@ func TestInit_at_least_once_stops_on_a_failure_and_redelivers(t *testing.T) {
 	bad := errors.New("cannot process")
 	run := func(fail bool) (bedrock.ExitStatus, []rabbitmq.Message) {
 		var got recorder
-		p, status := humustest.Start(t, initWith(func(_ context.Context, m rabbitmq.Message) error {
+		p, status := humustest.Start(t, humus.OSHost(), initWith(func(_ context.Context, m rabbitmq.Message) error {
 			got.add(m)
 			if fail && m.MessageID == "3" {
 				return bad
 			}
 			return nil
 		}),
-			humustest.WithApp(humus.WithHost(humus.OSHost())),
 			humustest.WithEnv(map[string]string{
 				"RABBITMQ_ADDR":     net.JoinHostPort(b.host, b.amqp),
 				"RABBITMQ_USERNAME": b.username,

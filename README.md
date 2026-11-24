@@ -27,7 +27,7 @@ go get github.com/z5labs/humus@v0.18.0
 gives it, once.
 
 ```go
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	name, err := config.Env(s.Process.Environment, "HELLO_NAME").Read(ctx)
 	if err != nil {
 		return nil, err

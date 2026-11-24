@@ -106,7 +106,7 @@ func (g *Greeter) Shutdown(ctx context.Context) error {
 // GreeterInit is the Init of the App in Example_settings. It sources the
 // Greeter's Settings from the environment with names and formats of its
 // own choosing.
-func GreeterInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func GreeterInit(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	d := DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
@@ -114,7 +114,7 @@ func GreeterInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		return Settings{
 			// The file is read as part of the setting, so a missing file
 			// is a config error named after the variable.
-			Greeting:    r.Get(env("GREETING_FILE").Parse(readFile(s.Host.Filesystem)).Default(d.Greeting)),
+			Greeting:    r.Get(env("GREETING_FILE").Parse(readFile(h.Filesystem)).Default(d.Greeting)),
 			ReadTimeout: r.Get(env("READ_TIMEOUT").Parse(time.ParseDuration).Default(d.ReadTimeout).Validate(CheckReadTimeout)),
 			MaxConns:    r.Get(env("MAX_CONNS").Parse(strconv.Atoi).Default(d.MaxConns).Validate(CheckMaxConns)),
 		}
@@ -153,8 +153,8 @@ func runGreeter(env map[string]string, files map[string][]byte) {
 
 	h := humustest.NewHost(t, hosttest.WithFiles(files))
 	tel := humustest.NewTelemetry()
-	p, status := humustest.Start(t, GreeterInit,
-		humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+	p, status := humustest.Start(t, h.Host(), GreeterInit,
+		humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 		humustest.WithEnv(env),
 	)
 	st := <-status

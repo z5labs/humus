@@ -164,8 +164,8 @@ func TestInit_passes_the_shared_cases_on_two_replicas_against_PostgreSQL(t *test
 		for name, file := range files {
 			env[name] = file
 		}
-		p, status := humustest.Start(t, Init,
-			humustest.WithApp(httpserver.Defaults(), humus.WithHost(humus.OSHost()), humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(Faults)),
+		p, status := humustest.Start(t, humus.OSHost(), Init,
+			humustest.WithApp(httpserver.Defaults()...), humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(Faults)),
 			humustest.WithEnv(env),
 		)
 		running = append(running, replica{addr: a, p: p, status: status})

@@ -54,8 +54,8 @@ func (*exporter) Shutdown(context.Context) error { return nil }
 
 // jobInit is the end user's Init: it reads the bucket from the environment
 // and returns the job.
-func jobInit(job *exporter) func(context.Context, *humus.Setup) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+func jobInit(job *exporter) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
+	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		bucket, err := s.Process.Environment.Value("EXPORT_BUCKET")
 		if err != nil {
 			return nil, err
@@ -71,8 +71,8 @@ func TestInit_exports_every_row(t *testing.T) {
 		job := &exporter{}
 		host := humustest.NewHost(t)
 		tel := humustest.NewTelemetry()
-		_, status := humustest.Start(t, jobInit(job),
-			humustest.WithApp(humus.WithHost(host.Host()), humus.WithTelemetry(tel.Builder())),
+		_, status := humustest.Start(t, host.Host(), jobInit(job),
+			humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 			humustest.WithEnv(map[string]string{"EXPORT_BUCKET": "nightly"}),
 			humustest.WithStdin(strings.NewReader("a\nb\n")),
 		)
@@ -86,7 +86,7 @@ func TestInit_exports_every_row(t *testing.T) {
 
 func TestInit_fails_without_its_bucket(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		p, status := humustest.Start(t, jobInit(&exporter{}))
+		p, status := humustest.Start(t, humustest.NewHost(t).Host(), jobInit(&exporter{}))
 
 		st := <-status
 		require.Equal(t, 1, st.Code())

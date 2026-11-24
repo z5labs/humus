@@ -25,7 +25,7 @@ import (
 
 // Init is the end user's Init: it sources the Settings, builds the Service
 // with NewService and returns it, with any other Service the process runs.
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	d := httpserver.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
@@ -34,7 +34,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 			// No .Default: Addr and TLS are required, so an unset ADDR or
 			// TLS_PEM_FILE fails as not found.
 			Addr:              r.Get(env("ADDR").Validate(httpserver.CheckAddr)),
-			TLS:               r.Get(env("TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS)),
+			TLS:               r.Get(env("TLS_PEM_FILE").Parse(readFile(h.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS)),
 			HTTP2Only:         r.Get(env("HTTP2_ONLY").Parse(strconv.ParseBool).Default(d.HTTP2Only)),
 			ReadHeaderTimeout: r.Get(env("READ_HEADER_TIMEOUT").Parse(time.ParseDuration).Default(d.ReadHeaderTimeout).Validate(httpserver.CheckReadHeaderTimeout)),
 			ReadTimeout:       r.Get(env("READ_TIMEOUT").Parse(time.ParseDuration).Default(d.ReadTimeout).Validate(httpserver.CheckReadTimeout)),
@@ -87,10 +87,10 @@ func serverTLS(pem []byte) (*tls.Config, error) {
 
 // buildTelemetry is the service's telemetry.Builder, which names the
 // service.
-func buildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+func buildTelemetry(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 	s := telemetry.DefaultSettings()
 	s.ServiceName = "greeter"
-	return telemetry.New(ctx, s, dial, p.Stdout)
+	return telemetry.New(ctx, s, n, p.Stdout)
 }
 
 // An HTTP service's main is one call to httpserver.Main, with an Init that

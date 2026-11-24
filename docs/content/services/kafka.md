@@ -144,7 +144,7 @@ builds. This one also sources `kafka.ProducerSettings` and builds the
 // Init is the end user's Init: it sources the Settings and the
 // ProducerSettings with config.Struct, builds the Producer and the
 // Processor, and returns the Service from NewService.
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 	d := kafka.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 	list := func(v string) []string { return strings.Split(v, ",") }
@@ -323,8 +323,8 @@ the client's certificate chain and private key from the one
 
 ```go
 // The CA's file is read first, and the client's certificate only once it has been.
-k.TLS = r.Get(env("KAFKA_TLS_CA_FILE").Parse(readFile(s.Host.Filesystem)).FlatMap(func(ca []byte) config.Value[*tls.Config] {
-	return env("KAFKA_TLS_CERT_FILE").Parse(readFile(s.Host.Filesystem)).Parse(clientTLS(ca))
+k.TLS = r.Get(env("KAFKA_TLS_CA_FILE").Parse(readFile(host.Filesystem)).FlatMap(func(ca []byte) config.Value[*tls.Config] {
+	return env("KAFKA_TLS_CERT_FILE").Parse(readFile(host.Filesystem)).Parse(clientTLS(ca))
 }))
 ```
 
@@ -1571,7 +1571,7 @@ SASL credentials. A test never needs fixed certificates or passwords.
 ### Running the end user's `Init`
 
 `humustest.Start` runs the end user's own `Init` on `humus.Main`'s defaults.
-`humus.WithHost(h.Host())` puts the App on the Host the cluster listens on,
+`Start`'s host, `h.Host()`, puts the App on the Host the cluster listens on,
 and `humustest.WithEnv` sets the variables `Init` reads. This test produces
 one record, lets the consumer process and commit it, and stops the App with
 SIGTERM, as Kubernetes would:
@@ -1584,8 +1584,8 @@ func TestInit_processes_and_commits_a_produced_record(t *testing.T) {
 		produce(t, h, c, 1) // key-0, with the value 0
 
 		tel := humustest.NewTelemetry() // keeps the App's logs off p.Stdout()
-		p, status := humustest.Start(t, Init,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+		p, status := humustest.Start(t, h.Host(), Init,
+			humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 			humustest.WithEnv(map[string]string{
 				"KAFKA_BROKERS":  strings.Join(c.ListenAddrs(), ","),
 				"KAFKA_GROUP_ID": "orders-consumer",

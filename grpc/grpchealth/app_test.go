@@ -57,8 +57,8 @@ func TestInit_answers_the_probes_on_the_Service_port(t *testing.T) {
 		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 			"tls.pem": pemFile(t, ca.Issue(t, "carts")),
 		}))
-		p, exit := grpcservertest.Start(t, Init,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		p, exit := grpcservertest.Start(t, h.Host(), Init,
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			humustest.WithEnv(map[string]string{"GRPC_ADDR": ":9090", "GRPC_TLS_PEM_FILE": "tls.pem"}),
 		)
 		<-h.Listening("carts:9090")
@@ -152,7 +152,7 @@ func TestNewServer_uses_no_OpenTelemetry_globals(t *testing.T) {
 		h := humustest.NewHost(t)
 		tel := humustest.NewTelemetry()
 		failing := health.MonitorFunc(func(context.Context) (bool, error) { return false, errSecret })
-		init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			svc, err := grpcserver.NewService(s, grpcserver.Settings{Addr: ":9090", TLS: tlsFor(t, ca)})
 			if err != nil {
 				return nil, err
@@ -161,8 +161,8 @@ func TestNewServer_uses_no_OpenTelemetry_globals(t *testing.T) {
 			healthpb.RegisterHealthServer(svc, grpchealth.NewServer(s, hs.Probes()))
 			return []humus.Service{svc, hs}, nil
 		}
-		p, exit := grpcservertest.Start(t, init,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+		p, exit := grpcservertest.Start(t, h.Host(), init,
+			humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 		)
 		<-h.Listening("carts:9090")
 		synctest.Wait()

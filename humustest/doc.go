@@ -5,10 +5,12 @@
 
 // Package humustest runs a whole humus App inside a test.
 //
-// A whole-App test hands the end user's Init to [Start], which runs the App
-// that humus.Main would run for it, with the same defaults, on a new
-// bedrocktest Process and a [Host] of this package in place of
-// humus.OSHost(). Start takes humus's options, with [WithApp], and the
+// A whole-App test hands a host and the end user's Init to [Start], which
+// runs the App that humus.MainOn would run for them, with the same
+// defaults, on a new bedrocktest Process. The host is the humus.Host of a
+// [Host] of this package in place of humus.OSHost(), or, for an App on a
+// host of its own, one built from that Host's parts. Start takes humus's
+// options, with [WithApp], and the
 // Process's environment, arguments and stdin, with [WithEnv], [WithArgs]
 // and [WithStdin], in one list, so the test needs no bedrocktest options.
 // humustest also supplies what a humus App needs beyond the process:
@@ -25,14 +27,12 @@
 // runs inside a testing/synctest bubble, with no real environment, no real
 // time and no file outside the test's temp directory. Here helloInit is the
 // end user's Init, whose Service serves hello over HTTP on ":8080" of its
-// Setup's Host, and the test passes its own Host to dial it:
+// host, and the test runs it on a Host it holds, to dial it:
 //
 //	func TestInit_serves_hello(t *testing.T) {
 //		synctest.Test(t, func(t *testing.T) {
 //			h := humustest.NewHost(t)
-//			p, status := humustest.Start(t, helloInit,
-//				humustest.WithApp(humus.WithHost(h.Host())),
-//			)
+//			p, status := humustest.Start(t, h.Host(), helloInit)
 //
 //			// Wait until every goroutine in the bubble is blocked, which
 //			// includes the App blocked in Accept on :8080.
@@ -59,9 +59,9 @@
 // imports bedrocktest and bedrock. A test of an App value it builds itself,
 // rather than of the end user's Init, runs it with bedrocktest.Start.
 //
-// The App reaches the network and the filesystem only through the Host in
-// its Setup: its Services listen with s.Host.ListenTCP and open files with
-// s.Host.Filesystem, never with net.Listen or os.Open, which would reach the real
+// The App reaches the network and the filesystem only through the host
+// Init is given: its Services listen with h.ListenTCP and open files with
+// h.Filesystem, never with net.Listen or os.Open, which would reach the real
 // host and block where synctest can't see. Build the Host, and a CA,
 // inside the bubble that uses them, with the bubble's t.
 //

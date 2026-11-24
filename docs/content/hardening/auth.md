@@ -872,7 +872,7 @@ and is served on the Host as an App of the test's own:
 
 ```go
 cert := ca.Issue(t, "idp.internal")
-proc, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+proc, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 	settings := httpserver.DefaultSettings()
 	settings.Addr = ":443"
 	settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
@@ -881,7 +881,7 @@ proc, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]hu
 		return nil, err
 	}
 	return []humus.Service{svc}, nil
-}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 select {
 case <-h.Listening("idp.internal:443"):
 case st := <-status:

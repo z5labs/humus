@@ -71,7 +71,7 @@ func podSetup(t *testing.T, h *humustest.Host, env map[string]string) *humus.Set
 func TestInit_without_its_variables_exits_78(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
-		_, status := humustest.Start(t, Init)
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), Init)
 
 		st := <-status
 		require.Equal(t, humus.ExitConfig, st.Code(), "cause: %v", st.Cause())
@@ -97,7 +97,7 @@ func TestInPod_reaches_the_API_server_with_the_service_accounts_token(t *testing
 			"KUBERNETES_SERVICE_HOST": "apiserver",
 			"KUBERNETES_SERVICE_PORT": "6443",
 		})
-		conn, err := inPod(t.Context(), s, h.Path("serviceaccount")+"/")
+		conn, err := inPod(t.Context(), s, h.Host(), h.Path("serviceaccount")+"/")
 		require.NoError(t, err)
 		require.Equal(t, server, conn.Server)
 
@@ -131,7 +131,7 @@ func TestInPod_brackets_an_IPv6_host(t *testing.T) {
 		conn, err := inPod(t.Context(), podSetup(t, h, map[string]string{
 			"KUBERNETES_SERVICE_HOST": "fd00:10:96::1",
 			"KUBERNETES_SERVICE_PORT": "443",
-		}), h.Path("serviceaccount")+"/")
+		}), h.Host(), h.Path("serviceaccount")+"/")
 		require.NoError(t, err)
 		require.Equal(t, "[fd00:10:96::1]:443", conn.Server)
 		require.NoError(t, kube.CheckServer(conn.Server))
@@ -142,7 +142,7 @@ func TestInPod_without_the_service_accounts_CA_fails(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
-		_, err := inPod(t.Context(), podSetup(t, h, nil), h.Path("serviceaccount")+"/")
+		_, err := inPod(t.Context(), podSetup(t, h, nil), h.Host(), h.Path("serviceaccount")+"/")
 		require.ErrorIs(t, err, os.ErrNotExist)
 	})
 }
@@ -357,14 +357,14 @@ func TestWithProbes_the_pod_is_ready_once_the_caches_have_synced(t *testing.T) {
 			TLS:  &tls.Config{Certificates: []tls.Certificate{ca.Issue(t, "localhost").TLS()}},
 		}
 
-		p, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		p, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			ctrl, err := kube.NewController(s, testClient(t, s), testSettings(), Memcached, Reconciler{Kube: fc.kube})
 			if err != nil {
 				return nil, err
 			}
 			kube.SetClients(ctrl, fc.dyn, fc.meta, fc.kube.CoordinationV1())
 			return withProbes(s, ctrl, probeSettings)
-		}, humustest.WithApp(humus.WithHost(h.Host())))
+		})
 		<-h.Listening("localhost:8081")
 		synctest.Wait()
 		require.Equal(t, http.StatusServiceUnavailable, probe(t, h, ca, readiness), "ready before the caches have synced")

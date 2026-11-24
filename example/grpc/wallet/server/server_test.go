@@ -325,7 +325,7 @@ func (e *env) startReplica(addr string) {
 	t := e.t
 	t.Helper()
 	cert := e.ca.Issue(t, "ledger").TLS()
-	p, exit := grpcservertest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	p, exit := grpcservertest.Start(t, e.h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		svc, err := grpcserver.NewService(s, grpcserver.Settings{
 			Addr: addr,
 			TLS:  &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
@@ -335,7 +335,7 @@ func (e *env) startReplica(addr string) {
 		}
 		ledgerpb.RegisterLedgerServer(svc, e.ledger)
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(e.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+	}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 	<-e.h.Listening(addr)
 
 	var once sync.Once
@@ -362,7 +362,7 @@ func (e *env) startWallet() {
 		return e.h.DialTCP(ctx, network, address)
 	}}
 	cert := e.ca.Issue(t, "wallet").TLS()
-	_, exit := grpcservertest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	_, exit := grpcservertest.Start(t, host, func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		settings := grpcclient.DefaultSettings()
 		settings.Addr = ledgerAddr
 		settings.TLS = &tls.Config{RootCAs: e.ca.Pool(), MinVersion: tls.VersionTLS12}
@@ -393,7 +393,7 @@ func (e *env) startWallet() {
 		}
 		walletpb.RegisterWalletServer(svc, wallet)
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(telemetry.NoopBuilder)))
+	}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 	<-e.h.Listening(walletAddr)
 	t.Cleanup(func() { <-exit })
 	e.wallet = walletpb.NewWalletClient(grpcservertest.NewClient(t, e.h, walletAddr, e.ca.Pool()))

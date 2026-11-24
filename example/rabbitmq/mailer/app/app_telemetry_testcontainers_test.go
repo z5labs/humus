@@ -232,8 +232,8 @@ func TestInit_traces_logs_and_measures_each_request_without_its_address_or_body(
 	m := newFaultsMailer(t, broker, provider, mailer, cased.username)
 	m.env["MAIL_MAX_ATTEMPTS"] = "2"
 	tel := humustest.NewTelemetry()
-	p, status := humustest.Start(t, app.Init,
-		humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(tel.Builder()), humus.WithFaults(app.Faults)),
+	p, status := humustest.Start(t, humus.OSHost(), app.Init,
+		humustest.WithApp(humus.WithTelemetry(tel.Builder()), humus.WithFaults(app.Faults)),
 		humustest.WithEnv(m.env),
 	)
 	m.awaitReady(t)

@@ -31,17 +31,17 @@ func funcPointer(f any) uintptr {
 }
 
 // noServices is an Init that returns no Services.
-func noServices(context.Context, *humus.Setup) ([]humus.Service, error) { return nil, nil }
+func noServices(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) { return nil, nil }
 
 func TestDefaults_leaves_the_rest_of_the_App_unchanged(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		host := humustest.NewHost(t).Host()
-		a := humus.App{
+		a := humus.App[humus.Host]{
 			Host:      host,
 			Telemetry: telemetry.NoopBuilder,
 			Init:      noServices,
 		}
-		grpcserver.Defaults()(&a)
+		require.NoError(t, a.Apply(grpcserver.Defaults()...))
 
 		require.Equal(t, host, a.Host, "Host")
 		require.Equal(t, funcPointer(telemetry.NoopBuilder), funcPointer(a.Telemetry), "Telemetry")
@@ -52,8 +52,8 @@ func TestDefaults_leaves_the_rest_of_the_App_unchanged(t *testing.T) {
 	})
 
 	t.Run("including an App with none of them set", func(t *testing.T) {
-		var a humus.App
-		grpcserver.Defaults()(&a)
+		var a humus.App[humus.Host]
+		require.NoError(t, a.Apply(grpcserver.Defaults()...))
 		require.Zero(t, a.Host)
 		require.Nil(t, a.Telemetry)
 		require.Nil(t, a.Init)
@@ -67,8 +67,8 @@ func TestMain_an_RPC_in_flight_finishes_during_shutdown(t *testing.T) {
 		tel := humustest.NewTelemetry()
 		ts := &testServer{entered: make(chan struct{}), release: make(chan struct{})}
 
-		p, exit := grpcservertest.Start(t, serves(settingsFor(t, ca, ":9090"), ts),
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+		p, exit := grpcservertest.Start(t, h.Host(), serves(settingsFor(t, ca, ":9090"), ts),
+			humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 		)
 		<-h.Listening("carts:9090")
 
@@ -96,7 +96,7 @@ func TestMain_an_RPC_in_flight_finishes_during_shutdown(t *testing.T) {
 
 func TestInit_without_an_address_or_a_certificate_exits_78(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		_, exit := grpcservertest.Start(t, Init)
+		_, exit := grpcservertest.Start(t, humustest.NewHost(t).Host(), Init)
 
 		st := <-exit
 		require.Equal(t, humus.ExitConfig, st.Code())
@@ -123,8 +123,8 @@ func TestInit_with_a_bad_address_exits_78(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h, env := p12Env(t, humustest.NewCA(t), "nope")
 
-		_, exit := grpcservertest.Start(t, Init,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		_, exit := grpcservertest.Start(t, h.Host(), Init,
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			humustest.WithEnv(env),
 		)
 
@@ -141,8 +141,8 @@ func TestInit_serves_with_a_certificate_from_a_PKCS12_file(t *testing.T) {
 		ca := humustest.NewCA(t)
 		h, env := p12Env(t, ca, ":9090")
 
-		p, exit := grpcservertest.Start(t, Init,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		p, exit := grpcservertest.Start(t, h.Host(), Init,
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			humustest.WithEnv(env),
 		)
 		<-h.Listening("carts:9090")
@@ -165,8 +165,8 @@ func TestInit_serves_with_a_certificate_from_a_PKCS12_file(t *testing.T) {
 			h, env := p12Env(t, humustest.NewCA(t), ":9090")
 			env["GRPC_TLS_P12_PASSWORD"] += "x"
 
-			_, exit := grpcservertest.Start(t, Init,
-				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+			_, exit := grpcservertest.Start(t, h.Host(), Init,
+				humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 				humustest.WithEnv(env),
 			)
 			st := <-exit

@@ -39,8 +39,8 @@ func producerSettings(brokers ...string) kafka.ProducerSettings {
 
 // produces returns an Init that builds a Producer with settings, and whose
 // only Service is a job that calls run with it.
-func produces(settings kafka.ProducerSettings, run func(ctx context.Context, p *kafka.Producer) error) func(context.Context, *humus.Setup) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+func produces(settings kafka.ProducerSettings, run func(ctx context.Context, p *kafka.Producer) error) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
+	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		p, err := kafka.NewProducer(s, settings)
 		if err != nil {
 			return nil, err
@@ -138,13 +138,13 @@ func TestProduce_stores_the_records_of_a_call(t *testing.T) {
 
 		tel := humustest.NewTelemetry()
 		var err error
-		_, status := humustest.Start(t, produces(producerSettings(c.ListenAddrs()...), func(ctx context.Context, p *kafka.Producer) error {
+		_, status := humustest.Start(t, h.Host(), produces(producerSettings(c.ListenAddrs()...), func(ctx context.Context, p *kafka.Producer) error {
 			err = p.Produce(ctx,
 				kafka.Record{Topic: topic, Key: []byte("key-0"), Value: []byte("0"), Headers: []kafka.Header{{Key: "h", Value: []byte("v")}}},
 				value(1),
 			)
 			return nil
-		}), humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+		}), humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 
 		st := <-status
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
@@ -182,10 +182,10 @@ func TestProduce_with_no_records_returns_nil(t *testing.T) {
 		})
 
 		var err error
-		_, status := humustest.Start(t, produces(producerSettings(c.ListenAddrs()...), func(ctx context.Context, p *kafka.Producer) error {
+		_, status := humustest.Start(t, h.Host(), produces(producerSettings(c.ListenAddrs()...), func(ctx context.Context, p *kafka.Producer) error {
 			err = p.Produce(ctx)
 			return nil
-		}), humustest.WithApp(humus.WithHost(h.Host())))
+		}))
 
 		st := <-status
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
@@ -204,10 +204,10 @@ func TestProduce_keeps_the_order_of_records_with_one_key(t *testing.T) {
 			records[i] = kafka.Record{Topic: topic, Key: []byte("one key"), Value: []byte(strconv.Itoa(i))}
 		}
 		var err error
-		_, status := humustest.Start(t, produces(producerSettings(c.ListenAddrs()...), func(ctx context.Context, p *kafka.Producer) error {
+		_, status := humustest.Start(t, h.Host(), produces(producerSettings(c.ListenAddrs()...), func(ctx context.Context, p *kafka.Producer) error {
 			err = p.Produce(ctx, records...)
 			return nil
-		}), humustest.WithApp(humus.WithHost(h.Host())))
+		}))
 
 		st := <-status
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
@@ -260,10 +260,10 @@ func TestReadAll_reads_every_record_when_the_first_Fetch_leaves_out_their_partit
 			records[i] = kafka.Record{Topic: topic, Key: []byte("one key"), Value: []byte(strconv.Itoa(i))}
 		}
 		var err error
-		_, status := humustest.Start(t, produces(producerSettings(c.ListenAddrs()...), func(ctx context.Context, p *kafka.Producer) error {
+		_, status := humustest.Start(t, h.Host(), produces(producerSettings(c.ListenAddrs()...), func(ctx context.Context, p *kafka.Producer) error {
 			err = p.Produce(ctx, records...)
 			return nil
-		}), humustest.WithApp(humus.WithHost(h.Host())))
+		}))
 		st := <-status
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
 		require.NoError(t, err)
@@ -307,14 +307,14 @@ func TestProduce_with_a_done_ctx_sends_nothing(t *testing.T) {
 
 		var err error
 		var took time.Duration
-		_, status := humustest.Start(t, produces(producerSettings(c.ListenAddrs()...), func(ctx context.Context, p *kafka.Producer) error {
+		_, status := humustest.Start(t, h.Host(), produces(producerSettings(c.ListenAddrs()...), func(ctx context.Context, p *kafka.Producer) error {
 			ctx, cancel := context.WithCancel(ctx)
 			cancel()
 			start := time.Now()
 			err = p.Produce(ctx, value(0))
 			took = time.Since(start)
 			return nil
-		}), humustest.WithApp(humus.WithHost(h.Host())))
+		}))
 
 		st := <-status
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
@@ -331,10 +331,10 @@ func TestProduce_rejects_a_record_with_no_topic(t *testing.T) {
 		c := cluster(t, h, 1)
 
 		var err error
-		_, status := humustest.Start(t, produces(producerSettings(c.ListenAddrs()...), func(ctx context.Context, p *kafka.Producer) error {
+		_, status := humustest.Start(t, h.Host(), produces(producerSettings(c.ListenAddrs()...), func(ctx context.Context, p *kafka.Producer) error {
 			err = p.Produce(ctx, value(0), kafka.Record{Value: []byte("no topic")})
 			return nil
-		}), humustest.WithApp(humus.WithHost(h.Host())))
+		}))
 
 		st := <-status
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
@@ -351,7 +351,7 @@ func TestProduce_returns_when_ctx_is_done_and_OnStop_flushes(t *testing.T) {
 
 		var err error
 		var took time.Duration
-		_, status := humustest.Start(t, produces(producerSettings(c.ListenAddrs()...), func(ctx context.Context, p *kafka.Producer) error {
+		_, status := humustest.Start(t, h.Host(), produces(producerSettings(c.ListenAddrs()...), func(ctx context.Context, p *kafka.Producer) error {
 			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
 			start := time.Now()
@@ -359,7 +359,7 @@ func TestProduce_returns_when_ctx_is_done_and_OnStop_flushes(t *testing.T) {
 			took = time.Since(start)
 			release() // the cluster answers once the call has given up
 			return nil
-		}), humustest.WithApp(humus.WithHost(h.Host())))
+		}))
 
 		st := <-status
 		require.Zero(t, st.Code(), "OnStop's flush waited for the record; cause: %v", st.Cause())
@@ -380,12 +380,12 @@ func TestProduce_DeliveryTimeout_bounds_a_call_against_a_hung_broker(t *testing.
 
 		var err error
 		var took time.Duration
-		_, status := humustest.Start(t, produces(producerSettings(c.ListenAddrs()...), func(_ context.Context, p *kafka.Producer) error {
+		_, status := humustest.Start(t, h.Host(), produces(producerSettings(c.ListenAddrs()...), func(_ context.Context, p *kafka.Producer) error {
 			start := time.Now()
 			err = p.Produce(context.Background(), value(0))
 			took = time.Since(start)
 			return nil
-		}), humustest.WithApp(humus.WithHost(h.Host())))
+		}))
 
 		st := <-status
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
@@ -487,7 +487,7 @@ func TestProduce_a_caller_giving_up_does_not_fail_another_callers_records(t *tes
 			first, second           error
 			firstTook, secondReturn time.Duration
 		)
-		_, status := humustest.Start(t, produces(producerSettings(c.ListenAddrs()...), func(ctx context.Context, p *kafka.Producer) error {
+		_, status := humustest.Start(t, h.Host(), produces(producerSettings(c.ListenAddrs()...), func(ctx context.Context, p *kafka.Producer) error {
 			start := time.Now()
 			var wg sync.WaitGroup
 			wg.Go(func() {
@@ -505,7 +505,7 @@ func TestProduce_a_caller_giving_up_does_not_fail_another_callers_records(t *tes
 			release()
 			wg.Wait()
 			return nil
-		}), humustest.WithApp(humus.WithHost(h.Host())))
+		}))
 
 		st := <-status
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
@@ -525,14 +525,13 @@ func TestProducer_grace_period_cuts_the_OnStop_flush_short(t *testing.T) {
 		held, _ := holdProduce(t, c) // released when the test ends
 
 		produced := make(chan error, 1)
-		_, status := humustest.Start(t, produces(producerSettings(c.ListenAddrs()...), func(_ context.Context, p *kafka.Producer) error {
+		_, status := humustest.Start(t, h.Host(), produces(producerSettings(c.ListenAddrs()...), func(_ context.Context, p *kafka.Producer) error {
 			// A goroutine the job leaves running, whose record the broker
 			// holds.
 			go func() { produced <- p.Produce(context.Background(), value(0)) }()
 			<-held
 			return nil
 		}),
-			humustest.WithApp(humus.WithHost(h.Host())),
 			humustest.WithEnv(map[string]string{"HUMUS_SHUTDOWN_GRACE_PERIOD": "2s"}),
 		)
 
@@ -557,7 +556,7 @@ func TestProducer_after_Close_Produce_fails(t *testing.T) {
 		after := make(chan struct{})
 		produced := make(chan error, 1)
 		var took time.Duration
-		_, status := humustest.Start(t, produces(producerSettings(c.ListenAddrs()...), func(_ context.Context, p *kafka.Producer) error {
+		_, status := humustest.Start(t, h.Host(), produces(producerSettings(c.ListenAddrs()...), func(_ context.Context, p *kafka.Producer) error {
 			// A goroutine the job leaves running, which produces after
 			// the App has stopped.
 			go func() {
@@ -568,7 +567,7 @@ func TestProducer_after_Close_Produce_fails(t *testing.T) {
 				produced <- err
 			}()
 			return nil
-		}), humustest.WithApp(humus.WithHost(h.Host())))
+		}))
 
 		st := <-status
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
@@ -587,7 +586,7 @@ func TestNewProducer_Init_failing_after_it_closes_the_client(t *testing.T) {
 
 		bad := errors.New("init failed after NewProducer")
 		var pr *kafka.Producer
-		_, status := humustest.Start(t, func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+		_, status := humustest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			var err error
 			pr, err = kafka.NewProducer(s, producerSettings(c.ListenAddrs()...))
 			if err != nil {
@@ -598,7 +597,7 @@ func TestNewProducer_Init_failing_after_it_closes_the_client(t *testing.T) {
 				return nil, err
 			}
 			return nil, bad
-		}, humustest.WithApp(humus.WithHost(h.Host())))
+		})
 
 		st := <-status
 		require.ErrorIs(t, st.Cause(), bad)
@@ -677,12 +676,12 @@ func TestNewProducer(t *testing.T) {
 				return nil, nil, false
 			})
 			bad := errors.New("init failed after NewProducer")
-			_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+			_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 				if _, err := kafka.NewProducer(s, producerSettings(c.ListenAddrs()...)); err != nil {
 					return nil, err
 				}
 				return nil, bad
-			}, humustest.WithApp(humus.WithHost(h.Host())))
+			})
 
 			st := <-status
 			require.ErrorIs(t, st.Cause(), bad)

@@ -135,9 +135,8 @@ func runner(t *testing.T, dir string, env map[string]string) func(ctx context.Co
 		all := maps.Clone(env)
 		all["DATABASE_URL_FILE"] = f.Name()
 		maps.Copy(all, extra)
-		p, status := humustest.Start(t, app.Init,
+		p, status := humustest.Start(t, humus.OSHost(), app.Init,
 			humustest.WithApp(app.Options()...),
-			humustest.WithApp(humus.WithHost(humus.OSHost())),
 			humustest.WithEnv(all),
 		)
 

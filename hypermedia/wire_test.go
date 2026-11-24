@@ -52,7 +52,7 @@ func serveSite(t *testing.T, routes ...hypermedia.Route) *served {
 	ca := humustest.NewCA(t)
 	cert := ca.Issue(t, "localhost")
 	s := &served{t: t, h: humustest.NewHost(t), tel: humustest.NewTelemetry(), pool: ca.Pool()}
-	p, status := httpservertest.Start(t, func(_ context.Context, setup *humus.Setup) ([]humus.Service, error) {
+	p, status := httpservertest.Start(t, s.h.Host(), func(_ context.Context, setup *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		site, err := hypermedia.NewSite(setup, func(w http.ResponseWriter, _ *http.Request, _ error) error {
 			s.pages.Add(1)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -70,7 +70,7 @@ func serveSite(t *testing.T, routes ...hypermedia.Route) *served {
 			return nil, err
 		}
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(s.h.Host()), humus.WithTelemetry(s.tel.Builder())))
+	}, humustest.WithApp(humus.WithTelemetry(s.tel.Builder())))
 	select {
 	case <-s.h.Listening("localhost:8443"):
 	case st := <-status:

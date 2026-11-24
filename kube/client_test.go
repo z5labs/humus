@@ -737,7 +737,7 @@ func TestClient_closes_its_idle_connections_at_OnStop(t *testing.T) {
 
 		host, conns := stallableDials(h)
 		var openWhileRunning bool
-		_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		_, status := humustest.Start(t, host, func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			c, err := kube.NewClient(s, kube.Connection{Server: server, TLS: &tls.Config{RootCAs: ca.Pool()}})
 			if err != nil {
 				return nil, err
@@ -754,7 +754,7 @@ func TestClient_closes_its_idle_connections_at_OnStop(t *testing.T) {
 				openWhileRunning = len(conns.all()) == 1 && !conns.all()[0].isClosed()
 				return nil
 			})}, nil
-		}, humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(telemetry.NoopBuilder)))
+		}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 		st := <-status
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
 		synctest.Wait()

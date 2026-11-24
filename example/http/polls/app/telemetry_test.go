@@ -40,7 +40,7 @@ const (
 	feedRoute = "GET /polls/{pollId}/feed"
 )
 
-func observe(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error)) (*service, *humustest.Telemetry) {
+func observe(t *testing.T, init func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error)) (*service, *humustest.Telemetry) {
 	t.Helper()
 	tel := humustest.NewTelemetry()
 	f := newFixture(t)
@@ -361,8 +361,8 @@ func TestInit_with_a_bad_telemetry_setting_exits_78(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
 				f.env[name] = value
-				_, status := httpservertest.Start(t, Init,
-					humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(BuildTelemetry)),
+				_, status := httpservertest.Start(t, f.h.Host(), Init,
+					humustest.WithApp(humus.WithTelemetry(BuildTelemetry)),
 					humustest.WithEnv(f.env),
 				)
 				st := <-status

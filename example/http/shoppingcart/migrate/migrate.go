@@ -32,13 +32,13 @@ const (
 	grantLock    = int64(4217863019455312)
 )
 
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	set, err := readSettings(ctx, s)
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	set, err := readSettings(ctx, s, h)
 	if err != nil {
 		return nil, err
 	}
 	return []humus.Service{job.NewService(s, func(ctx context.Context) error {
-		return run(ctx, s, set)
+		return run(ctx, s, h, set)
 	})}, nil
 }
 
@@ -48,9 +48,9 @@ type settings struct {
 	AppRole    string
 }
 
-func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
+func readSettings(ctx context.Context, s *humus.Setup, h humus.Host) (settings, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
-	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.Filesystem)) }
+	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(h.Filesystem)) }
 
 	return config.Struct(func(r *config.Resolver) settings {
 		return settings{
@@ -97,14 +97,14 @@ func notEmpty(s string) error {
 	return nil
 }
 
-func run(ctx context.Context, s *humus.Setup, set settings) (err error) {
+func run(ctx context.Context, s *humus.Setup, h humus.Host, set settings) (err error) {
 	cfg := set.Database
 	cfg.DialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		if network == "unix" {
 			var d net.Dialer
 			return d.DialContext(ctx, network, addr)
 		}
-		return s.Host.DialTCP(ctx, network, addr)
+		return h.DialTCP(ctx, network, addr)
 	}
 	cfg.LookupFunc = func(_ context.Context, host string) ([]string, error) {
 		return []string{host}, nil
@@ -146,8 +146,8 @@ func grant(ctx context.Context, conn *pgx.Conn, role string) error {
 	})
 }
 
-func BuildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+func BuildTelemetry(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 	s := telemetry.DefaultSettings()
 	s.ServiceName = "migrate"
-	return telemetry.New(ctx, s, dial, p.Stdout)
+	return telemetry.New(ctx, s, n, p.Stdout)
 }

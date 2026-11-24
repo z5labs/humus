@@ -34,7 +34,7 @@ func newMemoryLedger() *memoryLedger {
 	}
 }
 
-func (m *memoryLedger) open(_ context.Context, s *humus.Setup, _ *pgxpool.Config) (server.Store, func(context.Context) error, error) {
+func (m *memoryLedger) open(_ context.Context, s *humus.Setup, _ humus.Host, _ *pgxpool.Config) (server.Store, func(context.Context) error, error) {
 	return &memoryStore{ledger: m, faults: s.Faults}, func(context.Context) error { return nil }, nil
 }
 

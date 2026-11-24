@@ -122,7 +122,7 @@ func TestInit_turns_ready_once_it_has_joined_its_group(t *testing.T) {
 
 func TestInit_requires_the_brokers_and_the_probes_settings(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		_, status := humustest.Start(t, Init, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), Init, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 
 		st := <-status
 		require.Equal(t, humus.ExitConfig, st.Code())
@@ -134,7 +134,7 @@ func TestInit_requires_the_brokers_and_the_probes_settings(t *testing.T) {
 
 func TestInit_rejects_a_retry_setting_that_is_not_positive(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		_, status := humustest.Start(t, Init,
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), Init,
 			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			humustest.WithEnv(map[string]string{"RETRY_ATTEMPTS": "0", "RETRY_DELAY": "-1s"}),
 		)
@@ -179,8 +179,8 @@ func start(t *testing.T, env map[string]string) service {
 		"PROBES_TLS_KEY_FILE":  "tls/tls.key",
 	}
 	maps.Copy(all, env)
-	p, status := humustest.Start(t, Init,
-		humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+	p, status := humustest.Start(t, h.Host(), Init,
+		humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		humustest.WithEnv(all),
 	)
 	select {
