@@ -41,7 +41,7 @@ require (
 	github.com/swaggest/refl v1.4.0 // indirect
 	github.com/tinylib/msgp v1.6.5 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
-	github.com/valyala/fasthttp v1.79.0 // indirect
+	github.com/valyala/fasthttp v1.80.0 // indirect
 	github.com/z5labs/bedrock/fit v0.26.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.2 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0 // indirect
