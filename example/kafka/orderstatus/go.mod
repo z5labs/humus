@@ -14,7 +14,7 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.45.0
 	github.com/twmb/franz-go v1.22.3
 	github.com/twmb/franz-go/pkg/kadm v1.20.0
-	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261121001519-6c9b35e5d612
+	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261123165014-929202d23831
 	github.com/twmb/franz-go/pkg/kmsg v1.15.1
 	github.com/z5labs/bedrock v0.26.0
 	github.com/z5labs/bedrock/fit v0.26.0
@@ -97,8 +97,8 @@ require (
 	golang.org/x/sync v0.25.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/text v0.44.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20261118221215-c8830f628b3f // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20261118221215-c8830f628b3f // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20261123191846-1e707ab9fbc2 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20261123191846-1e707ab9fbc2 // indirect
 	google.golang.org/grpc v1.85.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	software.sslmate.com/src/go-pkcs12 v0.7.4 // indirect
