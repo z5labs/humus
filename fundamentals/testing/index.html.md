@@ -42,8 +42,8 @@ type helloService struct {
 	srv   http.Server
 }
 
-func (h *helloService) Serve(context.Context) error {
-	ln, err := h.setup.Host.Listen("tcp", ":8080")
+func (h *helloService) Serve(ctx context.Context) error {
+	ln, err := h.setup.Host.ListenTCP(ctx, "tcp", ":8080")
 	if err != nil {
 		return err
 	}
@@ -98,8 +98,8 @@ func TestInit_serves_hello(t *testing.T) {
 }
 ```
 
-The Service listens through `s.Host.Listen`, never through `net.Listen`, so it
-listens on the test Host. `Start` builds a Host of its own, and
+The Service listens through `s.Host.ListenTCP`, never through `net.Listen`,
+so it listens on the test Host. `Start` builds a Host of its own, and
 `humus.WithHost(h.Host())` replaces it with one the test holds, so that the
 test can dial it: `h.HTTPClient()` is an `http.Client` that dials the Host,
 with keep-alives off so that no idle connection outlives a request.
@@ -302,18 +302,18 @@ are in its docs. In short:
 
 - **A name and port can be held once.** A listener on every name, an empty
   host, `0.0.0.0` or `::`, conflicts with any other listener on its port.
-  A second `Listen` on a held name and port fails with `EADDRINUSE`.
+  A second `ListenTCP` on a held name and port fails with `EADDRINUSE`.
 - **Names are compared as written** and never resolved. `localhost` and
   `127.0.0.1` are different names, so a client dials the name a Service
   listens on, or the Service listens on every name, as `:8080` does above.
 - **UDP has ports of its own**, apart from TCP's, and binds by the same
-  rules. `ListenPacket` binds a socket, and `Dial` over `"udp"` returns a
-  socket connected to it. A datagram arrives whole and in order at the
+  rules. `ListenUDP` binds a socket, and `DialUDP` returns a socket
+  connected to it. A datagram arrives whole and in order at the
   socket that holds its address, and is dropped when no socket does.
 
 ```go
 h := humustest.NewHost(t)
-ln, err := h.Listen("tcp", "localhost:8080")
+ln, err := h.ListenTCP(context.Background(), "tcp", "localhost:8080")
 if err != nil {
 	fmt.Println(err)
 	return
@@ -329,7 +329,7 @@ go func() {
 	_, _ = io.WriteString(conn, "hello from localhost:8080")
 }()
 
-conn, err := h.Dial(context.Background(), "tcp", "localhost:8080")
+conn, err := h.DialTCP(context.Background(), "tcp", "localhost:8080")
 if err != nil {
 	fmt.Println(err)
 	return
@@ -342,26 +342,26 @@ if err != nil {
 }
 fmt.Println(string(b))
 
-_, err = h.Dial(context.Background(), "tcp", "127.0.0.1:8080")
+_, err = h.DialTCP(context.Background(), "tcp", "127.0.0.1:8080")
 fmt.Println("127.0.0.1:8080 refused:", errors.Is(err, syscall.ECONNREFUSED))
 // Output:
 // hello from localhost:8080
 // 127.0.0.1:8080 refused: true
 ```
 
-Over UDP, the socket that `ListenPacket` binds takes the datagram the dialled
+Over UDP, the socket that `ListenUDP` binds takes the datagram the dialled
 socket writes:
 
 ```go
 h := humustest.NewHost(t)
-pc, err := h.ListenPacket("udp", "dns:53")
+pc, err := h.ListenUDP(context.Background(), "udp", "dns:53")
 if err != nil {
 	fmt.Println(err)
 	return
 }
 defer func() { _ = pc.Close() }()
 
-conn, err := h.Dial(context.Background(), "udp", "dns:53")
+conn, err := h.DialUDP(context.Background(), "udp", "dns:53")
 if err != nil {
 	fmt.Println(err)
 	return
@@ -387,7 +387,7 @@ fmt.Println("from the dialled socket:", from.String() == conn.LocalAddr().String
 
 ### Waiting for a listener
 
-`Dial` refuses rather than waits. A `Dial` with no listener fails at once with
+`DialTCP` refuses rather than waits. A `DialTCP` with no listener fails at once with
 `ECONNREFUSED`, as a real dial does. A test that dials before the App listens
 has dialled too early, and waiting for a listener would hide that, or turn it
 into a `synctest` deadlock report that doesn't name the cause.
@@ -403,8 +403,8 @@ So a test waits for the listener itself, before it dials, in one of two ways:
 
 ```go
 h := humustest.NewHost(t)
-_, err := h.Dial(context.Background(), "tcp", "localhost:8080")
-fmt.Println("before Listen, refused:", errors.Is(err, syscall.ECONNREFUSED))
+_, err := h.DialTCP(context.Background(), "tcp", "localhost:8080")
+fmt.Println("before ListenTCP, refused:", errors.Is(err, syscall.ECONNREFUSED))
 
 // The goroutine stands in for an App, which listens when it gets to
 // it. Listening is called first, so the test can't miss the listener.
@@ -412,7 +412,7 @@ listening := h.Listening("localhost:8080")
 served := make(chan struct{})
 go func() {
 	defer close(served)
-	ln, err := h.Listen("tcp", ":8080")
+	ln, err := h.ListenTCP(context.Background(), "tcp", ":8080")
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -428,10 +428,10 @@ go func() {
 
 select {
 case <-listening:
-case <-served: // Listen failed, and the goroutine said why
+case <-served: // ListenTCP failed, and the goroutine said why
 	return
 }
-conn, err := h.Dial(context.Background(), "tcp", "localhost:8080")
+conn, err := h.DialTCP(context.Background(), "tcp", "localhost:8080")
 if err != nil {
 	fmt.Println(err)
 	return
@@ -445,12 +445,12 @@ if err != nil {
 fmt.Println(string(b))
 <-served
 // Output:
-// before Listen, refused: true
+// before ListenTCP, refused: true
 // hello from every name
 ```
 
 `Listening` waits for TCP listeners only. A UDP socket is bound once
-`ListenPacket` returns, so a test whose App binds one waits with
+`ListenUDP` returns, so a test whose App binds one waits with
 `synctest.Wait()`, which returns once the App is blocked reading the socket,
 before it sends. A datagram sent before then is dropped, as on a real
 network.
@@ -558,7 +558,7 @@ same way, next to an `httpserver` App.
 
 The filesystem is real. `NewHost` takes a directory from `t.TempDir()`, which
 is removed when the test ends, and `hosttest.WithFiles` writes the files a test sets up
-before the App starts. `Host.FS` opens files with an `os.Root` on that
+before the App starts. `Host.Filesystem` opens files with an `os.Root` on that
 directory, so `..` and symbolic links can't leave it, and `Host.Path` gives
 the absolute path of a file in it to put in a setting:
 
@@ -569,7 +569,7 @@ h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 path := h.Path("etc/app/greeting.txt")
 fmt.Println("absolute:", filepath.IsAbs(path))
 
-f, err := h.FS().Open(path)
+f, err := h.Filesystem().Open(path)
 if err != nil {
 	fmt.Println(err)
 	return
@@ -582,7 +582,7 @@ if err != nil {
 }
 fmt.Println(string(b))
 
-_, err = h.FS().Open("../outside.txt")
+_, err = h.Filesystem().Open("../outside.txt")
 fmt.Println("outside the directory refused:", err != nil)
 // Output:
 // absolute: true
@@ -594,10 +594,10 @@ Real files are what let libraries that need an `*os.File` or a path, such as
 SQLite drivers, archive libraries and programs started with `os/exec`, keep
 working in a test. They cost two things:
 
-- **An I/O error comes from an `FS` of the test's own.** The filesystem alone
-  can't fail a call, as a full disk does. A test that needs one embeds the
-  `FS` in a type of its own, overrides the method that fails, and runs the
-  App on a Host whose `FS` is that type, as
+- **An I/O error comes from a `Filesystem` of the test's own.** The
+  filesystem alone can't fail a call, as a full disk does. A test that needs
+  one embeds the `Filesystem` in a type of its own, overrides the method that
+  fails, and runs the App on a Host whose `Filesystem` is that type, as
   [hosttest's docs](https://pkg.go.dev/github.com/z5labs/bedrock/host/hosttest#hdr-Files)
   describe.
 - **Real `ModTime`, even inside `synctest`.** A bubble's clock is fake, and a
@@ -608,10 +608,11 @@ Here `OpenFile` fails as on a full disk, and every other method is the
 Host's:
 
 ```go
-// fullDisk is a humus.FS whose OpenFile fails as on a full disk. It embeds
-// the FS it wraps, so every other method is that FS's.
+// fullDisk is a humus.Filesystem whose OpenFile fails as on a full disk. It
+// embeds the Filesystem it wraps, so every other method is that
+// Filesystem's.
 type fullDisk struct {
-	humus.FS
+	humus.Filesystem
 }
 
 func (fullDisk) OpenFile(name string, _ int, _ os.FileMode) (*os.File, error) {
@@ -622,23 +623,22 @@ func (fullDisk) OpenFile(name string, _ int, _ os.FileMode) (*os.File, error) {
 ```go
 h := humustest.NewHost(t)
 hh := h.Host()
-hh.FS = fullDisk{FS: hh.FS}
+hh.Filesystem = fullDisk{Filesystem: hh.Filesystem}
 
-_, err := hh.FS.OpenFile(h.Path("out.txt"), os.O_CREATE|os.O_WRONLY, 0o600)
+_, err := hh.Filesystem.OpenFile(h.Path("out.txt"), os.O_CREATE|os.O_WRONLY, 0o600)
 fmt.Println("disk full:", errors.Is(err, syscall.ENOSPC))
-_, err = hh.FS.Stat(h.Path("out.txt"))
+_, err = hh.Filesystem.Stat(h.Path("out.txt"))
 fmt.Println("nothing written:", errors.Is(err, fs.ErrNotExist))
 // Output:
 // disk full: true
 // nothing written: true
 ```
 
-`humus.FS` is sealed, so a type is one only if it embeds an `FS`, as
-`fullDisk` does, and the
-[App lifecycle](/humus/fundamentals/lifecycle/#host) names which.
+Any type with `humus.Filesystem`'s twelve methods is one, so `fullDisk`
+embeds the Host's and writes only the method it changes.
 
-[The App lifecycle](/humus/fundamentals/lifecycle/#why-fs-hands-out-osfile)
-explains why `FS` hands out `*os.File`.
+[The App lifecycle](/humus/fundamentals/lifecycle/#why-filesystem-hands-out-osfile)
+explains why `Filesystem` hands out `*os.File`.
 
 ## TLS
 
@@ -708,7 +708,7 @@ func TestApp_Run_HTTPS_with_a_PKCS12_bundle_from_NewCA(t *testing.T) {
 ```
 
 The setting names are only for illustration; each runtime package names its
-own. `tlsFromPKCS12` opens the bundle through `s.Host.FS`, so the App reads it
+own. `tlsFromPKCS12` opens the bundle through `s.Host.Filesystem`, so the App reads it
 from the test's directory here and from the real disk in production:
 
 ```go
@@ -721,7 +721,7 @@ func tlsFromPKCS12(ctx context.Context, s *humus.Setup) (*tls.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	f, err := s.Host.FS.Open(path)
+	f, err := s.Host.Filesystem.Open(path)
 	if err != nil {
 		return nil, err
 	}
@@ -761,7 +761,7 @@ ca := humustest.NewCA(t)
 cert := ca.Issue(t, "api.internal")
 
 h := humustest.NewHost(t)
-ln, err := h.Listen("tcp", "api.internal:8443")
+ln, err := h.ListenTCP(context.Background(), "tcp", "api.internal:8443")
 if err != nil {
 	fmt.Println(err)
 	return
@@ -777,7 +777,7 @@ go func() {
 	_, _ = io.WriteString(srv, "hello over TLS")
 }()
 
-conn, err := h.Dial(context.Background(), "tcp", "api.internal:8443")
+conn, err := h.DialTCP(context.Background(), "tcp", "api.internal:8443")
 if err != nil {
 	fmt.Println(err)
 	return

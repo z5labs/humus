@@ -270,12 +270,12 @@ need different ones are
 `Connection.TLS` is the `*tls.Config` the broker is dialled with, and `nil`
 means plain text: humus makes a service as secure as it can, but it can't
 control what the service connects to. The Service runs the TLS handshake
-itself over the connection `s.Host.Dial` returns, and an empty `ServerName`
+itself over the connection `s.Host.DialTCP` returns, and an empty `ServerName`
 defaults to `Addr`'s host, on a clone of the config, so the end user's
 config is never changed. RabbitMQ serves AMQP over TLS on 5671 by default,
 and plain text on 5672.
 
-The end user decodes the certificates from files, read through `s.Host.FS`
+The end user decodes the certificates from files, read through `s.Host.Filesystem`
 so that a test reads them from its own directory and production from the
 real disk, as [Reading a file](/humus/fundamentals/configuration/#reading-a-file)
 describes. This chain reads the broker's CA from the PEM file
@@ -285,8 +285,8 @@ certificate:
 
 ```go
 // The CA's file is read first, and the client's certificate only once it has been.
-k.Connection.TLS = r.Get(env("RABBITMQ_TLS_CA_FILE").Parse(readFile(s.Host.FS)).FlatMap(func(ca []byte) config.Value[*tls.Config] {
-	return env("RABBITMQ_TLS_CERT_FILE").Parse(readFile(s.Host.FS)).Parse(clientTLS(ca))
+k.Connection.TLS = r.Get(env("RABBITMQ_TLS_CA_FILE").Parse(readFile(s.Host.Filesystem)).FlatMap(func(ca []byte) config.Value[*tls.Config] {
+	return env("RABBITMQ_TLS_CERT_FILE").Parse(readFile(s.Host.Filesystem)).Parse(clientTLS(ca))
 }))
 // The client certificate is the login: RabbitMQ's rabbitmq_auth_mechanism_ssl plugin takes it.
 k.Connection.SASL = &amqp.ExternalAuth{}

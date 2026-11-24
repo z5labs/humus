@@ -47,7 +47,7 @@ not humus's. The one piece of global state humus does set is OpenTelemetry's
 `App.Telemetry` is a
 [`telemetry.Builder`](https://pkg.go.dev/github.com/z5labs/humus/telemetry#Builder).
 `humus.Main` defaults it to one that calls `telemetry.New` with
-`telemetry.DefaultSettings()`, the Host's `Dial` and the Process's stdout. So
+`telemetry.DefaultSettings()`, the Host's `DialTCP` and the Process's stdout. So
 a service that passes no `Builder`:
 
 - writes its log records to standard output, as JSON lines in
@@ -85,7 +85,7 @@ humus.Main(CartsInit, humus.WithTelemetry(buildCartsTelemetry))
 ## Writing the Builder
 
 The end user's `Builder` is given the context a signal cancels, the
-`bedrock.Process` and the Host's `Dial`, and it does three things:
+`bedrock.Process` and the Host's `DialTCP`, and it does three things:
 
 1. sources `telemetry.Settings` from `p.Environment` with
    [`config.Struct`](https://pkg.go.dev/github.com/z5labs/bedrock/config#Struct),
@@ -184,7 +184,7 @@ range. A zero field means zero, never "use the default".
 The godoc of each field is the reference; the table is its summary. The
 `OTLP` fields are checked even when no signal is exported over OTLP. The
 OTLP exporters dial the collector through the `Dialer` the `Builder` is
-given, which is the Host's `Dial`, and over `http/protobuf` each signal is
+given, which is the Host's `DialTCP`, and over `http/protobuf` each signal is
 sent to its spec path: `/v1/traces`, `/v1/metrics` and `/v1/logs`.
 
 **humus reads none of these variables.** The last column names the

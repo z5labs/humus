@@ -300,9 +300,9 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 		return settings{
 			Connection: kube.Connection{
 				Server: net.JoinHostPort(r.Get(env("KUBERNETES_SERVICE_HOST")), r.Get(env("KUBERNETES_SERVICE_PORT"))),
-				TLS:    r.Get(env("KUBERNETES_CA_FILE").Default(serviceAccount + "ca.crt").Parse(trusting(s.Host.FS)).Validate(kube.CheckTLS)),
+				TLS:    r.Get(env("KUBERNETES_CA_FILE").Default(serviceAccount + "ca.crt").Parse(trusting(s.Host.Filesystem)).Validate(kube.CheckTLS)),
 				Token: func(context.Context) (string, error) {
-					b, err := readFile(s.Host.FS, tokenFile)
+					b, err := readFile(s.Host.Filesystem, tokenFile)
 					return string(bytes.TrimSpace(b)), err
 				},
 			},
@@ -310,7 +310,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 			Probes: httphealth.Settings{
 				Addr: r.Get(env("PROBES_ADDR").Validate(httphealth.CheckAddr)),
 				TLS: r.Get(env("PROBES_TLS_CERT_FILE").FlatMap(func(certFile string) config.Value[*tls.Config] {
-					return env("PROBES_TLS_KEY_FILE").Parse(serverTLS(s.Host.FS, certFile))
+					return env("PROBES_TLS_KEY_FILE").Parse(serverTLS(s.Host.Filesystem, certFile))
 				}).Validate(httphealth.CheckTLS)),
 			},
 		}

@@ -39,7 +39,7 @@ every item.
 
 - **Settings:** every one is sourced and checked, and a bad one exits 78,
   naming its variable.
-- **Secrets:** files mounted from Secrets and read through the Host's `FS`,
+- **Secrets:** files mounted from Secrets and read through the Host's `Filesystem`,
   never environment variables, and none reaches a log or a span.
 - **Certificates:** files too, read again when they're renewed, so a renewal
   needs no restart. A job reads them afresh on every run.

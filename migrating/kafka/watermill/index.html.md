@@ -295,7 +295,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 			Probes: httphealth.Settings{
 				Addr: r.Get(env("PROBES_ADDR").Validate(httphealth.CheckAddr)),
 				TLS: r.Get(env("PROBES_TLS_CERT_FILE").FlatMap(func(certFile string) config.Value[*tls.Config] {
-					return env("PROBES_TLS_KEY_FILE").Parse(serverTLS(s.Host.FS, certFile))
+					return env("PROBES_TLS_KEY_FILE").Parse(serverTLS(s.Host.Filesystem, certFile))
 				}).Validate(httphealth.CheckTLS)),
 			},
 		}
@@ -485,7 +485,7 @@ inside `synctest`, on a kfake cluster that listens on the test's Host:
 
 ```go
 cluster, err := kfake.NewCluster(
-	kfake.ListenFn(h.Listen),
+	kfake.ListenFn(func(network, address string) (net.Listener, error) { return h.ListenTCP(t.Context(), network, address) }),
 	kfake.NumBrokers(1),
 	kfake.SeedTopics(1, ordersTopic, invoicesTopic, retryTopic, deadLetterTopic),
 )

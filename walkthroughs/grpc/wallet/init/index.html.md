@@ -26,8 +26,8 @@ and the wallet exits 78, naming its variable:
 ```go
 func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
-	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.FS)) }
-	pemFile := func(name string) config.Value[*tls.Config] { return env(name).Parse(pemTLS(s.Host.FS)) }
+	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.Filesystem)) }
+	pemFile := func(name string) config.Value[*tls.Config] { return env(name).Parse(pemTLS(s.Host.Filesystem)) }
 ```
 
 The ledger's Client comes first, as
@@ -139,7 +139,7 @@ got, err := config.Struct(func(r *config.Resolver) sourced {
 			},
 			WatchInterval: r.Get(env("WATCH_INTERVAL").Parse(time.ParseDuration).Default(defaultWatchInterval).Validate(positive)),
 		},
-		ServerTLS: r.Get(env("GRPC_TLS_PEM_FILE").Parse(pemTLS(s.Host.FS))),
+		ServerTLS: r.Get(env("GRPC_TLS_PEM_FILE").Parse(pemTLS(s.Host.Filesystem))),
 		ClientCAs: r.Get(file("GRPC_CLIENT_CA_FILE").Parse(certPool)),
 		Postgres: postgres{
 			URL:      r.Get(env("POSTGRES_URL").Parse(parsePostgresURL).Validate(checkPostgresURL)),
@@ -219,12 +219,19 @@ Its error quotes nothing of the URL, so no password reaches a log.
 
 ## The pool, through the Host
 
-The pool dials through the Host, and leaves the host unresolved so the
-Host's `Dial` resolves it too. `OnStop` closes it:
+The pool dials TCP through the Host, and a Unix socket with a `net.Dialer`
+of its own. It leaves the host unresolved so the Host's `DialTCP` resolves it
+too. `OnStop` closes it:
 
 ```go
 func openPostgres(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (server.Store, func(context.Context) error, error) {
-	cfg.ConnConfig.DialFunc = s.Host.Dial
+	cfg.ConnConfig.DialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if network == "unix" {
+			var d net.Dialer
+			return d.DialContext(ctx, network, addr)
+		}
+		return s.Host.DialTCP(ctx, network, addr)
+	}
 	cfg.ConnConfig.LookupFunc = func(_ context.Context, host string) ([]string, error) {
 		return []string{host}, nil
 	}
@@ -243,11 +250,11 @@ func openPostgres(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (ser
 ## The secrets, as files
 
 PostgreSQL's password, the private keys and the CAs are files mounted from
-Secrets, each read through the Host's `FS`, so the tests can give the
+Secrets, each read through the Host's `Filesystem`, so the tests can give the
 service files of their own:
 
 ```go
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {
@@ -284,7 +291,7 @@ func certPool(pem []byte) (*x509.CertPool, error) {
 Each certificate and its key are one PEM file, read by `internal/certfile`:
 
 ```go
-func pemTLS(fsys humus.FS) func(name string) (*tls.Config, error) {
+func pemTLS(fsys humus.Filesystem) func(name string) (*tls.Config, error) {
 	return func(name string) (*tls.Config, error) {
 		return certfile.Config(fsys, name)
 	}
@@ -295,7 +302,7 @@ func pemTLS(fsys humus.FS) func(name string) (*tls.Config, error) {
 serves the certificate, and presents it as a client certificate:
 
 ```go
-func Config(fsys humus.FS, name string) (*tls.Config, error) {
+func Config(fsys humus.Filesystem, name string) (*tls.Config, error) {
 	f := &file{fs: fsys, name: name}
 	if _, err := f.certificate(); err != nil {
 		return nil, err

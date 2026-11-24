@@ -278,7 +278,7 @@ From here on, these are humus's:
 - **The settings.** A missing or bad one makes the service exit 78, naming
   its variable. `ADDR` has no default now.
 - **TLS.** `serverTLS` reads the certificate and its key from the files
-  `TLS_CERT_FILE` and `TLS_KEY_FILE` name, through the Host's `FS`. A proxy
+  `TLS_CERT_FILE` and `TLS_KEY_FILE` name, through the Host's `Filesystem`. A proxy
   in front connects over TLS, as
   [Behind a proxy](/humus/services/http/serving/#behind-a-proxy)
   describes.
@@ -301,7 +301,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (httpserver.Settings, err
 		settings := httpserver.DefaultSettings()
 		settings.Addr = r.Get(env("ADDR").Validate(httpserver.CheckAddr))
 		settings.TLS = r.Get(env("TLS_CERT_FILE").FlatMap(func(certFile string) config.Value[*tls.Config] {
-			return env("TLS_KEY_FILE").Parse(serverTLS(s.Host.FS, certFile))
+			return env("TLS_KEY_FILE").Parse(serverTLS(s.Host.Filesystem, certFile))
 		}).Validate(httpserver.CheckTLS))
 		return settings
 	}).Read(ctx)

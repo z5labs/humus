@@ -39,7 +39,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		// No .Default: BaseURL is required, and the dependency is https,
 		// so PAYMENTS_CA_FILE is too.
 		c.BaseURL = r.Get(env("PAYMENTS_URL").Parse(url.Parse).Validate(httpclient.CheckBaseURL))
-		c.TLS = r.Get(env("PAYMENTS_CA_FILE").Parse(readFile(s.Host.FS)).Parse(trusting).Validate(httpclient.CheckTLS))
+		c.TLS = r.Get(env("PAYMENTS_CA_FILE").Parse(readFile(s.Host.Filesystem)).Parse(trusting).Validate(httpclient.CheckTLS))
 		c.Timeout = r.Get(env("PAYMENTS_TIMEOUT").Parse(time.ParseDuration).Default(d.Timeout).Validate(httpclient.CheckTimeout))
 		return c
 	}).Read(ctx)
@@ -49,7 +49,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	serverSettings, err := config.Struct(func(r *config.Resolver) httpserver.Settings {
 		c := httpserver.DefaultSettings()
 		c.Addr = r.Get(env("ADDR").Validate(httpserver.CheckAddr))
-		c.TLS = r.Get(env("TLS_PEM_FILE").Parse(readFile(s.Host.FS)).Parse(serverTLS).Validate(httpserver.CheckTLS))
+		c.TLS = r.Get(env("TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS))
 		return c
 	}).Read(ctx)
 	if err != nil {
@@ -231,7 +231,7 @@ explains the exit codes.
 it trusts in `RootCAs`, and for mTLS, a client certificate in
 `Certificates`. The client dials with a clone of it, so the end user's
 config is never changed. `Init` above reads the dependency's CA from a file,
-through `s.Host.FS`, as [Reading a file](/humus/fundamentals/configuration/#reading-a-file)
+through `s.Host.Filesystem`, as [Reading a file](/humus/fundamentals/configuration/#reading-a-file)
 describes, and trusts only that CA:
 
 ```go

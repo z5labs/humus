@@ -111,7 +111,7 @@ func GreeterInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		return Settings{
 			// The file is read as part of the setting, so a missing file
 			// is a config error named after the variable.
-			Greeting:    r.Get(env("GREETING_FILE").Parse(readFile(s.Host.FS)).Default(d.Greeting)),
+			Greeting:    r.Get(env("GREETING_FILE").Parse(readFile(s.Host.Filesystem)).Default(d.Greeting)),
 			ReadTimeout: r.Get(env("READ_TIMEOUT").Parse(time.ParseDuration).Default(d.ReadTimeout).Validate(CheckReadTimeout)),
 			MaxConns:    r.Get(env("MAX_CONNS").Parse(strconv.Atoi).Default(d.MaxConns).Validate(CheckMaxConns)),
 		}
@@ -147,12 +147,12 @@ never through package `os`, so that the whole App runs in a test.
 
 A setting that names a file reads the file inside the field's chain. Here
 `GREETING_FILE` is parsed by `readFile`, which opens the file through
-`s.Host.FS`:
+`s.Host.Filesystem`:
 
 ```go
 // readFile returns a parser for config.Value.Parse that reads the whole
 // file a variable names, through fsys.
-func readFile(fsys humus.FS) func(name string) (string, error) {
+func readFile(fsys humus.Filesystem) func(name string) (string, error) {
 	return func(name string) (string, error) {
 		f, err := fsys.Open(name)
 		if err != nil {
@@ -167,7 +167,7 @@ func readFile(fsys humus.FS) func(name string) (string, error) {
 
 Because the file is read as part of the setting, a missing or unreadable file
 is a config error named after its variable, and it exits 78 with the rest.
-`humus.FS` has no `ReadFile`: a helper this small is your code, not humus's
+`humus.Filesystem` has no `ReadFile`: a helper this small is your code, not humus's
 API, and it stays unexported. The same goes for decoding: a package takes a
 decoded value, such as a `*tls.Config`, never a path or a file's contents, so
 how a certificate is stored and encoded is yours to decide. A further
@@ -196,8 +196,8 @@ And with `GREETING_FILE` naming a file that does not exist:
 init: config GREETING_FILE: openat etc/greeter/greeting.txt: no such file or directory
 ```
 
-The cause is whatever the Host's `FS` returned. This output is from the
-example, on a humustest Host, whose `FS` opens files through an `os.Root`,
+The cause is whatever the Host's `Filesystem` returned. This output is from the
+example, on a humustest Host, whose `Filesystem` opens files through an `os.Root`,
 hence `openat`. On `humus.OSHost()` the same file fails with
 `open <path>: no such file or directory`.
 
@@ -345,7 +345,7 @@ operator's would. `WithEnv` given twice keeps only the last map, so a test
 that adds to a base environment merges the maps itself, as
 [Testing a humus App](/humus/fundamentals/testing/#a-base-environment) shows.
 
-A relative name given to the humustest Host's `FS` is relative to the test's
+A relative name given to the humustest Host's `Filesystem` is relative to the test's
 temp directory, and an absolute one, from `h.Path`, must be inside it, so a
 setting naming a file never reaches the real disk.
 [Testing a humus App](/humus/fundamentals/testing/) covers the Host in full.

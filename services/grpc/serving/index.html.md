@@ -47,7 +47,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 			Addr: r.Get(env("GRPC_ADDR").Validate(grpcserver.CheckAddr)),
 			// readFile and serverTLS are the end user's own helpers. The
 			// bundle's password is read only once the bundle has been.
-			TLS: r.Get(env("GRPC_TLS_P12_FILE").Parse(readFile(s.Host.FS)).FlatMap(func(bundle []byte) config.Value[*tls.Config] {
+			TLS: r.Get(env("GRPC_TLS_P12_FILE").Parse(readFile(s.Host.Filesystem)).FlatMap(func(bundle []byte) config.Value[*tls.Config] {
 				return env("GRPC_TLS_P12_PASSWORD").Parse(serverTLS(bundle))
 			}).Validate(grpcserver.CheckTLS)),
 		}
@@ -104,7 +104,7 @@ variable and no file, and defines no variable name.
 | `Addr` | none: required | `host:port`, with any host, an empty one included, and a port written as a number from 0 to 65535 | `CheckAddr` |
 | `TLS` | none: required | a config that has a certificate and allows TLS 1.2 or later | `CheckTLS` |
 
-`CheckAddr` accepts what `Host.Listen` accepts: an empty host listens on every
+`CheckAddr` accepts what `Host.ListenTCP` accepts: an empty host listens on every
 name, and port 0 picks a free port. It rejects `""`, an address with no port,
 and a port that isn't such a number, such as the named port `:grpc`.
 
@@ -144,7 +144,7 @@ that already encrypts between pods.
 
 ### The certificate
 
-The end user decodes the certificate from a file, read through `s.Host.FS` so
+The end user decodes the certificate from a file, read through `s.Host.Filesystem` so
 that a test reads it from its own directory and production from the real
 disk, as [Reading a file](/humus/fundamentals/configuration/#reading-a-file)
 describes. How the certificate is stored and encoded is the end user's
@@ -156,7 +156,7 @@ with exit 78:
 ```go
 // readFile returns a parser for config.Value.Parse that reads the whole
 // file a variable names, through fsys.
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {
@@ -189,7 +189,7 @@ func serverTLS(bundle []byte) func(password string) (*tls.Config, error) {
 [go-pkcs12](https://pkg.go.dev/software.sslmate.com/src/go-pkcs12), which
 humus doesn't depend on. A PEM file that holds the certificate chain and the
 private key needs no password: its chain is
-`env("GRPC_TLS_PEM_FILE").Parse(readFile(s.Host.FS)).Parse(serverTLS).Validate(grpcserver.CheckTLS)`,
+`env("GRPC_TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(grpcserver.CheckTLS)`,
 with a `serverTLS` that calls `tls.X509KeyPair`, as
 [Serving HTTP](/humus/services/http/serving/#the-certificate) shows. A certificate
 that rotates on disk is served from a config that sets `GetCertificate`
@@ -903,7 +903,7 @@ Host's: no lookup is made, and a name that exists nowhere but on the test Host
 works, inside a bubble or out. A test that builds a client of its own, with
 `grpc.NewClient`, does the same: it targets `passthrough:///` and the address,
 and dials through the Host with `grpc.WithContextDialer`, whose function takes
-no network, so it calls `h.Dial(ctx, "tcp", addr)`.
+no network, so it calls `h.DialTCP(ctx, "tcp", addr)`.
 
 ### The Service contract
 

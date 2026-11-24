@@ -38,7 +38,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 			// No .Default: Addr and TLS are required, so an unset ADDR or
 			// TLS_PEM_FILE fails as not found.
 			Addr:              r.Get(env("ADDR").Validate(httpserver.CheckAddr)),
-			TLS:               r.Get(env("TLS_PEM_FILE").Parse(readFile(s.Host.FS)).Parse(serverTLS).Validate(httpserver.CheckTLS)),
+			TLS:               r.Get(env("TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS)),
 			HTTP2Only:         r.Get(env("HTTP2_ONLY").Parse(strconv.ParseBool).Default(d.HTTP2Only)),
 			ReadHeaderTimeout: r.Get(env("READ_HEADER_TIMEOUT").Parse(time.ParseDuration).Default(d.ReadHeaderTimeout).Validate(httpserver.CheckReadHeaderTimeout)),
 			ReadTimeout:       r.Get(env("READ_TIMEOUT").Parse(time.ParseDuration).Default(d.ReadTimeout).Validate(httpserver.CheckReadTimeout)),
@@ -144,7 +144,7 @@ than starting and failing every request.
 
 ### The certificate
 
-The end user decodes the certificate from a file, read through `s.Host.FS`
+The end user decodes the certificate from a file, read through `s.Host.Filesystem`
 so that a test reads it from its own directory and production from the real
 disk, as [Reading a file](/humus/fundamentals/configuration/#reading-a-file)
 describes. How the certificate is stored and encoded is the end user's
@@ -154,7 +154,7 @@ and the private key:
 ```go
 // readFile returns a parser for config.Value.Parse that reads the whole
 // file a variable names, through fsys.
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {
@@ -185,7 +185,7 @@ one each fail as a config error with exit 78:
 settings, err := config.Struct(func(r *config.Resolver) httpserver.Settings {
 	settings := httpserver.DefaultSettings()
 	settings.Addr = r.Get(env("ADDR").Validate(httpserver.CheckAddr))
-	settings.TLS = r.Get(env("TLS_PKCS12_FILE").Parse(readFile(s.Host.FS)).FlatMap(func(bundle []byte) config.Value[*tls.Config] {
+	settings.TLS = r.Get(env("TLS_PKCS12_FILE").Parse(readFile(s.Host.Filesystem)).FlatMap(func(bundle []byte) config.Value[*tls.Config] {
 		return env("TLS_PKCS12_PASSWORD").Parse(pkcs12TLS(bundle))
 	}).Validate(httpserver.CheckTLS))
 	return settings
