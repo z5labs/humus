@@ -56,14 +56,14 @@
 // # Dialling and names
 //
 // NewClient targets "passthrough:///" and Settings.Addr, and dials with the
-// Setup's Host.Dial. The passthrough resolver hands Addr to the dialler as
+// Setup's Host.DialTCP. The passthrough resolver hands Addr to the dialler as
 // it is, so grpc-go looks no name up: the Host resolves the name when it
 // dials. grpc-go's dns resolver, the default for a target with no scheme, is
 // never used. It would look the name up with net.DefaultResolver, around the
 // Host, reading the real host's resolver configuration and querying the real
 // network, and inside a testing/synctest bubble it crashes the test binary.
 //
-// In main, humus.OSHost's Dial is a net.Dialer's, which looks the name up as
+// In main, humus.OSHost's DialTCP is a net.Dialer's, which looks the name up as
 // net.Dial does, each time it dials. In a test, humustest's Host compares
 // names as written, so a name that exists only on the test Host works,
 // inside a bubble or out.
@@ -81,7 +81,7 @@
 // through the Host, with its own connection backoff, which starts at 1s and
 // grows to 120s. grpc.WithConnectParams in opts changes it.
 //
-// OSHost's Dial tries a name's addresses in the order the lookup returns
+// OSHost's DialTCP tries a name's addresses in the order the lookup returns
 // them, and keeps the first connection that succeeds. So:
 //
 //   - Behind a Kubernetes ClusterIP Service, the Service's name resolves to

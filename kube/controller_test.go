@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/host/hosttest"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/log"
@@ -63,10 +64,15 @@ func testSettings() kube.Settings {
 	return s
 }
 
-// noDial is a Host's Dial that reaches nothing: a controller under test
-// reaches the API server only through client-go's fakes.
-func noDial(context.Context, string, string) (net.Conn, error) {
-	return nil, errors.New("no network")
+// noNetwork returns a test Host whose DialTCP reaches nothing: a controller
+// under test reaches the API server only through client-go's fakes.
+func noNetwork(t *testing.T) humus.Host {
+	th := hosttest.New(t)
+	n := hosttest.Seams{Network: th}
+	n.OnDialTCP = func(context.Context, string, string) (net.Conn, error) {
+		return nil, errors.New("no network")
+	}
+	return humus.Host{IPNetwork: n, Filesystem: th.Filesystem()}
 }
 
 // testClient returns a Client that reaches nothing.
@@ -386,7 +392,7 @@ func readyReplicas(got *reconciles) kube.ReconcilerFunc[MemcachedSpec, Memcached
 func TestNewController_reports_every_mistake(t *testing.T) {
 	t.Parallel()
 
-	s := newSetup(t, humus.Host{Dial: noDial}, humustest.NewTelemetry())
+	s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
 	client := testClient(t, s)
 	rec := readyReplicas(&reconciles{})
 
@@ -546,7 +552,7 @@ func TestController_reconciles_an_object_once_for_itself_and_once_for_its_status
 	synctest.Test(t, func(t *testing.T) {
 		fc := newFakeCluster(t, memcachedObject("cache", 3))
 		var got reconciles
-		s := newSetup(t, humus.Host{Dial: noDial}, humustest.NewTelemetry())
+		s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
 		ctrl := newController(t, s, fc, testSettings(), readyReplicas(&got))
 
 		sv := serve(t, ctrl)
@@ -594,7 +600,7 @@ func TestController_hands_each_reconcile_its_own_copy(t *testing.T) {
 			m.Spec.Size = 1
 			return kube.Result[MemcachedStatus]{After: time.Second}, nil
 		})
-		s := newSetup(t, humus.Host{Dial: noDial}, humustest.NewTelemetry())
+		s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
 		sv := serve(t, newController(t, s, fc, testSettings(), rec))
 		time.Sleep(settle)
 
@@ -617,7 +623,7 @@ func TestController_reconciles_again_After(t *testing.T) {
 			got.add(m)
 			return kube.Result[MemcachedStatus]{After: 30 * time.Second}, nil
 		})
-		s := newSetup(t, humus.Host{Dial: noDial}, humustest.NewTelemetry())
+		s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
 		sv := serve(t, newController(t, s, fc, testSettings(), rec))
 		time.Sleep(time.Second)
 		require.Equal(t, 1, got.count())
@@ -649,7 +655,7 @@ func TestController_retries_an_error_with_backoff(t *testing.T) {
 		settings.RetryBaseDelay = time.Second
 		settings.RetryMaxDelay = 4 * time.Second
 		tel := humustest.NewTelemetry()
-		s := newSetup(t, humus.Host{Dial: noDial}, tel)
+		s := newSetup(t, noNetwork(t), tel)
 		sv := serve(t, newController(t, s, fc, settings, rec))
 		time.Sleep(settle)
 
@@ -708,7 +714,7 @@ func TestController_applies_the_status_on_an_error(t *testing.T) {
 				}}
 				return kube.Result[MemcachedStatus]{Status: &st}, errors.New("refused")
 			})
-			s := newSetup(t, humus.Host{Dial: noDial}, humustest.NewTelemetry())
+			s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
 			sv := serve(t, newController(t, s, fc, testSettings(), rec))
 			time.Sleep(settle)
 
@@ -733,7 +739,7 @@ func TestController_applies_the_status_on_an_error(t *testing.T) {
 				got.add(m)
 				return kube.Result[MemcachedStatus]{}, errors.New("refused")
 			})
-			s := newSetup(t, humus.Host{Dial: noDial}, humustest.NewTelemetry())
+			s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
 			sv := serve(t, newController(t, s, fc, testSettings(), rec))
 			time.Sleep(settle)
 
@@ -755,7 +761,7 @@ func TestController_applies_the_status_on_an_error(t *testing.T) {
 			})
 			var got reconciles
 			tel := humustest.NewTelemetry()
-			s := newSetup(t, humus.Host{Dial: noDial}, tel)
+			s := newSetup(t, noNetwork(t), tel)
 			sv := serve(t, newController(t, s, fc, testSettings(), readyReplicas(&got)))
 			time.Sleep(settle)
 
@@ -786,7 +792,7 @@ func TestController_leaves_an_object_alone(t *testing.T) {
 			obj.SetFinalizers([]string{"example.com/someone-elses"})
 			fc := newFakeCluster(t, obj)
 			var got reconciles
-			s := newSetup(t, humus.Host{Dial: noDial}, humustest.NewTelemetry())
+			s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
 			sv := serve(t, newController(t, s, fc, testSettings(), readyReplicas(&got)))
 			time.Sleep(settle)
 
@@ -801,7 +807,7 @@ func TestController_leaves_an_object_alone(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			fc := newFakeCluster(t, memcachedObject("cache", 3))
 			var got reconciles
-			s := newSetup(t, humus.Host{Dial: noDial}, humustest.NewTelemetry())
+			s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
 			sv := serve(t, newController(t, s, fc, testSettings(), readyReplicas(&got)))
 			time.Sleep(settle)
 			require.Equal(t, 2, got.count())
@@ -821,7 +827,7 @@ func TestController_holds_the_Lease_and_releases_it_on_shutdown(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		fc := newFakeCluster(t, memcachedObject("cache", 3))
 		var got reconciles
-		s := newSetup(t, humus.Host{Dial: noDial}, humustest.NewTelemetry())
+		s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
 		ctrl := newController(t, s, fc, testSettings(), readyReplicas(&got))
 		sv := serve(t, ctrl)
 		time.Sleep(settle)
@@ -847,7 +853,7 @@ func TestController_shutdown_leaves_the_backlog(t *testing.T) {
 			}
 			return kube.Result[MemcachedStatus]{}, ctx.Err()
 		})
-		s := newSetup(t, humus.Host{Dial: noDial}, humustest.NewTelemetry())
+		s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
 		sv := serve(t, newController(t, s, fc, testSettings(), rec))
 		<-inFlight
 
@@ -875,7 +881,7 @@ func TestController_Shutdown_cancels_the_reconciles_in_flight_when_its_context_i
 			cause = ctx.Err()
 			return kube.Result[MemcachedStatus]{}, ctx.Err()
 		})
-		s := newSetup(t, humus.Host{Dial: noDial}, humustest.NewTelemetry())
+		s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
 		ctrl := newController(t, s, fc, testSettings(), rec)
 		sv := serve(t, ctrl)
 		<-inFlight
@@ -913,7 +919,7 @@ func TestController_Serve_returns_ErrLostLeadership(t *testing.T) {
 			}
 			return true, nil, errors.New("the API server is unreachable")
 		})
-		s := newSetup(t, humus.Host{Dial: noDial}, humustest.NewTelemetry())
+		s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
 		sv := serve(t, newController(t, s, fc, testSettings(), rec))
 		<-inFlight
 
@@ -934,7 +940,7 @@ func TestController_Serve_fails_on_a_resource_that_isnt_served(t *testing.T) {
 		fc.dyn.PrependReactor("list", Memcached.Plural, func(clienttesting.Action) (bool, runtime.Object, error) {
 			return true, nil, apierrors.NewNotFound(Memcached.GVR().GroupResource(), "")
 		})
-		ctrl := newController(t, newSetup(t, humus.Host{Dial: noDial}, humustest.NewTelemetry()), fc, testSettings(), readyReplicas(&reconciles{}))
+		ctrl := newController(t, newSetup(t, noNetwork(t), humustest.NewTelemetry()), fc, testSettings(), readyReplicas(&reconciles{}))
 		err := ctrl.Serve(t.Context())
 		require.ErrorContains(t, err, "kube: listing cache.example.com/v1alpha1, Resource=memcacheds: ")
 		require.True(t, apierrors.IsNotFound(err))
@@ -949,7 +955,7 @@ func TestController_Synced(t *testing.T) {
 		t.Parallel()
 		synctest.Test(t, func(t *testing.T) {
 			fc := newFakeCluster(t, memcachedObject("cache", 3))
-			s := newSetup(t, humus.Host{Dial: noDial}, humustest.NewTelemetry())
+			s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
 			ctrl := newController(t, s, fc, testSettings(), readyReplicas(&reconciles{}))
 			synced := ctrl.Synced()
 			requireHealthy(t, synced, false, "before Serve")
@@ -982,7 +988,7 @@ func TestController_Synced(t *testing.T) {
 			require.NoError(t, err)
 
 			var got reconciles
-			s := newSetup(t, humus.Host{Dial: noDial}, humustest.NewTelemetry())
+			s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
 			ctrl := newController(t, s, fc, testSettings(), readyReplicas(&got))
 			sv := serve(t, ctrl)
 			// Less than the LeaseDuration, which replica-2 doesn't renew.
@@ -1005,7 +1011,7 @@ func TestController_Synced(t *testing.T) {
 			fc.dyn.PrependReactor("list", Memcached.Plural, func(clienttesting.Action) (bool, runtime.Object, error) {
 				return true, nil, errors.New("refused")
 			})
-			s := newSetup(t, humus.Host{Dial: noDial}, humustest.NewTelemetry())
+			s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
 			ctrl := newController(t, s, fc, testSettings(), readyReplicas(&reconciles{}))
 			require.Error(t, ctrl.Serve(t.Context()))
 			requireHealthy(t, ctrl.Synced(), false, "a Serve that failed")
@@ -1031,7 +1037,7 @@ func TestController_telemetry(t *testing.T) {
 		fc := newFakeCluster(t, memcachedObject("cache", 3))
 		var got reconciles
 		tel := humustest.NewTelemetry()
-		s := newSetup(t, humus.Host{Dial: noDial}, tel)
+		s := newSetup(t, noNetwork(t), tel)
 		spanCtx := make(chan bool, 2)
 		rec := kube.ReconcilerFunc[MemcachedSpec, MemcachedStatus](func(ctx context.Context, m kube.Object[MemcachedSpec, MemcachedStatus]) (kube.Result[MemcachedStatus], error) {
 			spanCtx <- spanFromContext(ctx)

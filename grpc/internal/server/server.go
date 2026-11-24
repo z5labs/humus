@@ -73,7 +73,7 @@ type Server struct {
 	stopped  chan struct{}
 }
 
-// New listens on addr with s.Host.Listen("tcp", addr), and builds the
+// New listens on addr with s.Host.ListenTCP over "tcp", and builds the
 // server with grpc.WaitForHandlers(true), a unary and a stream interceptor
 // that recover a panic, a stream interceptor inside it that gives each
 // stream's handler a context Shutdown cancels, then opts, and then
@@ -88,7 +88,7 @@ type Server struct {
 // of the package building the server, such as
 // "github.com/z5labs/humus/grpc/grpcserver".
 func New(s *humus.Setup, scope, addr string, tc credentials.TransportCredentials, opts ...grpc.ServerOption) (*Server, error) {
-	ln, err := s.Host.Listen("tcp", addr)
+	ln, err := s.Host.ListenTCP(context.Background(), "tcp", addr)
 	if err != nil {
 		return nil, err
 	}

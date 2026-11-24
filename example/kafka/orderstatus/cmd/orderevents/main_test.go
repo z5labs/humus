@@ -88,7 +88,9 @@ func newCLI(t *testing.T, files map[string][]byte) *cli {
 func (c *cli) cluster(t *testing.T) *kfake.Cluster {
 	t.Helper()
 	k, err := kfake.NewCluster(
-		kfake.ListenFn(c.h.Listen),
+		kfake.ListenFn(func(network, address string) (net.Listener, error) {
+			return c.h.ListenTCP(t.Context(), network, address)
+		}),
 		kfake.NumBrokers(1),
 		kfake.SeedTopics(12, eventsTopic),
 		kfake.TLS(&tls.Config{
@@ -124,7 +126,7 @@ func (c *cli) start(t *testing.T, env map[string]string, build telemetry.Builder
 }
 
 func (c *cli) dial(ctx context.Context, network, address string) (net.Conn, error) {
-	conn, err := c.h.Dial(ctx, network, address)
+	conn, err := c.h.DialTCP(ctx, network, address)
 	if err != nil {
 		return nil, err
 	}

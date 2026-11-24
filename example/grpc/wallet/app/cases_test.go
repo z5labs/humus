@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/bedrocktest"
+	"github.com/z5labs/bedrock/host/hosttest"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -67,7 +68,7 @@ func (n *network) service(addr string) *service {
 	return s
 }
 
-func (n *network) Dial(ctx context.Context, network, address string) (net.Conn, error) {
+func (n *network) DialTCP(ctx context.Context, network, address string) (net.Conn, error) {
 	n.mu.Lock()
 	s := n.services[address]
 	n.mu.Unlock()
@@ -233,14 +234,14 @@ func startHarnessWith(t *testing.T, pl place, walletTel, ledgerTel telemetry.Bui
 	defer cancel()
 
 	file := func(name string, contents []byte) string {
-		return writeHostFile(t, pl.host.FS, filepath.Join(pl.dir, name), contents)
+		return writeHostFile(t, pl.host.Filesystem, filepath.Join(pl.dir, name), contents)
 	}
 	ca := humustest.NewCA(t)
 	caFile := file("certs/ca.pem", caPEM(t, ca))
 
-	n := newNetwork(pl.host.Dial)
+	n := newNetwork(pl.host.DialTCP)
 	host := pl.host
-	host.Dial = n.Dial
+	host.IPNetwork = hosttest.Seams{Network: host.IPNetwork, OnDialTCP: n.DialTCP}
 	walletApp := humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(walletTel), humus.WithFaults(Faults))
 	ledgerApp := humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(ledgerTel), humus.WithFaults(ledgerapp.Faults))
 
@@ -251,7 +252,7 @@ func startHarnessWith(t *testing.T, pl place, walletTel, ledgerTel telemetry.Bui
 	keysReplica.start = func() (*bedrocktest.Process, <-chan bedrock.ExitStatus) {
 		return provider.serve(t, host, keysReplica.addr, keysCert)
 	}
-	keysReplica.ready = func(ctx context.Context) error { return dialable(ctx, pl.host.Dial, keysReplica) }
+	keysReplica.ready = func(ctx context.Context) error { return dialable(ctx, pl.host.DialTCP, keysReplica) }
 	require.NoError(t, keys.run(ctx, keysReplica))
 
 	ledgerEnv := map[string]string{
@@ -275,7 +276,7 @@ func startHarnessWith(t *testing.T, pl place, walletTel, ledgerTel telemetry.Bui
 				return ledgerapp.InitWith(ctx, s, pl.ledger)
 			}, ledgerApp, humustest.WithEnv(env))
 		}
-		r.ready = func(ctx context.Context) error { return serving(ctx, pl.host.Dial, r, probes) }
+		r.ready = func(ctx context.Context) error { return serving(ctx, pl.host.DialTCP, r, probes) }
 		require.NoError(t, ledger.run(ctx, r))
 	}
 
@@ -298,7 +299,7 @@ func startHarnessWith(t *testing.T, pl place, walletTel, ledgerTel telemetry.Bui
 	w.start = func() (*bedrocktest.Process, <-chan bedrock.ExitStatus) {
 		return grpcservertest.Start(t, Init, walletApp, humustest.WithEnv(walletEnv))
 	}
-	w.ready = func(ctx context.Context) error { return serving(ctx, pl.host.Dial, w, walletProbes) }
+	w.ready = func(ctx context.Context) error { return serving(ctx, pl.host.DialTCP, w, walletProbes) }
 	require.NoError(t, wallet.run(ctx, w))
 
 	casesCert := ca.Issue(t, "cases").TLS()
@@ -333,7 +334,7 @@ func connect(t *testing.T, n *network, addr string, cfg *tls.Config) *grpc.Clien
 	t.Helper()
 	conn, err := grpc.NewClient("passthrough:///"+addr,
 		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
-			return n.Dial(ctx, "tcp", addr)
+			return n.DialTCP(ctx, "tcp", addr)
 		}),
 		grpc.WithTransportCredentials(credentials.NewTLS(cfg)),
 	)
@@ -387,7 +388,7 @@ func poll(ctx context.Context, r *replica, ok func(context.Context) bool) error 
 	}
 }
 
-func writeHostFile(t *testing.T, fsys humus.FS, name string, contents []byte) string {
+func writeHostFile(t *testing.T, fsys humus.Filesystem, name string, contents []byte) string {
 	t.Helper()
 	if dir := filepath.Dir(name); dir != "." {
 		require.NoError(t, fsys.MkdirAll(dir, 0o700))

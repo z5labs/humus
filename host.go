@@ -6,30 +6,63 @@
 package humus
 
 import (
+	"context"
 	"io/fs"
+	"net"
 	"os"
 
 	"github.com/z5labs/bedrock/host"
 )
 
-// Host is what humus hands an App beyond its process: the network and the
-// filesystem. Every field is required.
-//
-// In main, an App runs on OSHost. In a test, it runs on a Host whose
-// listeners, dialler and filesystem the test controls, so a whole App can
-// run without touching the real host.
-type Host = host.Host[FS]
+// IPNetwork is the network of the default Host. host.IPNetwork implements
+// it, and so does the test host.
+type IPNetwork interface {
+	// ListenTCP announces on the local network address, for "tcp", "tcp4"
+	// or "tcp6", like net.ListenConfig.Listen.
+	ListenTCP(ctx context.Context, network, address string) (net.Listener, error)
 
-// FS is the filesystem of a Host. Names are OS paths, as accepted by the
-// functions of the same name in package os, and files are *os.File, so a
-// file opened through an FS can be handed to anything that takes an OS file
-// or a path.
-//
-// FS is sealed by host.FS: host.OSFS and hosttest's *FS implement it, and
-// a type elsewhere satisfies it by embedding one of them, or FS itself.
-type FS interface {
-	host.FS
+	// DialTCP connects to address over "tcp", "tcp4" or "tcp6", like
+	// net.Dialer.DialContext.
+	DialTCP(ctx context.Context, network, address string) (net.Conn, error)
 
+	// ListenUDP binds a UDP socket to the local network address, for "udp",
+	// "udp4" or "udp6", like net.ListenConfig.ListenPacket.
+	ListenUDP(ctx context.Context, network, address string) (net.PacketConn, error)
+
+	// DialUDP returns a UDP socket connected to address, for "udp", "udp4"
+	// or "udp6", like net.Dialer.DialContext. It sends only to the address
+	// it dialled and takes datagrams only from it.
+	DialUDP(ctx context.Context, network, address string) (net.Conn, error)
+}
+
+// Host is the default host: the network and the filesystem humus hands an
+// App beyond its process. It embeds its network, so a Host's ListenTCP,
+// DialTCP, ListenUDP and DialUDP are its IPNetwork's. Both fields are
+// required.
+//
+// In main, an App runs on OSHost. In a test, it runs on a Host built from
+// the test host's parts, so a whole App can run without touching the real
+// host.
+type Host struct {
+	IPNetwork
+
+	// Filesystem is the Host's filesystem.
+	Filesystem Filesystem
+}
+
+// OSHost returns Host{IPNetwork: host.IPNetwork{}, Filesystem: host.OSFilesystem{}}.
+func OSHost() Host {
+	return Host{IPNetwork: host.IPNetwork{}, Filesystem: host.OSFilesystem{}}
+}
+
+// Filesystem is the filesystem of a Host. Names are OS paths, as accepted
+// by the functions of the same name in package os, and files are *os.File,
+// so a file opened through a Filesystem can be handed to anything that
+// takes an OS file or a path.
+//
+// host.OSFilesystem and hosttest's *Filesystem implement it, and so does
+// any type with its twelve methods.
+type Filesystem interface {
 	// Open opens the named file for reading, like os.Open.
 	Open(name string) (*os.File, error)
 
@@ -71,11 +104,4 @@ type FS interface {
 	// DirFS returns an fs.FS view of dir, for fs.WalkDir, fs.Glob,
 	// template.ParseFS and the other std helpers.
 	DirFS(dir string) fs.FS
-}
-
-// OSHost returns the Host of the real machine: the fields of host.OS, with
-// its OSFS as the FS.
-func OSHost() Host {
-	h := host.OS()
-	return Host{Listen: h.Listen, ListenPacket: h.ListenPacket, Dial: h.Dial, FS: h.FS}
 }

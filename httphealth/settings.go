@@ -37,12 +37,12 @@ type Settings struct {
 	TLS *tls.Config
 }
 
-// CheckAddr rejects an address that Host.Listen can't listen on, without
+// CheckAddr rejects an address that Host.ListenTCP can't listen on, without
 // naming the field: one that is not host:port, such as "" or an address
 // with no port, or one whose port is not a number from 0 to 65535, a
 // service name such as "https" included. An empty host and port 0 are
 // valid. It checks the address's form, not that the host resolves or that
-// the port is free: Host.Listen reports those when the Service listens.
+// the port is free: Host.ListenTCP reports those when the Service listens.
 func CheckAddr(addr string) error {
 	_, port, err := net.SplitHostPort(addr)
 	if err != nil {

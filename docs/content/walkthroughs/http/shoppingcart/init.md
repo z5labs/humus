@@ -37,7 +37,7 @@ and the cart exits 78, naming its variable:
 func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 	d := httpserver.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
-	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.FS)) }
+	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.Filesystem)) }
 
 	read, err := config.Struct(func(r *config.Resolver) settings {
 		client := httpclient.DefaultSettings()
@@ -66,9 +66,9 @@ return settings{
 	HTTP: httpserver.Settings{
 		Addr: r.Get(env("ADDR").Validate(httpserver.CheckAddr)),
 		TLS: &tls.Config{
-			GetCertificate: r.Get(env("TLS_CERT_FILE").Validate(holdsCertificate(s.Host.FS)).FlatMap(func(certFile string) config.Value[serverCertificate] {
+			GetCertificate: r.Get(env("TLS_CERT_FILE").Validate(holdsCertificate(s.Host.Filesystem)).FlatMap(func(certFile string) config.Value[serverCertificate] {
 				return env("TLS_KEY_FILE").Parse(func(keyFile string) (serverCertificate, error) {
-					cfg, err := certfile.Config(s.Host.FS, certFile, keyFile)
+					cfg, err := certfile.Config(s.Host.Filesystem, certFile, keyFile)
 					if err != nil {
 						return nil, err
 					}
@@ -178,10 +178,10 @@ func parseAlgorithms(s string) ([]jwt.Algorithm, error) {
 
 The database's URL, with its password, is a file mounted from a Secret, and
 so are the certificates and their keys. Each is read through the Host's
-`FS`, so the tests can give the service files of their own:
+`Filesystem`, so the tests can give the service files of their own:
 
 ```go
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {
@@ -206,7 +206,7 @@ func databaseURL(b []byte) (*pgxpool.Config, error) {
 Its error quotes nothing of the file, so no password reaches a log.
 
 ```go
-func holdsCertificate(fsys humus.FS) func(name string) error {
+func holdsCertificate(fsys humus.Filesystem) func(name string) error {
 	return func(name string) error {
 		b, err := readFile(fsys)(name)
 		if err != nil {
@@ -244,7 +244,7 @@ certificate, from its files:
 ```go
 const interval = 30 * time.Second
 
-func Config(fsys humus.FS, certFile, keyFile string) (*tls.Config, error) {
+func Config(fsys humus.Filesystem, certFile, keyFile string) (*tls.Config, error) {
 	f := &files{fs: fsys, certFile: certFile, keyFile: keyFile, checked: time.Now()}
 	p, err := f.read(nil)
 	if err != nil {
@@ -311,12 +311,19 @@ func (f *files) read(last *pair) (*pair, error) {
 
 ## The pool, through the Host
 
-The pool dials through the Host, and leaves the host unresolved so the
-Host's `Dial` resolves it too. `OnStop` closes it:
+The pool dials TCP through the Host, and a Unix socket with a `net.Dialer`
+of its own. It leaves the host unresolved so the Host's `DialTCP` resolves it
+too. `OnStop` closes it:
 
 ```go
 func openPostgres(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (endpoint.Store, func(context.Context) error, error) {
-	cfg.ConnConfig.DialFunc = s.Host.Dial
+	cfg.ConnConfig.DialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if network == "unix" {
+			var d net.Dialer
+			return d.DialContext(ctx, network, addr)
+		}
+		return s.Host.DialTCP(ctx, network, addr)
+	}
 	cfg.ConnConfig.LookupFunc = func(_ context.Context, host string) ([]string, error) {
 		return []string{host}, nil
 	}

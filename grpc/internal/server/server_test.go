@@ -150,7 +150,7 @@ func TestServer_Shutdown_closes_the_listener_before_Serve(t *testing.T) {
 		addr := srv.Addr().String()
 
 		require.NoError(t, srv.Shutdown(t.Context()))
-		_, err = h.Dial(t.Context(), "tcp", addr)
+		_, err = h.DialTCP(t.Context(), "tcp", addr)
 		require.ErrorIs(t, err, syscall.ECONNREFUSED)
 		require.NoError(t, srv.Serve(t.Context()))
 	})
@@ -260,7 +260,7 @@ func TestServer_Shutdown_closes_a_connection_in_its_handshake(t *testing.T) {
 
 				// A client that never sends its preface holds its connection
 				// in grpc-go's handshake for 120s.
-				conn, err := h.Dial(t.Context(), "tcp", "localhost:8081")
+				conn, err := h.DialTCP(t.Context(), "tcp", "localhost:8081")
 				require.NoError(t, err)
 				defer func() { _ = conn.Close() }()
 				synctest.Wait()

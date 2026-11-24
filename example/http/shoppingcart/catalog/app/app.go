@@ -14,6 +14,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -149,7 +150,7 @@ type serverCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error)
 func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 	d := httpserver.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
-	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.FS)) }
+	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.Filesystem)) }
 
 	read, err := config.Struct(func(r *config.Resolver) settings {
 		client := httpclient.DefaultSettings()
@@ -172,9 +173,9 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 			HTTP: httpserver.Settings{
 				Addr: r.Get(env("ADDR").Validate(httpserver.CheckAddr)),
 				TLS: &tls.Config{
-					GetCertificate: r.Get(env("TLS_CERT_FILE").Validate(holdsCertificate(s.Host.FS)).FlatMap(func(certFile string) config.Value[serverCertificate] {
+					GetCertificate: r.Get(env("TLS_CERT_FILE").Validate(holdsCertificate(s.Host.Filesystem)).FlatMap(func(certFile string) config.Value[serverCertificate] {
 						return env("TLS_KEY_FILE").Parse(func(keyFile string) (serverCertificate, error) {
-							cfg, err := certfile.Config(s.Host.FS, certFile, keyFile)
+							cfg, err := certfile.Config(s.Host.Filesystem, certFile, keyFile)
 							if err != nil {
 								return nil, err
 							}
@@ -211,7 +212,7 @@ func issuedByTheCA(r *http.Request) bool {
 	return r.TLS != nil && len(r.TLS.VerifiedChains) > 0
 }
 
-func holdsCertificate(fsys humus.FS) func(name string) error {
+func holdsCertificate(fsys humus.Filesystem) func(name string) error {
 	return func(name string) error {
 		b, err := readFile(fsys)(name)
 		if err != nil {
@@ -266,7 +267,7 @@ func certPool(pem []byte) (*x509.CertPool, error) {
 	return roots, nil
 }
 
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {
@@ -278,7 +279,13 @@ func readFile(fsys humus.FS) func(name string) ([]byte, error) {
 }
 
 func openPostgres(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (endpoint.Store, func(context.Context) error, error) {
-	cfg.ConnConfig.DialFunc = s.Host.Dial
+	cfg.ConnConfig.DialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if network == "unix" {
+			var d net.Dialer
+			return d.DialContext(ctx, network, addr)
+		}
+		return s.Host.DialTCP(ctx, network, addr)
+	}
 	cfg.ConnConfig.LookupFunc = func(_ context.Context, host string) ([]string, error) {
 		return []string{host}, nil
 	}

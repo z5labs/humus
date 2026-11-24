@@ -114,7 +114,7 @@ func GreeterInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		return Settings{
 			// The file is read as part of the setting, so a missing file
 			// is a config error named after the variable.
-			Greeting:    r.Get(env("GREETING_FILE").Parse(readFile(s.Host.FS)).Default(d.Greeting)),
+			Greeting:    r.Get(env("GREETING_FILE").Parse(readFile(s.Host.Filesystem)).Default(d.Greeting)),
 			ReadTimeout: r.Get(env("READ_TIMEOUT").Parse(time.ParseDuration).Default(d.ReadTimeout).Validate(CheckReadTimeout)),
 			MaxConns:    r.Get(env("MAX_CONNS").Parse(strconv.Atoi).Default(d.MaxConns).Validate(CheckMaxConns)),
 		}
@@ -132,7 +132,7 @@ func GreeterInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 
 // readFile returns a parser for config.Value.Parse that reads the whole
 // file a variable names, through fsys.
-func readFile(fsys humus.FS) func(name string) (string, error) {
+func readFile(fsys humus.Filesystem) func(name string) (string, error) {
 	return func(name string) (string, error) {
 		f, err := fsys.Open(name)
 		if err != nil {
@@ -176,10 +176,11 @@ func Example_settings() {
 
 	// A file that does not exist, named after the variable that names it.
 	// A relative name is relative to the humustest Host's directory, whose
-	// FS opens files through an os.Root, hence openat rather than open.
+	// Filesystem opens files through an os.Root, hence openat rather than
+	// open.
 	runGreeter(map[string]string{"GREETING_FILE": "etc/greeter/greeting.txt"}, nil)
 
-	// The same file, there this time, read through the Host's FS.
+	// The same file, there this time, read through the Host's Filesystem.
 	runGreeter(
 		map[string]string{"GREETING_FILE": "etc/greeter/greeting.txt"},
 		map[string][]byte{"etc/greeter/greeting.txt": []byte("hi")},

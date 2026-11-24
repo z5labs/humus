@@ -40,7 +40,7 @@ var serviceSubtests = []string{
 // newHTTPService builds a correct HTTP Service, which listens when it is
 // built.
 func newHTTPService(t *testing.T, s *humus.Setup) humus.Service {
-	ln, err := s.Host.Listen("tcp", ":8080")
+	ln, err := s.Host.ListenTCP(t.Context(), "tcp", ":8080")
 	require.NoError(t, err)
 	return &httpService{ln: ln, srv: &http.Server{Handler: http.NotFoundHandler()}}
 }
@@ -227,7 +227,7 @@ func TestTestService_runs_OnStop_functions_through_the_lifecycle(t *testing.T) {
 
 		// The marker can only be created in a directory no other subtest
 		// has used, so each subtest has a new humustest Host.
-		f, err := s.Host.FS.OpenFile("marker", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		f, err := s.Host.Filesystem.OpenFile("marker", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		require.NoError(t, err, "each subtest has a new Host")
 		require.NoError(t, f.Close())
 

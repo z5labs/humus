@@ -160,7 +160,7 @@ func ExampleService_Joined() {
 
 // secureInit is an Init for brokers that require TLS with a client
 // certificate, and SASL. It sources the brokers' CA and the client's
-// certificate from PEM files, read through s.Host.FS, and SCRAM-SHA-512
+// certificate from PEM files, read through s.Host.Filesystem, and SCRAM-SHA-512
 // credentials, and produces its dead letters to the same cluster with the
 // same ones.
 func secureInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
@@ -174,8 +174,8 @@ func secureInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		k.GroupID = r.Get(env("KAFKA_GROUP_ID").Validate(kafka.CheckGroupID))
 		k.Topics = r.Get(env("KAFKA_TOPICS").Map(list).Validate(kafka.CheckTopics))
 		// The CA's file is read first, and the client's certificate only once it has been.
-		k.TLS = r.Get(env("KAFKA_TLS_CA_FILE").Parse(readFile(s.Host.FS)).FlatMap(func(ca []byte) config.Value[*tls.Config] {
-			return env("KAFKA_TLS_CERT_FILE").Parse(readFile(s.Host.FS)).Parse(clientTLS(ca))
+		k.TLS = r.Get(env("KAFKA_TLS_CA_FILE").Parse(readFile(s.Host.Filesystem)).FlatMap(func(ca []byte) config.Value[*tls.Config] {
+			return env("KAFKA_TLS_CERT_FILE").Parse(readFile(s.Host.Filesystem)).Parse(clientTLS(ca))
 		}))
 		k.SASL = r.Get(env("KAFKA_SASL_USER").FlatMap(func(user string) config.Value[kafka.SASLMechanism] {
 			return env("KAFKA_SASL_PASSWORD").Map(func(password string) kafka.SASLMechanism {
@@ -206,7 +206,7 @@ func secureInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 
 // readFile returns a parser for config.Value.Parse that reads the whole
 // file a variable names, through fsys.
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {

@@ -547,7 +547,7 @@ func TestNewPublisher_opens_no_connection(t *testing.T) {
 
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
-		l, err := h.Listen("tcp", "rabbit:5672")
+		l, err := h.ListenTCP(t.Context(), "tcp", "rabbit:5672")
 		require.NoError(t, err)
 		defer func() { _ = l.Close() }()
 		accepted := make(chan struct{})

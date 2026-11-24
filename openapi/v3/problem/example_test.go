@@ -66,14 +66,14 @@ func readSettings(ctx context.Context, s *humus.Setup) (httpserver.Settings, err
 	return config.Struct(func(r *config.Resolver) httpserver.Settings {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = r.Get(env("ADDR").Validate(httpserver.CheckAddr))
-		settings.TLS = r.Get(env("TLS_PEM_FILE").Parse(readFile(s.Host.FS)).Parse(serverTLS).Validate(httpserver.CheckTLS))
+		settings.TLS = r.Get(env("TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS))
 		return settings
 	}).Read(ctx)
 }
 
 // readFile returns a parser for config.Value.Parse that reads the whole
 // file a variable names, through fsys.
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {

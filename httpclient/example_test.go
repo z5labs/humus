@@ -39,7 +39,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		// No .Default: BaseURL is required, and the dependency is https,
 		// so PAYMENTS_CA_FILE is too.
 		c.BaseURL = r.Get(env("PAYMENTS_URL").Parse(url.Parse).Validate(httpclient.CheckBaseURL))
-		c.TLS = r.Get(env("PAYMENTS_CA_FILE").Parse(readFile(s.Host.FS)).Parse(trusting).Validate(httpclient.CheckTLS))
+		c.TLS = r.Get(env("PAYMENTS_CA_FILE").Parse(readFile(s.Host.Filesystem)).Parse(trusting).Validate(httpclient.CheckTLS))
 		c.Timeout = r.Get(env("PAYMENTS_TIMEOUT").Parse(time.ParseDuration).Default(d.Timeout).Validate(httpclient.CheckTimeout))
 		return c
 	}).Read(ctx)
@@ -49,7 +49,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	serverSettings, err := config.Struct(func(r *config.Resolver) httpserver.Settings {
 		c := httpserver.DefaultSettings()
 		c.Addr = r.Get(env("ADDR").Validate(httpserver.CheckAddr))
-		c.TLS = r.Get(env("TLS_PEM_FILE").Parse(readFile(s.Host.FS)).Parse(serverTLS).Validate(httpserver.CheckTLS))
+		c.TLS = r.Get(env("TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS))
 		return c
 	}).Read(ctx)
 	if err != nil {
@@ -101,7 +101,7 @@ func newAPI(payments *http.Client, base *url.URL) http.Handler {
 
 // readFile returns a parser for config.Value.Parse that reads the whole
 // file a variable names, through fsys.
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {

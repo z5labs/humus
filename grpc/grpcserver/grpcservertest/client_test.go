@@ -38,11 +38,11 @@ func (testService) EmptyCall(context.Context, *testpb.Empty) (*testpb.Empty, err
 }
 
 // serve starts a *grpc.Server with creds, serving testService on a listener
-// from h.Listen for address. The server is stopped when the test ends.
+// from h.ListenTCP for address. The server is stopped when the test ends.
 func serve(t *testing.T, h *humustest.Host, address string, creds credentials.TransportCredentials) {
 	t.Helper()
 
-	l, err := h.Listen("tcp", address)
+	l, err := h.ListenTCP(t.Context(), "tcp", address)
 	require.NoError(t, err)
 
 	srv := grpc.NewServer(grpc.Creds(creds))

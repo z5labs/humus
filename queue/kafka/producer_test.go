@@ -71,7 +71,7 @@ func readAll(t *testing.T, h *humustest.Host, c *kfake.Cluster, topic string, op
 	}
 	cl, err := kgo.NewClient(append([]kgo.Opt{
 		kgo.SeedBrokers(c.ListenAddrs()...),
-		kgo.Dialer(h.Dial),
+		kgo.Dialer(h.DialTCP),
 		kgo.ConsumeTopics(topic),
 		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
 	}, opts...)...)

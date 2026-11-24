@@ -17,6 +17,7 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/host/hosttest"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
@@ -329,13 +330,13 @@ func TestPublisher_each_failed_dial_is_retried_MaxAttempts_times_in_all(t *testi
 			mu    sync.Mutex
 			dials []time.Time
 		)
-		dial := host.Dial
-		host.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		dial := host.DialTCP
+		host.IPNetwork = hosttest.Seams{Network: host.IPNetwork, OnDialTCP: func(ctx context.Context, network, address string) (net.Conn, error) {
 			mu.Lock()
 			dials = append(dials, time.Now())
 			mu.Unlock()
 			return dial(ctx, network, address)
-		}
+		}}
 		settings := publisherSettings()
 		settings.MaxAttempts = 4
 		pub, err := rabbitmq.NewPublisher(&humus.Setup{Host: host, Telemetry: telemetry.Noop()}, settings)

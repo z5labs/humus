@@ -37,7 +37,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		// No .Default: Addr is required, and carts serves TLS, so
 		// CARTS_CA_FILE is too.
 		c.Addr = r.Get(env("CARTS_ADDR").Validate(grpcclient.CheckAddr))
-		c.TLS = r.Get(env("CARTS_CA_FILE").Parse(readFile(s.Host.FS)).Parse(clientTLS).Validate(grpcclient.CheckTLS))
+		c.TLS = r.Get(env("CARTS_CA_FILE").Parse(readFile(s.Host.Filesystem)).Parse(clientTLS).Validate(grpcclient.CheckTLS))
 		c.Timeout = r.Get(env("CARTS_TIMEOUT").Parse(time.ParseDuration).Default(d.Timeout).Validate(grpcclient.CheckTimeout))
 		return c
 	}).Read(ctx)
@@ -47,7 +47,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	serverSettings, err := config.Struct(func(r *config.Resolver) grpcserver.Settings {
 		return grpcserver.Settings{
 			Addr: r.Get(env("GRPC_ADDR").Validate(grpcserver.CheckAddr)),
-			TLS:  r.Get(env("GRPC_TLS_PEM_FILE").Parse(readFile(s.Host.FS)).Parse(serverTLS).Validate(grpcserver.CheckTLS)),
+			TLS:  r.Get(env("GRPC_TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(grpcserver.CheckTLS)),
 		}
 	}).Read(ctx)
 	if err != nil {
@@ -90,7 +90,7 @@ func (a *api) UnaryCall(ctx context.Context, _ *testpb.SimpleRequest) (*testpb.S
 
 // readFile returns a parser for config.Value.Parse that reads the whole
 // file a variable names, through fsys.
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {

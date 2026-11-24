@@ -35,7 +35,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 			// readFile and serverTLS are the end user's own helpers. The
 			// config requires no client certificate, so the kubelet's
 			// probes reach the Service.
-			TLS: r.Get(env("GRPC_TLS_PEM_FILE").Parse(readFile(s.Host.FS)).Parse(serverTLS).Validate(grpcserver.CheckTLS)),
+			TLS: r.Get(env("GRPC_TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(grpcserver.CheckTLS)),
 		}
 	}).Read(ctx)
 	if err != nil {
@@ -64,7 +64,7 @@ func (greeter) UnaryCall(context.Context, *testpb.SimpleRequest) (*testpb.Simple
 
 // readFile returns a parser for config.Value.Parse that reads the whole
 // file a variable names, through fsys.
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {
@@ -112,7 +112,7 @@ func ProbesInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		return settings{
 			grpc: grpcserver.Settings{
 				Addr: r.Get(env("GRPC_ADDR").Validate(grpcserver.CheckAddr)),
-				TLS:  r.Get(env("GRPC_TLS_PEM_FILE").Parse(readFile(s.Host.FS)).Parse(serverTLS).Validate(grpcserver.CheckTLS)),
+				TLS:  r.Get(env("GRPC_TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(grpcserver.CheckTLS)),
 			},
 			probes: grpchealth.Settings{
 				// No .Default: the field is required.

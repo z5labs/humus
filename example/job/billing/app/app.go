@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"strconv"
 	"time"
@@ -96,7 +97,7 @@ type settings struct {
 
 func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
-	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.FS)) }
+	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.Filesystem)) }
 
 	return config.Struct(func(r *config.Resolver) settings {
 		client := httpclient.DefaultSettings()
@@ -118,7 +119,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 	}).Read(ctx)
 }
 
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {
@@ -191,7 +192,13 @@ func checkConcurrency(n int) error {
 }
 
 func openPostgres(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (billing.Invoices, error) {
-	cfg.ConnConfig.DialFunc = s.Host.Dial
+	cfg.ConnConfig.DialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if network == "unix" {
+			var d net.Dialer
+			return d.DialContext(ctx, network, addr)
+		}
+		return s.Host.DialTCP(ctx, network, addr)
+	}
 	cfg.ConnConfig.LookupFunc = func(_ context.Context, host string) ([]string, error) {
 		return []string{host}, nil
 	}

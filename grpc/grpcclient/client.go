@@ -83,11 +83,10 @@ var _ grpc.ClientConnInterface = (*Client)(nil)
 // NewClient runs every check on settings, and rejects a BackoffMax below
 // BackoffBase, a nil Classify, and a BreakerPolicy with a nil Trip or
 // Probe, reporting every bad field in one error that names each one. It
-// also rejects a nil s, and an s whose Host has no Dial, rather than let
-// grpc-go fall back to dialling the real network. It builds the Client,
-// with one retry.Budget, one retry.Retrier and one circuit breaker, built
-// with circuit.New from settings.Breaker and settings.BreakerPolicy, all
-// shared by every method and every goroutine. The breaker sits inside the
+// also rejects a nil s. It builds the Client, with one retry.Budget, one
+// retry.Retrier and one circuit breaker, built with circuit.New from
+// settings.Breaker and settings.BreakerPolicy, all shared by every method
+// and every goroutine. The breaker sits inside the
 // retries: each attempt is one call through it. It opens no connection:
 // the first RPC dials.
 //
@@ -119,9 +118,6 @@ func NewClient(s *humus.Setup, settings Settings, opts ...grpc.DialOption) (*Cli
 		return nil, errors.New("grpcclient: NewClient: the Setup must not be nil")
 	}
 	err := checkSettings(settings)
-	if s.Host.Dial == nil {
-		err = errors.Join(errors.New("the Setup's Host.Dial must not be nil"), err)
-	}
 	if err != nil {
 		return nil, fmt.Errorf("grpcclient: NewClient: %w", err)
 	}
@@ -161,7 +157,7 @@ func NewClient(s *humus.Setup, settings Settings, opts ...grpc.DialOption) (*Cli
 		return nil, fmt.Errorf("grpcclient: NewClient: %w", err)
 	}
 
-	dial := s.Host.Dial
+	dial := s.Host.DialTCP
 	creds := insecure.NewCredentials()
 	if settings.TLS != nil {
 		// credentials.NewTLS clones the config, so the end user's is never

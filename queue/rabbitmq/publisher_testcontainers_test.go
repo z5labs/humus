@@ -25,6 +25,7 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/host/hosttest"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.opentelemetry.io/otel/trace"
@@ -273,11 +274,11 @@ func TestPublisher_a_Publish_right_after_close_all_connections_is_confirmed_on_a
 
 	host := humus.OSHost()
 	var dials atomic.Int32
-	dial := host.Dial
-	host.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+	dial := host.DialTCP
+	host.IPNetwork = hosttest.Seams{Network: host.IPNetwork, OnDialTCP: func(ctx context.Context, network, address string) (net.Conn, error) {
 		dials.Add(1)
 		return dial(ctx, network, address)
-	}
+	}}
 	settings := rabbitmq.DefaultPublisherSettings()
 	settings.Connection = plainText(t)
 

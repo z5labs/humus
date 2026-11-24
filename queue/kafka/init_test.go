@@ -12,6 +12,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"net"
 	"strings"
 	"sync"
 	"syscall"
@@ -255,7 +256,7 @@ func TestTwoDeliveries_are_two_Services_with_two_group_IDs(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
 		c, err := kfake.NewCluster(
-			kfake.ListenFn(h.Listen),
+			kfake.ListenFn(func(network, address string) (net.Listener, error) { return h.ListenTCP(t.Context(), network, address) }),
 			kfake.NumBrokers(1),
 			kfake.SeedTopics(1, "payments", "clicks"),
 		)

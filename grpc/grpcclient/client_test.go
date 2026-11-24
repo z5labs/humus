@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/host/hosttest"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -215,24 +216,24 @@ func emptyCall(ctx context.Context, c testpb.TestServiceClient) error {
 	return err
 }
 
-// dialled records the address of every Dial through a Host.
+// dialled records the address of every DialTCP through a Host.
 type dialled struct {
 	mu    sync.Mutex
 	addrs []string
 }
 
-// recordDials returns h's Host, with a Dial that records each address in
+// recordDials returns h's Host, with a DialTCP that records each address in
 // the returned dialled before dialling it.
 func recordDials(h *humustest.Host) (humus.Host, *dialled) {
 	d := &dialled{}
 	host := h.Host()
-	dial := host.Dial
-	host.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+	dial := host.DialTCP
+	host.IPNetwork = hosttest.Seams{Network: host.IPNetwork, OnDialTCP: func(ctx context.Context, network, address string) (net.Conn, error) {
 		d.mu.Lock()
 		d.addrs = append(d.addrs, address)
 		d.mu.Unlock()
 		return dial(ctx, network, address)
-	}
+	}}
 	return host, d
 }
 
@@ -311,7 +312,7 @@ func TestClient_reads_a_stream(t *testing.T) {
 // h for address. The server is stopped when the test ends.
 func servePlain(t *testing.T, h *humustest.Host, address string, b *backend) {
 	t.Helper()
-	l, err := h.Listen("tcp", address)
+	l, err := h.ListenTCP(t.Context(), "tcp", address)
 	require.NoError(t, err)
 
 	srv := grpc.NewServer(grpc.Creds(insecure.NewCredentials()))
@@ -423,7 +424,7 @@ func TestClient_dials_names_only_through_the_Host(t *testing.T) {
 }
 
 // TestClient_uses_no_proxy shows a call reaching the backend directly, with
-// the proxy variables set in the real environment. The Host's Dial sees
+// the proxy variables set in the real environment. The Host's DialTCP sees
 // the backend's address, and nothing else. In grpc-go v1.84.0 the Host's
 // dialler alone already rules a proxy out, since grpc-go consults the
 // proxy variables only for a client with no dialler of its own, so this

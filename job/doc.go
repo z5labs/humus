@@ -24,7 +24,7 @@
 //		}
 //		s.OnStop(func(context.Context) error { pool.Close(); return nil })
 //
-//		e := &exporter{pool: pool, fs: s.Host.FS}
+//		e := &exporter{pool: pool, fs: s.Host.Filesystem}
 //		return []humus.Service{job.NewService(s, e.Run)}, nil
 //	}
 //

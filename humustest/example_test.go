@@ -67,16 +67,16 @@ func (tb *exampleTB) runCleanups() {
 	}
 }
 
-// A Host's network is in memory. Listen holds a name and port, and Dial
-// reaches the listener for exactly that name: names are compared as
-// written and never resolved, so 127.0.0.1 is not localhost. A Dial that
+// A Host's network is in memory. ListenTCP holds a name and port, and
+// DialTCP reaches the listener for exactly that name: names are compared as
+// written and never resolved, so 127.0.0.1 is not localhost. A DialTCP that
 // finds no listener is refused at once; it never waits for one.
 func ExampleNewHost() {
 	t := new(exampleTB)
 	defer t.runCleanups()
 
 	h := humustest.NewHost(t)
-	ln, err := h.Listen("tcp", "localhost:8080")
+	ln, err := h.ListenTCP(context.Background(), "tcp", "localhost:8080")
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -92,7 +92,7 @@ func ExampleNewHost() {
 		_, _ = io.WriteString(conn, "hello from localhost:8080")
 	}()
 
-	conn, err := h.Dial(context.Background(), "tcp", "localhost:8080")
+	conn, err := h.DialTCP(context.Background(), "tcp", "localhost:8080")
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -105,7 +105,7 @@ func ExampleNewHost() {
 	}
 	fmt.Println(string(b))
 
-	_, err = h.Dial(context.Background(), "tcp", "127.0.0.1:8080")
+	_, err = h.DialTCP(context.Background(), "tcp", "127.0.0.1:8080")
 	fmt.Println("127.0.0.1:8080 refused:", errors.Is(err, syscall.ECONNREFUSED))
 	// Output:
 	// hello from localhost:8080
@@ -115,14 +115,14 @@ func ExampleNewHost() {
 // A test waits for a listener before it dials. Inside a synctest bubble,
 // synctest.Wait does that for every listener at once; Listening waits for
 // one, and works outside a bubble too. A listener on every name, such as
-// ":8080", is reached by a Dial to any name on its port.
+// ":8080", is reached by a DialTCP to any name on its port.
 func ExampleHost_Listening() {
 	t := new(exampleTB)
 	defer t.runCleanups()
 
 	h := humustest.NewHost(t)
-	_, err := h.Dial(context.Background(), "tcp", "localhost:8080")
-	fmt.Println("before Listen, refused:", errors.Is(err, syscall.ECONNREFUSED))
+	_, err := h.DialTCP(context.Background(), "tcp", "localhost:8080")
+	fmt.Println("before ListenTCP, refused:", errors.Is(err, syscall.ECONNREFUSED))
 
 	// The goroutine stands in for an App, which listens when it gets to
 	// it. Listening is called first, so the test can't miss the listener.
@@ -130,7 +130,7 @@ func ExampleHost_Listening() {
 	served := make(chan struct{})
 	go func() {
 		defer close(served)
-		ln, err := h.Listen("tcp", ":8080")
+		ln, err := h.ListenTCP(context.Background(), "tcp", ":8080")
 		if err != nil {
 			fmt.Println(err)
 			return
@@ -146,10 +146,10 @@ func ExampleHost_Listening() {
 
 	select {
 	case <-listening:
-	case <-served: // Listen failed, and the goroutine said why
+	case <-served: // ListenTCP failed, and the goroutine said why
 		return
 	}
-	conn, err := h.Dial(context.Background(), "tcp", "localhost:8080")
+	conn, err := h.DialTCP(context.Background(), "tcp", "localhost:8080")
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -163,26 +163,26 @@ func ExampleHost_Listening() {
 	fmt.Println(string(b))
 	<-served
 	// Output:
-	// before Listen, refused: true
+	// before ListenTCP, refused: true
 	// hello from every name
 }
 
-// ListenPacket binds a UDP socket on the Host's network, and Dial over
-// "udp" returns a socket connected to it. A datagram arrives whole at the
+// ListenUDP binds a UDP socket on the Host's network, and DialUDP returns
+// a socket connected to it. A datagram arrives whole at the
 // socket that holds its address, and comes from the dialled socket.
-func ExampleHost_ListenPacket() {
+func ExampleHost_ListenUDP() {
 	t := new(exampleTB)
 	defer t.runCleanups()
 
 	h := humustest.NewHost(t)
-	pc, err := h.ListenPacket("udp", "dns:53")
+	pc, err := h.ListenUDP(context.Background(), "udp", "dns:53")
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 	defer func() { _ = pc.Close() }()
 
-	conn, err := h.Dial(context.Background(), "udp", "dns:53")
+	conn, err := h.DialUDP(context.Background(), "udp", "dns:53")
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -208,7 +208,7 @@ func ExampleHost_ListenPacket() {
 
 // hosttest.WithFiles writes the files a test sets up into the Host's
 // directory before the App starts, and Path gives the absolute OS path of
-// one, to put in a setting. The Host's FS opens it there, and refuses a
+// one, to put in a setting. The Host's Filesystem opens it there, and refuses a
 // path that leaves the directory.
 func ExampleHost_Path() {
 	t := new(exampleTB)
@@ -220,7 +220,7 @@ func ExampleHost_Path() {
 	path := h.Path("etc/app/greeting.txt")
 	fmt.Println("absolute:", filepath.IsAbs(path))
 
-	f, err := h.FS().Open(path)
+	f, err := h.Filesystem().Open(path)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -233,7 +233,7 @@ func ExampleHost_Path() {
 	}
 	fmt.Println(string(b))
 
-	_, err = h.FS().Open("../outside.txt")
+	_, err = h.Filesystem().Open("../outside.txt")
 	fmt.Println("outside the directory refused:", err != nil)
 	// Output:
 	// absolute: true
@@ -241,30 +241,31 @@ func ExampleHost_Path() {
 	// outside the directory refused: true
 }
 
-// fullDisk is a humus.FS whose OpenFile fails as on a full disk. It embeds
-// the FS it wraps, so every other method is that FS's.
+// fullDisk is a humus.Filesystem whose OpenFile fails as on a full disk. It
+// embeds the Filesystem it wraps, so every other method is that
+// Filesystem's.
 type fullDisk struct {
-	humus.FS
+	humus.Filesystem
 }
 
 func (fullDisk) OpenFile(name string, _ int, _ os.FileMode) (*os.File, error) {
 	return nil, &fs.PathError{Op: "open", Path: name, Err: syscall.ENOSPC}
 }
 
-// A test makes a filesystem call fail by embedding the Host's FS in a type
-// of its own and overriding the method that fails. The App runs on a Host
-// whose FS is that type.
-func ExampleHost_FS() {
+// A test makes a filesystem call fail by embedding the Host's Filesystem in
+// a type of its own and overriding the method that fails. The App runs on a
+// Host whose Filesystem is that type.
+func ExampleHost_Filesystem() {
 	t := new(exampleTB)
 	defer t.runCleanups()
 
 	h := humustest.NewHost(t)
 	hh := h.Host()
-	hh.FS = fullDisk{FS: hh.FS}
+	hh.Filesystem = fullDisk{Filesystem: hh.Filesystem}
 
-	_, err := hh.FS.OpenFile(h.Path("out.txt"), os.O_CREATE|os.O_WRONLY, 0o600)
+	_, err := hh.Filesystem.OpenFile(h.Path("out.txt"), os.O_CREATE|os.O_WRONLY, 0o600)
 	fmt.Println("disk full:", errors.Is(err, syscall.ENOSPC))
-	_, err = hh.FS.Stat(h.Path("out.txt"))
+	_, err = hh.Filesystem.Stat(h.Path("out.txt"))
 	fmt.Println("nothing written:", errors.Is(err, fs.ErrNotExist))
 	// Output:
 	// disk full: true
@@ -283,7 +284,7 @@ func ExampleNewCA() {
 	cert := ca.Issue(t, "api.internal")
 
 	h := humustest.NewHost(t)
-	ln, err := h.Listen("tcp", "api.internal:8443")
+	ln, err := h.ListenTCP(context.Background(), "tcp", "api.internal:8443")
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -299,7 +300,7 @@ func ExampleNewCA() {
 		_, _ = io.WriteString(srv, "hello over TLS")
 	}()
 
-	conn, err := h.Dial(context.Background(), "tcp", "api.internal:8443")
+	conn, err := h.DialTCP(context.Background(), "tcp", "api.internal:8443")
 	if err != nil {
 		fmt.Println(err)
 		return

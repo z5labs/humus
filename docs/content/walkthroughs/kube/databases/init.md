@@ -32,11 +32,11 @@ and the controller exits 78, naming its variable:
 ```go
 func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
-	read := readFile(s.Host.FS)
+	read := readFile(s.Host.Filesystem)
 
 	return config.Struct(func(r *config.Resolver) settings {
 		tokenFile := r.Get(env("KUBERNETES_TOKEN_FILE").Default(serviceAccount + "token").Validate(func(name string) error {
-			_, err := readToken(s.Host.FS, name)
+			_, err := readToken(s.Host.Filesystem, name)
 			return err
 		}))
 
@@ -56,7 +56,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 				),
 				TLS: r.Get(env("KUBERNETES_CA_FILE").Default(serviceAccount + "ca.crt").Parse(read).Parse(certPool).Map(trusting).Validate(kube.CheckTLS)),
 				Token: func(context.Context) (string, error) {
-					return readToken(s.Host.FS, tokenFile)
+					return readToken(s.Host.Filesystem, tokenFile)
 				},
 			},
 			Controller: k,
@@ -65,7 +65,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 			Port:       r.Get(env("POSTGRES_PORT").Parse(strconv.Atoi).Default(5432).Validate(checkPostgresPort)),
 			Probes: httphealth.Settings{
 				Addr: r.Get(env("PROBES_ADDR").Validate(httphealth.CheckAddr)),
-				TLS:  r.Get(env("PROBES_TLS_PEM_FILE").Parse(pemTLS(s.Host.FS)).Validate(httphealth.CheckTLS)),
+				TLS:  r.Get(env("PROBES_TLS_PEM_FILE").Parse(pemTLS(s.Host.Filesystem)).Validate(httphealth.CheckTLS)),
 			},
 			TrustedPrefix: r.Get(env("FAULT_TRUSTED_NAMESPACE_PREFIX").Default("")),
 		}
@@ -116,11 +116,11 @@ func notEmpty(s string) error {
 ## The secrets, as files
 
 The admin DSN, the service account's token and CA, and the probes'
-certificate are files, read through the Host's `FS`, so the tests can give
+certificate are files, read through the Host's `Filesystem`, so the tests can give
 the controller files of their own:
 
 ```go
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {
@@ -131,7 +131,7 @@ func readFile(fsys humus.FS) func(name string) ([]byte, error) {
 	}
 }
 
-func readToken(fsys humus.FS, name string) (string, error) {
+func readToken(fsys humus.Filesystem, name string) (string, error) {
 	b, err := readFile(fsys)(name)
 	if err != nil {
 		return "", err
@@ -265,13 +265,20 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	}
 ```
 
-`openPostgres` dials through the Host, so the tests can give the pool their
-own network, and closes the pool when the App stops. The `Server` gets the
+`openPostgres` dials TCP through the Host, so the tests can give the pool
+their own network, and a Unix socket with a `net.Dialer` of its own. It
+closes the pool when the App stops. The `Server` gets the
 App's `fault.Injector` and its tracer provider:
 
 ```go
 func openPostgres(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (*postgres.Server, error) {
-	cfg.ConnConfig.DialFunc = s.Host.Dial
+	cfg.ConnConfig.DialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if network == "unix" {
+			var d net.Dialer
+			return d.DialContext(ctx, network, addr)
+		}
+		return s.Host.DialTCP(ctx, network, addr)
+	}
 	cfg.ConnConfig.LookupFunc = func(_ context.Context, host string) ([]string, error) {
 		return []string{host}, nil
 	}
@@ -327,7 +334,7 @@ The probes are served over TLS. Their certificate and key are one PEM file,
 read again when it changes, so a renewal needs no restart:
 
 ```go
-func pemTLS(fsys humus.FS) func(name string) (*tls.Config, error) {
+func pemTLS(fsys humus.Filesystem) func(name string) (*tls.Config, error) {
 	return func(name string) (*tls.Config, error) {
 		return certfile.Config(fsys, name, name)
 	}
@@ -335,7 +342,7 @@ func pemTLS(fsys humus.FS) func(name string) (*tls.Config, error) {
 ```
 
 ```go
-func Config(fsys humus.FS, certFile, keyFile string) (*tls.Config, error) {
+func Config(fsys humus.Filesystem, certFile, keyFile string) (*tls.Config, error) {
 	f := &files{fs: fsys, certFile: certFile, keyFile: keyFile}
 	if _, err := f.certificate(); err != nil {
 		return nil, err

@@ -52,14 +52,14 @@ func newHost(t *testing.T, c *humustest.Certificate) *humustest.Host {
 
 func config(t *testing.T, h *humustest.Host) *tls.Config {
 	t.Helper()
-	cfg, err := certfile.Config(h.FS(), h.Path(pemFile))
+	cfg, err := certfile.Config(h.Filesystem(), h.Path(pemFile))
 	require.NoError(t, err)
 	return cfg
 }
 
 func writeInPlace(t *testing.T, h *humustest.Host, data []byte) {
 	t.Helper()
-	f, err := h.FS().OpenFile(h.Path(pemFile), os.O_WRONLY|os.O_TRUNC, 0)
+	f, err := h.Filesystem().OpenFile(h.Path(pemFile), os.O_WRONLY|os.O_TRUNC, 0)
 	require.NoError(t, err)
 	_, err = f.Write(data)
 	require.NoError(t, err)
@@ -69,12 +69,12 @@ func writeInPlace(t *testing.T, h *humustest.Host, data []byte) {
 func writeByRename(t *testing.T, h *humustest.Host, data []byte) {
 	t.Helper()
 	name := h.Path(pemFile)
-	tmp, err := h.FS().CreateTemp(filepath.Dir(name), "renewed-*")
+	tmp, err := h.Filesystem().CreateTemp(filepath.Dir(name), "renewed-*")
 	require.NoError(t, err)
 	_, err = tmp.Write(data)
 	require.NoError(t, err)
 	require.NoError(t, tmp.Close())
-	require.NoError(t, h.FS().Rename(tmp.Name(), name))
+	require.NoError(t, h.Filesystem().Rename(tmp.Name(), name))
 }
 
 type server struct {
@@ -83,7 +83,7 @@ type server struct {
 
 func serve(t *testing.T, h *humustest.Host, cfg *tls.Config) *server {
 	t.Helper()
-	l, err := h.Listen("tcp", addr)
+	l, err := h.ListenTCP(t.Context(), "tcp", addr)
 	require.NoError(t, err)
 
 	s := &server{}
@@ -222,7 +222,7 @@ func TestConfig(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
 
-			_, err := certfile.Config(h.FS(), h.Path(pemFile))
+			_, err := certfile.Config(h.Filesystem(), h.Path(pemFile))
 			require.ErrorIs(t, err, os.ErrNotExist)
 		})
 	})
@@ -232,7 +232,7 @@ func TestConfig(t *testing.T) {
 			ca := humustest.NewCA(t)
 			h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{pemFile: certificates(t, ca.Issue(t, serverName))}))
 
-			_, err := certfile.Config(h.FS(), h.Path(pemFile))
+			_, err := certfile.Config(h.Filesystem(), h.Path(pemFile))
 			require.ErrorContains(t, err, h.Path(pemFile))
 		})
 	})
@@ -243,7 +243,7 @@ func TestConfig(t *testing.T) {
 			mismatched := append(certificates(t, ca.Issue(t, serverName)), key(t, ca.Issue(t, serverName))...)
 			h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{pemFile: mismatched}))
 
-			_, err := certfile.Config(h.FS(), h.Path(pemFile))
+			_, err := certfile.Config(h.Filesystem(), h.Path(pemFile))
 			require.ErrorContains(t, err, h.Path(pemFile))
 		})
 	})

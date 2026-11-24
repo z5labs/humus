@@ -564,7 +564,7 @@ func TestInit_closes_a_connection_after_a_minute_but_leaves_its_open_watch(t *te
 		var dials atomic.Int64
 		c := w.client(t, grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
 			dials.Add(1)
-			return w.f.h.Dial(ctx, "tcp", addr)
+			return w.f.h.DialTCP(ctx, "tcp", addr)
 		}))
 		ctx := w.as(t, "alice", server.ScopeRead, server.ScopeWrite)
 		w.ledger.deposit("alice", 500)
@@ -592,7 +592,7 @@ func TestInit_serves_TLS_without_asking_for_a_client_certificate(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		w := start(t)
 		asked := make(chan bool, 1)
-		conn, err := w.f.h.Dial(t.Context(), "tcp", walletAddr)
+		conn, err := w.f.h.DialTCP(t.Context(), "tcp", walletAddr)
 		require.NoError(t, err)
 		tc := tls.Client(conn, &tls.Config{
 			ServerName: "wallet",

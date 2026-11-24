@@ -21,7 +21,7 @@ func TestListener_keeps_the_Service_contract(t *testing.T) {
 	humustest.TestService(t, func(t *testing.T, s *humus.Setup) humus.Service {
 		cfg, err := pgx.ParseConfig("postgres://polls@" + dbHost + "/polls?sslmode=disable")
 		require.NoError(t, err)
-		cfg.DialFunc = s.Host.Dial
+		cfg.DialFunc = s.Host.DialTCP
 		cfg.LookupFunc = func(_ context.Context, host string) ([]string, error) {
 			return []string{host}, nil
 		}

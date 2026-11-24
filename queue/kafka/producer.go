@@ -151,7 +151,7 @@ func NewProducer(s *humus.Setup, settings ProducerSettings) (*Producer, error) {
 	p.breaker = breaker
 	opts := []kgo.Opt{
 		kgo.SeedBrokers(settings.Brokers...),
-		kgo.Dialer(tlsDialer(s.Host.Dial, settings.TLS)),
+		kgo.Dialer(tlsDialer(s.Host.DialTCP, settings.TLS)),
 		kgo.WithLogger(kgoLogger{ctx: context.Background(), logger: s.Telemetry.LoggerProvider.Logger(kgoScope)}),
 		kgo.WithHooks(
 			sendHook{sent: sent, operations: operations},

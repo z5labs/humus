@@ -24,9 +24,9 @@ catalog := httpclient.DefaultSettings()
 catalog.BaseURL = r.Get(env("CATALOG_URL").Parse(url.Parse).Validate(checkCatalogURL))
 catalog.TLS = &tls.Config{
 	RootCAs: r.Get(file("CATALOG_CA_FILE").Parse(certPool)),
-	GetClientCertificate: r.Get(env("CATALOG_CLIENT_CERT_FILE").Validate(holdsCertificate(s.Host.FS)).FlatMap(func(certFile string) config.Value[clientCertificate] {
+	GetClientCertificate: r.Get(env("CATALOG_CLIENT_CERT_FILE").Validate(holdsCertificate(s.Host.Filesystem)).FlatMap(func(certFile string) config.Value[clientCertificate] {
 		return env("CATALOG_CLIENT_KEY_FILE").Parse(func(keyFile string) (clientCertificate, error) {
-			cfg, err := certfile.Config(s.Host.FS, certFile, keyFile)
+			cfg, err := certfile.Config(s.Host.Filesystem, certFile, keyFile)
 			if err != nil {
 				return nil, err
 			}

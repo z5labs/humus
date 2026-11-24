@@ -23,6 +23,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
+	"github.com/z5labs/bedrock/host/hosttest"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/httpclient"
@@ -143,24 +144,24 @@ func get(ctx context.Context, c *http.Client, rawURL string) (response, error) {
 	}, err
 }
 
-// dialled records the address of every Dial through a Host.
+// dialled records the address of every DialTCP through a Host.
 type dialled struct {
 	mu    sync.Mutex
 	addrs []string
 }
 
-// recordDials returns h's Host, with a Dial that records each address in
+// recordDials returns h's Host, with a DialTCP that records each address in
 // the returned dialled before dialling it.
 func recordDials(h *humustest.Host) (humus.Host, *dialled) {
 	d := &dialled{}
 	host := h.Host()
-	dial := host.Dial
-	host.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+	dial := host.DialTCP
+	host.IPNetwork = hosttest.Seams{Network: host.IPNetwork, OnDialTCP: func(ctx context.Context, network, address string) (net.Conn, error) {
 		d.mu.Lock()
 		d.addrs = append(d.addrs, address)
 		d.mu.Unlock()
 		return dial(ctx, network, address)
-	}
+	}}
 	return host, d
 }
 
@@ -181,19 +182,19 @@ type peerCloses struct {
 	closed   atomic.Int32
 }
 
-// watchConns returns h's Host, with a Listen whose connections report to
+// watchConns returns h's Host, with a ListenTCP whose connections report to
 // the returned peerCloses.
 func watchConns(h *humustest.Host) (humus.Host, *peerCloses) {
 	pc := &peerCloses{}
 	host := h.Host()
-	listen := host.Listen
-	host.Listen = func(network, address string) (net.Listener, error) {
-		l, err := listen(network, address)
+	listen := host.ListenTCP
+	host.IPNetwork = hosttest.Seams{Network: host.IPNetwork, OnListenTCP: func(ctx context.Context, network, address string) (net.Listener, error) {
+		l, err := listen(ctx, network, address)
 		if err != nil {
 			return nil, err
 		}
 		return &watchedListener{Listener: l, pc: pc}, nil
-	}
+	}}
 	return host, pc
 }
 
@@ -300,7 +301,7 @@ func TestClient_calls_over_HTTP2(t *testing.T) {
 func TestClient_calls_in_plain_text_over_HTTP1(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
-		l, err := h.Listen("tcp", "payments:8080")
+		l, err := h.ListenTCP(t.Context(), "tcp", "payments:8080")
 		require.NoError(t, err)
 		var proto string
 		srv := &http.Server{

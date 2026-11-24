@@ -800,7 +800,7 @@ func TestClient_a_request_sent_once_still_counts_in_the_budget(t *testing.T) {
 func TestClient_Transport_keeps_a_101_responses_writable_body(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
-		l, err := h.Listen("tcp", "payments:8080")
+		l, err := h.ListenTCP(t.Context(), "tcp", "payments:8080")
 		require.NoError(t, err)
 		srv := &http.Server{
 			Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

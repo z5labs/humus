@@ -135,7 +135,7 @@ func NewService(s *humus.Setup, settings Settings, p queue.Processor[Message]) (
 	return &Service{
 		settings:   settings,
 		proc:       p,
-		dial:       tlsDialer(s.Host.Dial, settings.TLS),
+		dial:       tlsDialer(s.Host.DialTCP, settings.TLS),
 		logger:     s.Telemetry.LoggerProvider.Logger(scopeName),
 		kgoLogger:  s.Telemetry.LoggerProvider.Logger(kgoScope),
 		tracer:     s.Telemetry.TracerProvider.Tracer(scopeName),

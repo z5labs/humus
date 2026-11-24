@@ -19,7 +19,7 @@ import (
 
 const interval = 30 * time.Second
 
-func Config(fsys humus.FS, certFile, keyFile string) (*tls.Config, error) {
+func Config(fsys humus.Filesystem, certFile, keyFile string) (*tls.Config, error) {
 	f := &files{fs: fsys, certFile: certFile, keyFile: keyFile, checked: time.Now()}
 	p, err := f.read(nil)
 	if err != nil {
@@ -37,7 +37,7 @@ func Config(fsys humus.FS, certFile, keyFile string) (*tls.Config, error) {
 }
 
 type files struct {
-	fs       humus.FS
+	fs       humus.Filesystem
 	certFile string
 	keyFile  string
 
@@ -94,7 +94,7 @@ func (f *files) read(last *pair) (*pair, error) {
 	return &pair{certPEM: certPEM, keyPEM: keyPEM, cert: &cert}, nil
 }
 
-func readFile(fsys humus.FS, name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem, name string) ([]byte, error) {
 	file, err := fsys.Open(name)
 	if err != nil {
 		return nil, err

@@ -57,7 +57,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		// No .Default: Addr is required, and carts serves TLS, so
 		// CARTS_CA_FILE is too.
 		c.Addr = r.Get(env("CARTS_ADDR").Validate(grpcclient.CheckAddr))
-		c.TLS = r.Get(env("CARTS_CA_FILE").Parse(readFile(s.Host.FS)).Parse(clientTLS).Validate(grpcclient.CheckTLS))
+		c.TLS = r.Get(env("CARTS_CA_FILE").Parse(readFile(s.Host.Filesystem)).Parse(clientTLS).Validate(grpcclient.CheckTLS))
 		c.Timeout = r.Get(env("CARTS_TIMEOUT").Parse(time.ParseDuration).Default(d.Timeout).Validate(grpcclient.CheckTimeout))
 		return c
 	}).Read(ctx)
@@ -67,7 +67,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	serverSettings, err := config.Struct(func(r *config.Resolver) grpcserver.Settings {
 		return grpcserver.Settings{
 			Addr: r.Get(env("GRPC_ADDR").Validate(grpcserver.CheckAddr)),
-			TLS:  r.Get(env("GRPC_TLS_PEM_FILE").Parse(readFile(s.Host.FS)).Parse(serverTLS).Validate(grpcserver.CheckTLS)),
+			TLS:  r.Get(env("GRPC_TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(grpcserver.CheckTLS)),
 		}
 	}).Read(ctx)
 	if err != nil {
@@ -227,7 +227,7 @@ explains the exit codes.
 `Client` dials with a clone of it, so the end user's config is never
 changed. grpc-go adds `h2` to its ALPN and enforces it, and `CheckTLS`
 rejects a config that allows nothing from TLS 1.2 on, which HTTP/2 requires.
-`Init` above reads the dependency's CA from a file, through `s.Host.FS`, as
+`Init` above reads the dependency's CA from a file, through `s.Host.Filesystem`, as
 [Reading a file]({{< relref "/fundamentals/configuration#reading-a-file" >}}) describes,
 and trusts only that CA:
 
@@ -275,9 +275,9 @@ in `NewClient`'s options. A `Client` of `10.0.0.7:9090` whose `TLS` has the
 ## Names, addresses and load
 
 `NewClient` targets `passthrough:///` and `Settings.Addr`, and dials with the
-Setup's `Host.Dial`. The passthrough resolver hands `Addr` to the dialler as
+Setup's `Host.DialTCP`. The passthrough resolver hands `Addr` to the dialler as
 it is, so grpc-go looks no name up: the Host resolves the name when it
-dials. In `main`, `humus.OSHost`'s `Dial` looks the name up as `net.Dial`
+dials. In `main`, `humus.OSHost`'s `DialTCP` looks the name up as `net.Dial`
 does, each time it dials. grpc-go's `dns` resolver, the default for a target
 with no scheme, is never used: it would look the name up around the Host,
 and inside a `testing/synctest` bubble it crashes the test binary, as
@@ -290,7 +290,7 @@ describes. The `Client` uses no HTTP CONNECT proxy, and never reads
 The passthrough resolver hands grpc-go one address, whatever its form, a name
 or an IP, so the `Client` has grpc-go's default `pick_first` policy, and
 **every RPC goes over one HTTP/2 connection**, to whichever backend that
-dial reached. `OSHost`'s `Dial` tries a name's addresses in the order the
+dial reached. `OSHost`'s `DialTCP` tries a name's addresses in the order the
 lookup returns them, and keeps the first connection that succeeds. So:
 
 - **Behind a Kubernetes ClusterIP Service,** the Service's name resolves to

@@ -106,7 +106,7 @@ func newEnv(t *testing.T, answer func(int, *http.Request, http.ResponseWriter)) 
 		key:  rand.Text(),
 		api:  &api{answer: answer},
 	}
-	l, err := e.host.Listen("tcp", ":8443")
+	l, err := e.host.ListenTCP(t.Context(), "tcp", ":8443")
 	require.NoError(t, err)
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)

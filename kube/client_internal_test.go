@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/host/hosttest"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/telemetry"
@@ -27,10 +28,12 @@ import (
 func TestNewClient_the_transport(t *testing.T) {
 	t.Parallel()
 
-	dial := func(context.Context, string, string) (net.Conn, error) {
+	th := hosttest.New(t)
+	n := hosttest.Seams{Network: th}
+	n.OnDialTCP = func(context.Context, string, string) (net.Conn, error) {
 		return nil, errors.New("no network")
 	}
-	s := &humus.Setup{Host: humus.Host{Dial: dial}, Telemetry: telemetry.Noop()}
+	s := &humus.Setup{Host: humus.Host{IPNetwork: n, Filesystem: th.Filesystem()}, Telemetry: telemetry.Noop()}
 	c, err := NewClient(s, Connection{Server: "apiserver:6443", TLS: &tls.Config{}})
 	require.NoError(t, err)
 

@@ -55,9 +55,9 @@
 // the only environment variables the root package reads.
 //
 // An App reaches the network and the filesystem only through its [Host],
-// which is bedrock's [host.Host]: [OSHost] in main, and a Host the test
-// controls in a test, so a whole App runs inside a test under
-// testing/synctest with bedrocktest's fake process.
+// an [IPNetwork] and a [Filesystem]: [OSHost] in main, and a Host built
+// from the test host's parts in a test, so a whole App runs inside a test
+// under testing/synctest with bedrocktest's fake process.
 // Health is a Service that the health package provides: the end user's Init
 // returns it next to the App's other Services.
 //

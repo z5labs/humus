@@ -314,20 +314,6 @@ func TestNewClient_the_Setup(t *testing.T) {
 		require.Nil(t, c)
 		require.EqualError(t, err, "grpcclient: NewClient: the Setup must not be nil")
 	})
-
-	t.Run("a Host with no Dial is rejected, rather than dialling the real network", func(t *testing.T) {
-		t.Parallel()
-		c, err := grpcclient.NewClient(&humus.Setup{}, settings)
-		require.Nil(t, c)
-		require.EqualError(t, err, "grpcclient: NewClient: the Setup's Host.Dial must not be nil")
-	})
-
-	t.Run("alongside the bad fields", func(t *testing.T) {
-		t.Parallel()
-		_, err := grpcclient.NewClient(&humus.Setup{}, grpcclient.DefaultSettings())
-		require.ErrorContains(t, err, "the Setup's Host.Dial must not be nil")
-		require.ErrorContains(t, err, `Settings.Addr "" is not host:port`)
-	})
 }
 
 func TestNewClient_settings(t *testing.T) {

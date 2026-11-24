@@ -130,7 +130,7 @@ func configMapOwner(name string) metav1.OwnerReference {
 func TestNewKindController_reports_every_mistake(t *testing.T) {
 	t.Parallel()
 
-	s := newSetup(t, humus.Host{Dial: noDial}, humustest.NewTelemetry())
+	s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
 	client := testClient(t, s)
 	rec := settles(&handed[corev1.ConfigMap]{})
 	noCleanupOf := func(context.Context, corev1.ConfigMap) error { return nil }
@@ -286,7 +286,7 @@ func TestKindController_hands_the_Reconciler_client_gos_struct_and_reconciles_ag
 			return 0, nil
 		})
 		tel := humustest.NewTelemetry()
-		s := newSetup(t, humus.Host{Dial: noDial}, tel)
+		s := newSetup(t, noNetwork(t), tel)
 		sv := serve(t, newKindController(t, s, fc, ConfigMaps, rec))
 		time.Sleep(settle)
 
@@ -347,7 +347,7 @@ func TestKindController_retries_an_error_with_backoff(t *testing.T) {
 			return 0, nil
 		})
 		tel := humustest.NewTelemetry()
-		s := newSetup(t, humus.Host{Dial: noDial}, tel)
+		s := newSetup(t, noNetwork(t), tel)
 		sv := serve(t, newKindController(t, s, fc, ConfigMaps, rec))
 		time.Sleep(settle)
 
@@ -365,7 +365,7 @@ func TestKindController_Owns_reconciles_the_owner(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		fc := newConfigMapCluster(t, configMapObject("settings", nil), configMapObject("other", nil))
 		var got handed[corev1.ConfigMap]
-		s := newSetup(t, humus.Host{Dial: noDial}, humustest.NewTelemetry())
+		s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
 		sv := serve(t, newKindController(t, s, fc, ConfigMaps, settles(&got), kube.Owns(deployments)))
 		time.Sleep(settle)
 		require.Equal(t, 2, got.count(), "each ConfigMap once")
@@ -399,7 +399,7 @@ func TestKindController_Owns_reconciles_a_cluster_scoped_owner(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		fc := newFakeClusterOf(t, Namespaces.GVR, "NamespaceList", "", namespaceObject("default"), namespaceObject("kube-system"))
 		var got handed[corev1.Namespace]
-		s := newSetup(t, humus.Host{Dial: noDial}, humustest.NewTelemetry())
+		s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
 		sv := serve(t, newKindController(t, s, fc, Namespaces, settles(&got), kube.Owns(deployments)))
 		time.Sleep(settle)
 		require.Equal(t, 2, got.count(), "each Namespace once")
@@ -437,7 +437,7 @@ func TestKindController_Finalize_runs_with_no_status_applied(t *testing.T) {
 			cleaned.add(cm)
 			return nil
 		})
-		s := newSetup(t, humus.Host{Dial: noDial}, humustest.NewTelemetry())
+		s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
 		sv := serve(t, newKindController(t, s, fc, ConfigMaps, settles(&got), finalize))
 		time.Sleep(settle)
 
@@ -479,7 +479,7 @@ func TestKindController_recovers_a_panic_and_never_retries_it(t *testing.T) {
 			return 0, errors.New(keys[len(cm.Data)])
 		})
 		tel := humustest.NewTelemetry()
-		s := newSetup(t, humus.Host{Dial: noDial}, tel)
+		s := newSetup(t, noNetwork(t), tel)
 		ctrl, err := kube.NewKindController(s, testClient(t, s), panicSettings(), ConfigMaps, rec)
 		require.NoError(t, err)
 		kube.SetClients(ctrl, fc.dyn, fc.meta, fc.kube.CoordinationV1())

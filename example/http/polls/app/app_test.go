@@ -578,7 +578,7 @@ func TestInit_serves_a_renewed_certificate_with_no_restart(t *testing.T) {
 		renewed := s.f.ca.Issue(t, "polls.internal")
 		certPEM, keyPEM := pemPair(t, renewed)
 		for name, data := range map[string][]byte{"tls/tls.crt": certPEM, "tls/tls.key": keyPEM} {
-			file, err := s.f.h.FS().OpenFile(s.f.h.Path(name), os.O_WRONLY|os.O_TRUNC, 0)
+			file, err := s.f.h.Filesystem().OpenFile(s.f.h.Path(name), os.O_WRONLY|os.O_TRUNC, 0)
 			require.NoError(t, err)
 			_, err = file.Write(data)
 			require.NoError(t, err)
@@ -691,7 +691,7 @@ func TestInit_ends_an_open_feed_cleanly_after_the_drain_and_counts_a_vote_in_fli
 func TestInit_dials_PostgreSQL_for_its_pool_and_its_listener_through_the_Host(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		f := newFixture(t)
-		db, err := f.h.Listen("tcp", dbHost)
+		db, err := f.h.ListenTCP(t.Context(), "tcp", dbHost)
 		require.NoError(t, err)
 		var (
 			mu       sync.Mutex

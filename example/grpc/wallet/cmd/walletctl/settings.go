@@ -114,7 +114,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 	if err != nil {
 		return settings{}, err
 	}
-	file := func(name string) config.Value[[]byte] { return args.value(name).Parse(readFile(s.Host.FS)) }
+	file := func(name string) config.Value[[]byte] { return args.value(name).Parse(readFile(s.Host.Filesystem)) }
 
 	return config.Struct(func(r *config.Resolver) settings {
 		set := settings{Command: args.command}
@@ -381,7 +381,7 @@ func positive(d time.Duration) error {
 	return nil
 }
 
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {

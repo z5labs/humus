@@ -6,6 +6,7 @@
 package main
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/pem"
 	"io"
@@ -116,7 +117,7 @@ func start(t *testing.T, tel telemetry.Builder) service {
 		"tls/tls.key": keyPEM,
 	}))
 	host := h.Host()
-	host.Listen = withClientAddr(host.Listen)
+	host.IPNetwork = hosttest.Seams{Network: host.IPNetwork, OnListenTCP: withClientAddr(host.ListenTCP)}
 	p, status := httpservertest.Start(t, Init,
 		humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(tel)),
 		humustest.WithEnv(map[string]string{
@@ -145,9 +146,9 @@ func (s service) stop(t *testing.T) {
 	require.Zero(t, st.Code(), "cause: %v", st.Cause())
 }
 
-func withClientAddr(listen func(network, address string) (net.Listener, error)) func(network, address string) (net.Listener, error) {
-	return func(network, address string) (net.Listener, error) {
-		l, err := listen(network, address)
+func withClientAddr(listen func(ctx context.Context, network, address string) (net.Listener, error)) func(ctx context.Context, network, address string) (net.Listener, error) {
+	return func(ctx context.Context, network, address string) (net.Listener, error) {
+		l, err := listen(ctx, network, address)
 		if err != nil {
 			return nil, err
 		}

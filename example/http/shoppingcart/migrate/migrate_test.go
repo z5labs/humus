@@ -106,7 +106,7 @@ func TestInit_without_its_settings_exits_78_naming_each(t *testing.T) {
 func TestInit_dials_PostgreSQL_through_the_Host(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		tg := newTarget(t)
-		l, err := tg.host.Listen("tcp", "db.internal:5432")
+		l, err := tg.host.ListenTCP(t.Context(), "tcp", "db.internal:5432")
 		require.NoError(t, err)
 		var (
 			mu      sync.Mutex

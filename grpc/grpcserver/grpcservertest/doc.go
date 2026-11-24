@@ -71,7 +71,7 @@
 // A test that builds a client of its own, with grpc.NewClient, must not use
 // the dns resolver either. It targets "passthrough:///" and the address, and
 // dials through the Host with grpc.WithContextDialer, whose function takes
-// no network, so it calls h.Dial(ctx, "tcp", addr).
+// no network, so it calls h.DialTCP(ctx, "tcp", addr).
 //
 // # The certificate
 //

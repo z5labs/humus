@@ -24,6 +24,7 @@ import (
 	"testing/synctest"
 
 	"github.com/stretchr/testify/require"
+	"github.com/z5labs/bedrock/host/hosttest"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/trace"
@@ -537,14 +538,14 @@ func (g *heldReads) unhold() {
 }
 
 func (g *heldReads) host(h humus.Host) humus.Host {
-	listen := h.Listen
-	h.Listen = func(network, address string) (net.Listener, error) {
-		l, err := listen(network, address)
+	listen := h.ListenTCP
+	h.IPNetwork = hosttest.Seams{Network: h.IPNetwork, OnListenTCP: func(ctx context.Context, network, address string) (net.Listener, error) {
+		l, err := listen(ctx, network, address)
 		if err != nil {
 			return nil, err
 		}
 		return heldListener{Listener: l, g: g}, nil
-	}
+	}}
 	return h
 }
 

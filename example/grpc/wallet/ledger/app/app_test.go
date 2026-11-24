@@ -374,7 +374,7 @@ func TestInit_closes_a_connection_after_a_minute_but_leaves_its_open_watch(t *te
 		var dials atomic.Int64
 		c := l.wallet(t, grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
 			dials.Add(1)
-			return l.f.h.Dial(ctx, "tcp", addr)
+			return l.f.h.DialTCP(ctx, "tcp", addr)
 		}))
 
 		_, err := c.OpenAccount(t.Context(), &ledgerpb.OpenAccountRequest{AccountId: "alice"})
@@ -427,7 +427,7 @@ func TestInit_dials_PostgreSQL_through_the_Host(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		l := start(t, Init)
 
-		db, err := l.f.h.Listen("tcp", "postgres.internal:5432")
+		db, err := l.f.h.ListenTCP(t.Context(), "tcp", "postgres.internal:5432")
 		require.NoError(t, err)
 		requested := make(chan []byte, 1)
 		go func() {

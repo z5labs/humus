@@ -23,6 +23,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
+	"github.com/z5labs/bedrock/host/hosttest"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
@@ -107,7 +108,7 @@ func (a *apiServer) received() []received {
 // ca for names. It returns a function that stops it.
 func startAPIServer(t *testing.T, h *humustest.Host, ca *humustest.CA, addr string, api http.Handler, names ...string) (stop func()) {
 	t.Helper()
-	l, err := h.Listen("tcp", addr)
+	l, err := h.ListenTCP(t.Context(), "tcp", addr)
 	require.NoError(t, err)
 	cert := ca.Issue(t, names...)
 	srv := &http.Server{
@@ -134,18 +135,18 @@ func (d *dials) all() []string {
 	return append([]string(nil), d.addrs...)
 }
 
-// recordDials returns h's humus.Host, whose Dial records every address it
+// recordDials returns h's humus.Host, whose DialTCP records every address it
 // dials, and the record.
 func recordDials(h *humustest.Host) (humus.Host, *dials) {
 	d := &dials{}
 	host := h.Host()
-	dial := host.Dial
-	host.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+	dial := host.DialTCP
+	host.IPNetwork = hosttest.Seams{Network: host.IPNetwork, OnDialTCP: func(ctx context.Context, network, address string) (net.Conn, error) {
 		d.mu.Lock()
 		d.addrs = append(d.addrs, address)
 		d.mu.Unlock()
 		return dial(ctx, network, address)
-	}
+	}}
 	return host, d
 }
 
@@ -269,10 +270,6 @@ func TestNewClient_rejects_a_bad_Setup(t *testing.T) {
 
 	_, err := kube.NewClient(nil, conn)
 	require.ErrorContains(t, err, "the Setup must not be nil")
-
-	_, err = kube.NewClient(&humus.Setup{Telemetry: telemetry.Noop()}, kube.Connection{TLS: &tls.Config{}})
-	require.ErrorContains(t, err, "Host.Dial must not be nil")
-	require.ErrorContains(t, err, "Connection.Server", "the Setup's error is reported with the Connection's")
 }
 
 func TestClient_dials_through_the_Host(t *testing.T) {
@@ -784,13 +781,13 @@ func (c *conns) all() []*stallableConn {
 	return append([]*stallableConn(nil), c.list...)
 }
 
-// stallableDials returns h's humus.Host, whose Dial wraps every connection
+// stallableDials returns h's humus.Host, whose DialTCP wraps every connection
 // in a stallableConn, and the record of them.
 func stallableDials(h *humustest.Host) (humus.Host, *conns) {
 	cs := &conns{}
 	host := h.Host()
-	dial := host.Dial
-	host.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+	dial := host.DialTCP
+	host.IPNetwork = hosttest.Seams{Network: host.IPNetwork, OnDialTCP: func(ctx context.Context, network, address string) (net.Conn, error) {
 		conn, err := dial(ctx, network, address)
 		if err != nil {
 			return nil, err
@@ -800,7 +797,7 @@ func stallableDials(h *humustest.Host) (humus.Host, *conns) {
 		cs.list = append(cs.list, sc)
 		cs.mu.Unlock()
 		return sc, nil
-	}
+	}}
 	return host, cs
 }
 

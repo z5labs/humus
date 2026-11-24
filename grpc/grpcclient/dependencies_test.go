@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/circuit"
+	"github.com/z5labs/bedrock/host/hosttest"
 	"github.com/z5labs/bedrock/retry"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -401,7 +402,7 @@ func startPod(t *testing.T, h *humustest.Host, ca *humustest.CA, name string, op
 // while its App is serving: its Init has returned the pod's Service, no
 // Serve has returned, the pod has not been sent SIGTERM, and t has not
 // ended, which ends the App's context. A pod whose App has exited, or is
-// exiting, on its own, as when its Listen fails, is never sent SIGTERM:
+// exiting, on its own, as when its ListenTCP fails, is never sent SIGTERM:
 // the function waits for that App's exit status and returns it. Calling
 // the function again returns the same status.
 func startPodServing(t *testing.T, host humus.Host, ca *humustest.CA, addr string, srv testpb.TestServiceServer, listening <-chan struct{}, opts []grpc.ServerOption, app ...humus.Option) (stop func() bedrock.ExitStatus) {
@@ -473,7 +474,7 @@ func (s podService) Serve(ctx context.Context) error {
 	return err
 }
 
-// service is the dependency's Kubernetes ClusterIP Service. A Dial of
+// service is the dependency's Kubernetes ClusterIP Service. A DialTCP of
 // ledger:9090, through the Host that host returns, reaches the pod in its
 // endpoints at the time, as kube-proxy picks a pod for each connection.
 type service struct {
@@ -490,15 +491,15 @@ func (s *service) route(pod string) {
 
 func (s *service) host(h *humustest.Host) humus.Host {
 	host := h.Host()
-	dial := host.Dial
-	host.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+	dial := host.DialTCP
+	host.IPNetwork = hosttest.Seams{Network: host.IPNetwork, OnDialTCP: func(ctx context.Context, network, address string) (net.Conn, error) {
 		if address == "ledger:9090" {
 			s.mu.Lock()
 			address = s.pod + ":9090"
 			s.mu.Unlock()
 		}
 		return dial(ctx, network, address)
-	}
+	}}
 	return host
 }
 
@@ -1150,7 +1151,7 @@ func TestClient_a_stream_opened_again_when_Shutdown_ends_it_lands_on_the_next_po
 				host:  svc.host(h),
 				route: func() { svc.route("ledger-b") },
 				hold: func() net.Conn {
-					conn, err := h.Host().Dial(t.Context(), "tcp", "ledger-a:9090")
+					conn, err := h.Host().DialTCP(t.Context(), "tcp", "ledger-a:9090")
 					require.NoError(t, err)
 					synctest.Wait()
 					return conn
@@ -1178,15 +1179,15 @@ func (s *osService) route(addr string) {
 
 func (s *osService) host() humus.Host {
 	host := humus.OSHost()
-	dial := host.Dial
-	host.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+	dial := host.DialTCP
+	host.IPNetwork = hosttest.Seams{Network: host.IPNetwork, OnDialTCP: func(ctx context.Context, network, address string) (net.Conn, error) {
 		if address == "ledger:9090" {
 			s.mu.Lock()
 			address = s.addr
 			s.mu.Unlock()
 		}
 		return dial(ctx, network, address)
-	}
+	}}
 	return host
 }
 
@@ -1202,7 +1203,7 @@ var held sync.Map
 
 // freeAddr returns a loopback address whose port no other pod, and no other
 // listener on the host, can get: freeAddr listens on it, and holds that
-// listener until the pod at the address takes it, with a Listen through
+// listener until the pod at the address takes it, with a ListenTCP through
 // osHost, or the test ends. A port is held from the moment it is picked,
 // so two parallel subtests never get the same one.
 func freeAddr(t *testing.T) string {
@@ -1221,26 +1222,26 @@ func freeAddr(t *testing.T) string {
 	return addr
 }
 
-// osHost is humus.OSHost, whose first Listen of an address from freeAddr
-// returns the listener that holds its port. Every other Listen listens, as
+// osHost is humus.OSHost, whose first ListenTCP of an address from freeAddr
+// returns the listener that holds its port. Every other ListenTCP listens, as
 // humus.OSHost's does.
 func osHost() humus.Host {
 	host := humus.OSHost()
-	listen := host.Listen
-	host.Listen = func(network, address string) (net.Listener, error) {
+	listen := host.ListenTCP
+	host.IPNetwork = hosttest.Seams{Network: host.IPNetwork, OnListenTCP: func(ctx context.Context, network, address string) (net.Listener, error) {
 		if v, ok := held.Load(address); ok && network == "tcp" {
 			if hp := v.(*heldPort); !hp.taken.Swap(true) {
 				close(hp.listened)
 				return hp.ln, nil
 			}
 		}
-		return listen(network, address)
-	}
+		return listen(ctx, network, address)
+	}}
 	return host
 }
 
 // listensOnOS returns a channel that is closed once the pod at addr, an
-// address from freeAddr, listens on it: once its Listen through osHost has
+// address from freeAddr, listens on it: once its ListenTCP through osHost has
 // taken the listener that holds the port. From then on, the pod accepts
 // every connection to addr.
 func listensOnOS(t *testing.T, addr string) <-chan struct{} {
@@ -1284,17 +1285,17 @@ func stopsWithin(stop func() bedrock.ExitStatus, d time.Duration) (bedrock.ExitS
 	}
 }
 
-// loggedHost is osHost, logging each Listen of name's that fails.
+// loggedHost is osHost, logging each ListenTCP of name's that fails.
 func loggedHost(t *testing.T, name string) humus.Host {
 	host := osHost()
-	listen := host.Listen
-	host.Listen = func(network, address string) (net.Listener, error) {
-		ln, err := listen(network, address)
+	listen := host.ListenTCP
+	host.IPNetwork = hosttest.Seams{Network: host.IPNetwork, OnListenTCP: func(ctx context.Context, network, address string) (net.Listener, error) {
+		ln, err := listen(ctx, network, address)
 		if err != nil {
 			t.Logf("%s's Listen failed: %v", name, err)
 		}
 		return ln, err
-	}
+	}}
 	return host
 }
 
@@ -1343,7 +1344,7 @@ func TestClient_over_TCP_every_parallel_pod_listens_on_a_port_of_its_own(t *test
 
 // Another pod listens on ledger-a's address before ledger-a starts, as when
 // two subtests got the same port, or something else on the host took it.
-// ledger-a's Listen fails, and its App exits: stop must still return, with
+// ledger-a's ListenTCP fails, and its App exits: stop must still return, with
 // that exit.
 func TestClient_over_TCP_a_pod_stops_when_another_pod_already_listens_on_its_address(t *testing.T) {
 	addrA := freeAddr(t)
@@ -1363,7 +1364,7 @@ func TestClient_over_TCP_a_pod_stops_when_another_pod_already_listens_on_its_add
 	require.ErrorContains(t, st.Cause(), addrA)
 }
 
-// Another pod listens on ledger-a's address, so ledger-a's Listen fails, and
+// Another pod listens on ledger-a's address, so ledger-a's ListenTCP fails, and
 // its App exits on its own. ledger-a's Init is held once it has failed,
 // before its App stops listening for SIGTERM, and ledger-a's stop is called
 // then. stop must not send ledger-a SIGTERM, and must return its App's exit

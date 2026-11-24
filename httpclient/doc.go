@@ -99,7 +99,7 @@
 //
 // The client's transport is an http.Transport of its own:
 //
-//   - It dials with the Setup's Host.Dial, so the client reaches the
+//   - It dials with the Setup's Host.DialTCP, so the client reaches the
 //     dependency the way every humus App reaches the network, and a test's
 //     in-memory Host serves it.
 //   - Its Proxy is nil. The client never reads HTTP_PROXY, HTTPS_PROXY or

@@ -28,7 +28,7 @@ func TestStore_wraps_a_connection_that_failed_as_ErrUnavailable(t *testing.T) {
 		h := humustest.NewHost(t)
 		cfg, err := pgxpool.ParseConfig("postgres://catalog:" + rand.Text() + "@db.internal:5432/catalog?sslmode=disable")
 		require.NoError(t, err)
-		cfg.ConnConfig.DialFunc = h.Dial
+		cfg.ConnConfig.DialFunc = h.DialTCP
 		cfg.ConnConfig.LookupFunc = func(_ context.Context, host string) ([]string, error) {
 			return []string{host}, nil
 		}

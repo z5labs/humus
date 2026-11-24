@@ -335,7 +335,7 @@ func TestInit_dials_Postgres_through_the_Host(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		c := start(t, Init)
 
-		db, err := c.f.h.Listen("tcp", dbHost)
+		db, err := c.f.h.ListenTCP(t.Context(), "tcp", dbHost)
 		require.NoError(t, err)
 		var wg sync.WaitGroup
 		var dialled bool

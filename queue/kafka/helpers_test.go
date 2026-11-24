@@ -39,7 +39,7 @@ const (
 func cluster(t *testing.T, h *humustest.Host, partitions int32, opts ...kfake.Opt) *kfake.Cluster {
 	t.Helper()
 	all := append([]kfake.Opt{
-		kfake.ListenFn(h.Listen),
+		kfake.ListenFn(func(network, address string) (net.Listener, error) { return h.ListenTCP(t.Context(), network, address) }),
 		kfake.NumBrokers(1),
 		kfake.SeedTopics(partitions, topic),
 	}, opts...)
@@ -88,7 +88,7 @@ func produceRecords(t *testing.T, h *humustest.Host, c *kfake.Cluster, records [
 	t.Helper()
 	all := append([]kgo.Opt{
 		kgo.SeedBrokers(c.ListenAddrs()...),
-		kgo.Dialer(h.Dial),
+		kgo.Dialer(h.DialTCP),
 		kgo.RecordPartitioner(kgo.ManualPartitioner()),
 	}, opts...)
 	cl, err := kgo.NewClient(all...)
@@ -135,7 +135,7 @@ func consumes(settings kafka.Settings, p queue.ProcessorFunc[kafka.Message]) fun
 // cfg over the connection.
 func tlsDial(h *humustest.Host, cfg *tls.Config) func(ctx context.Context, network, address string) (net.Conn, error) {
 	return func(ctx context.Context, network, address string) (net.Conn, error) {
-		conn, err := h.Dial(ctx, network, address)
+		conn, err := h.DialTCP(ctx, network, address)
 		if err != nil {
 			return nil, err
 		}

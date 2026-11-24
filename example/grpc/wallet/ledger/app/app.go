@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -201,7 +202,7 @@ type sourced struct {
 
 func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
-	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.FS)) }
+	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.Filesystem)) }
 
 	got, err := config.Struct(func(r *config.Resolver) sourced {
 		return sourced{
@@ -215,7 +216,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 				},
 				WatchInterval: r.Get(env("WATCH_INTERVAL").Parse(time.ParseDuration).Default(defaultWatchInterval).Validate(positive)),
 			},
-			ServerTLS: r.Get(env("GRPC_TLS_PEM_FILE").Parse(pemTLS(s.Host.FS))),
+			ServerTLS: r.Get(env("GRPC_TLS_PEM_FILE").Parse(pemTLS(s.Host.Filesystem))),
 			ClientCAs: r.Get(file("GRPC_CLIENT_CA_FILE").Parse(certPool)),
 			Postgres: postgres{
 				URL:      r.Get(env("POSTGRES_URL").Parse(parsePostgresURL).Validate(checkPostgresURL)),
@@ -302,7 +303,13 @@ func poolConfig(p postgres) (*pgxpool.Config, error) {
 }
 
 func openPostgres(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (server.Store, func(context.Context) error, error) {
-	cfg.ConnConfig.DialFunc = s.Host.Dial
+	cfg.ConnConfig.DialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if network == "unix" {
+			var d net.Dialer
+			return d.DialContext(ctx, network, addr)
+		}
+		return s.Host.DialTCP(ctx, network, addr)
+	}
 	cfg.ConnConfig.LookupFunc = func(_ context.Context, host string) ([]string, error) {
 		return []string{host}, nil
 	}
@@ -324,7 +331,7 @@ func positive(d time.Duration) error {
 	return nil
 }
 
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {
@@ -351,7 +358,7 @@ func certPool(pem []byte) (*x509.CertPool, error) {
 	return roots, nil
 }
 
-func pemTLS(fsys humus.FS) func(name string) (*tls.Config, error) {
+func pemTLS(fsys humus.Filesystem) func(name string) (*tls.Config, error) {
 	return func(name string) (*tls.Config, error) {
 		return certfile.Config(fsys, name)
 	}

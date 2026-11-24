@@ -101,10 +101,10 @@ func hostSetup(h *humustest.Host) *humus.Setup {
 	return &humus.Setup{Host: h.Host(), Telemetry: telemetry.Noop()}
 }
 
-// requireRefused fails t unless a Dial to address is refused.
+// requireRefused fails t unless a DialTCP to address is refused.
 func requireRefused(t *testing.T, h *humustest.Host, address string) {
 	t.Helper()
-	conn, err := h.Dial(t.Context(), "tcp", address)
+	conn, err := h.DialTCP(t.Context(), "tcp", address)
 	if err == nil {
 		_ = conn.Close()
 		t.Fatalf("Dial(%q) connected, want ECONNREFUSED", address)
@@ -355,7 +355,7 @@ func TestService_logs_listening(t *testing.T) {
 // protos, and returns the protocol ALPN picked.
 func negotiate(t *testing.T, h *humustest.Host, ca *humustest.CA, address string, protos ...string) string {
 	t.Helper()
-	conn, err := h.Dial(t.Context(), "tcp", address)
+	conn, err := h.DialTCP(t.Context(), "tcp", address)
 	require.NoError(t, err)
 	tc := tls.Client(conn, &tls.Config{RootCAs: ca.Pool(), ServerName: "localhost", NextProtos: protos})
 	defer func() { _ = tc.Close() }()
@@ -392,7 +392,7 @@ func TestService_speaks_HTTP1_only(t *testing.T) {
 
 		// ALPN offers http/1.1 and nothing else, whatever the config lists.
 		require.Equal(t, "http/1.1", negotiate(t, h, ca, "localhost:8081", "h2", "http/1.1"))
-		conn, err := h.Dial(t.Context(), "tcp", "localhost:8081")
+		conn, err := h.DialTCP(t.Context(), "tcp", "localhost:8081")
 		require.NoError(t, err)
 		tc := tls.Client(conn, &tls.Config{RootCAs: ca.Pool(), ServerName: "localhost", NextProtos: []string{"h2", "acme-tls/1"}})
 		require.ErrorContains(t, tc.HandshakeContext(t.Context()), "no application protocol",
@@ -488,7 +488,7 @@ func TestNewService_the_listener(t *testing.T) {
 	t.Run("a taken address fails NewService, with the Host's error", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
-			l, err := h.Listen("tcp", ":8081")
+			l, err := h.ListenTCP(t.Context(), "tcp", ":8081")
 			require.NoError(t, err)
 			defer func() { _ = l.Close() }()
 

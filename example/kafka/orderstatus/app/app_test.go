@@ -178,7 +178,9 @@ func newProcessor(t *testing.T, files map[string][]byte) *processor {
 func (p *processor) cluster(t *testing.T, opts ...kfake.Opt) *kfake.Cluster {
 	t.Helper()
 	c, err := kfake.NewCluster(append([]kfake.Opt{
-		kfake.ListenFn(p.h.Listen),
+		kfake.ListenFn(func(network, address string) (net.Listener, error) {
+			return p.h.ListenTCP(t.Context(), network, address)
+		}),
 		kfake.NumBrokers(1),
 		kfake.SeedTopics(1, eventsTopic, statusTopic, retryTopic, deadLetterTopic),
 		kfake.TLS(&tls.Config{
@@ -225,7 +227,7 @@ func (p *processor) probe(t *testing.T, path string) int {
 }
 
 func (p *processor) dial(ctx context.Context, network, address string) (net.Conn, error) {
-	conn, err := p.h.Dial(ctx, network, address)
+	conn, err := p.h.DialTCP(ctx, network, address)
 	if err != nil {
 		return nil, err
 	}
@@ -525,7 +527,7 @@ func TestPoolConfig_leaves_nothing_for_pgx_to_read(t *testing.T) {
 func TestOpenPostgres_dials_through_the_Host_and_closes_the_pool_on_stop(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
-		ln, err := h.Listen("tcp", "postgres.internal:5432")
+		ln, err := h.ListenTCP(t.Context(), "tcp", "postgres.internal:5432")
 		require.NoError(t, err)
 		defer func() { _ = ln.Close() }()
 		requested := make(chan []byte, 1)
@@ -1162,7 +1164,7 @@ func (r *closeRace) isFetchConn(c *raceConn) bool {
 // sides of crypto/tls.
 func (r *closeRace) dial(p *processor) func(ctx context.Context, network, address string) (net.Conn, error) {
 	return func(ctx context.Context, network, address string) (net.Conn, error) {
-		conn, err := p.h.Dial(ctx, network, address)
+		conn, err := p.h.DialTCP(ctx, network, address)
 		if err != nil {
 			return nil, err
 		}

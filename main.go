@@ -23,7 +23,7 @@ import (
 //
 //   - Host: OSHost().
 //   - Telemetry: a Builder that calls telemetry.New with
-//     telemetry.DefaultSettings(), the Host's Dial and the Process's stdout.
+//     telemetry.DefaultSettings(), the Host's DialTCP and the Process's stdout.
 //   - ShutdownGracePeriod: 20s.
 //   - Drain: none.
 //   - Faults: none, so failure injection is off.

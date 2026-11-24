@@ -54,7 +54,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	payments, err := config.Struct(func(r *config.Resolver) httpclient.Settings {
 		c := httpclient.DefaultSettings()
 		c.BaseURL = r.Get(env("PAYMENTS_URL").Parse(url.Parse).Validate(httpclient.CheckBaseURL))
-		c.TLS = r.Get(env("PAYMENTS_CA_FILE").Parse(readFile(s.Host.FS)).Parse(trusting).Validate(httpclient.CheckTLS))
+		c.TLS = r.Get(env("PAYMENTS_CA_FILE").Parse(readFile(s.Host.Filesystem)).Parse(trusting).Validate(httpclient.CheckTLS))
 		return c
 	}).Read(ctx)
 	if err != nil {
@@ -63,13 +63,13 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	api, err := config.Struct(func(r *config.Resolver) httpserver.Settings {
 		c := httpserver.DefaultSettings()
 		c.Addr = r.Get(env("ADDR").Validate(httpserver.CheckAddr))
-		c.TLS = r.Get(env("TLS_PEM_FILE").Parse(readFile(s.Host.FS)).Parse(serverTLS).Validate(httpserver.CheckTLS))
+		c.TLS = r.Get(env("TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS))
 		return c
 	}).Read(ctx)
 	if err != nil {
 		return nil, err
 	}
-	meshCAs, err := env("MESH_CA_FILE").Parse(readFile(s.Host.FS)).Parse(certPool).Read(ctx)
+	meshCAs, err := env("MESH_CA_FILE").Parse(readFile(s.Host.Filesystem)).Parse(certPool).Read(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +117,7 @@ func newAPI(payments *http.Client, base *url.URL) http.Handler {
 
 // readFile returns a parser for config.Value.Parse that reads the whole
 // file a variable names, through fsys.
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {

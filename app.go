@@ -68,7 +68,8 @@ type Service interface {
 // App literal with bedrock.Main.
 type App struct {
 	// Host is the network and filesystem the App runs on: OSHost(), which
-	// is Main's default, in main, and a Host the test controls in a test.
+	// is Main's default, in main, and a Host built from the test host's
+	// parts in a test. Its IPNetwork and its Filesystem are both required.
 	Host Host
 
 	// ShutdownGracePeriod is the grace period when the environment does not
@@ -104,7 +105,7 @@ type App struct {
 	//
 	// Run calls it after it starts listening for signals and before Init,
 	// with a context that a signal cancels, the Process, and the Host's
-	// Dial. The SDK it returns is handed to Init in Setup.Telemetry, the
+	// DialTCP. The SDK it returns is handed to Init in Setup.Telemetry, the
 	// lifecycle logs through its LoggerProvider, and it is shut down last,
 	// after the OnStop functions.
 	Telemetry telemetry.Builder
@@ -199,7 +200,9 @@ func (e *GracePeriodError) Unwrap() error {
 
 // Run implements bedrock.App. In order, it:
 //
-//  1. reads the grace period from HUMUS_SHUTDOWN_GRACE_PERIOD in
+//  1. checks the App's Host, and exits ExitFailure, naming each field at
+//     fault, when its IPNetwork or its Filesystem is nil;
+//  2. reads the grace period from HUMUS_SHUTDOWN_GRACE_PERIOD in
 //     p.Environment, a time.ParseDuration string such as "30s" defaulting to
 //     the App's ShutdownGracePeriod, and the drain: DrainDelay of
 //     HUMUS_SHUTDOWN_DRAIN_DELAY, a time.ParseDuration string such as "5s",
@@ -207,32 +210,32 @@ func (e *GracePeriodError) Unwrap() error {
 //     it is not. It exits ExitConfig, naming every variable at fault, if
 //     either variable is malformed, the grace period is not positive after
 //     its default, or HUMUS_SHUTDOWN_DRAIN_DELAY is negative;
-//  2. listens for an interrupt and SIGTERM through p.NotifyContext;
-//  3. builds the App's telemetry by calling App.Telemetry with the context
-//     a signal cancels, p and Host.Dial. It exits ExitConfig when a
+//  3. listens for an interrupt and SIGTERM through p.NotifyContext;
+//  4. builds the App's telemetry by calling App.Telemetry with the context
+//     a signal cancels, p and Host.DialTCP. It exits ExitConfig when a
 //     *config.Error is in the Builder's error chain, and ExitFailure for any
 //     other failure or for an SDK with a nil field;
-//  4. sets OpenTelemetry's process-wide error handler to one that writes
+//  5. sets OpenTelemetry's process-wide error handler to one that writes
 //     each error to p.Stderr, as one line starting with "telemetry: ";
-//  5. when App.Faults is set, calls it with the context a signal cancels
+//  6. when App.Faults is set, calls it with the context a signal cancels
 //     and the Setup that Init is then given, builds the Injector from the
 //     Settings it returns with fault.New, and puts it in Setup.Faults. If
 //     either fails, it runs the OnStop functions registered so far and
 //     exits ExitConfig when a *config.Error is in the error chain, or
 //     ExitFailure otherwise, without calling Init;
-//  6. calls Init, and if it fails, runs the OnStop functions registered so
+//  7. calls Init, and if it fails, runs the OnStop functions registered so
 //     far and exits ExitConfig when a *config.Error is in Init's error
 //     chain, or ExitFailure otherwise;
-//  7. calls Serve on every Service concurrently, and logs "serving";
-//  8. waits for a signal, or for the first Service to return. A Service
+//  8. calls Serve on every Service concurrently, and logs "serving";
+//  9. waits for a signal, or for the first Service to return. A Service
 //     whose Serve returns once a signal has come, or once ctx is cancelled,
 //     returned on it, even when Run receives its result first, so the
 //     shutdown is the signal's, or ctx's; it is a Service's own only when
 //     Serve returned before either;
-//  9. stops listening for signals, so a second one takes its default
+//  10. stops listening for signals, so a second one takes its default
 //     action, cancels the context passed to Serve, and logs "shutting
 //     down";
-//  10. when it hasn't yet received every Serve's result, calls the drain
+//  11. when it hasn't yet received every Serve's result, calls the drain
 //     with the Setup that Init was given and a context that keeps ctx's
 //     values, is not cancelled with it, is done once every Serve has
 //     returned, and gives ShutdownCause the shutdown's cause: the signal's
@@ -241,11 +244,11 @@ func (e *GracePeriodError) Unwrap() error {
 //     failed, when a Service returned before any signal. It collects the
 //     Serve results that arrive while the drain runs, and waits for the
 //     drain to return;
-//  11. calls Shutdown on every Service concurrently, waits for every Serve
+//  12. calls Shutdown on every Service concurrently, waits for every Serve
 //     to return, and then runs the OnStop functions in reverse order of
 //     registration, all within one grace period, which starts after the
 //     drain, and logs "stopped";
-//  12. shuts the telemetry down, with a context that keeps ctx's values but
+//  13. shuts the telemetry down, with a context that keeps ctx's values but
 //     not its cancellation, separately from the grace period.
 //
 // An Init that returns no Services, and a Service that returns on its own
@@ -266,13 +269,16 @@ func (e *GracePeriodError) Unwrap() error {
 // OpenTelemetry Logs API and the logger name "github.com/z5labs/humus":
 // "serving", "shutting down" and "stopped" at INFO, and every failure after
 // the SDK is built at ERROR, one record per error. Standard error gets only
-// what telemetry cannot report itself: a failed setting or a failure to
-// build telemetry, one line per error; the export errors the handler of
-// step 4 writes; and a failure to shut telemetry down, which is joined into
+// what telemetry cannot report itself: a Host with a nil field, a failed
+// setting or a failure to build telemetry, one line per error; the export errors the handler of
+// step 5 writes; and a failure to shut telemetry down, which is joined into
 // the cause and turns an exit 0 into ExitFailure. Run never recovers a
 // panic, including one in the drain.
 func (a App) Run(ctx context.Context, p bedrock.Process) bedrock.ExitStatus {
 	stderr := &lockedWriter{w: p.Stderr}
+	if err := a.checkHost(); err != nil {
+		return fail(stderr, ExitFailure, err)
+	}
 	settings, err := a.readSettings(ctx, p.Environment)
 	if err != nil {
 		return fail(stderr, ExitConfig, err)
@@ -317,6 +323,19 @@ func (a App) Run(ctx context.Context, p bedrock.Process) bedrock.ExitStatus {
 	return bedrock.ExitWithCause(code, cause)
 }
 
+// checkHost returns an error naming each field of the App's Host that is
+// nil.
+func (a App) checkHost() error {
+	var errs []error
+	if a.Host.IPNetwork == nil {
+		errs = append(errs, errors.New("humus: Host.IPNetwork is nil: build the Host with OSHost, or from the test host's parts"))
+	}
+	if a.Host.Filesystem == nil {
+		errs = append(errs, errors.New("humus: Host.Filesystem is nil: build the Host with OSHost, or from the test host's parts"))
+	}
+	return errors.Join(errs...)
+}
+
 // loggerName is the name of the logger the lifecycle logs through.
 const loggerName = "github.com/z5labs/humus"
 
@@ -327,7 +346,7 @@ func (a App) buildTelemetry(ctx, sigCtx context.Context, p bedrock.Process) (tel
 	if a.Telemetry == nil {
 		return telemetry.SDK{}, errors.New("build telemetry: App.Telemetry is nil")
 	}
-	sdk, err := a.Telemetry(sigCtx, p, a.Host.Dial)
+	sdk, err := a.Telemetry(sigCtx, p, a.Host.DialTCP)
 	if err != nil {
 		return telemetry.SDK{}, fmt.Errorf("build telemetry: %w", err)
 	}

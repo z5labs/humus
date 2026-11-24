@@ -304,7 +304,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 			Probes: httphealth.Settings{
 				Addr: r.Get(env("PROBES_ADDR").Validate(httphealth.CheckAddr)),
 				TLS: r.Get(env("PROBES_TLS_CERT_FILE").FlatMap(func(certFile string) config.Value[*tls.Config] {
-					return env("PROBES_TLS_KEY_FILE").Parse(serverTLS(s.Host.FS, certFile))
+					return env("PROBES_TLS_KEY_FILE").Parse(serverTLS(s.Host.Filesystem, certFile))
 				}).Validate(httphealth.CheckTLS)),
 			},
 		}

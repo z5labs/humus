@@ -111,10 +111,10 @@ var hello = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 	_, _ = io.WriteString(w, "hello")
 })
 
-// requireRefused fails t unless a Dial to address is refused.
+// requireRefused fails t unless a DialTCP to address is refused.
 func requireRefused(t *testing.T, h *humustest.Host, address string) {
 	t.Helper()
-	conn, err := h.Dial(t.Context(), "tcp", address)
+	conn, err := h.DialTCP(t.Context(), "tcp", address)
 	if err == nil {
 		_ = conn.Close()
 		t.Fatalf("Dial(%q) connected, want ECONNREFUSED", address)
@@ -381,7 +381,7 @@ func TestService_protocols(t *testing.T) {
 			// Get fails with "http: server closed idle connection" rather than
 			// a closed connection. Here nothing reads until the request is
 			// written.
-			conn, err := h.Dial(t.Context(), "tcp", "localhost:8443")
+			conn, err := h.DialTCP(t.Context(), "tcp", "localhost:8443")
 			require.NoError(t, err)
 			tc := tls.Client(conn, &tls.Config{RootCAs: ca.Pool(), ServerName: "localhost", NextProtos: []string{"http/1.1"}})
 			defer func() { _ = tc.Close() }()
@@ -449,7 +449,7 @@ func TestService_protocols(t *testing.T) {
 // protos, and returns the protocol ALPN picked.
 func negotiate(t *testing.T, h *humustest.Host, ca *humustest.CA, address string, protos ...string) string {
 	t.Helper()
-	conn, err := h.Dial(t.Context(), "tcp", address)
+	conn, err := h.DialTCP(t.Context(), "tcp", address)
 	require.NoError(t, err)
 	tc := tls.Client(conn, &tls.Config{RootCAs: ca.Pool(), ServerName: "localhost", NextProtos: protos})
 	defer func() { _ = tc.Close() }()

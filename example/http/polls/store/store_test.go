@@ -49,7 +49,7 @@ func unreachableWith(t *testing.T, faults fault.Injector) *store.Store {
 	h := humustest.NewHost(t)
 	cfg, err := pgxpool.ParseConfig("postgres://polls:" + rand.Text() + "@db.internal:5432/polls?sslmode=disable")
 	require.NoError(t, err)
-	cfg.ConnConfig.DialFunc = h.Dial
+	cfg.ConnConfig.DialFunc = h.DialTCP
 	cfg.ConnConfig.LookupFunc = func(_ context.Context, host string) ([]string, error) {
 		return []string{host}, nil
 	}

@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/z5labs/bedrock"
 	"github.com/z5labs/bedrock/bedrocktest"
+	"github.com/z5labs/bedrock/host/hosttest"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -354,12 +355,12 @@ func (e *env) startWallet() {
 	t := e.t
 	t.Helper()
 	host := e.h.Host()
-	host.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+	host.IPNetwork = hosttest.Seams{Network: host.IPNetwork, OnDialTCP: func(ctx context.Context, network, address string) (net.Conn, error) {
 		if address == ledgerAddr {
 			address = *e.route.Load()
 		}
-		return e.h.Dial(ctx, network, address)
-	}
+		return e.h.DialTCP(ctx, network, address)
+	}}
 	cert := e.ca.Issue(t, "wallet").TLS()
 	_, exit := grpcservertest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
 		settings := grpcclient.DefaultSettings()

@@ -204,7 +204,7 @@ humus.Main(Init, humus.WithTelemetry(buildTelemetry))
 again, rejects a nil `Processor`, and builds the Service's instruments. It
 builds no client and registers no `OnStop` function, so an `Init` that fails
 after it leaks nothing. `Serve` builds the franz-go client, dials every
-broker through `s.Host.Dial`, joins the group and starts processing. Dialling
+broker through `s.Host.DialTCP`, joins the group and starts processing. Dialling
 through the Host is what puts the Service on a test's network, with no
 test-only seam.
 
@@ -310,10 +310,10 @@ topic, so one `Processor` can dispatch on it. Two topics that need different
 `Settings.TLS` is the `*tls.Config` the Service dials the brokers with, and
 `nil` means plaintext. A client certificate in its `Certificates` makes it
 mTLS. The Service runs the TLS handshake itself over the connection
-`s.Host.Dial` returns, and sets `ServerName` from the broker's host when the
+`s.Host.DialTCP` returns, and sets `ServerName` from the broker's host when the
 config leaves it empty, without changing the end user's config.
 
-The end user decodes the certificates from files, read through `s.Host.FS`
+The end user decodes the certificates from files, read through `s.Host.Filesystem`
 so that a test reads them from its own directory and production from the
 real disk, as [Reading a file]({{< relref "/fundamentals/configuration#reading-a-file" >}})
 describes. How they are stored and encoded is the end user's decision. This
@@ -323,8 +323,8 @@ the client's certificate chain and private key from the one
 
 ```go
 // The CA's file is read first, and the client's certificate only once it has been.
-k.TLS = r.Get(env("KAFKA_TLS_CA_FILE").Parse(readFile(s.Host.FS)).FlatMap(func(ca []byte) config.Value[*tls.Config] {
-	return env("KAFKA_TLS_CERT_FILE").Parse(readFile(s.Host.FS)).Parse(clientTLS(ca))
+k.TLS = r.Get(env("KAFKA_TLS_CA_FILE").Parse(readFile(s.Host.Filesystem)).FlatMap(func(ca []byte) config.Value[*tls.Config] {
+	return env("KAFKA_TLS_CERT_FILE").Parse(readFile(s.Host.Filesystem)).Parse(clientTLS(ca))
 }))
 ```
 
@@ -335,7 +335,7 @@ fail as a config error with exit 78, named after its variable. `readFile` and
 ```go
 // readFile returns a parser for config.Value.Parse that reads the whole
 // file a variable names, through fsys.
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {
@@ -1521,10 +1521,10 @@ the App in process, on kfake, and against its deployment on kind.
 ### A fake cluster on the test Host
 
 franz-go's [kfake](https://pkg.go.dev/github.com/twmb/franz-go/pkg/kfake) is
-a Kafka cluster in memory, built for `synctest`. `kfake.ListenFn(h.Listen)`
-makes it listen on humustest's network rather than the real one, and a test
-builds it inside the bubble, with the bubble's `t`, and closes it before the
-bubble ends:
+a Kafka cluster in memory, built for `synctest`. `kfake.ListenFn` with the
+test Host's `ListenTCP` makes it listen on humustest's network rather than
+the real one, and a test builds it inside the bubble, with the bubble's `t`,
+and closes it before the bubble ends:
 
 ```go
 // cluster returns a kfake cluster listening on h, with topic seeded with
@@ -1533,7 +1533,7 @@ bubble ends:
 func cluster(t *testing.T, h *humustest.Host, partitions int32, opts ...kfake.Opt) *kfake.Cluster {
 	t.Helper()
 	all := append([]kfake.Opt{
-		kfake.ListenFn(h.Listen),
+		kfake.ListenFn(func(network, address string) (net.Listener, error) { return h.ListenTCP(t.Context(), network, address) }),
 		kfake.NumBrokers(1),
 		kfake.SeedTopics(partitions, topic),
 	}, opts...)
@@ -1544,7 +1544,7 @@ func cluster(t *testing.T, h *humustest.Host, partitions int32, opts ...kfake.Op
 }
 ```
 
-A test's producer is a franz-go client that dials `h.Dial`, so it reaches the
+A test's producer is a franz-go client that dials `h.DialTCP`, so it reaches the
 cluster over the same network:
 
 ```go
@@ -1554,7 +1554,7 @@ func produceRecords(t *testing.T, h *humustest.Host, c *kfake.Cluster, records [
 	t.Helper()
 	all := append([]kgo.Opt{
 		kgo.SeedBrokers(c.ListenAddrs()...),
-		kgo.Dialer(h.Dial),
+		kgo.Dialer(h.DialTCP),
 		kgo.RecordPartitioner(kgo.ManualPartitioner()),
 	}, opts...)
 	cl, err := kgo.NewClient(all...)
@@ -1681,7 +1681,7 @@ func readAll(t *testing.T, h *humustest.Host, c *kfake.Cluster, topic string, op
 	}
 	cl, err := kgo.NewClient(append([]kgo.Opt{
 		kgo.SeedBrokers(c.ListenAddrs()...),
-		kgo.Dialer(h.Dial),
+		kgo.Dialer(h.DialTCP),
 		kgo.ConsumeTopics(topic),
 		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
 	}, opts...)...)
@@ -1756,14 +1756,16 @@ tested the same way: `queue/kafka`'s own tests run each `Produce` inside a
 `queue/kafka`'s own tests hold `kafka.Service` to the Service contract with
 [`humustest.TestService`]({{< relref "/fundamentals/testing#checking-a-service" >}}), and a
 Service of your own that wraps a consumer is checked the same way. The
-constructor builds a cluster on `s.Host.Listen` and closes it with
+constructor builds a cluster on `s.Host.ListenTCP` and closes it with
 `s.OnStop`:
 
 ```go
 func TestService_contract(t *testing.T) {
 	humustest.TestService(t, func(t *testing.T, s *humus.Setup) humus.Service {
 		c, err := kfake.NewCluster(
-			kfake.ListenFn(s.Host.Listen),
+			kfake.ListenFn(func(network, address string) (net.Listener, error) {
+				return s.Host.ListenTCP(t.Context(), network, address)
+			}),
 			kfake.NumBrokers(1),
 			kfake.SeedTopics(1, topic),
 		)

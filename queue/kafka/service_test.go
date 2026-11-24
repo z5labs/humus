@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"errors"
+	"net"
 	"slices"
 	"strconv"
 	"sync"
@@ -326,7 +327,9 @@ func TestService_at_most_once(t *testing.T) {
 func TestService_contract(t *testing.T) {
 	humustest.TestService(t, func(t *testing.T, s *humus.Setup) humus.Service {
 		c, err := kfake.NewCluster(
-			kfake.ListenFn(s.Host.Listen),
+			kfake.ListenFn(func(network, address string) (net.Listener, error) {
+				return s.Host.ListenTCP(t.Context(), network, address)
+			}),
 			kfake.NumBrokers(1),
 			kfake.SeedTopics(1, topic),
 		)

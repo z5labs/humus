@@ -71,7 +71,7 @@ func sdkOf(t *testing.T, tel *humustest.Telemetry) telemetry.SDK {
 func serve(t *testing.T, h http.Handler) *humustest.Host {
 	t.Helper()
 	host := humustest.NewHost(t)
-	l, err := host.Listen("tcp", "localhost:8080")
+	l, err := host.ListenTCP(t.Context(), "tcp", "localhost:8080")
 	require.NoError(t, err)
 	srv := &http.Server{Handler: h}
 	served := make(chan error, 1)
@@ -96,7 +96,7 @@ type wire struct {
 // sent, parsed into a wire.
 func send(t *testing.T, host *humustest.Host, method, path string) wire {
 	t.Helper()
-	conn, err := host.Dial(t.Context(), "tcp", "localhost:8080")
+	conn, err := host.DialTCP(t.Context(), "tcp", "localhost:8080")
 	require.NoError(t, err)
 	defer func() { _ = conn.Close() }()
 

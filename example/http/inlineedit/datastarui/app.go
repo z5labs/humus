@@ -66,7 +66,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (httpserver.Settings, err
 	return config.Struct(func(r *config.Resolver) httpserver.Settings {
 		return httpserver.Settings{
 			Addr:              r.Get(env("ADDR").Validate(httpserver.CheckAddr)),
-			TLS:               r.Get(env("TLS_PEM_FILE").Parse(readFile(s.Host.FS)).Parse(serverTLS).Validate(httpserver.CheckTLS)),
+			TLS:               r.Get(env("TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS)),
 			HTTP2Only:         r.Get(env("HTTP2_ONLY").Parse(strconv.ParseBool).Default(d.HTTP2Only)),
 			ReadHeaderTimeout: r.Get(env("READ_HEADER_TIMEOUT").Parse(time.ParseDuration).Default(d.ReadHeaderTimeout).Validate(httpserver.CheckReadHeaderTimeout)),
 			ReadTimeout:       r.Get(env("READ_TIMEOUT").Parse(time.ParseDuration).Default(d.ReadTimeout).Validate(httpserver.CheckReadTimeout)),
@@ -77,7 +77,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (httpserver.Settings, err
 	}).Read(ctx)
 }
 
-func readFile(fsys humus.FS) func(name string) ([]byte, error) {
+func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	return func(name string) ([]byte, error) {
 		f, err := fsys.Open(name)
 		if err != nil {

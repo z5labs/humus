@@ -200,7 +200,7 @@ type countingDialer struct {
 }
 
 func newCountingDialer(host *humustest.Host) *countingDialer {
-	return &countingDialer{dial: host.Dial}
+	return &countingDialer{dial: host.DialTCP}
 }
 
 func (d *countingDialer) Dial(ctx context.Context, network, address string) (net.Conn, error) {
@@ -226,7 +226,7 @@ func failingDialer(t *testing.T) telemetry.Dialer {
 
 func listen(t *testing.T, host *humustest.Host, address string) net.Listener {
 	t.Helper()
-	ln, err := host.Listen("tcp", address)
+	ln, err := host.ListenTCP(t.Context(), "tcp", address)
 	require.NoError(t, err)
 	return ln
 }

@@ -52,7 +52,7 @@ func newHost(t *testing.T, c *humustest.Certificate) *humustest.Host {
 
 func write(t *testing.T, h *humustest.Host, name string, data []byte) {
 	t.Helper()
-	f, err := h.FS().OpenFile(h.Path(name), os.O_WRONLY|os.O_TRUNC, 0)
+	f, err := h.Filesystem().OpenFile(h.Path(name), os.O_WRONLY|os.O_TRUNC, 0)
 	require.NoError(t, err)
 	_, err = f.Write(data)
 	require.NoError(t, err)
@@ -68,7 +68,7 @@ func renew(t *testing.T, h *humustest.Host, c *humustest.Certificate) {
 
 func config(t *testing.T, h *humustest.Host) *tls.Config {
 	t.Helper()
-	cfg, err := certfile.Config(h.FS(), h.Path(certFile), h.Path(keyFile))
+	cfg, err := certfile.Config(h.Filesystem(), h.Path(certFile), h.Path(keyFile))
 	require.NoError(t, err)
 	return cfg
 }
@@ -187,7 +187,7 @@ func TestConfig(t *testing.T) {
 					require.NoError(t, err)
 					require.True(t, got.Equal(old.TLS().Leaf))
 
-					require.NoError(t, h.FS().Remove(h.Path(keyFile)))
+					require.NoError(t, h.Filesystem().Remove(h.Path(keyFile)))
 					time.Sleep(30 * time.Second)
 					got, err = peerCertificate(t, cfg, ca)
 					require.NoError(t, err)
@@ -196,7 +196,7 @@ func TestConfig(t *testing.T) {
 					renewed := ca.Issue(t, serverName)
 					certPEM, keyPEM := encode(t, renewed)
 					write(t, h, certFile, certPEM)
-					f, err := h.FS().OpenFile(h.Path(keyFile), os.O_WRONLY|os.O_CREATE, 0o600)
+					f, err := h.Filesystem().OpenFile(h.Path(keyFile), os.O_WRONLY|os.O_CREATE, 0o600)
 					require.NoError(t, err)
 					_, err = f.Write(keyPEM)
 					require.NoError(t, err)
@@ -217,7 +217,7 @@ func TestConfig(t *testing.T) {
 			_, keyPEM := encode(t, ca.Issue(t, serverName))
 			h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{certFile: certPEM, keyFile: keyPEM}))
 
-			_, err := certfile.Config(h.FS(), h.Path(certFile), h.Path(keyFile))
+			_, err := certfile.Config(h.Filesystem(), h.Path(certFile), h.Path(keyFile))
 			require.ErrorContains(t, err, h.Path(certFile))
 		})
 	})
@@ -228,7 +228,7 @@ func TestConfig(t *testing.T) {
 			certPEM, _ := encode(t, ca.Issue(t, serverName))
 			h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{certFile: certPEM}))
 
-			_, err := certfile.Config(h.FS(), h.Path(certFile), h.Path(keyFile))
+			_, err := certfile.Config(h.Filesystem(), h.Path(certFile), h.Path(keyFile))
 			require.ErrorIs(t, err, os.ErrNotExist)
 		})
 	})

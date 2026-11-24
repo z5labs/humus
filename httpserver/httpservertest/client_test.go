@@ -53,7 +53,7 @@ func TestNewClient_speaks_only_HTTP2(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			ca := humustest.NewCA(t)
 			h := humustest.NewHost(t)
-			l, err := h.Listen("tcp", ":8443")
+			l, err := h.ListenTCP(t.Context(), "tcp", ":8443")
 			require.NoError(t, err)
 
 			var http1 http.Protocols
