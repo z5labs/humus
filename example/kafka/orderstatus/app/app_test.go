@@ -970,45 +970,131 @@ func (tr *trace) Log(level kgo.LogLevel, msg string, keyvals ...any) {
 	}
 }
 
-// closeRace orders the close of a consumer's fetch connection. Close stops
-// the consumer's session, which cuts short the read of the long-poll Fetch
-// in flight, and then sends a Fetch that kills the fetch session. closeRace
-// holds the cut-short read until the session-kill Fetch is written on the
-// same connection, so the read fails, and franz-go closes the connection,
-// after that write. With holdReset, it also holds the write deadline reset
-// that follows that write until crypto/tls is writing close_notify. Without
-// it, the read waits for the reset instead.
+// closeRace orders the close of a consumer's fetch connection, so that the
+// session-kill Fetch's write and crypto/tls's close_notify meet on it. Close
+// stops the consumer's session, waits for the long-poll Fetch in flight, and
+// then writes a Fetch that kills the fetch session. A read that fails closes
+// its connection, so on its own the session-kill Fetch goes out on a new
+// connection, which Close closes only once that Fetch has been answered.
+//
+// closeRace keeps the fetch connection open past the session's stop. It
+// writes a Fetch of its own on the connection, behind the long-poll Fetch in
+// flight, and holds franz-go's read of its response. franz-go then writes
+// the next long-poll Fetch behind closeRace's, fails it without reading it
+// when Close stops the session, writes the session-kill Fetch behind both on
+// the same connection, and fails that after Close's 1s wait for it. Close
+// then closes the connection itself as it stops the broker, and crypto/tls
+// writes close_notify on it. closeRace holds:
+//
+//   - the read of its own Fetch's response, until close_notify's write
+//     returns, so that no read fails and closes the connection first;
+//   - franz-go's close of the connection, until the client's closed context
+//     has set the connection's deadlines, so that they can't cut
+//     close_notify short. Without holdReset, it also holds the close until
+//     the session-kill Fetch's write has reset its write deadline;
+//   - with holdReset, that reset, until crypto/tls begins writing
+//     close_notify, and close_notify's write, until the reset is done. The
+//     reset then clears the 5s write deadline close_notify waits on.
+//
+// Each hold ends on the event it waits for, or when wait gives up after
+// 10s. A hold that gives up, or one that never happens, means the close
+// didn't run in closeRace's order, and the test fails.
 type closeRace struct {
 	tr        *trace
 	holdReset bool
 
-	killWritten  chan struct{} // closed once the session-kill Fetch is written
-	resetDone    chan struct{} // closed once that write has reset the write deadline
+	queued       chan struct{} // closed once the long-poll Fetch is written behind closeRace's
+	resetDone    chan struct{} // closed once the session-kill Fetch's write has reset the write deadline
+	ctxDeadline  chan struct{} // closed once the client's closed context has set the connection's deadlines
 	alertWriting chan struct{} // closed as crypto/tls begins writing close_notify
+	alertWritten chan struct{} // closed once close_notify's write returns
+	done         chan struct{} // closed as the test ends, to release every call still held
 
-	mu     sync.Mutex
-	writes map[string]int // the requests written since the close began
+	sending atomic.Bool // closeRace is sending its own Fetch
+	closing atomic.Bool // the client is closing
+
+	mu        sync.Mutex
+	fetchConn *raceConn      // the connection closeRace's Fetch is written on
+	fetchCorr int32          // that Fetch's correlation ID
+	queuedOn  bool           // the long-poll Fetch has been written behind it
+	readHeld  bool           // the read of its response has been held
+	writes    map[string]int // the requests written since the trace was armed
+	events    []string
+	held      []hold
+}
+
+// The events closeRace orders on the fetch connection.
+const (
+	killFetchWritten   = "the session-kill Fetch is written"
+	writeDeadlineReset = "the session-kill Fetch's write resets the write deadline"
+	closeNotifyBegins  = "crypto/tls begins writing close_notify"
+	closeNotifyReturns = "close_notify's write returns"
+)
+
+// hold is a call closeRace held, the event it waited for, and whether that
+// event released it.
+type hold struct {
+	call, awaited string
+	released      bool
 }
 
 func newCloseRace(tr *trace, holdReset bool) *closeRace {
 	return &closeRace{
 		tr:           tr,
 		holdReset:    holdReset,
-		killWritten:  make(chan struct{}),
+		queued:       make(chan struct{}),
 		resetDone:    make(chan struct{}),
+		ctxDeadline:  make(chan struct{}),
 		alertWriting: make(chan struct{}),
+		alertWritten: make(chan struct{}),
+		done:         make(chan struct{}),
 		writes:       map[string]int{},
 	}
 }
 
-// wait waits for ch, for at most 10s of bubble time, so that an order that
-// never comes doesn't hold a call forever.
-func (r *closeRace) wait(what string, ch <-chan struct{}) {
+// wait holds a call until ch is closed, and records whether ch released it.
+// It gives up after 10s of bubble time, or as the test ends, so that an
+// order that never comes doesn't hold a call forever. A hold that gives up
+// fails the test.
+func (r *closeRace) wait(call, awaited string, ch <-chan struct{}) {
+	r.tr.log("%s is held until: %s", call, awaited)
+	start := time.Now()
+	h := hold{call: call, awaited: awaited}
 	select {
 	case <-ch:
+		h.released = true
+		r.tr.log("%s is released after %v by: %s", call, time.Since(start), awaited)
 	case <-time.After(10 * time.Second):
-		r.tr.log("gave up waiting for %s", what)
+		r.tr.log("gave up waiting: %s is released after %v without: %s", call, time.Since(start), awaited)
+	case <-r.done:
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.held = append(r.held, h)
+}
+
+// happen records an event, and closes ch, if it isn't nil, to release the
+// calls held until it.
+func (r *closeRace) happen(event string, ch chan struct{}) {
+	r.tr.log("%s", event)
+	r.mu.Lock()
+	r.events = append(r.events, event)
+	r.mu.Unlock()
+	if ch != nil {
+		close(ch)
+	}
+}
+
+func (r *closeRace) holds() []hold {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]hold(nil), r.held...)
+}
+
+func (r *closeRace) happened() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.events...)
 }
 
 func (r *closeRace) count(key int16) {
@@ -1028,6 +1114,50 @@ func (r *closeRace) written() string {
 	return strings.Join(out, ", ")
 }
 
+// wroteFetch tells, from the Fetches written on it, which connection is the
+// fetch connection, and when the long-poll Fetch and then the session-kill
+// Fetch are written on it behind closeRace's.
+func (r *closeRace) wroteFetch(c *raceConn, corr int32) {
+	r.mu.Lock()
+	switch {
+	case r.fetchConn == nil:
+		if r.sending.Load() {
+			r.fetchConn, r.fetchCorr = c, corr
+			r.tr.log("closeRace's Fetch is written on the fetch connection, behind the long-poll Fetch in flight")
+		}
+	case c != r.fetchConn:
+	case !r.closing.Load():
+		if !r.queuedOn {
+			r.queuedOn = true
+			r.tr.log("the next long-poll Fetch is written behind closeRace's")
+			close(r.queued)
+		}
+	case c.killer.CompareAndSwap(false, true):
+		r.mu.Unlock()
+		r.happen(killFetchWritten, nil)
+		return
+	}
+	r.mu.Unlock()
+}
+
+// ownResponse reports whether b, read on c, is the response to closeRace's
+// Fetch, the first time it is read.
+func (r *closeRace) ownResponse(c *raceConn, b []byte) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.readHeld || c != r.fetchConn || len(b) < 8 || int32(binary.BigEndian.Uint32(b[4:8])) != r.fetchCorr {
+		return false
+	}
+	r.readHeld = true
+	return true
+}
+
+func (r *closeRace) isFetchConn(c *raceConn) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return c == r.fetchConn
+}
+
 // dial dials as processor.dial does, and wraps the connection on both
 // sides of crypto/tls.
 func (r *closeRace) dial(p *processor) func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -1037,7 +1167,7 @@ func (r *closeRace) dial(p *processor) func(ctx context.Context, network, addres
 			return nil, err
 		}
 		c := &raceConn{r: r}
-		c.wire = &wireConn{Conn: conn, log: r.tr.log, onAlert: func() { close(r.alertWriting) }}
+		c.wire = &wireConn{Conn: conn, r: r}
 		cfg := p.client.Clone()
 		cfg.ServerName, _, _ = net.SplitHostPort(address)
 		tc := tls.Client(c.wire, cfg)
@@ -1056,42 +1186,41 @@ type raceConn struct {
 	r    *closeRace
 	wire *wireConn
 
-	fetch  atomic.Bool // a Fetch has been written on it
-	killer atomic.Bool // the session-kill Fetch has been written on it
-	reset  atomic.Bool // that write has reset the write deadline
+	killer   atomic.Bool // the session-kill Fetch has been written on it
+	reset    atomic.Bool // that write has reset the write deadline
+	deadline atomic.Bool // the client's closed context has set its deadlines
 }
 
 func (c *raceConn) Write(b []byte) (int, error) {
 	n, err := c.Conn.Write(b)
-	if len(b) < 6 {
+	if len(b) < 12 || err != nil {
 		return n, err
 	}
 	key := int16(binary.BigEndian.Uint16(b[4:6]))
 	if c.r.tr.armed.Load() {
 		c.r.count(key)
-		if key == kmsg.Fetch.Int16() && c.fetch.Load() && c.killer.CompareAndSwap(false, true) {
-			c.r.tr.log("the session-kill Fetch is written on the long-poll Fetch's connection: %d bytes, err %v", n, err)
-			close(c.r.killWritten)
-		}
 	}
 	if key == kmsg.Fetch.Int16() {
-		c.fetch.Store(true)
+		c.r.wroteFetch(c, int32(binary.BigEndian.Uint32(b[8:12])))
 	}
 	return n, err
 }
 
-func (c *raceConn) SetReadDeadline(t time.Time) error {
-	if c.r.tr.armed.Load() && c.fetch.Load() && !c.killer.Load() && !t.IsZero() && !t.After(time.Now()) {
-		if c.r.holdReset {
-			c.r.tr.log("franz-go cuts short the long-poll Fetch's read; held until the session-kill Fetch is written")
-			c.r.wait("the session-kill Fetch", c.r.killWritten)
-		} else {
-			c.r.tr.log("franz-go cuts short the long-poll Fetch's read; held until the session-kill Fetch's write resets the write deadline")
-			c.r.wait("the write deadline reset", c.r.resetDone)
-		}
-		c.r.tr.log("the long-poll Fetch's read is cut short")
+func (c *raceConn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	if c.r.ownResponse(c, b[:n]) {
+		c.r.wait("franz-go's read of closeRace's Fetch's response", closeNotifyReturns, c.r.alertWritten)
 	}
-	return c.Conn.SetReadDeadline(t)
+	return n, err
+}
+
+func (c *raceConn) SetDeadline(t time.Time) error {
+	err := c.Conn.SetDeadline(t)
+	if c.r.closing.Load() && !t.IsZero() && c.r.isFetchConn(c) && c.deadline.CompareAndSwap(false, true) {
+		c.r.tr.log("the client's closed context sets the fetch connection's deadlines to now")
+		close(c.r.ctxDeadline)
+	}
+	return err
 }
 
 func (c *raceConn) SetWriteDeadline(t time.Time) error {
@@ -1099,12 +1228,10 @@ func (c *raceConn) SetWriteDeadline(t time.Time) error {
 		return c.Conn.SetWriteDeadline(t)
 	}
 	if c.r.holdReset {
-		c.r.tr.log("the session-kill Fetch's write resets the write deadline; held until crypto/tls writes close_notify")
-		c.r.wait("close_notify", c.r.alertWriting)
+		c.r.wait("the session-kill Fetch's write deadline reset", closeNotifyBegins, c.r.alertWriting)
 	}
 	err := c.Conn.SetWriteDeadline(t)
-	c.r.tr.log("the session-kill Fetch's write has reset the connection's write deadline to none")
-	close(c.r.resetDone)
+	c.r.happen(writeDeadlineReset, c.r.resetDone)
 	return err
 }
 
@@ -1112,8 +1239,12 @@ func (c *raceConn) Close() error {
 	if !c.killer.Load() {
 		return c.Conn.Close()
 	}
+	c.r.wait("franz-go's close of the fetch connection", "the client's closed context sets the connection's deadlines", c.r.ctxDeadline)
+	if !c.r.holdReset {
+		c.r.wait("franz-go's close of the fetch connection", writeDeadlineReset, c.r.resetDone)
+	}
 	c.wire.closing.Store(true)
-	c.r.tr.log("franz-go closes the long-poll Fetch's connection")
+	c.r.tr.log("franz-go closes the fetch connection")
 	err := c.Conn.Close()
 	c.r.tr.log("the connection's Close returns: %v", err)
 	return err
@@ -1121,11 +1252,10 @@ func (c *raceConn) Close() error {
 
 // wireConn is the connection beneath crypto/tls. Once closing is set, it
 // logs crypto/tls's write deadlines, and reports its first write, which is
-// close_notify.
+// close_notify, as it begins and once it returns.
 type wireConn struct {
 	net.Conn
-	log     func(format string, args ...any)
-	onAlert func()
+	r *closeRace
 
 	closing atomic.Bool
 	alerted atomic.Bool
@@ -1134,9 +1264,9 @@ type wireConn struct {
 func (w *wireConn) SetWriteDeadline(t time.Time) error {
 	if w.closing.Load() {
 		if t.IsZero() {
-			w.log("the write deadline beneath crypto/tls is set to none")
+			w.r.tr.log("the write deadline beneath crypto/tls is set to none")
 		} else {
-			w.log("the write deadline beneath crypto/tls is set %v ahead", time.Until(t))
+			w.r.tr.log("the write deadline beneath crypto/tls is set %v ahead", time.Until(t))
 		}
 	}
 	return w.Conn.SetWriteDeadline(t)
@@ -1146,18 +1276,22 @@ func (w *wireConn) Write(b []byte) (int, error) {
 	if !w.closing.Load() || !w.alerted.CompareAndSwap(false, true) {
 		return w.Conn.Write(b)
 	}
-	w.log("crypto/tls writes close_notify: %d bytes", len(b))
-	w.onAlert()
+	w.r.happen(closeNotifyBegins, w.r.alertWriting)
+	if w.r.holdReset {
+		w.r.wait("crypto/tls's close_notify write", writeDeadlineReset, w.r.resetDone)
+	}
 	start := time.Now()
 	n, err := w.Conn.Write(b)
-	w.log("close_notify's write returns after %v: %v", time.Since(start), err)
+	w.r.tr.log("close_notify's write of %d bytes took %v: %v", len(b), time.Since(start), err)
+	w.r.happen(closeNotifyReturns, w.r.alertWritten)
 	return n, err
 }
 
-// closeReadAllClient polls and closes a client as readAll does, with the
-// connections ordered by closeRace, and fails the test if Close hasn't
-// returned after a minute of bubble time.
-func closeReadAllClient(t *testing.T, holdReset bool) {
+// closeReadAllClient polls and closes a client as readAll does, with its
+// fetch connection's close ordered by closeRace. It fails the test if Close
+// hasn't returned after a minute of bubble time, and then runs check on what
+// closeRace saw.
+func closeReadAllClient(t *testing.T, holdReset bool, check func(t *testing.T, r *closeRace)) {
 	synctest.Test(t, func(t *testing.T) {
 		p := newProcessor(t, nil)
 		c := p.cluster(t)
@@ -1166,6 +1300,7 @@ func closeReadAllClient(t *testing.T, holdReset bool) {
 		tr := &trace{t: t}
 		defer tr.stop()
 		r := newCloseRace(tr, holdReset)
+		defer close(r.done)
 		cl, err := kgo.NewClient(
 			kgo.SeedBrokers(c.ListenAddrs()...),
 			kgo.Dialer(r.dial(p)),
@@ -1192,7 +1327,21 @@ func closeReadAllClient(t *testing.T, holdReset bool) {
 		require.Len(t, out, 1)
 
 		tr.arm()
-		tr.log("readAll closes its client, with its long-poll Fetch in flight")
+		tr.log("closeRace sends a Fetch of its own, with the long-poll Fetch in flight")
+		r.sending.Store(true)
+		sent := make(chan error, 1)
+		go func() {
+			_, err := cl.Broker(0).Request(context.Background(), kmsg.NewPtrFetchRequest())
+			sent <- err
+		}()
+		select {
+		case <-r.queued:
+		case <-time.After(time.Minute):
+			t.Errorf("no long-poll Fetch was written behind closeRace's after %v of bubble time", time.Minute)
+		}
+
+		r.closing.Store(true)
+		tr.log("readAll closes its client, with the long-poll Fetch queued behind closeRace's")
 		closed := make(chan struct{})
 		go func() {
 			defer close(closed)
@@ -1213,6 +1362,9 @@ func closeReadAllClient(t *testing.T, holdReset bool) {
 			<-closed
 			tr.log("Close returns once the cluster closes its connections")
 		}
+		tr.log("closeRace's Fetch returns: %v", <-sent)
+
+		check(t, r)
 	})
 }
 
@@ -1237,10 +1389,54 @@ func stuckGoroutines() []string {
 	return out
 }
 
+// requireNoGiveUp fails the test if closeRace gave up waiting for an event.
+func requireNoGiveUp(t *testing.T, r *closeRace) {
+	t.Helper()
+	for _, h := range r.holds() {
+		require.True(t, h.released, "closeRace gave up waiting for: %s; so the close didn't run in the order it forces", h.awaited)
+	}
+}
+
+// ranInOrder fails the test unless the close ran in the order of events
+// want on the fetch connection, with no hold giving up.
+func ranInOrder(want ...string) func(t *testing.T, r *closeRace) {
+	return func(t *testing.T, r *closeRace) {
+		t.Helper()
+		requireNoGiveUp(t, r)
+		require.Equal(t, want, r.happened(), "the close didn't run in the order the test names")
+	}
+}
+
 func TestReadAll_closes_its_client_when_the_session_kill_Fetch_resets_the_deadline_close_notify_waits_on(t *testing.T) {
-	closeReadAllClient(t, true)
+	closeReadAllClient(t, true, ranInOrder(killFetchWritten, closeNotifyBegins, writeDeadlineReset, closeNotifyReturns))
 }
 
 func TestReadAll_closes_its_client_when_the_session_kill_Fetch_resets_its_deadline_before_close_notify(t *testing.T) {
-	closeReadAllClient(t, false)
+	closeReadAllClient(t, false, ranInOrder(killFetchWritten, writeDeadlineReset, closeNotifyBegins, closeNotifyReturns))
+}
+
+// heldUntil fails the test unless closeRace held each call in held, and no
+// other, and each was released by the event it waits for.
+func heldUntil(held ...hold) func(t *testing.T, r *closeRace) {
+	return func(t *testing.T, r *closeRace) {
+		t.Helper()
+		requireNoGiveUp(t, r)
+		require.ElementsMatch(t, held, r.holds(), "closeRace held other calls than its order needs")
+	}
+}
+
+var (
+	ownReadHeld       = hold{call: "franz-go's read of closeRace's Fetch's response", awaited: closeNotifyReturns, released: true}
+	closeHeld         = hold{call: "franz-go's close of the fetch connection", awaited: "the client's closed context sets the connection's deadlines", released: true}
+	resetHeld         = hold{call: "the session-kill Fetch's write deadline reset", awaited: closeNotifyBegins, released: true}
+	alertHeld         = hold{call: "crypto/tls's close_notify write", awaited: writeDeadlineReset, released: true}
+	closeHeldForReset = hold{call: "franz-go's close of the fetch connection", awaited: writeDeadlineReset, released: true}
+)
+
+func TestCloseRace_forces_the_session_kill_Fetch_to_reset_the_deadline_close_notify_waits_on(t *testing.T) {
+	closeReadAllClient(t, true, heldUntil(ownReadHeld, closeHeld, resetHeld, alertHeld))
+}
+
+func TestCloseRace_forces_the_session_kill_Fetch_to_reset_its_deadline_before_close_notify(t *testing.T) {
+	closeReadAllClient(t, false, heldUntil(ownReadHeld, closeHeld, closeHeldForReset))
 }
