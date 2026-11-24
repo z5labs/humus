@@ -15,9 +15,9 @@ require (
 	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261123165014-929202d23831
 	github.com/twmb/franz-go/pkg/kmsg v1.15.1
 	github.com/twmb/franz-go/plugin/kotel v1.7.1
-	github.com/z5labs/bedrock v0.26.0
-	github.com/z5labs/bedrock/circuit v0.26.0
-	github.com/z5labs/bedrock/fit v0.26.0
+	github.com/z5labs/bedrock v0.27.0
+	github.com/z5labs/bedrock/circuit v0.27.0
+	github.com/z5labs/bedrock/fit v0.27.0
 	github.com/z5labs/bedrock/host v0.27.0
 	github.com/z5labs/humus v0.18.0
 	go.opentelemetry.io/otel v1.47.0

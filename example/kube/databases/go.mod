@@ -12,8 +12,8 @@ require (
 	github.com/testcontainers/testcontainers-go v0.45.0
 	github.com/testcontainers/testcontainers-go/modules/k3s v0.45.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.45.0
-	github.com/z5labs/bedrock v0.26.0
-	github.com/z5labs/bedrock/fit v0.26.0
+	github.com/z5labs/bedrock v0.27.0
+	github.com/z5labs/bedrock/fit v0.27.0
 	github.com/z5labs/bedrock/host v0.27.0
 	github.com/z5labs/humus v0.18.0
 	github.com/z5labs/humus/kube v0.18.0
