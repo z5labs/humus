@@ -60,7 +60,9 @@ import (
 //
 // The last tests open streams on a pod, and open each again at once when
 // the pod's Shutdown ends it, as #1254 reported, on the test Host and over
-// loopback TCP. Each stream opened again lands on the next pod.
+// loopback TCP. Each stream opened again lands on the next pod. Over TCP,
+// the next pod runs without a drain, since nothing reaches it once the
+// streams have heard from it, so each rollout waits out one drain.
 
 // startServing runs a dependency on h, in an App of its own, with a
 // certificate for name from ca, serving b at addr, and passing opts to
@@ -1086,8 +1088,10 @@ func (ro rollout) run(t *testing.T, ca *humustest.CA, tc reopenCase, handshaking
 
 // roll rolls ledger-a out from under tc's streams: it opens them, holds a
 // connection to ledger-a in its handshake if handshaking, routes the
-// Service to ledger-b, and sends ledger-a SIGTERM. Once both pods have
-// exited, it logs what happened, in order, and returns it.
+// Service to ledger-b, and sends ledger-a SIGTERM. Once ledger-a has
+// exited, it stops ledger-b, and once ledger-b has exited too, it logs what
+// happened, in order, and returns it. So a rollout takes ledger-a's drain
+// and Shutdown, and then ledger-b's.
 func (ro rollout) roll(t *testing.T, ca *humustest.CA, tc reopenCase, handshaking bool) rolled {
 	t.Helper()
 	start := time.Now()
@@ -1250,6 +1254,10 @@ func listensOnOS(t *testing.T, addr string) <-chan struct{} {
 	return v.(*heldPort).listened
 }
 
+// The rollouts of eachReopenCase over loopback TCP, in parallel subtests.
+// ledger-a runs on grpcserver's defaults, and ledger-b without a drain, so
+// each subtest takes ledger-a's 5s drain. Pinned to one core, -parallel is
+// 1, and the 12 subtests take a minute, one after another.
 func TestClient_a_stream_opened_again_when_Shutdown_ends_it_lands_on_the_next_pod_over_TCP(t *testing.T) {
 	eachReopenCase(t, func(t *testing.T, tc reopenCase, serve func(string) testpb.TestServiceServer, handshaking bool) {
 		t.Parallel()
@@ -1266,7 +1274,7 @@ func TestClient_a_stream_opened_again_when_Shutdown_ends_it_lands_on_the_next_po
 				return conn
 			},
 			stopA: startPodServing(t, osHost(), ca, addrA, serve("ledger-a"), listensOnOS(t, addrA), nil),
-			stopB: startPodServing(t, osHost(), ca, addrB, serve("ledger-b"), listensOnOS(t, addrB), nil),
+			stopB: startPodServing(t, osHost(), ca, addrB, serve("ledger-b"), listensOnOS(t, addrB), nil, humus.WithDrain(nil)),
 		}.run(t, ca, tc, handshaking)
 	})
 }
