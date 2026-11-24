@@ -58,13 +58,13 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 
 	// One client for the dependency, built once and shared by every
 	// request the handler serves.
-	payments, err := httpclient.NewClient(s, paymentsSettings)
+	payments, err := httpclient.NewClient(s, h, paymentsSettings)
 	if err != nil {
 		return nil, err
 	}
 
 	api := newAPI(payments, paymentsSettings.BaseURL)
-	svc, err := httpserver.NewService(s, serverSettings, api)
+	svc, err := httpserver.NewService(ctx, s, h, serverSettings, api)
 	if err != nil {
 		return nil, err
 	}
@@ -147,11 +147,11 @@ and its own `Settings`, and so each with its own breaker and retry budget:
 ```go
 // Two clients of one origin, each with its own Settings, built
 // once in Init and shared by everything that calls them.
-payments, err := httpclient.NewClient(s, paymentsSettings)
+payments, err := httpclient.NewClient(s, h, paymentsSettings)
 if err != nil {
 	return nil, err
 }
-ledger, err := httpclient.NewClient(s, ledgerSettings)
+ledger, err := httpclient.NewClient(s, h, ledgerSettings)
 if err != nil {
 	return nil, err
 }
@@ -752,11 +752,11 @@ generates for the test. `httpclient`'s own tests start one with a helper:
 func startPaymentsWith(t *testing.T, h *humustest.Host, host humus.Host, tel telemetry.Builder, ca *humustest.CA, handler http.Handler) (stop func()) {
 	t.Helper()
 	cert := ca.Issue(t, "payments")
-	p, status := humustest.Start(t, host, func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	p, status := humustest.Start(t, host, func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = ":8443"
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
-		svc, err := httpserver.NewService(s, settings, handler)
+		svc, err := httpserver.NewService(ctx, s, h, settings, handler)
 		if err != nil {
 			return nil, err
 		}

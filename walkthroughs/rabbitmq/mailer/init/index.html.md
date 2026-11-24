@@ -256,7 +256,7 @@ The provider's client and the worker, then the Service that consumes
 `mail.send`:
 
 ```go
-client, err := provider.New(s, settings.Provider)
+client, err := provider.New(s, h, settings.Provider)
 if err != nil {
 	return nil, err
 }
@@ -285,7 +285,7 @@ An `httphealth` server, ready while the Service is consuming. It has no
 liveness monitor, since the Service reconnects on its own:
 
 ```go
-	probes, err := httphealth.NewService(s, settings.Probes, health.Readiness(svc.Consuming()))
+	probes, err := httphealth.NewService(ctx, s, h, settings.Probes, health.Readiness(svc.Consuming()))
 	if err != nil {
 		return nil, err
 	}

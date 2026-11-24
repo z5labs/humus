@@ -54,7 +54,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /hello", greet)
 
-	svc, err := httpserver.NewService(s, settings, mux)
+	svc, err := httpserver.NewService(ctx, s, h, settings, mux)
 	if err != nil {
 		return nil, err
 	}
@@ -541,7 +541,7 @@ whose `Probes` it answers from next to the HTTP Service:
 mux := http.NewServeMux()
 mux.Handle("/", api)
 mux.Handle("/health/", httphealth.NewHandler(s, hs.Probes()))
-svc, err := httpserver.NewService(s, settings, mux)
+svc, err := httpserver.NewService(ctx, s, h, settings, mux)
 if err != nil {
 	return nil, err
 }
@@ -852,7 +852,7 @@ func TestService_meets_the_Service_contract(t *testing.T) {
 		settings.Addr = ":8443"
 		cert := humustest.NewCA(t).Issue(t, "localhost")
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
-		svc, err := httpserver.NewService(s, settings, http.NotFoundHandler())
+		svc, err := httpserver.NewService(t.Context(), s, humustest.NewHost(t), settings, http.NotFoundHandler())
 		require.NoError(t, err)
 		return svc
 	})

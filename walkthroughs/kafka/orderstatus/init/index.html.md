@@ -491,7 +491,7 @@ if err != nil {
 An `httphealth` server, ready once the Service has joined its group:
 
 ```go
-	probes, err := httphealth.NewService(s, set.Probes, health.Readiness(consumer.Joined()))
+	probes, err := httphealth.NewService(ctx, s, h, set.Probes, health.Readiness(consumer.Joined()))
 	if err != nil {
 		return nil, err
 	}

@@ -56,7 +56,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 		return nil, err // every mistake in the declarations, named
 	}
 
-	svc, err := httpserver.NewService(s, settings, api)
+	svc, err := httpserver.NewService(ctx, s, h, settings, api)
 	if err != nil {
 		return nil, err
 	}

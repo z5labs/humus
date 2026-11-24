@@ -41,7 +41,7 @@ type Client struct {
 	authorization string
 }
 
-func New(s *humus.Setup, settings Settings) (*Client, error) {
+func New(s *humus.Setup, n httpclient.Network, settings Settings) (*Client, error) {
 	var errs []error
 	if settings.From == "" {
 		errs = append(errs, errors.New("Settings.From must not be empty"))
@@ -66,7 +66,7 @@ func New(s *humus.Setup, settings Settings) (*Client, error) {
 	h.AttemptTimeout = settings.AttemptTimeout
 	h.MaxAttempts = settings.MaxAttempts
 	h.Classify = withConflict(h.Classify)
-	c, err := httpclient.NewClient(s, h)
+	c, err := httpclient.NewClient(s, n, h)
 	if err != nil {
 		return nil, fmt.Errorf("provider: New: %w", err)
 	}

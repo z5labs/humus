@@ -128,7 +128,7 @@ func (e *env) run(t *testing.T, period time.Time, concurrency int) billing.Run {
 	settings.BaseURL = u
 	settings.TLS = &tls.Config{RootCAs: e.ca.Pool()}
 	sdk := e.sdk(t)
-	client, err := payments.NewClient(&humus.Setup{Host: e.host.Host(), Telemetry: sdk}, settings, e.key)
+	client, err := payments.NewClient(&humus.Setup{Telemetry: sdk}, e.host, settings, e.key)
 	require.NoError(t, err)
 	return billing.Run{Invoices: e.store, Payments: client, Period: period, Concurrency: concurrency, Telemetry: sdk}
 }
