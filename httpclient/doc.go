@@ -14,7 +14,7 @@
 //		if err != nil {
 //			return nil, err
 //		}
-//		payments, err := httpclient.NewClient(s, h, h, paymentsSettings)
+//		payments, err := httpclient.NewClient(s, h, paymentsSettings)
 //		if err != nil {
 //			return nil, err
 //		}
