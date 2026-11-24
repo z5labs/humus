@@ -22,7 +22,8 @@
 //		if err != nil {
 //			return nil, err
 //		}
-//		svc, err := rabbitmq.NewService(s, h, settings, queue.ProcessorFunc[rabbitmq.Message](handler.Handle))
+//		o := &orders{} // the end user's Processor, with a Handle method
+//		svc, err := rabbitmq.NewService(s, h, settings, queue.ProcessorFunc[rabbitmq.Message](o.Handle))
 //		if err != nil {
 //			return nil, err
 //		}
