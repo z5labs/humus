@@ -221,12 +221,12 @@ func TestClient_metrics_of_two_clients_of_one_origin_add_up(t *testing.T) {
 
 		settings := paymentsSettings(t, ca)
 		tel := humustest.NewTelemetry()
-		_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-			first, err := httpclient.NewClient(s, settings)
+		_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			first, err := httpclient.NewClient(s, h, settings)
 			if err != nil {
 				return nil, err
 			}
-			second, err := httpclient.NewClient(s, settings)
+			second, err := httpclient.NewClient(s, h, settings)
 			if err != nil {
 				return nil, err
 			}

@@ -54,7 +54,7 @@ site, err := hypermedia.NewSite(s, contacts.ErrorPage, ui.Routes())
 if err != nil {
 	return nil, err
 }
-svc, err := httpserver.NewService(s, settings, http.NewCrossOriginProtection().Handler(site))
+svc, err := httpserver.NewService(ctx, s, h, settings, http.NewCrossOriginProtection().Handler(site))
 ```
 
 A route is one method on one path, and its handler:

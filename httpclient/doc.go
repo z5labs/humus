@@ -14,13 +14,13 @@
 //		if err != nil {
 //			return nil, err
 //		}
-//		payments, err := httpclient.NewClient(s, paymentsSettings)
+//		payments, err := httpclient.NewClient(s, h, paymentsSettings)
 //		if err != nil {
 //			return nil, err
 //		}
 //
 //		api := newAPI(payments) // the end user's handler, which calls payments
-//		svc, err := httpserver.NewService(s, serverSettings, api)
+//		svc, err := httpserver.NewService(ctx, s, h, serverSettings, api)
 //		if err != nil {
 //			return nil, err
 //		}
@@ -30,7 +30,7 @@
 // Service code, generated clients and SDKs take the *http.Client as they take
 // any other, and depend on net/http's type rather than on this package, so a
 // unit test of that code passes any client. The client dials only through
-// the Setup's Host, so a test runs the end user's whole App, its outbound
+// the [Network] it is given, such as Init's host, so a test runs the end user's whole App, its outbound
 // calls included, on humustest's network.
 //
 // A client is not a humus.Service. NewClient opens no connection, and the
@@ -99,9 +99,9 @@
 //
 // The client's transport is an http.Transport of its own:
 //
-//   - It dials with the Setup's Host.DialTCP, so the client reaches the
+//   - It dials with the Network's DialTCP, so the client reaches the
 //     dependency the way every humus App reaches the network, and a test's
-//     in-memory Host serves it.
+//     in-memory host serves it.
 //   - Its Proxy is nil. The client never reads HTTP_PROXY, HTTPS_PROXY or
 //     NO_PROXY, and has no proxy setting.
 //   - For an https BaseURL it offers HTTP/2 and then HTTP/1.1 in ALPN, so

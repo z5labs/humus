@@ -243,13 +243,13 @@ func TestService_Consuming_stays_unhealthy_with_nothing_listening(t *testing.T) 
 // probeSettings with httphealth's probes server, whose readiness waits for
 // the consumer to consume.
 func probedConsumer(settings rabbitmq.Settings, ch *standIn, probeSettings httphealth.Settings) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	return func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		consumer, err := rabbitmq.NewService(s, settings, nop)
 		if err != nil {
 			return nil, err
 		}
 		rabbitmq.SetOpen(consumer, ch.open)
-		probes, err := httphealth.NewService(s, probeSettings, health.Readiness(consumer.Consuming()))
+		probes, err := httphealth.NewService(ctx, s, h, probeSettings, health.Readiness(consumer.Consuming()))
 		if err != nil {
 			return nil, err
 		}

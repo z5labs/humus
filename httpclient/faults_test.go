@@ -144,13 +144,13 @@ func runOrders(t *testing.T, run ordersRun) ordersResult {
 
 	var calls []ordersCall
 	cert := ca.Issue(t, "orders")
-	init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		settings := paymentsSettings(t, ca)
 		settings.ForwardScenario = run.forward
 		if run.classify != nil {
 			settings.Classify = run.classify
 		}
-		payments, err := httpclient.NewClient(s, settings)
+		payments, err := httpclient.NewClient(s, h, settings)
 		if err != nil {
 			return nil, err
 		}
@@ -182,7 +182,7 @@ func runOrders(t *testing.T, run ordersRun) ordersResult {
 		server.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
 		server.TrustScenario = func(*http.Request) bool { return true } // the edge
 		server.WriteTimeout = time.Minute                               // outlasts the Client's Timeout
-		svc, err := httpserver.NewService(s, server, mux)
+		svc, err := httpserver.NewService(ctx, s, h, server, mux)
 		if err != nil {
 			return nil, err
 		}

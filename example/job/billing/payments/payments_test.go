@@ -136,12 +136,12 @@ func (e *env) settings(t *testing.T) httpclient.Settings {
 
 func (e *env) client(t *testing.T) *payments.Client {
 	t.Helper()
-	return e.clientWith(t, &humus.Setup{Host: e.host.Host(), Telemetry: telemetry.Noop()}, e.settings(t))
+	return e.clientWith(t, &humus.Setup{Telemetry: telemetry.Noop()}, e.settings(t))
 }
 
 func (e *env) clientWith(t *testing.T, s *humus.Setup, settings httpclient.Settings) *payments.Client {
 	t.Helper()
-	c, err := payments.NewClient(s, settings, e.key)
+	c, err := payments.NewClient(s, e.host, settings, e.key)
 	require.NoError(t, err)
 	return c
 }
@@ -327,7 +327,7 @@ func TestClient_never_forwards_a_scenario(t *testing.T) {
 		require.NoError(t, err)
 		settings := e.settings(t)
 		settings.ForwardScenario = true
-		c := e.clientWith(t, &humus.Setup{Host: e.host.Host(), Telemetry: telemetry.Noop(), Faults: faults}, settings)
+		c := e.clientWith(t, &humus.Setup{Telemetry: telemetry.Noop(), Faults: faults}, settings)
 
 		tenant, err := baggage.NewMemberRaw("tenant", "acme")
 		require.NoError(t, err)

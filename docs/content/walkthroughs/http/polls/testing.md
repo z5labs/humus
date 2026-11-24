@@ -15,7 +15,7 @@ weight: 90
 The Site's tests serve it on the humustest Host, with a Store of their own:
 
 ```go
-	p, status := httpservertest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	p, status := httpservertest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = "polls.internal:8443"
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
@@ -27,7 +27,7 @@ The Site's tests serve it on the humustest Host, with a Store of their own:
 		if err != nil {
 			return nil, err
 		}
-		svc, err := httpserver.NewService(s, settings, site)
+		svc, err := httpserver.NewService(ctx, s, h, settings, site)
 		if err != nil {
 			return nil, err
 		}

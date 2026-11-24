@@ -122,7 +122,7 @@ func serve(t *testing.T, build func(s *humus.Setup) (http.Handler, error), edit 
 	h := humustest.NewHost(t)
 	tel := humustest.NewTelemetry()
 
-	p, status := httpservertest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	p, status := httpservertest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		handler, err := build(s)
 		if err != nil {
 			return nil, err
@@ -133,7 +133,7 @@ func serve(t *testing.T, build func(s *humus.Setup) (http.Handler, error), edit 
 		if edit != nil {
 			edit(settings.TLS, ca)
 		}
-		svc, err := httpserver.NewService(s, settings, handler)
+		svc, err := httpserver.NewService(ctx, s, h, settings, handler)
 		if err != nil {
 			return nil, err
 		}

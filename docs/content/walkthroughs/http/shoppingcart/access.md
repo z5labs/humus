@@ -38,7 +38,7 @@ func (c Claims) HasScope(scope string) bool {
 `Claims`:
 
 ```go
-idp, err := httpclient.NewClient(s, settings.KeySet.Client)
+idp, err := httpclient.NewClient(s, h, settings.KeySet.Client)
 if err != nil {
 	return nil, err
 }

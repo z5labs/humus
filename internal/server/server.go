@@ -6,7 +6,7 @@
 // Package server serves an *http.Server over TLS as a humus.Service.
 //
 // It is the code every HTTP port of humus's core module is served with: it
-// listens through the Setup's Host, serves the *http.Server it is given
+// listens through the Network it is given, serves the *http.Server it is given
 // over TLS, through the drain, and shuts it down gracefully, then closes
 // every connection once the grace period runs out. Its error log emits each
 // of net/http's lines as one ERROR record, through the logger it is given,
@@ -48,9 +48,16 @@ type Server struct {
 	shutdown atomic.Bool
 }
 
-// New listens on addr with s.Host.ListenTCP over "tcp". A failure to
-// listen, such as EADDRINUSE, is its error, unwrapped. It registers a function with
-// s.OnStop that closes the listener, so a listener whose Server never
+// Network is what a Server needs of a host: a way to listen.
+type Network interface {
+	// ListenTCP announces on the local network address, for "tcp", "tcp4"
+	// or "tcp6", like net.ListenConfig.Listen.
+	ListenTCP(ctx context.Context, network, address string) (net.Listener, error)
+}
+
+// New listens on addr with n.ListenTCP over "tcp", with ctx, which bounds
+// the lookup of addr's host. A failure to listen, such as EADDRINUSE, is its
+// error, unwrapped. It registers a function with s.OnStop that closes the listener, so a listener whose Server never
 // serves, because Init failed after New, is still closed.
 //
 // name prefixes every other error of the Server's, including the one the
@@ -63,8 +70,8 @@ type Server struct {
 // handler. New sets srv.ErrorLog, which emits each of net/http's lines as
 // one ERROR record through logger, and the caller must not use srv after
 // New, other than through the Server. The Server logs through logger too.
-func New(s *humus.Setup, name, addr string, srv *http.Server, logger log.Logger) (*Server, error) {
-	ln, err := s.Host.ListenTCP(context.Background(), "tcp", addr)
+func New(ctx context.Context, s *humus.Setup, n Network, name, addr string, srv *http.Server, logger log.Logger) (*Server, error) {
+	ln, err := n.ListenTCP(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
 	}
@@ -81,8 +88,8 @@ func New(s *humus.Setup, name, addr string, srv *http.Server, logger log.Logger)
 	return &Server{name: name, ln: ln, srv: srv, logger: logger}, nil
 }
 
-// Addr returns the address the Server listens on, with the port the Host
-// picked when addr has port 0.
+// Addr returns the address the Server listens on, with the port the
+// Network picked when addr has port 0.
 func (s *Server) Addr() net.Addr {
 	return s.ln.Addr()
 }

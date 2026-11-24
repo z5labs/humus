@@ -404,11 +404,11 @@
 // the pod's probes. A consumer's pod has no server of its own, so that is a
 // probes server made with httphealth.NewService:
 //
-//	consumer, err := rabbitmq.NewService(s, settings, queue.ProcessorFunc[rabbitmq.Message](h.Handle))
+//	consumer, err := rabbitmq.NewService(s, settings, queue.ProcessorFunc[rabbitmq.Message](handler.Handle))
 //	if err != nil {
 //		return nil, err
 //	}
-//	probes, err := httphealth.NewService(s, probeSettings, health.Readiness(consumer.Consuming()))
+//	probes, err := httphealth.NewService(ctx, s, h, probeSettings, health.Readiness(consumer.Consuming()))
 //	if err != nil {
 //		return nil, err
 //	}

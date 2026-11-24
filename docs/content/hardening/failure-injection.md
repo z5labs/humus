@@ -481,7 +481,7 @@ scenario can reach the points that dependency calls in turn:
 
 ```go
 payments.ForwardScenario = true // payments is ours, and honors acme.fault too
-client, err := httpclient.NewClient(s, payments)
+client, err := httpclient.NewClient(s, h, payments)
 if err != nil {
 	return nil, err
 }

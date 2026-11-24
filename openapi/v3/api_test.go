@@ -132,7 +132,7 @@ func serveOn(t *testing.T, host func(humus.Host) humus.Host, build func(s *humus
 	h := humustest.NewHost(t)
 	tel := humustest.NewTelemetry()
 
-	p, status := httpservertest.Start(t, host(h.Host()), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	p, status := httpservertest.Start(t, host(h.Host()), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		api, err := build(s)
 		if err != nil {
 			return nil, err
@@ -140,7 +140,7 @@ func serveOn(t *testing.T, host func(humus.Host) humus.Host, build func(s *humus
 		settings := httpserver.DefaultSettings()
 		settings.Addr = ":8443"
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
-		svc, err := httpserver.NewService(s, settings, api)
+		svc, err := httpserver.NewService(ctx, s, h, settings, api)
 		if err != nil {
 			return nil, err
 		}

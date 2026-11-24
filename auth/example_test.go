@@ -43,7 +43,7 @@ type Directory interface {
 // TLS verified, or with a password, and changing anything needs the
 // "admin" role.
 func AdminInit(dir Directory, tlsConfig *tls.Config) func(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	return func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		// A certificate is verified by the handshake, against ClientCAs:
 		// its common name is the operator, who has every role.
 		cert := auth.MutualTLS("cert", func(_ context.Context, chains [][]*x509.Certificate) (Operator, error) {
@@ -99,7 +99,7 @@ func AdminInit(dir Directory, tlsConfig *tls.Config) func(ctx context.Context, s
 		settings := httpserver.DefaultSettings()
 		settings.Addr = ":8443"
 		settings.TLS = tlsConfig // with ClientAuth tls.VerifyClientCertIfGiven, and ClientCAs
-		svc, err := httpserver.NewService(s, settings, mux)
+		svc, err := httpserver.NewService(ctx, s, h, settings, mux)
 		if err != nil {
 			return nil, err
 		}

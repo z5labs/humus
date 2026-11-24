@@ -86,7 +86,7 @@ func TestSite_names_its_span_after_the_route_under_the_handlers_it_is_wrapped_in
 				cert := ca.Issue(t, "localhost")
 				h := humustest.NewHost(t)
 				tel := humustest.NewTelemetry()
-				p, status := httpservertest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+				p, status := httpservertest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 					site, err := hypermedia.NewSite(s, func(w http.ResponseWriter, _ *http.Request, _ error) error {
 						w.WriteHeader(http.StatusNotFound)
 						return nil
@@ -101,7 +101,7 @@ func TestSite_names_its_span_after_the_route_under_the_handlers_it_is_wrapped_in
 					settings := httpserver.DefaultSettings()
 					settings.Addr = ":8443"
 					settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
-					svc, err := httpserver.NewService(s, settings, tc.wrap(site))
+					svc, err := httpserver.NewService(ctx, s, h, settings, tc.wrap(site))
 					if err != nil {
 						return nil, err
 					}

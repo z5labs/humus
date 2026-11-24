@@ -202,7 +202,7 @@
 // server, such as httphealth.NewService in a pod with no server of its own,
 // or a health Service.
 //
-//	probes, err := httphealth.NewService(s, probeSettings, health.Readiness(consumer.Joined()))
+//	probes, err := httphealth.NewService(ctx, s, h, probeSettings, health.Readiness(consumer.Joined()))
 //
 // A rollout whose new pods can't reach the brokers then stalls, and is
 // reported failed at its progress deadline, rather than replacing every old

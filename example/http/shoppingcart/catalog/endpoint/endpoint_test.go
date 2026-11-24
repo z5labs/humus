@@ -153,7 +153,7 @@ func start(t *testing.T) *catalog {
 		tel:   humustest.NewTelemetry(),
 	}
 	serverCert := ca.Issue(t, "localhost")
-	c.p, c.status = httpservertest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	c.p, c.status = httpservertest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		settings := jwt.DefaultSettings()
 		settings.Issuer = issuer
 		settings.Audience = audience
@@ -172,7 +172,7 @@ func start(t *testing.T) *catalog {
 			ClientAuth:   tls.VerifyClientCertIfGiven,
 			ClientCAs:    ca.Pool(),
 		}
-		svc, err := httpserver.NewService(s, server, api)
+		svc, err := httpserver.NewService(ctx, s, h, server, api)
 		if err != nil {
 			return nil, err
 		}

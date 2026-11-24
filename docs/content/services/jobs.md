@@ -336,7 +336,7 @@ health Service. Its liveness monitor, here `progress`, is the job's own: with
 none, the probe checks only that the process answers:
 
 ```go
-probes, err := httphealth.NewService(s, probeSettings, health.Liveness(progress))
+probes, err := httphealth.NewService(ctx, s, h, probeSettings, health.Liveness(progress))
 if err != nil {
 	return nil, err
 }

@@ -106,11 +106,11 @@ func (p *identityProvider) token(t *testing.T, subject, scope string) string {
 func serveIdentityProvider(t *testing.T, h *humustest.Host, ca *humustest.CA, p *identityProvider) func() {
 	t.Helper()
 	cert := ca.Issue(t, "idp.internal")
-	proc, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	proc, status := humustest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = ":443"
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
-		svc, err := httpserver.NewService(s, settings, p)
+		svc, err := httpserver.NewService(ctx, s, h, settings, p)
 		if err != nil {
 			return nil, err
 		}

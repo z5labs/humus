@@ -98,13 +98,13 @@ func (c carts) greet(ctx context.Context, _ openapi.Request[openapi.EmptyBody]) 
 // and carts:write to delete a cart, with a greeting whose authentication
 // is optional, its document public, and its health probes open beside it.
 func CartsInit(idp IdP, tlsConfig *tls.Config) func(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	return func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		// The key set's client is for its origin alone, and fetches
 		// nothing until the Verifier's first token.
 		clientSettings := httpclient.DefaultSettings()
 		clientSettings.BaseURL = &url.URL{Scheme: idp.KeySet.Scheme, Host: idp.KeySet.Host}
 		clientSettings.TLS = &tls.Config{RootCAs: idp.Roots}
-		client, err := httpclient.NewClient(s, clientSettings)
+		client, err := httpclient.NewClient(s, h, clientSettings)
 		if err != nil {
 			return nil, err
 		}
@@ -159,7 +159,7 @@ func CartsInit(idp IdP, tlsConfig *tls.Config) func(ctx context.Context, s *humu
 		settings := httpserver.DefaultSettings()
 		settings.Addr = ":8443"
 		settings.TLS = tlsConfig
-		svc, err := httpserver.NewService(s, settings, mux)
+		svc, err := httpserver.NewService(ctx, s, h, settings, mux)
 		if err != nil {
 			return nil, err
 		}

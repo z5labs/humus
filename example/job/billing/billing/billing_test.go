@@ -299,7 +299,7 @@ func (e *env) run(t *testing.T, period time.Time, concurrency int) billing.Run {
 	settings.BaseURL = u
 	settings.TLS = &tls.Config{RootCAs: e.ca.Pool()}
 	sdk := e.sdk(t)
-	client, err := payments.NewClient(&humus.Setup{Host: e.host.Host(), Telemetry: sdk}, settings, e.key)
+	client, err := payments.NewClient(&humus.Setup{Telemetry: sdk}, e.host, settings, e.key)
 	require.NoError(t, err)
 	return billing.Run{Invoices: e.store, Payments: client, Period: period, Concurrency: concurrency, Telemetry: sdk}
 }
@@ -683,7 +683,7 @@ func (e *env) heldRun(t *testing.T, period time.Time, run context.Context, a *an
 		}
 		return &heldConn{Conn: c, run: run, answered: a}, nil
 	}}
-	client, err := payments.NewClient(&humus.Setup{Host: host, Telemetry: sdk}, settings, e.key)
+	client, err := payments.NewClient(&humus.Setup{Telemetry: sdk}, host, settings, e.key)
 	require.NoError(t, err)
 	return billing.Run{Invoices: e.store, Payments: client, Period: period, Concurrency: 1, Telemetry: sdk}
 }

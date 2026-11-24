@@ -411,8 +411,8 @@ func operator(s *humus.Setup, client *kube.Client, settings, budgetSettings kube
 // withProbes returns the Services of a controller's pod, which has no server
 // of its own: the Controller, and a probes server made with httphealth,
 // whose readiness waits for the Controller's caches to sync.
-func withProbes(s *humus.Setup, ctrl *kube.Controller, probeSettings httphealth.Settings) ([]humus.Service, error) {
-	probes, err := httphealth.NewService(s, probeSettings, health.Readiness(ctrl.Synced()))
+func withProbes(ctx context.Context, s *humus.Setup, h httphealth.Network, ctrl *kube.Controller, probeSettings httphealth.Settings) ([]humus.Service, error) {
+	probes, err := httphealth.NewService(ctx, s, h, probeSettings, health.Readiness(ctrl.Synced()))
 	if err != nil {
 		return nil, err
 	}

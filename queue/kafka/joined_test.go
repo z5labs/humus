@@ -217,12 +217,12 @@ func TestService_Joined(t *testing.T) {
 // join its group.
 func probedConsumer(settings kafka.Settings, probeSettings httphealth.Settings) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 	nop := queue.ProcessorFunc[kafka.Message](func(context.Context, kafka.Message) error { return nil })
-	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	return func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		consumer, err := kafka.NewService(s, settings, nop)
 		if err != nil {
 			return nil, err
 		}
-		probes, err := httphealth.NewService(s, probeSettings, health.Readiness(consumer.Joined()))
+		probes, err := httphealth.NewService(ctx, s, h, probeSettings, health.Readiness(consumer.Joined()))
 		if err != nil {
 			return nil, err
 		}

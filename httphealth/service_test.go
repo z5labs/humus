@@ -62,8 +62,8 @@ func probeSettings(t *testing.T, ca *humustest.CA) httphealth.Settings {
 // probes returns an Init whose only Service is a probes server on settings,
 // with opts.
 func probes(settings httphealth.Settings, opts ...health.Option) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		svc, err := httphealth.NewService(s, settings, opts...)
+	return func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		svc, err := httphealth.NewService(ctx, s, h, settings, opts...)
 		if err != nil {
 			return nil, err
 		}
@@ -95,10 +95,10 @@ func probe(t *testing.T, c *http.Client, url string) int {
 	return resp.StatusCode
 }
 
-// hostSetup returns a Setup on h with telemetry off, for a test that drives
-// a Service directly rather than through an App.
-func hostSetup(h *humustest.Host) *humus.Setup {
-	return &humus.Setup{Host: h.Host(), Telemetry: telemetry.Noop()}
+// hostSetup returns a Setup with telemetry off and no Host, for a test that
+// drives a Service directly rather than through an App.
+func hostSetup() *humus.Setup {
+	return &humus.Setup{Telemetry: telemetry.Noop()}
 }
 
 // requireRefused fails t unless a DialTCP to address is refused.
@@ -126,7 +126,7 @@ func records(tel *humustest.Telemetry) []sdklog.Record {
 func TestService(t *testing.T) {
 	humustest.TestService(t, func(t *testing.T, s *humus.Setup) humus.Service {
 		cert := humustest.NewCA(t).Issue(t, "localhost")
-		svc, err := httphealth.NewService(s, httphealth.Settings{
+		svc, err := httphealth.NewService(t.Context(), s, humustest.NewHost(t), httphealth.Settings{
 			Addr: ":8081",
 			TLS:  &tls.Config{Certificates: []tls.Certificate{cert.TLS()}},
 		})
@@ -142,15 +142,15 @@ func TestInit_is_not_ready_during_the_drain(t *testing.T) {
 
 		// apiInit returns an API on :8443 and a probes server on :8081, and
 		// no health Service: the probes server owns readiness.
-		apiInit := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+		apiInit := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 			settings := httpserver.DefaultSettings()
 			settings.Addr = ":8443"
 			settings.TLS = &tls.Config{Certificates: []tls.Certificate{ca.Issue(t, "localhost").TLS()}}
-			api, err := httpserver.NewService(s, settings, http.NotFoundHandler())
+			api, err := httpserver.NewService(ctx, s, h, settings, http.NotFoundHandler())
 			if err != nil {
 				return nil, err
 			}
-			probes, err := httphealth.NewService(s, probeSettings(t, ca))
+			probes, err := httphealth.NewService(ctx, s, h, probeSettings(t, ca))
 			if err != nil {
 				return nil, err
 			}
@@ -258,8 +258,8 @@ func TestService_answers_no_probe_before_Init_returns(t *testing.T) {
 		h := humustest.NewHost(t)
 		settings := probeSettings(t, ca)
 		start := time.Now()
-		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-			svc, err := httphealth.NewService(s, settings)
+		init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			svc, err := httphealth.NewService(ctx, s, h, settings)
 			if err != nil {
 				return nil, err
 			}
@@ -410,7 +410,7 @@ func TestNewService_settings(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
 
-			svc, err := httphealth.NewService(hostSetup(h), httphealth.Settings{})
+			svc, err := httphealth.NewService(t.Context(), hostSetup(), h, httphealth.Settings{})
 			require.Nil(t, svc)
 			require.ErrorContains(t, err, "httphealth: NewService")
 			require.ErrorContains(t, err, "Settings.Addr")
@@ -422,7 +422,7 @@ func TestNewService_settings(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
 
-			svc, err := httphealth.NewService(hostSetup(h), probeSettings(t, humustest.NewCA(t)),
+			svc, err := httphealth.NewService(t.Context(), hostSetup(), h, probeSettings(t, humustest.NewCA(t)),
 				health.Readiness(healthyMonitor), nil,
 			)
 			require.Nil(t, svc)
@@ -436,7 +436,7 @@ func TestNewService_settings(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
 
-			_, err := httphealth.NewService(hostSetup(h), httphealth.Settings{Addr: ":8081"}, nil)
+			_, err := httphealth.NewService(t.Context(), hostSetup(), h, httphealth.Settings{Addr: ":8081"}, nil)
 			require.ErrorContains(t, err, "Settings.TLS must not be nil")
 			require.ErrorContains(t, err, "opts[0] must not be nil")
 			require.NotContains(t, err.Error(), "Settings.Addr")
@@ -450,7 +450,7 @@ func TestNewService_settings(t *testing.T) {
 			settings := probeSettings(t, humustest.NewCA(t))
 			settings.TLS.ClientAuth = tls.RequireAndVerifyClientCert
 
-			svc, err := httphealth.NewService(hostSetup(h), settings)
+			svc, err := httphealth.NewService(t.Context(), hostSetup(), h, settings)
 			require.Nil(t, svc)
 			require.ErrorContains(t, err, "Settings.TLS")
 			require.ErrorContains(t, err, "client certificate")
@@ -467,8 +467,8 @@ func TestNewService_the_listener(t *testing.T) {
 			h := humustest.NewHost(t)
 			errInit := errors.New("the brokers are misconfigured")
 			settings := probeSettings(t, ca)
-			init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-				if _, err := httphealth.NewService(s, settings); err != nil {
+			init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+				if _, err := httphealth.NewService(ctx, s, h, settings); err != nil {
 					return nil, err
 				}
 				return nil, errInit
@@ -491,7 +491,7 @@ func TestNewService_the_listener(t *testing.T) {
 			require.NoError(t, err)
 			defer func() { _ = l.Close() }()
 
-			svc, err := httphealth.NewService(hostSetup(h), probeSettings(t, humustest.NewCA(t)))
+			svc, err := httphealth.NewService(t.Context(), hostSetup(), h, probeSettings(t, humustest.NewCA(t)))
 			require.Nil(t, svc)
 			require.ErrorIs(t, err, syscall.EADDRINUSE)
 			require.ErrorContains(t, err, "httphealth: NewService")
@@ -506,8 +506,8 @@ func TestService_Addr_reports_the_port_the_Host_picked(t *testing.T) {
 		settings := probeSettings(t, ca)
 		settings.Addr = ":0"
 		addrs := make(chan net.Addr, 1)
-		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-			svc, err := httphealth.NewService(s, settings)
+		init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			svc, err := httphealth.NewService(ctx, s, h, settings)
 			if err != nil {
 				return nil, err
 			}
@@ -534,7 +534,7 @@ func TestService_Shutdown(t *testing.T) {
 	t.Run("before Serve, Serve then returns nil at once", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
-			svc, err := httphealth.NewService(hostSetup(h), probeSettings(t, humustest.NewCA(t)))
+			svc, err := httphealth.NewService(t.Context(), hostSetup(), h, probeSettings(t, humustest.NewCA(t)))
 			require.NoError(t, err)
 
 			require.NoError(t, svc.Shutdown(t.Context()))
@@ -557,7 +557,7 @@ func TestService_Shutdown(t *testing.T) {
 				cancelled <- ctx.Err()
 				return false, ctx.Err()
 			})
-			svc, err := httphealth.NewService(hostSetup(h), probeSettings(t, ca), health.Liveness(slow))
+			svc, err := httphealth.NewService(t.Context(), hostSetup(), h, probeSettings(t, ca), health.Liveness(slow))
 			require.NoError(t, err)
 			served := make(chan error, 1)
 			go func() { served <- svc.Serve(t.Context()) }()
@@ -588,7 +588,7 @@ func TestService_Shutdown(t *testing.T) {
 	t.Run("a second call returns nil", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
-			svc, err := httphealth.NewService(hostSetup(h), probeSettings(t, humustest.NewCA(t)))
+			svc, err := httphealth.NewService(t.Context(), hostSetup(), h, probeSettings(t, humustest.NewCA(t)))
 			require.NoError(t, err)
 			served := make(chan error, 1)
 			go func() { served <- svc.Serve(t.Context()) }()

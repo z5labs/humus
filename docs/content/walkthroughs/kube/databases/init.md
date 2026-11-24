@@ -322,7 +322,7 @@ if err != nil {
 An `httphealth` server, ready once the Controller's caches have synced:
 
 ```go
-	probes, err := httphealth.NewService(s, set.Probes, health.Readiness(ctrl.Synced()))
+	probes, err := httphealth.NewService(ctx, s, h, set.Probes, health.Readiness(ctrl.Synced()))
 	if err != nil {
 		return nil, err
 	}

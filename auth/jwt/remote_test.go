@@ -164,11 +164,11 @@ func newNetwork(t *testing.T, handler http.Handler) *network {
 	t.Helper()
 	n := &network{h: humustest.NewHost(t), ca: humustest.NewCA(t)}
 	cert := n.ca.Issue(t, "idp")
-	p, status := humustest.Start(t, n.h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	p, status := humustest.Start(t, n.h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = ":8443"
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
-		svc, err := httpserver.NewService(s, settings, handler)
+		svc, err := httpserver.NewService(ctx, s, h, settings, handler)
 		if err != nil {
 			return nil, err
 		}
@@ -186,7 +186,7 @@ func newNetwork(t *testing.T, handler http.Handler) *network {
 // remoteKeySet is how the end user's Init builds a RemoteKeySet: with an
 // httpclient client for the key set's origin, which trusts the provider
 // through its TLS.RootCAs.
-func remoteKeySet(s *humus.Setup, roots *x509.CertPool) (*jwt.RemoteKeySet, error) {
+func remoteKeySet(s *humus.Setup, n httpclient.Network, roots *x509.CertPool) (*jwt.RemoteKeySet, error) {
 	u, err := url.Parse(jwksURL)
 	if err != nil {
 		return nil, err
@@ -194,7 +194,7 @@ func remoteKeySet(s *humus.Setup, roots *x509.CertPool) (*jwt.RemoteKeySet, erro
 	settings := httpclient.DefaultSettings()
 	settings.BaseURL = &url.URL{Scheme: u.Scheme, Host: u.Host}
 	settings.TLS = &tls.Config{RootCAs: roots}
-	idp, err := httpclient.NewClient(s, settings)
+	idp, err := httpclient.NewClient(s, n, settings)
 	if err != nil {
 		return nil, err
 	}
@@ -218,8 +218,8 @@ func startAPI(t *testing.T, n *network) *api {
 	t.Helper()
 	cert := n.ca.Issue(t, "carts")
 	tel := humustest.NewTelemetry()
-	p, status := httpservertest.Start(t, n.h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		keys, err := remoteKeySet(s, n.ca.Pool())
+	p, status := httpservertest.Start(t, n.h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		keys, err := remoteKeySet(s, h, n.ca.Pool())
 		if err != nil {
 			return nil, err
 		}
@@ -243,7 +243,7 @@ func startAPI(t *testing.T, n *network) *api {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = ":9443"
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
-		svc, err := httpserver.NewService(s, settings, handler)
+		svc, err := httpserver.NewService(ctx, s, h, settings, handler)
 		if err != nil {
 			return nil, err
 		}
@@ -320,8 +320,8 @@ func fetch(t *testing.T, n *network) ([]jwt.Key, error) {
 		keys    []jwt.Key
 		keysErr error
 	)
-	_, st := humustest.Start(t, n.h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		remote, err := remoteKeySet(s, n.ca.Pool())
+	_, st := humustest.Start(t, n.h.Host(), func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		remote, err := remoteKeySet(s, h, n.ca.Pool())
 		if err != nil {
 			return nil, err
 		}

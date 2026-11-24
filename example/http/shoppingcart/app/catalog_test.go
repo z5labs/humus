@@ -61,7 +61,7 @@ func (c *fakeCatalog) fail(err error) {
 	c.err = err
 }
 
-func (c *fakeCatalog) open(*humus.Setup, httpclient.Settings) (endpoint.Catalog, func(context.Context) error, error) {
+func (c *fakeCatalog) open(*humus.Setup, httpclient.Network, httpclient.Settings) (endpoint.Catalog, func(context.Context) error, error) {
 	return c, func(context.Context) error { return nil }, nil
 }
 
@@ -134,7 +134,7 @@ func (c *catalogServer) clients() []string {
 
 func (c *catalogServer) serve(t *testing.T, host humus.Host, addr string, cert *humustest.Certificate, clientCAs *x509.CertPool) (stop func()) {
 	t.Helper()
-	proc, status := humustest.Start(t, host, func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	proc, status := humustest.Start(t, host, func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = addr
 		settings.TLS = &tls.Config{
@@ -145,7 +145,7 @@ func (c *catalogServer) serve(t *testing.T, host humus.Host, addr string, cert *
 		mux := http.NewServeMux()
 		mux.Handle("GET /products/{productId}", c)
 		mux.HandleFunc("GET /health/readiness", c.readiness)
-		svc, err := httpserver.NewService(s, settings, mux)
+		svc, err := httpserver.NewService(ctx, s, h, settings, mux)
 		if err != nil {
 			return nil, err
 		}

@@ -44,8 +44,8 @@ func fetch(t *testing.T, h *humustest.Host, http2 bool, handler http.Handler) re
 	settings.Addr = ":8443"
 	settings.TLS = &tls.Config{Certificates: []tls.Certificate{ca.Issue(t, "localhost").TLS()}}
 	require.Equal(t, 10*time.Second, settings.WriteTimeout)
-	p, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		svc, err := httpserver.NewService(s, settings, handler)
+	p, status := humustest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		svc, err := httpserver.NewService(ctx, s, h, settings, handler)
 		if err != nil {
 			return nil, err
 		}

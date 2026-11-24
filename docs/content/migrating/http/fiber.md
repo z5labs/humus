@@ -285,7 +285,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 	mux.Handle("/", route(app))
 	mux.Handle("/health/", httphealth.NewHandler(s, hs.Probes()))
 
-	svc, err := httpserver.NewService(s, settings, mux)
+	svc, err := httpserver.NewService(ctx, s, h, settings, mux)
 	if err != nil {
 		return nil, err
 	}

@@ -669,7 +669,7 @@ server of its own, so that is a probes server made with
 `httphealth.NewService`, returned beside the consumer:
 
 ```go
-probes, err := httphealth.NewService(s, probeSettings, health.Readiness(consumer.Consuming()))
+probes, err := httphealth.NewService(ctx, s, h, probeSettings, health.Readiness(consumer.Consuming()))
 if err != nil {
 	return nil, err
 }

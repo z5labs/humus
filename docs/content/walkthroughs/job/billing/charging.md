@@ -81,10 +81,10 @@ type Client struct {
 	key     string
 }
 
-func NewClient(s *humus.Setup, settings httpclient.Settings, key string) (*Client, error) {
+func NewClient(s *humus.Setup, n httpclient.Network, settings httpclient.Settings, key string) (*Client, error) {
 	settings.Classify = Classify
 	settings.ForwardScenario = false
-	c, err := httpclient.NewClient(s, settings)
+	c, err := httpclient.NewClient(s, n, settings)
 	if err != nil {
 		return nil, err
 	}

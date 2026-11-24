@@ -117,7 +117,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 	if err != nil {
 		return nil, err
 	}
-	probes, err := httphealth.NewService(s, set.Probes, health.Readiness(ctrl.Synced()))
+	probes, err := httphealth.NewService(ctx, s, h, set.Probes, health.Readiness(ctrl.Synced()))
 	if err != nil {
 		return nil, err
 	}

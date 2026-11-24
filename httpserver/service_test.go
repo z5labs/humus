@@ -46,10 +46,10 @@ func settingsFor(t *testing.T, ca *humustest.CA) httpserver.Settings {
 	return settings
 }
 
-// serves returns an Init whose only Service serves h on settings.
-func serves(settings httpserver.Settings, h http.Handler) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		svc, err := httpserver.NewService(s, settings, h)
+// serves returns an Init whose only Service serves handler on settings.
+func serves(settings httpserver.Settings, handler http.Handler) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
+	return func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		svc, err := httpserver.NewService(ctx, s, h, settings, handler)
 		if err != nil {
 			return nil, err
 		}
@@ -153,7 +153,7 @@ func TestService_meets_the_Service_contract(t *testing.T) {
 		settings.Addr = ":8443"
 		cert := humustest.NewCA(t).Issue(t, "localhost")
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
-		svc, err := httpserver.NewService(s, settings, http.NotFoundHandler())
+		svc, err := httpserver.NewService(t.Context(), s, humustest.NewHost(t), settings, http.NotFoundHandler())
 		require.NoError(t, err)
 		return svc
 	})
@@ -524,10 +524,10 @@ func TestService_ALPN_order(t *testing.T) {
 	})
 }
 
-// newSetup returns a Setup on h with telemetry off, for a test that drives a
-// Service directly rather than through an App.
-func newSetup(h *humustest.Host) *humus.Setup {
-	return &humus.Setup{Host: h.Host(), Telemetry: telemetry.Noop()}
+// newSetup returns a Setup with telemetry off and no Host, for a test that
+// drives a Service directly rather than through an App.
+func newSetup() *humus.Setup {
+	return &humus.Setup{Telemetry: telemetry.Noop()}
 }
 
 func TestNewService_settings(t *testing.T) {
@@ -535,7 +535,7 @@ func TestNewService_settings(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
 
-			svc, err := httpserver.NewService(newSetup(h), httpserver.DefaultSettings(), hello)
+			svc, err := httpserver.NewService(t.Context(), newSetup(), h, httpserver.DefaultSettings(), hello)
 			require.Nil(t, svc)
 			require.ErrorContains(t, err, "Settings.Addr")
 			require.ErrorContains(t, err, "Settings.TLS")
@@ -550,7 +550,7 @@ func TestNewService_settings(t *testing.T) {
 			settings.ReadTimeout = -time.Second
 			settings.MaxHeaderBytes = 0
 
-			_, err := httpserver.NewService(newSetup(h), settings, hello)
+			_, err := httpserver.NewService(t.Context(), newSetup(), h, settings, hello)
 			require.ErrorContains(t, err, "Settings.ReadTimeout must not be negative")
 			require.ErrorContains(t, err, "Settings.MaxHeaderBytes must be positive")
 			require.NotContains(t, err.Error(), "Settings.Addr")
@@ -562,7 +562,7 @@ func TestNewService_settings(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
 
-			svc, err := httpserver.NewService(newSetup(h), settingsFor(t, humustest.NewCA(t)), hello)
+			svc, err := httpserver.NewService(t.Context(), newSetup(), h, settingsFor(t, humustest.NewCA(t)), hello)
 			require.NoError(t, err)
 			require.NotNil(t, svc)
 			require.NoError(t, svc.Shutdown(t.Context()))
@@ -573,7 +573,7 @@ func TestNewService_settings(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
 
-			svc, err := httpserver.NewService(newSetup(h), settingsFor(t, humustest.NewCA(t)), nil)
+			svc, err := httpserver.NewService(t.Context(), newSetup(), h, settingsFor(t, humustest.NewCA(t)), nil)
 			require.Nil(t, svc)
 			require.ErrorContains(t, err, "handler must not be nil")
 			requireRefused(t, h, "localhost:8443")
@@ -587,12 +587,12 @@ func TestNewService_the_listener(t *testing.T) {
 			ca := humustest.NewCA(t)
 			h := humustest.NewHost(t)
 			settings := settingsFor(t, ca)
-			init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-				first, err := httpserver.NewService(s, settings, hello)
+			init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+				first, err := httpserver.NewService(ctx, s, h, settings, hello)
 				if err != nil {
 					return nil, err
 				}
-				second, err := httpserver.NewService(s, settings, hello)
+				second, err := httpserver.NewService(ctx, s, h, settings, hello)
 				if err != nil {
 					return nil, err
 				}
@@ -615,8 +615,8 @@ func TestNewService_the_listener(t *testing.T) {
 			h := humustest.NewHost(t)
 			errInit := errors.New("the database is unreachable")
 			settings := settingsFor(t, ca)
-			init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-				if _, err := httpserver.NewService(s, settings, hello); err != nil {
+			init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+				if _, err := httpserver.NewService(ctx, s, h, settings, hello); err != nil {
 					return nil, err
 				}
 				return nil, errInit
@@ -640,8 +640,8 @@ func TestService_Addr_reports_the_port_the_Host_picked(t *testing.T) {
 		settings := settingsFor(t, ca)
 		settings.Addr = ":0"
 		addrs := make(chan net.Addr, 1)
-		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-			svc, err := httpserver.NewService(s, settings, hello)
+		init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			svc, err := httpserver.NewService(ctx, s, h, settings, hello)
 			if err != nil {
 				return nil, err
 			}
@@ -669,7 +669,7 @@ func TestService_Shutdown(t *testing.T) {
 	t.Run("before Serve, Serve then returns nil at once", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
-			svc, err := httpserver.NewService(newSetup(h), settingsFor(t, humustest.NewCA(t)), hello)
+			svc, err := httpserver.NewService(t.Context(), newSetup(), h, settingsFor(t, humustest.NewCA(t)), hello)
 			require.NoError(t, err)
 
 			require.NoError(t, svc.Shutdown(t.Context()))
@@ -691,7 +691,7 @@ func TestService_Shutdown(t *testing.T) {
 				<-r.Context().Done()
 				cancelled <- r.Context().Err()
 			})
-			svc, err := httpserver.NewService(newSetup(h), settingsFor(t, ca), handler)
+			svc, err := httpserver.NewService(t.Context(), newSetup(), h, settingsFor(t, ca), handler)
 			require.NoError(t, err)
 			served := make(chan error, 1)
 			go func() { served <- svc.Serve(t.Context()) }()
@@ -714,7 +714,7 @@ func TestService_Shutdown(t *testing.T) {
 	t.Run("a second call returns nil", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			h := humustest.NewHost(t)
-			svc, err := httpserver.NewService(newSetup(h), settingsFor(t, humustest.NewCA(t)), hello)
+			svc, err := httpserver.NewService(t.Context(), newSetup(), h, settingsFor(t, humustest.NewCA(t)), hello)
 			require.NoError(t, err)
 			served := make(chan error, 1)
 			go func() { served <- svc.Serve(t.Context()) }()
@@ -733,13 +733,13 @@ func TestService_Shutdown_with_a_done_context_closes_the_ShuttingDown_channel(t 
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
 		h := humustest.NewHost(t)
-		s := &humus.Setup{Host: h.Host(), Telemetry: telemetry.Noop()}
+		s := &humus.Setup{Telemetry: telemetry.Noop()}
 		channels := make(chan (<-chan struct{}), 1)
 		handler := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 			channels <- httpserver.ShuttingDown(r.Context())
 			<-r.Context().Done()
 		})
-		svc, err := httpserver.NewService(s, settingsFor(t, ca), handler)
+		svc, err := httpserver.NewService(t.Context(), s, h, settingsFor(t, ca), handler)
 		require.NoError(t, err)
 		served := make(chan error, 1)
 		go func() { served <- svc.Serve(t.Context()) }()

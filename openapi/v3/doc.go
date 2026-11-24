@@ -27,7 +27,7 @@
 //	if err != nil {
 //		return nil, err
 //	}
-//	svc, err := httpserver.NewService(s, settings, api)
+//	svc, err := httpserver.NewService(ctx, s, h, settings, api)
 //
 // The import path, github.com/z5labs/humus/openapi/v3, names the major
 // version of OpenAPI the package follows. The package's name is openapi.

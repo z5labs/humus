@@ -72,7 +72,7 @@ func initWith(ctx context.Context, s *humus.Setup, h humus.Host, open openStore)
 		return nil, err
 	}
 
-	client, err := payments.NewClient(s, set.Payments, set.APIKey)
+	client, err := payments.NewClient(s, h, set.Payments, set.APIKey)
 	if err != nil {
 		return nil, err
 	}
