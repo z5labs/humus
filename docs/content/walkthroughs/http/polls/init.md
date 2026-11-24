@@ -434,6 +434,10 @@ func initWith(ctx context.Context, s *humus.Setup, h humus.Host, open openBacken
 }
 ```
 
+`Init` is given the host, `h`, and hands it to each runtime as the network
+it uses: the pool dials through it, and `httpserver.NewService` listens
+through it.
+
 ## Readiness
 
 The probes are on the service's own port, at `/health/`, beside the Site.

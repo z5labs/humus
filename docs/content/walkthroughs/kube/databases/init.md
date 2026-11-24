@@ -265,6 +265,10 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 	}
 ```
 
+`Init` is given the host, `h`, and hands it on as the network
+`kube.NewClient` dials the API server through, and the probes' `httphealth`
+server listens through.
+
 `openPostgres` dials TCP through the Host, so the tests can give the pool
 their own network, and a Unix socket with a `net.Dialer` of its own. It
 closes the pool when the App stops. The `Server` gets the

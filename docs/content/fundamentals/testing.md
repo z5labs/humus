@@ -125,7 +125,7 @@ run for `h` and `init`. With no options, that App has:
 
 - the host `h`, which for an App on the default host is a humustest Host's
   `Host()`, in place of `humus.OSHost()`, and for an App on a host of its
-  own is one built from a humustest Host's parts;
+  own is one [built from a humustest Host's parts](#a-host-of-the-end-users-own);
 - `Main`'s telemetry default, so its log records reach `p.Stdout()` as JSON
   lines;
 - `Main`'s 20s grace period, and no drain.
@@ -304,8 +304,13 @@ A test of an App value it builds itself, rather than of the end user's
 ## The network
 
 humustest's Host is bedrock's
-[hosttest](https://pkg.go.dev/github.com/z5labs/bedrock/host/hosttest), and
-its network follows hosttest's rules, which follow a real network's. The
+[hosttest](https://pkg.go.dev/github.com/z5labs/bedrock/host/hosttest)
+underneath. It has the four network methods of `humus.IPNetwork`,
+`ListenTCP`, `DialTCP`, `ListenUDP` and `DialUDP`, so it is the network of
+any host, and `Filesystem()`, which returns its concrete
+`*hosttest.Filesystem`. `h.Host()` is the default host on them,
+`humus.Host{IPNetwork: h, Filesystem: h.Filesystem()}`. Its network follows
+hosttest's rules, which follow a real network's. The
 rules for [names](https://pkg.go.dev/github.com/z5labs/bedrock/host/hosttest#hdr-Names),
 [TCP connections](https://pkg.go.dev/github.com/z5labs/bedrock/host/hosttest#hdr-TCP_connections)
 and [UDP](https://pkg.go.dev/github.com/z5labs/bedrock/host/hosttest#hdr-UDP)
@@ -565,6 +570,27 @@ App, and for `orders:8443` before it calls it. An
 [`httpclient`]({{< relref "/dependencies/http#testing" >}}) client is tested the
 same way, next to an `httpserver` App.
 
+### Replacing one seam
+
+A test that changes one network call, such as making every outbound dial
+fail, wraps the Host's network in a
+[`hosttest.Seams`](https://pkg.go.dev/github.com/z5labs/bedrock/host/hosttest#Seams).
+A `Seams` calls the function set for a method, and the network it wraps for
+every other method, so the test writes only the call it changes. Here every
+`DialTCP` is reset, so an `Init` that dials its database fails:
+
+```go
+th := humustest.NewHost(t)
+n := hosttest.Seams{Network: th}
+n.OnDialTCP = func(context.Context, string, string) (net.Conn, error) { return nil, syscall.ECONNRESET }
+_, status := humustest.Start(t, humus.Host{IPNetwork: n, Filesystem: th.Filesystem()}, dialsInit,
+	humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
+)
+```
+
+A runtime takes its network as an argument, so `Init` can also hand one
+runtime a `Seams` and the others the host it is given.
+
 ## Files
 
 The filesystem is real. `NewHost` takes a directory from `t.TempDir()`, which
@@ -647,6 +673,33 @@ fmt.Println("nothing written:", errors.Is(err, fs.ErrNotExist))
 
 Any type with `humus.Filesystem`'s twelve methods is one, so `fullDisk`
 embeds the Host's and writes only the method it changes.
+
+### A host of the end user's own
+
+An App on a host of its own, run in `main` with
+[`humus.MainOn`]({{< relref "/fundamentals/lifecycle#a-host-of-the-end-users-own" >}}),
+is tested on a host of the same type, built from the test Host's parts: the
+Host as its network, and `Filesystem()` as its files. `Filesystem()` is the
+concrete `*hosttest.Filesystem`, so it satisfies a filesystem interface that
+lists more than `humus.Filesystem`, such as one with `ReadFile`. The files
+the App reads are written with `hosttest.WithFiles`:
+
+```go
+th := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
+	"etc/greeter/greeting":     []byte("hello"),
+	"run/greeter/deregistered": nil,
+}))
+h := filesHost{IPNetwork: th, Files: th.Filesystem()}
+p, status := humustest.Start(t, h, initOnFiles,
+	humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
+	humustest.WithApp(humus.WithDrain(drainOnFiles(h, th.Path("run/greeter/deregistered")))),
+	humustest.WithEnv(map[string]string{"GREETING_FILE": th.Path("etc/greeter/greeting")}),
+)
+```
+
+`Start` infers the host type from `h`. It runs only the options it is
+given, so the test passes the Drain that `main` passes to `MainOn`, built on
+the test host, with `WithApp`.
 
 [The App lifecycle]({{< relref "/fundamentals/lifecycle#why-filesystem-hands-out-osfile" >}})
 explains why `Filesystem` hands out `*os.File`.

@@ -541,6 +541,11 @@ Then it builds `grpcauth`'s interceptors, the Service and the probes, and
 returns the Service and the probes. The wallet's `Init` reads its settings,
 builds the ledger's Client, the key set and the Verifier, then the same.
 
+Each `Init` is given the host, `h`, and hands it to each runtime as the
+network it uses: `grpcserver.NewService` and `grpchealth.NewService` listen
+through it, and the pool, the ledger's `grpcclient` Client and the key set's
+`httpclient` client dial through it.
+
 ## `main`
 
 Each `main` passes its `Init`, `BuildTelemetry` and `Faults` to

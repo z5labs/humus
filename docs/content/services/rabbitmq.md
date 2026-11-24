@@ -187,7 +187,11 @@ humus.Main(Init, humus.WithTelemetry(buildTelemetry))
 again, rejects a `Concurrency` above `Prefetch` and a nil `Processor`, and
 builds the Service's instruments. It registers no `OnStop` function, so an
 `Init` that fails after it leaks nothing. `Serve` connects, as
-[Connecting](#connecting) describes, and consumes. Dialling through the Host
+[Connecting](#connecting) describes, and consumes.
+
+`NewService(s, n, settings, p)` and `NewPublisher(s, n, settings)` take the
+network they dial through, `n`, right after `s`: a `rabbitmq.Network`, which
+lists only `DialTCP`. `Init` passes its host. Dialling through that network
 is what lets a test put the App on a network of its own, with no test-only
 seam.
 
