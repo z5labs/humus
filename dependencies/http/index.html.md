@@ -1,6 +1,6 @@
 # Calling HTTP services
 
-The [`httpclient`](https://pkg.go.dev/github.com/z5labs/humus/httpclient)
+The [`httpclient`](https://pkg.go.dev/github.com/z5labs/humus/http/httpclient)
 package calls another service over HTTP. `httpclient.NewClient` builds a
 client for one dependency in the end user's `Init`, from `Settings` the end
 user sources, and returns a plain `*http.Client`. Its calls go through the
@@ -556,7 +556,7 @@ or for at most `Breaker.ProbeTimeout`, after which another probe may go.
 ### Its log records
 
 The client logs through the Setup's `LoggerProvider`, with the logger
-`github.com/z5labs/humus/httpclient`, one record for each change of the
+`github.com/z5labs/humus/http/httpclient`, one record for each change of the
 breaker's state, in the context of the call that made it:
 
 | Record | Severity | When |
@@ -666,7 +666,7 @@ The breaker's state changes are the client's only log records, as
 
 The client records four instruments of humus's own, for its breaker and its
 retries, with the Setup's `MeterProvider`, in the scope
-`github.com/z5labs/humus/httpclient`, the scope of its log records:
+`github.com/z5labs/humus/http/httpclient`, the scope of its log records:
 
 | Instrument | Kind | Unit | Attributes | Recorded |
 |---|---|---|---|---|

@@ -53,7 +53,7 @@ returns a job, whose run greets it. Put it in &lt;code&gt;hello.go&lt;/code&gt;:
 &lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;span class="line"&gt;&lt;span class="cl"&gt;&lt;span class="w"&gt;&lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;
 &lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;&lt;h2 id="3-write-main"&gt;3. Write main&lt;/h2&gt;
 &lt;p&gt;&lt;code&gt;humus.Main&lt;/code&gt; runs &lt;code&gt;Init&lt;/code&gt;&amp;rsquo;s Services until they return, then exits with their
-status. Put it in &lt;code&gt;main.go&lt;/code&gt;:&lt;/p&gt;</description></item><item><title>Calling HTTP services</title><link>https://z5labs.github.io/humus/dependencies/http/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/dependencies/http/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/httpclient"&gt;&lt;code&gt;httpclient&lt;/code&gt;&lt;/a&gt;
+status. Put it in &lt;code&gt;main.go&lt;/code&gt;:&lt;/p&gt;</description></item><item><title>Calling HTTP services</title><link>https://z5labs.github.io/humus/dependencies/http/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/dependencies/http/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/http/httpclient"&gt;&lt;code&gt;httpclient&lt;/code&gt;&lt;/a&gt;
 package calls another service over HTTP. &lt;code&gt;httpclient.NewClient&lt;/code&gt; builds a
 client for one dependency in the end user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt;, from &lt;code&gt;Settings&lt;/code&gt; the end
 user sources, and returns a plain &lt;code&gt;*http.Client&lt;/code&gt;. Its calls go through the

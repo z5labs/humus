@@ -476,7 +476,7 @@ OpenTelemetry's instrumentation breaks calls down already.
 
 | Client | Meter scope | The dependency's attributes |
 |---|---|---|
-| [`httpclient`](/humus/dependencies/http/#humuss-own-instruments) | `github.com/z5labs/humus/httpclient` | `server.address` and `server.port` of `BaseURL`'s origin |
+| [`httpclient`](/humus/dependencies/http/#humuss-own-instruments) | `github.com/z5labs/humus/http/httpclient` | `server.address` and `server.port` of `BaseURL`'s origin |
 | [`grpcclient`](/humus/dependencies/grpc/#humuss-own-instruments) | `github.com/z5labs/humus/grpc/grpcclient` | `server.address` and `server.port` of `Addr` |
 | [Kafka `Producer`](/humus/services/kafka/#humuss-own-instruments) | `github.com/z5labs/humus/queue/kafka` | `messaging.system`, set to `kafka`, and `server.address` and `server.port` of the first of `ProducerSettings.Brokers` |
 | [RabbitMQ `Publisher`](/humus/services/rabbitmq/#humuss-own-instruments) | `github.com/z5labs/humus/queue/rabbitmq` | `server.address` and `server.port` of `Connection.Addr` |
@@ -660,7 +660,7 @@ func ordersTelemetry(reader sdkmetric.Reader) telemetry.Builder {
 				sdkmetric.NewView(
 					sdkmetric.Instrument{
 						Name:  "humus.retry.decisions",
-						Scope: instrumentation.Scope{Name: "github.com/z5labs/humus/httpclient"},
+						Scope: instrumentation.Scope{Name: "github.com/z5labs/humus/http/httpclient"},
 					},
 					sdkmetric.Stream{Name: "orders.payments.retries"},
 				),
@@ -715,7 +715,7 @@ rm, err := tel.Metrics(context.Background())
 require.NoError(t, err)
 byState := map[string]int64{}
 for _, sm := range rm.ScopeMetrics {
-	if sm.Scope.Name != "github.com/z5labs/humus/httpclient" {
+	if sm.Scope.Name != "github.com/z5labs/humus/http/httpclient" {
 		continue // otelhttp's instruments, and any other client's
 	}
 	for _, m := range sm.Metrics {

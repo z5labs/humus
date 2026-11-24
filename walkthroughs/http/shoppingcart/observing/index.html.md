@@ -122,7 +122,7 @@ Neither service records an instrument of its own. humus records these:
 |---|---|
 | `http.server.request.duration` | `httpserver`, for each request to either service |
 | `http.client.request.duration` | each `httpclient` Client, for each attempt: the cart's two, and the catalog's for the key set |
-| `humus.circuit.state`, `humus.circuit.calls`, `humus.circuit.transitions`, `humus.retry.decisions` | the same Clients, scope `github.com/z5labs/humus/httpclient` |
+| `humus.circuit.state`, `humus.circuit.calls`, `humus.circuit.transitions`, `humus.retry.decisions` | the same Clients, scope `github.com/z5labs/humus/http/httpclient` |
 
 In Mimir, a name's dots are underscores, and `service.name` is `job`:
 
@@ -140,7 +140,7 @@ for _, name := range []string{"humus.circuit.state", "humus.circuit.calls", "hum
 ```
 
 ```text
-sum by (server_address, humus_circuit_state) (humus_circuit_state{job="cart", otel_scope_name="github.com/z5labs/humus/httpclient"})
+sum by (server_address, humus_circuit_state) (humus_circuit_state{job="cart", otel_scope_name="github.com/z5labs/humus/http/httpclient"})
 ```
 
 The Collector adds each pod's attributes, so the two replicas of a service
@@ -233,14 +233,14 @@ The breakers' rules keep `server_address`, so an alert says which
 dependency:
 
 ```yaml
-              expr: max by (server_address) (humus_circuit_state{job="cart", otel_scope_name="github.com/z5labs/humus/httpclient", humus_circuit_state="open"}) or on () vector(0)
+              expr: max by (server_address) (humus_circuit_state{job="cart", otel_scope_name="github.com/z5labs/humus/http/httpclient", humus_circuit_state="open"}) or on () vector(0)
 ```
 
 A counter's rule adds the series that first appeared in its window, which
 `increase` alone reads as no change:
 
 ```yaml
-              expr: (sum by (server_address) (increase(humus_circuit_transitions{job="cart", otel_scope_name="github.com/z5labs/humus/httpclient", humus_circuit_state="open"}[5m]) or (humus_circuit_transitions{job="cart", otel_scope_name="github.com/z5labs/humus/httpclient", humus_circuit_state="open"} unless humus_circuit_transitions{job="cart", otel_scope_name="github.com/z5labs/humus/httpclient", humus_circuit_state="open"} offset 5m))) or on () vector(0)
+              expr: (sum by (server_address) (increase(humus_circuit_transitions{job="cart", otel_scope_name="github.com/z5labs/humus/http/httpclient", humus_circuit_state="open"}[5m]) or (humus_circuit_transitions{job="cart", otel_scope_name="github.com/z5labs/humus/http/httpclient", humus_circuit_state="open"} unless humus_circuit_transitions{job="cart", otel_scope_name="github.com/z5labs/humus/http/httpclient", humus_circuit_state="open"} offset 5m))) or on () vector(0)
 ```
 
 ## The dashboard
