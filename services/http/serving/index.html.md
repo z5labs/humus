@@ -1,12 +1,12 @@
 # Serving HTTP
 
-The [`httpserver`](https://pkg.go.dev/github.com/z5labs/humus/httpserver)
+The [`httpserver`](https://pkg.go.dev/github.com/z5labs/humus/http/httpserver)
 package serves an `http.Handler` over TLS as a `humus.Service`. The end
 user's `Init` sources its `Settings`, builds the Service with
 `httpserver.NewService` and returns it, and `httpserver.Main` runs it with
 the defaults an HTTP server behind a load balancer needs: a 5s drain and a
 10s grace period. Its test package,
-[`httpservertest`](https://pkg.go.dev/github.com/z5labs/humus/httpserver/httpservertest),
+[`httpservertest`](https://pkg.go.dev/github.com/z5labs/humus/http/httpserver/httpservertest),
 runs the same App in a test, on the same defaults, with an HTTP/2 client.
 
 The package serves an `http.Handler` and has no REST DSL, which is
@@ -345,7 +345,7 @@ A response that runs until its client leaves, such as an event stream,
 holds `Shutdown` to the end of the grace period. On `httpserver.Main`'s
 defaults it is cut at SIGTERM+15s, and the App exits 1 with a
 `*humus.GracePeriodError`. So a feed watches
-[`httpserver.ShuttingDown`](https://pkg.go.dev/github.com/z5labs/humus/httpserver#ShuttingDown)
+[`httpserver.ShuttingDown`](https://pkg.go.dev/github.com/z5labs/humus/http/httpserver#ShuttingDown)
 and writes its events with
 [`sse`](https://pkg.go.dev/github.com/z5labs/humus/sse):
 
@@ -604,7 +604,7 @@ semantic conventions.
 
 The Service logs through the `LoggerProvider` of the Setup's telemetry, with
 the OpenTelemetry Logs API and the logger name
-`github.com/z5labs/humus/httpserver`, which is the records' instrumentation
+`github.com/z5labs/humus/http/httpserver`, which is the records' instrumentation
 scope:
 
 | Record | Severity | When |
@@ -646,7 +646,7 @@ processors:
     error_mode: ignore
     logs:
       log_record:
-        - instrumentation_scope.name == "github.com/z5labs/humus/httpserver" and IsMatch(body, "^http: TLS handshake error from .*: EOF$")
+        - instrumentation_scope.name == "github.com/z5labs/humus/http/httpserver" and IsMatch(body, "^http: TLS handshake error from .*: EOF$")
 ```
 
 Matching on the scope as well as the text drops only the Service's own
