@@ -39,7 +39,7 @@ import (
 	"github.com/z5labs/humus/example/http/shoppingcart/cases"
 	catalogapp "github.com/z5labs/humus/example/http/shoppingcart/catalog/app"
 	"github.com/z5labs/humus/example/http/shoppingcart/internal/postgrestest"
-	"github.com/z5labs/humus/httpserver"
+	"github.com/z5labs/humus/http/httpserver"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/telemetry"
 )

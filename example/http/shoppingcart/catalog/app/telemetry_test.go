@@ -17,7 +17,7 @@ import (
 	"github.com/z5labs/bedrock"
 
 	"github.com/z5labs/humus"
-	"github.com/z5labs/humus/httpserver/httpservertest"
+	"github.com/z5labs/humus/http/httpserver/httpservertest"
 	"github.com/z5labs/humus/humustest"
 )
 

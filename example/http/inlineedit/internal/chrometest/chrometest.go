@@ -38,7 +38,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/z5labs/humus"
-	"github.com/z5labs/humus/httpserver/httpservertest"
+	"github.com/z5labs/humus/http/httpserver/httpservertest"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/telemetry"
 )

@@ -22,7 +22,7 @@ import (
 )
 
 // loggerName is the name of the logger the Service logs through.
-const loggerName = "github.com/z5labs/humus/httpserver"
+const loggerName = "github.com/z5labs/humus/http/httpserver"
 
 // The ALPN protocol IDs of HTTP/2 and HTTP/1.1.
 const (

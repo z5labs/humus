@@ -20,7 +20,7 @@ import (
 
 	"github.com/z5labs/humus/example/http/polls/store"
 	"github.com/z5labs/humus/fault/jsonscenario"
-	"github.com/z5labs/humus/httpserver/httpservertest"
+	"github.com/z5labs/humus/http/httpserver/httpservertest"
 )
 
 func rehearsing(t *testing.T, header map[string]string, rules ...fit.Rule) map[string]string {

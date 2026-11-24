@@ -491,7 +491,7 @@ func TestNewHandler_passes_a_verifiers_panic_to_httpserver(t *testing.T) {
 		s.stop()
 		require.Empty(t, records(s.tel))
 		var recs []sdklog.Record
-		for _, r := range recordsOf(s.tel, "github.com/z5labs/humus/httpserver") {
+		for _, r := range recordsOf(s.tel, "github.com/z5labs/humus/http/httpserver") {
 			if r.Severity() == log.SeverityError {
 				recs = append(recs, r)
 			}

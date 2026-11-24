@@ -21,7 +21,7 @@ import (
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/example/http/inlineedit/contacts"
-	"github.com/z5labs/humus/httpserver"
+	"github.com/z5labs/humus/http/httpserver"
 	"github.com/z5labs/humus/hypermedia"
 	"github.com/z5labs/humus/sse"
 )

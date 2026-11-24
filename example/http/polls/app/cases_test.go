@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/z5labs/humus/example/http/polls/cases"
-	"github.com/z5labs/humus/httpserver/httpservertest"
+	"github.com/z5labs/humus/http/httpserver/httpservertest"
 )
 
 var replicaAddrs = []string{addr, "polls.internal:9443"}

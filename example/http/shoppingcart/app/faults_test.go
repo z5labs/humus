@@ -24,8 +24,8 @@ import (
 	"github.com/z5labs/humus/example/http/shoppingcart/database"
 	"github.com/z5labs/humus/example/http/shoppingcart/endpoint"
 	"github.com/z5labs/humus/fault/jsonscenario"
+	"github.com/z5labs/humus/http/httpserver/httpservertest"
 	"github.com/z5labs/humus/httpclient"
-	"github.com/z5labs/humus/httpserver/httpservertest"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/telemetry"
 )

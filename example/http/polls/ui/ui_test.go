@@ -27,8 +27,8 @@ import (
 	"github.com/z5labs/humus/example/http/polls/store"
 	"github.com/z5labs/humus/example/http/polls/store/storetest"
 	"github.com/z5labs/humus/example/http/polls/ui"
-	"github.com/z5labs/humus/httpserver"
-	"github.com/z5labs/humus/httpserver/httpservertest"
+	"github.com/z5labs/humus/http/httpserver"
+	"github.com/z5labs/humus/http/httpserver/httpservertest"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/hypermedia"
 )

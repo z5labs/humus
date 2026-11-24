@@ -16,7 +16,7 @@ import (
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/auth"
-	"github.com/z5labs/humus/httpserver"
+	"github.com/z5labs/humus/http/httpserver"
 )
 
 // Sessions is where the end user keeps browser sessions, such as a

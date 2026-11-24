@@ -27,7 +27,7 @@ import (
 	"github.com/z5labs/humus"
 	catalogdatabase "github.com/z5labs/humus/example/http/shoppingcart/catalog/database"
 	"github.com/z5labs/humus/example/http/shoppingcart/endpoint"
-	"github.com/z5labs/humus/httpserver/httpservertest"
+	"github.com/z5labs/humus/http/httpserver/httpservertest"
 	"github.com/z5labs/humus/humustest"
 )
 
