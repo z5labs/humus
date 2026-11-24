@@ -17,7 +17,7 @@ import (
 	"software.sslmate.com/src/go-pkcs12"
 
 	"github.com/z5labs/humus"
-	"github.com/z5labs/humus/httpserver"
+	"github.com/z5labs/humus/http/httpserver"
 )
 
 // Init is the end user's Init, sourced as the proposal's revisions 1 and 2

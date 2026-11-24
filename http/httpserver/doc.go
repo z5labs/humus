@@ -167,7 +167,7 @@
 //
 // The Service logs through the LoggerProvider of the Setup's telemetry,
 // with the OpenTelemetry Logs API and the logger name
-// "github.com/z5labs/humus/httpserver". It emits one INFO record,
+// "github.com/z5labs/humus/http/httpserver". It emits one INFO record,
 // "listening", when Serve starts, with the attribute server.address set to
 // [Service.Addr], and one ERROR record for each line net/http writes to the
 // server's error log, such as a TLS handshake error. Nothing reaches the

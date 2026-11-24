@@ -24,7 +24,7 @@ import (
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
 	"github.com/z5labs/humus"
-	"github.com/z5labs/humus/httpserver"
+	"github.com/z5labs/humus/http/httpserver"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/telemetry"
 )
@@ -34,7 +34,7 @@ import (
 // humustest.Start, and clients come from the Host's HTTPClient.
 
 // scope is the instrumentation scope of the Service's logger.
-const scope = "github.com/z5labs/humus/httpserver"
+const scope = "github.com/z5labs/humus/http/httpserver"
 
 // settingsFor returns DefaultSettings on :8443, over TLS with a certificate
 // for localhost from ca.

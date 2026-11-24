@@ -20,8 +20,8 @@ import (
 	"github.com/z5labs/bedrock/config"
 
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/http/httpserver"
 	"github.com/z5labs/humus/httpclient"
-	"github.com/z5labs/humus/httpserver"
 	"github.com/z5labs/humus/telemetry"
 )
 

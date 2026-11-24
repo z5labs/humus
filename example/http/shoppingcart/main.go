@@ -9,7 +9,7 @@ package main
 import (
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/example/http/shoppingcart/app"
-	"github.com/z5labs/humus/httpserver"
+	"github.com/z5labs/humus/http/httpserver"
 )
 
 func main() {

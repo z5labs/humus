@@ -35,8 +35,8 @@ import (
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/auth/jwt"
 	"github.com/z5labs/humus/example/http/shoppingcart/catalog/endpoint"
-	"github.com/z5labs/humus/httpserver"
-	"github.com/z5labs/humus/httpserver/httpservertest"
+	"github.com/z5labs/humus/http/httpserver"
+	"github.com/z5labs/humus/http/httpserver/httpservertest"
 	"github.com/z5labs/humus/humustest"
 )
 

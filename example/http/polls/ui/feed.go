@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/z5labs/humus/example/http/polls/store"
-	"github.com/z5labs/humus/httpserver"
+	"github.com/z5labs/humus/http/httpserver"
 	"github.com/z5labs/humus/sse"
 )
 

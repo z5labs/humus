@@ -6,7 +6,7 @@
 // Command datastarui serves inlineedit's contacts with Datastar: a row edited in place, and a live feed of every saved row.
 package main
 
-import "github.com/z5labs/humus/httpserver"
+import "github.com/z5labs/humus/http/httpserver"
 
 func main() {
 	httpserver.Main(Init)

@@ -17,7 +17,7 @@ import (
 	"github.com/z5labs/bedrock/config"
 
 	"github.com/z5labs/humus"
-	"github.com/z5labs/humus/httpserver"
+	"github.com/z5labs/humus/http/httpserver"
 	openapi "github.com/z5labs/humus/openapi/v3"
 	"github.com/z5labs/humus/openapi/v3/jsoncodec"
 	"github.com/z5labs/humus/openapi/v3/problem"

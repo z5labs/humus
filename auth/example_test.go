@@ -17,7 +17,7 @@ import (
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/auth"
-	"github.com/z5labs/humus/httpserver"
+	"github.com/z5labs/humus/http/httpserver"
 )
 
 // Operator is the end user's principal: who operates the admin API.

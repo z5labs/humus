@@ -34,7 +34,7 @@ import (
 	"github.com/z5labs/humus/example/http/shoppingcart/catalog/database"
 	"github.com/z5labs/humus/example/http/shoppingcart/catalog/endpoint"
 	"github.com/z5labs/humus/fault"
-	"github.com/z5labs/humus/httpserver/httpservertest"
+	"github.com/z5labs/humus/http/httpserver/httpservertest"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/telemetry"
 )
