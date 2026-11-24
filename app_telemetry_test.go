@@ -39,8 +39,8 @@ import (
 
 // telemetryApp returns an App on h with a 10s ShutdownGracePeriod whose
 // telemetry is built by build and whose Init is init.
-func telemetryApp(h *humustest.Host, build telemetry.Builder, init func(context.Context, *humus.Setup) ([]humus.Service, error)) humus.App {
-	return humus.App{
+func telemetryApp(h *humustest.Host, build telemetry.Builder, init func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error)) humus.App[humus.Host] {
+	return humus.App[humus.Host]{
 		Host:                h.Host(),
 		ShutdownGracePeriod: 10 * time.Second,
 		Telemetry:           build,
@@ -68,7 +68,7 @@ func parseExporter(v string) (telemetry.Exporter, error) {
 
 // envBuilder is a Builder that sources Settings.Traces from
 // OTEL_TRACES_EXPORTER, as an end user's Builder does.
-func envBuilder(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+func envBuilder(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 	s := telemetry.DefaultSettings()
 	traces, err := config.Env(p.Environment, "OTEL_TRACES_EXPORTER").
 		Parse(parseExporter).
@@ -80,14 +80,14 @@ func envBuilder(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (
 	}
 	s.Traces = traces
 	s.Logs = telemetry.ExporterNone
-	return telemetry.New(ctx, s, dial, p.Stdout)
+	return telemetry.New(ctx, s, n, p.Stdout)
 }
 
 func TestApp_Run_telemetry_a_malformed_variable_read_by_the_Builder_exits_78(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
 		initCalled := false
-		app := telemetryApp(h, envBuilder, func(context.Context, *humus.Setup) ([]humus.Service, error) {
+		app := telemetryApp(h, envBuilder, func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 			initCalled = true
 			return nil, nil
 		})
@@ -112,14 +112,14 @@ func TestApp_Run_telemetry_a_signal_during_a_slow_Builder_cancels_it(t *testing.
 		h := humustest.NewHost(t)
 		started := make(chan struct{})
 		var builderCause error
-		slow := func(ctx context.Context, _ bedrock.Process, _ telemetry.Dialer) (telemetry.SDK, error) {
+		slow := func(ctx context.Context, _ bedrock.Process, _ telemetry.Network) (telemetry.SDK, error) {
 			close(started)
 			<-ctx.Done() // a cloud resource detector calling its metadata server
 			builderCause = context.Cause(ctx)
 			return telemetry.SDK{}, context.Cause(ctx)
 		}
 		initCalled := false
-		app := telemetryApp(h, slow, func(context.Context, *humus.Setup) ([]humus.Service, error) {
+		app := telemetryApp(h, slow, func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 			initCalled = true
 			return nil, nil
 		})
@@ -142,7 +142,7 @@ func TestApp_Run_telemetry_a_failed_Builder_exits_1(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
 		errBuild := errors.New("detect resource: metadata server unreachable")
-		failing := func(context.Context, bedrock.Process, telemetry.Dialer) (telemetry.SDK, error) {
+		failing := func(context.Context, bedrock.Process, telemetry.Network) (telemetry.SDK, error) {
 			return telemetry.SDK{}, errBuild
 		}
 
@@ -171,7 +171,7 @@ func TestApp_Run_telemetry_an_SDK_with_a_nil_field_exits_1(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				h := humustest.NewHost(t)
 				shutdowns := 0
-				build := func(context.Context, bedrock.Process, telemetry.Dialer) (telemetry.SDK, error) {
+				build := func(context.Context, bedrock.Process, telemetry.Network) (telemetry.SDK, error) {
 					sdk := telemetry.Noop()
 					sdk.Shutdown = func(context.Context) error {
 						shutdowns++
@@ -181,7 +181,7 @@ func TestApp_Run_telemetry_an_SDK_with_a_nil_field_exits_1(t *testing.T) {
 					return sdk, nil
 				}
 				initCalled := false
-				app := telemetryApp(h, build, func(context.Context, *humus.Setup) ([]humus.Service, error) {
+				app := telemetryApp(h, build, func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 					initCalled = true
 					return nil, nil
 				})
@@ -206,7 +206,7 @@ func TestApp_Run_telemetry_an_SDK_with_a_nil_field_joins_its_failed_shutdown(t *
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
 		errShutdown := errors.New("close exporter")
-		build := func(context.Context, bedrock.Process, telemetry.Dialer) (telemetry.SDK, error) {
+		build := func(context.Context, bedrock.Process, telemetry.Network) (telemetry.SDK, error) {
 			sdk := telemetry.Noop()
 			sdk.MeterProvider = nil
 			sdk.Shutdown = func(context.Context) error { return errShutdown }
@@ -240,11 +240,11 @@ func TestApp_Run_telemetry_the_Builder_gets_the_Process_and_the_Hosts_Dial(t *te
 		h := humustest.NewHost(t)
 		var gotArgs []string
 		var dialErr error
-		build := func(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+		build := func(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 			gotArgs = p.Args
 			// Nothing listens on the humustest Host, so its DialTCP refuses
 			// the connection; OSHost's would have dialled the real network.
-			_, dialErr = dial(ctx, "tcp", "collector:4317")
+			_, dialErr = n.DialTCP(ctx, "tcp", "collector:4317")
 			return telemetry.Noop(), nil
 		}
 
@@ -264,7 +264,7 @@ func TestApp_Run_telemetry_Init_and_the_Services_get_the_SDK(t *testing.T) {
 		h := humustest.NewHost(t)
 		tel := humustest.NewTelemetry()
 		svc := &fakeService{}
-		init := func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+		init := func(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			_, span := s.Telemetry.TracerProvider.Tracer("carts").Start(ctx, "init")
 			span.End()
 			svc.serve = func(ctx context.Context) error {
@@ -292,7 +292,7 @@ func TestApp_Run_telemetry_a_failed_Init_is_logged_at_ERROR(t *testing.T) {
 		h := humustest.NewHost(t)
 		tel := humustest.NewTelemetry()
 		errInit := errors.New("dial database: connection refused")
-		app := telemetryApp(h, tel.Builder(), func(context.Context, *humus.Setup) ([]humus.Service, error) {
+		app := telemetryApp(h, tel.Builder(), func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 			return nil, errInit
 		})
 
@@ -370,7 +370,7 @@ func TestApp_Run_telemetry_a_span_recorded_by_an_OnStop_function_is_exported(t *
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
 		tel := humustest.NewTelemetry()
-		init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			s.OnStop(func(ctx context.Context) error {
 				_, span := s.Telemetry.TracerProvider.Tracer("carts").Start(ctx, "close pool")
 				span.End()
@@ -404,7 +404,7 @@ func TestApp_Run_telemetry_shuts_down_last(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				h := humustest.NewHost(t)
 				var order []string
-				build := func(context.Context, bedrock.Process, telemetry.Dialer) (telemetry.SDK, error) {
+				build := func(context.Context, bedrock.Process, telemetry.Network) (telemetry.SDK, error) {
 					sdk := telemetry.Noop()
 					sdk.Shutdown = func(context.Context) error {
 						order = append(order, "telemetry")
@@ -419,7 +419,7 @@ func TestApp_Run_telemetry_shuts_down_last(t *testing.T) {
 						return nil
 					},
 				}
-				init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+				init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 					s.OnStop(func(context.Context) error {
 						order = append(order, "on stop")
 						return nil
@@ -454,7 +454,7 @@ func TestApp_Run_telemetry_shutdown_keeps_the_values_but_not_the_cancellation_of
 			shutdownValue any
 			hasDeadline   bool
 		)
-		build := func(context.Context, bedrock.Process, telemetry.Dialer) (telemetry.SDK, error) {
+		build := func(context.Context, bedrock.Process, telemetry.Network) (telemetry.SDK, error) {
 			sdk := telemetry.Noop()
 			sdk.Shutdown = func(ctx context.Context) error {
 				shutdownErr = ctx.Err()
@@ -485,7 +485,7 @@ func TestApp_Run_telemetry_a_failed_shutdown_turns_exit_0_into_1(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
 		errShutdown := errors.New("flush logs: collector unavailable")
-		build := func(context.Context, bedrock.Process, telemetry.Dialer) (telemetry.SDK, error) {
+		build := func(context.Context, bedrock.Process, telemetry.Network) (telemetry.SDK, error) {
 			sdk := telemetry.Noop()
 			sdk.Shutdown = func(context.Context) error { return errShutdown }
 			return sdk, nil
@@ -505,7 +505,7 @@ func TestApp_Run_telemetry_a_failed_shutdown_is_joined_into_the_cause(t *testing
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
 		errShutdown := errors.New("flush logs: collector unavailable")
-		build := func(context.Context, bedrock.Process, telemetry.Dialer) (telemetry.SDK, error) {
+		build := func(context.Context, bedrock.Process, telemetry.Network) (telemetry.SDK, error) {
 			sdk := telemetry.Noop()
 			sdk.Shutdown = func(context.Context) error { return errShutdown }
 			return sdk, nil
@@ -527,12 +527,12 @@ func TestApp_Run_telemetry_a_failed_shutdown_keeps_a_config_failure_at_78(t *tes
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
 		errShutdown := errors.New("flush logs: collector unavailable")
-		build := func(context.Context, bedrock.Process, telemetry.Dialer) (telemetry.SDK, error) {
+		build := func(context.Context, bedrock.Process, telemetry.Network) (telemetry.SDK, error) {
 			sdk := telemetry.Noop()
 			sdk.Shutdown = func(context.Context) error { return errShutdown }
 			return sdk, nil
 		}
-		init := func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+		init := func(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			_, err := config.Env(s.Process.Environment, "DATABASE_URL").Read(ctx)
 			return nil, err
 		}
@@ -549,7 +549,7 @@ func TestApp_Run_telemetry_a_failed_shutdown_keeps_a_config_failure_at_78(t *tes
 func TestApp_Run_telemetry_sets_an_error_handler_that_writes_one_line_to_stderr(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
-		init := func(context.Context, *humus.Setup) ([]humus.Service, error) {
+		init := func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 			otel.Handle(errors.Join(errors.New("export spans"), errors.New("connection refused")))
 			return nil, nil
 		}
@@ -567,15 +567,15 @@ func TestApp_Run_telemetry_sets_an_error_handler_that_writes_one_line_to_stderr(
 // and timers of its own.
 func TestApp_Run_telemetry_an_export_error_is_written_to_stderr(t *testing.T) {
 	h := humustest.NewHost(t)
-	build := func(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+	build := func(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 		s := telemetry.DefaultSettings()
 		s.Traces = telemetry.ExporterOTLP
 		s.Logs = telemetry.ExporterNone
 		s.OTLP.Endpoint = "collector:4317" // nothing listens on it
 		s.OTLP.Timeout = 100 * time.Millisecond
-		return telemetry.New(ctx, s, dial, p.Stdout)
+		return telemetry.New(ctx, s, n, p.Stdout)
 	}
-	init := func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+	init := func(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		_, span := s.Telemetry.TracerProvider.Tracer("carts").Start(ctx, "init")
 		span.End()
 		return nil, nil

@@ -55,8 +55,8 @@ func (s *Sessions) End(id string) {
 
 // SessionInit serves a browser that signs in with a password and is then
 // authenticated by its session cookie, behind http.CrossOriginProtection.
-func SessionInit(dir Directory, sessions *Sessions, tlsConfig *tls.Config) func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+func SessionInit(dir Directory, sessions *Sessions, tlsConfig *tls.Config) func(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		session := auth.APIKeyCookie("session", "__Host-session", func(_ context.Context, id string) (string, error) {
 			name, ok := sessions.Name(id)
 			if !ok {

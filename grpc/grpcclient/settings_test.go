@@ -385,10 +385,10 @@ func TestNewClient_settings(t *testing.T) {
 			// close the connection.
 			errInit := errors.New("init failed")
 			var newErr error
-			_, exit := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+			_, exit := humustest.Start(t, humustest.NewHost(t).Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 				_, newErr = grpcclient.NewClient(s, settings)
 				return nil, errInit
-			}, humustest.WithApp(humus.WithHost(humustest.NewHost(t).Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+			}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 			st := <-exit
 			require.ErrorIs(t, st.Cause(), errInit)
 			require.NoError(t, newErr)
@@ -436,10 +436,10 @@ func TestNewClient_settings(t *testing.T) {
 				c      *grpcclient.Client
 				newErr error
 			)
-			_, exit := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+			_, exit := humustest.Start(t, host, func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 				c, newErr = grpcclient.NewClient(s, settings)
 				return nil, errInit
-			}, humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(telemetry.NoopBuilder)))
+			}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 			st := <-exit
 			require.ErrorIs(t, st.Cause(), errInit)
 

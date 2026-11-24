@@ -32,7 +32,7 @@
 //	}
 //
 //	// Faults is the service's failure injection.
-//	func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
+//	func Faults(ctx context.Context, s *humus.Setup, h humus.Host) (fault.Settings, error) {
 //		d := fault.DefaultSettings()
 //		return config.Struct(func(r *config.Resolver) fault.Settings {
 //			c := d
@@ -43,9 +43,9 @@
 //		}).Read(ctx)
 //	}
 //
-// The function is given the Setup, so a Decoder can load what it needs
-// through s.Host, such as a registry of scenario IDs from a file, and
-// register its release with s.OnStop. The App builds the Injector with
+// The function is given the Setup and the App's host, so a Decoder can load
+// what it needs through the host, such as a registry of scenario IDs from a
+// file, and register its release with s.OnStop. The App builds the Injector with
 // [New], which checks the Settings. An error from either fails startup,
 // as an error from Init does. Without humus.WithFaults, Setup.Faults is the
 // zero Injector, which is off: it evaluates and strips nothing, and nothing

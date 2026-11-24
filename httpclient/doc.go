@@ -9,7 +9,7 @@
 // builds it in the end user's Init, from [Settings] the end user sources, and
 // returns a plain *http.Client:
 //
-//	func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+//	func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 //		paymentsSettings, err := readPaymentsSettings(ctx, s) // httpclient.Settings, sourced with config.Struct
 //		if err != nil {
 //			return nil, err

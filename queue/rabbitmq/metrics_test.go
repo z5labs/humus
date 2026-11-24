@@ -129,7 +129,7 @@ func breakerIs(closed, open, halfOpen int64) map[string]int64 {
 // it. It fails t unless the App exits 0.
 func publishesWith(t *testing.T, tel *humustest.Telemetry, s *pubStandIn, settings rabbitmq.PublisherSettings, run func(ctx context.Context, pub *rabbitmq.Publisher) error) {
 	t.Helper()
-	_, status := humustest.Start(t, func(_ context.Context, setup *humus.Setup) ([]humus.Service, error) {
+	_, status := humustest.Start(t, humustest.NewHost(t).Host(), func(_ context.Context, setup *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		p, err := rabbitmq.NewPublisher(setup, settings)
 		if err != nil {
 			return nil, err
@@ -273,7 +273,7 @@ func TestPublisher_metrics_of_two_Publishers_of_one_broker_add_up(t *testing.T) 
 
 		tel := humustest.NewTelemetry()
 		var during map[string]int64
-		_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			first, err := rabbitmq.NewPublisher(s, settings)
 			if err != nil {
 				return nil, err
@@ -340,7 +340,7 @@ func TestPublisher_metrics_callback_is_registered_last(t *testing.T) {
 		settings.BreakerPolicy.Probe = nil
 
 		tel := humustest.NewTelemetry()
-		_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			_, err := rabbitmq.NewPublisher(s, settings)
 			if err == nil {
 				require.FailNow(t, "NewPublisher accepted a BreakerPolicy with no Probe")

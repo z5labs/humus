@@ -140,14 +140,14 @@ func TestKafka_OAuthBearer_authenticates_a_Service_and_a_Producer_with_a_token_f
 	ps.Brokers = []string{addr}
 	ps.SASL = mechanism
 	var produced error
-	_, status := humustest.Start(t, produces(ps, func(ctx context.Context, p *kafka.Producer) error {
+	_, status := humustest.Start(t, humus.OSHost(), produces(ps, func(ctx context.Context, p *kafka.Producer) error {
 		produced = p.Produce(ctx,
 			kafka.Record{Topic: name, Value: []byte("0")},
 			kafka.Record{Topic: name, Value: []byte("1")},
 			kafka.Record{Topic: name, Value: []byte("2")},
 		)
 		return nil
-	}), humustest.WithApp(humus.WithHost(humus.OSHost())))
+	}))
 	st := exited(t, status)
 	require.Zero(t, st.Code(), "cause: %v", st.Cause())
 	require.NoError(t, produced, "the Producer authenticated")
@@ -183,10 +183,10 @@ func TestKafka_OAuthBearer_authenticates_a_Service_and_a_Producer_with_a_token_f
 	ps.SASL = kafka.OAuthBearer(func(context.Context) (kafka.OAuthToken, error) {
 		return kafka.OAuthToken{Token: "not-a-jwt"}, nil
 	})
-	_, status = humustest.Start(t, produces(ps, func(ctx context.Context, p *kafka.Producer) error {
+	_, status = humustest.Start(t, humus.OSHost(), produces(ps, func(ctx context.Context, p *kafka.Producer) error {
 		produced = p.Produce(ctx, kafka.Record{Topic: name, Value: []byte("3")})
 		return nil
-	}), humustest.WithApp(humus.WithHost(humus.OSHost())))
+	}))
 	st = exited(t, status)
 	require.Zero(t, st.Code(), "cause: %v", st.Cause())
 	requireCode(t, produced, saslAuthenticationFailed)

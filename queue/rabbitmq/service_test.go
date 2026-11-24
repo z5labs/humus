@@ -767,7 +767,7 @@ func TestService_SIGTERM_while_reconnecting_exits_0_at_once(t *testing.T) {
 		ch := newStandIn()
 		tel := humustest.NewTelemetry()
 		var attempts atomic.Int32
-		p, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		p, status := humustest.Start(t, humustest.NewHost(t).Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			svc, err := rabbitmq.NewService(s, settings(), queue.ProcessorFunc[rabbitmq.Message](func(context.Context, rabbitmq.Message) error {
 				return nil
 			}))
@@ -783,7 +783,7 @@ func TestService_SIGTERM_while_reconnecting_exits_0_at_once(t *testing.T) {
 			})
 			return []humus.Service{svc}, nil
 		},
-			humustest.WithApp(humus.WithHost(humustest.NewHost(t).Host()), humus.WithTelemetry(tel.Builder())),
+			humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 		)
 		synctest.Wait()
 		ch.lose(forced)
@@ -911,8 +911,8 @@ func (r refusingConsume) ConsumeWithContext(context.Context, string, string, boo
 
 // standInInit returns an Init whose only Service consumes settings with p, on
 // ch.
-func standInInit(settings rabbitmq.Settings, ch *standIn, p queue.ProcessorFunc[rabbitmq.Message]) func(context.Context, *humus.Setup) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+func standInInit(settings rabbitmq.Settings, ch *standIn, p queue.ProcessorFunc[rabbitmq.Message]) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
+	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		svc, err := rabbitmq.NewService(s, settings, p)
 		if err != nil {
 			return nil, err
@@ -929,12 +929,11 @@ func TestService_a_grace_period_that_runs_out_cancels_Process_and_exits_1(t *tes
 		ch := newStandIn()
 		ch.deliver("0")
 		var cancelled time.Time
-		p, status := humustest.Start(t, standInInit(settings(), ch, func(ctx context.Context, _ rabbitmq.Message) error {
+		p, status := humustest.Start(t, humustest.NewHost(t).Host(), standInInit(settings(), ch, func(ctx context.Context, _ rabbitmq.Message) error {
 			<-ctx.Done()
 			cancelled = time.Now()
 			return ctx.Err()
 		}),
-			humustest.WithApp(humus.WithHost(humustest.NewHost(t).Host())),
 			humustest.WithEnv(map[string]string{"HUMUS_SHUTDOWN_GRACE_PERIOD": "2s"}),
 		)
 		synctest.Wait()
@@ -957,7 +956,7 @@ func TestService_waits_for_a_broker_that_is_down_and_returns_nil_on_SIGTERM(t *t
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t) // nothing listens at rabbit:5672
 		tel := humustest.NewTelemetry()
-		p, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		p, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			svc, err := rabbitmq.NewService(s, settings(), queue.ProcessorFunc[rabbitmq.Message](func(context.Context, rabbitmq.Message) error {
 				return nil
 			}))
@@ -965,7 +964,7 @@ func TestService_waits_for_a_broker_that_is_down_and_returns_nil_on_SIGTERM(t *t
 				return nil, err
 			}
 			return []humus.Service{svc}, nil
-		}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+		}, humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 		time.Sleep(2 * time.Minute)
 		p.Signal(syscall.SIGTERM)
 

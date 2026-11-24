@@ -192,22 +192,23 @@ func anyString(v *commonpb.AnyValue) string {
 	return v.String()
 }
 
-// countingDialer dials through host and counts the calls.
+// countingDialer is a telemetry.Network that dials through host and counts
+// the calls.
 type countingDialer struct {
 	mu    sync.Mutex
 	calls []string
-	dial  telemetry.Dialer
+	host  *humustest.Host
 }
 
 func newCountingDialer(host *humustest.Host) *countingDialer {
-	return &countingDialer{dial: host.DialTCP}
+	return &countingDialer{host: host}
 }
 
-func (d *countingDialer) Dial(ctx context.Context, network, address string) (net.Conn, error) {
+func (d *countingDialer) DialTCP(ctx context.Context, network, address string) (net.Conn, error) {
 	d.mu.Lock()
 	d.calls = append(d.calls, address)
 	d.mu.Unlock()
-	return d.dial(ctx, network, address)
+	return d.host.DialTCP(ctx, network, address)
 }
 
 func (d *countingDialer) Calls() []string {
@@ -216,12 +217,20 @@ func (d *countingDialer) Calls() []string {
 	return append([]string(nil), d.calls...)
 }
 
-// failingDialer fails the test when it is called.
-func failingDialer(t *testing.T) telemetry.Dialer {
-	return func(_ context.Context, network, address string) (net.Conn, error) {
+// failingDialer is a telemetry.Network that fails the test when it is
+// dialled.
+func failingDialer(t *testing.T) telemetry.Network {
+	return dialFunc(func(_ context.Context, network, address string) (net.Conn, error) {
 		t.Errorf("dialled %s %s, want nothing dialled", network, address)
 		return nil, errors.New("dialled")
-	}
+	})
+}
+
+// dialFunc is a telemetry.Network whose DialTCP is the func itself.
+type dialFunc func(ctx context.Context, network, address string) (net.Conn, error)
+
+func (f dialFunc) DialTCP(ctx context.Context, network, address string) (net.Conn, error) {
+	return f(ctx, network, address)
 }
 
 func listen(t *testing.T, host *humustest.Host, address string) net.Listener {

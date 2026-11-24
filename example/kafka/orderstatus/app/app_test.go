@@ -74,7 +74,7 @@ func newMemory() *memory {
 	return &memory{statuses: map[string]store.Status{}}
 }
 
-func (m *memory) open(context.Context, *humus.Setup, *pgxpool.Config) (projector.Store, error) {
+func (m *memory) open(context.Context, *humus.Setup, humus.Host, *pgxpool.Config) (projector.Store, error) {
 	return m, nil
 }
 
@@ -206,11 +206,11 @@ func (p *processor) start(t *testing.T, env map[string]string, opts ...humus.Opt
 		}
 		merged[name] = value
 	}
-	init := func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-		return initWith(ctx, s, p.store.open)
+	init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		return initWith(ctx, s, h, p.store.open)
 	}
-	proc, st := humustest.Start(t, init,
-		humustest.WithApp(append([]humus.Option{humus.WithHost(p.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)}, opts...)...),
+	proc, st := humustest.Start(t, p.h.Host(), init,
+		humustest.WithApp(append([]humus.Option{humus.WithTelemetry(telemetry.NoopBuilder)}, opts...)...),
 		humustest.WithEnv(merged),
 	)
 	return proc.Signal, st
@@ -547,8 +547,8 @@ func TestOpenPostgres_dials_through_the_Host_and_closes_the_pool_on_stop(t *test
 		cfg, err := poolConfig(postgres{URL: u, Password: rand.Text(), CA: humustest.NewCA(t).Pool()})
 		require.NoError(t, err)
 
-		init := func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-			st, err := openPostgres(ctx, s, cfg)
+		init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			st, err := openPostgres(ctx, s, h, cfg)
 			if err != nil {
 				return nil, err
 			}
@@ -560,7 +560,7 @@ func TestOpenPostgres_dials_through_the_Host_and_closes_the_pool_on_stop(t *test
 				return nil
 			})}, nil
 		}
-		_, status := humustest.Start(t, init, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+		_, status := humustest.Start(t, h.Host(), init, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 
 		st := <-status
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())

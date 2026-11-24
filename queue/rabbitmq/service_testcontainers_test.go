@@ -135,8 +135,8 @@ func consumerSettings(c rabbitmq.Connection, queue string) rabbitmq.Settings {
 }
 
 // consumes returns an Init whose only Service consumes settings with p.
-func consumes(settings rabbitmq.Settings, p queue.ProcessorFunc[rabbitmq.Message]) func(context.Context, *humus.Setup) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+func consumes(settings rabbitmq.Settings, p queue.ProcessorFunc[rabbitmq.Message]) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
+	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		svc, err := rabbitmq.NewService(s, settings, p)
 		if err != nil {
 			return nil, err
@@ -149,8 +149,8 @@ func consumes(settings rabbitmq.Settings, p queue.ProcessorFunc[rabbitmq.Message
 // settings with p.
 func startApp(t *testing.T, settings rabbitmq.Settings, p queue.ProcessorFunc[rabbitmq.Message], opts ...humustest.Option) (*bedrocktest.Process, <-chan bedrock.ExitStatus) {
 	t.Helper()
-	all := append([]humustest.Option{humustest.WithApp(humus.WithHost(humus.OSHost()))}, opts...)
-	return humustest.Start(t, consumes(settings, p), all...)
+	all := append([]humustest.Option{humustest.WithApp()}, opts...)
+	return humustest.Start(t, humus.OSHost(), consumes(settings, p), all...)
 }
 
 // exit waits for the App's exit status.
@@ -277,8 +277,8 @@ func TestService_processes_in_order_and_drains_on_SIGTERM(t *testing.T) {
 // initWith is the end user's Init with p as its Processor: it sources the
 // Settings from the variables example_test.go's Init reads, and returns the
 // Service from NewService.
-func initWith(p queue.ProcessorFunc[rabbitmq.Message]) func(context.Context, *humus.Setup) ([]humus.Service, error) {
-	return func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func initWith(p queue.ProcessorFunc[rabbitmq.Message]) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
+	return func(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		d := rabbitmq.DefaultSettings()
 		env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 		settings, err := config.Struct(func(r *config.Resolver) rabbitmq.Settings {
@@ -314,14 +314,13 @@ func TestInit_at_least_once_stops_on_a_failure_and_redelivers(t *testing.T) {
 	bad := errors.New("cannot process")
 	run := func(fail bool) (bedrock.ExitStatus, []rabbitmq.Message) {
 		var got recorder
-		p, status := humustest.Start(t, initWith(func(_ context.Context, m rabbitmq.Message) error {
+		p, status := humustest.Start(t, humus.OSHost(), initWith(func(_ context.Context, m rabbitmq.Message) error {
 			got.add(m)
 			if fail && m.MessageID == "3" {
 				return bad
 			}
 			return nil
 		}),
-			humustest.WithApp(humus.WithHost(humus.OSHost())),
 			humustest.WithEnv(map[string]string{
 				"RABBITMQ_ADDR":     net.JoinHostPort(b.host, b.amqp),
 				"RABBITMQ_USERNAME": b.username,
@@ -469,7 +468,7 @@ func TestService_Consuming_stays_healthy_through_close_all_connections(t *testin
 	var got recorder
 	svcs := make(chan *rabbitmq.Service, 1)
 	tel := humustest.NewTelemetry()
-	p, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	p, status := humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		svc, err := rabbitmq.NewService(s, consumerSettings(plainText(t), q), queue.ProcessorFunc[rabbitmq.Message](func(_ context.Context, m rabbitmq.Message) error {
 			got.add(m)
 			return nil
@@ -479,7 +478,7 @@ func TestService_Consuming_stays_healthy_through_close_all_connections(t *testin
 		}
 		svcs <- svc
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(tel.Builder())))
+	}, humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 	svc := <-svcs
 	m := svc.Consuming()
 	healthy := func() bool {

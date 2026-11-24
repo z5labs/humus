@@ -38,7 +38,7 @@ import (
 // no View, so the Builder builds the MeterProvider itself, and its Shutdown
 // shuts that down with the rest of the SDK.
 func ordersTelemetry(reader sdkmetric.Reader) telemetry.Builder {
-	return func(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+	return func(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 		s := telemetry.DefaultSettings()
 		s.ServiceName = "orders"
 		// The resource telemetry.New builds for traces and logs:
@@ -47,7 +47,7 @@ func ordersTelemetry(reader sdkmetric.Reader) telemetry.Builder {
 		if err != nil {
 			return telemetry.SDK{}, err
 		}
-		sdk, err := telemetry.New(ctx, s, dial, p.Stdout)
+		sdk, err := telemetry.New(ctx, s, n, p.Stdout)
 		if err != nil {
 			return telemetry.SDK{}, err
 		}
@@ -119,7 +119,7 @@ func TestClient_metrics_read_once_the_App_has_exited(t *testing.T) {
 		settings := paymentsSettings(t, ca)
 
 		tel := humustest.NewTelemetry()
-		_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			c, err := httpclient.NewClient(s, settings)
 			if err != nil {
 				return nil, err
@@ -128,7 +128,7 @@ func TestClient_metrics_read_once_the_App_has_exited(t *testing.T) {
 				getN(t, ctx, c, 5, "https://payments:8443/") // five 500s open the breaker
 				return nil
 			})}, nil
-		}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+		}, humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 		st := <-status
 		require.Zero(t, st.Code())
 

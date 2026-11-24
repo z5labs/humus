@@ -23,7 +23,7 @@ import (
 // Init is the end user's Init, sourced as the proposal's revisions 1 and 2
 // show: Addr and TLS have no default, and the certificate is a PEM file
 // named by TLS_PEM_FILE. It serves greet on GET /hello/{name}.
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	d := httpserver.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
@@ -32,7 +32,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 			// No .Default: Addr and TLS are required, so an unset ADDR or
 			// TLS_PEM_FILE fails as not found.
 			Addr:              r.Get(env("ADDR").Validate(httpserver.CheckAddr)),
-			TLS:               r.Get(env("TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS)),
+			TLS:               r.Get(env("TLS_PEM_FILE").Parse(readFile(h.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS)),
 			HTTP2Only:         r.Get(env("HTTP2_ONLY").Parse(strconv.ParseBool).Default(d.HTTP2Only)),
 			ReadHeaderTimeout: r.Get(env("READ_HEADER_TIMEOUT").Parse(time.ParseDuration).Default(d.ReadHeaderTimeout).Validate(httpserver.CheckReadHeaderTimeout)),
 			ReadTimeout:       r.Get(env("READ_TIMEOUT").Parse(time.ParseDuration).Default(d.ReadTimeout).Validate(httpserver.CheckReadTimeout)),
@@ -50,13 +50,13 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 // InitPKCS12 is an Init like Init, whose certificate is a PKCS#12 bundle in
 // the file TLS_PKCS12_FILE names, encrypted with TLS_PKCS12_PASSWORD. Every
 // other field keeps its default. It serves greet on GET /hello/{name}.
-func InitPKCS12(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func InitPKCS12(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
 	settings, err := config.Struct(func(r *config.Resolver) httpserver.Settings {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = r.Get(env("ADDR").Validate(httpserver.CheckAddr))
-		settings.TLS = r.Get(env("TLS_PKCS12_FILE").Parse(readFile(s.Host.Filesystem)).FlatMap(func(bundle []byte) config.Value[*tls.Config] {
+		settings.TLS = r.Get(env("TLS_PKCS12_FILE").Parse(readFile(h.Filesystem)).FlatMap(func(bundle []byte) config.Value[*tls.Config] {
 			return env("TLS_PKCS12_PASSWORD").Parse(pkcs12TLS(bundle))
 		}).Validate(httpserver.CheckTLS))
 		return settings

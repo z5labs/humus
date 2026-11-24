@@ -52,7 +52,7 @@ func startPayments(t *testing.T, h *humustest.Host, host humus.Host, ca *humuste
 func startPaymentsWith(t *testing.T, h *humustest.Host, host humus.Host, tel telemetry.Builder, ca *humustest.CA, handler http.Handler) (stop func()) {
 	t.Helper()
 	cert := ca.Issue(t, "payments")
-	p, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	p, status := humustest.Start(t, host, func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = ":8443"
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
@@ -61,7 +61,7 @@ func startPaymentsWith(t *testing.T, h *humustest.Host, host humus.Host, tel tel
 			return nil, err
 		}
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(tel)))
+	}, humustest.WithApp(humus.WithTelemetry(tel)))
 	<-h.Listening("payments:8443")
 	return func() {
 		p.Signal(syscall.SIGTERM)
@@ -98,13 +98,13 @@ func runJob(t *testing.T, host humus.Host, settings httpclient.Settings, run fun
 // runJobWith is runJob, with the App's telemetry built by tel.
 func runJobWith(t *testing.T, host humus.Host, tel telemetry.Builder, settings httpclient.Settings, run func(ctx context.Context, c *http.Client) error) bedrock.ExitStatus {
 	t.Helper()
-	_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	_, status := humustest.Start(t, host, func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		c, err := httpclient.NewClient(s, settings)
 		if err != nil {
 			return nil, err
 		}
 		return []humus.Service{job.NewService(s, func(ctx context.Context) error { return run(ctx, c) })}, nil
-	}, humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(tel)))
+	}, humustest.WithApp(humus.WithTelemetry(tel)))
 	return <-status
 }
 
@@ -533,7 +533,7 @@ func TestClient_closes_its_idle_connections_at_OnStop(t *testing.T) {
 
 			errInit := errors.New("init failed")
 			settings := paymentsSettings(t, ca)
-			_, status := humustest.Start(t, func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+			_, status := humustest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 				c, err := httpclient.NewClient(s, settings)
 				if err != nil {
 					return nil, err
@@ -542,7 +542,7 @@ func TestClient_closes_its_idle_connections_at_OnStop(t *testing.T) {
 					return nil, err
 				}
 				return nil, errInit
-			}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+			}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 			st := <-status
 			synctest.Wait()
 

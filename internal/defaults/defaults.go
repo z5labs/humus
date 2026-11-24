@@ -3,14 +3,12 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-// Package defaults holds the defaults of the App that humus.Main runs, so
-// that humustest can run a test's App with the same ones without either
-// package exporting them.
+// Package defaults holds the values of humus.Defaults, the defaults of the
+// App that humus.Main and humus.MainOn run, so that they are tested apart
+// from the root package.
 //
-// It can't import the root package, which imports it, so it holds the
-// values, and each of humus.Main and humustest assembles its App from them.
-// The Host is not here: humus.Main's is humus.OSHost(), and humustest's is a
-// Host of its own. Nor is the drain: the App that humus.Main runs has none.
+// The host is not here: it is an argument of humus.Defaults. Nor is the
+// drain: the App that humus.Main runs has none.
 package defaults
 
 import (
@@ -28,9 +26,9 @@ import (
 const ShutdownGracePeriod = 20 * time.Second
 
 // Telemetry is the App's telemetry.Builder: telemetry.New with
-// telemetry.DefaultSettings(), the Host's DialTCP and the Process's stdout.
+// telemetry.DefaultSettings(), the App's host and the Process's stdout.
 // Logs go to stdout as JSON lines, and spans get real IDs without being
 // exported.
-func Telemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
-	return telemetry.New(ctx, telemetry.DefaultSettings(), dial, p.Stdout)
+func Telemetry(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
+	return telemetry.New(ctx, telemetry.DefaultSettings(), n, p.Stdout)
 }

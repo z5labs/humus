@@ -29,7 +29,7 @@ const probesAddr = "localhost:8443"
 
 func TestInit_requires_the_AMQP_URI_and_the_probes_settings(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		_, status := humustest.Start(t, Init, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), Init, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 
 		st := <-status
 		require.Equal(t, humus.ExitConfig, st.Code())
@@ -53,7 +53,7 @@ func TestInit_rejects_an_AMQP_URI_it_cannot_log_in_with(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				_, status := humustest.Start(t, Init,
+				_, status := humustest.Start(t, humustest.NewHost(t).Host(), Init,
 					humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 					humustest.WithEnv(map[string]string{"AMQP_URI": c.uri}),
 				)
@@ -69,7 +69,7 @@ func TestInit_rejects_an_AMQP_URI_it_cannot_log_in_with(t *testing.T) {
 
 func TestInit_rejects_a_retry_setting_that_is_not_positive(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		_, status := humustest.Start(t, Init,
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), Init,
 			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			humustest.WithEnv(map[string]string{"RETRY_ATTEMPTS": "0"}),
 		)
@@ -94,8 +94,8 @@ func TestInit_waits_for_the_broker_alive_but_not_ready(t *testing.T) {
 			"PROBES_TLS_CERT_FILE": "tls/tls.crt",
 			"PROBES_TLS_KEY_FILE":  "tls/tls.key",
 		}
-		p, status := humustest.Start(t, Init,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		p, status := humustest.Start(t, h.Host(), Init,
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			humustest.WithEnv(env),
 		)
 		<-h.Listening(probesAddr)

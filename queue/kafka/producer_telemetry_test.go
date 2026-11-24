@@ -51,7 +51,7 @@ type order struct {
 // deadLetterInit is the Init of the producing proposal's Summary: a
 // consumer whose Processor produces a record it can't decode to a
 // dead-letter topic, with the Producer, before the record is committed.
-func deadLetterInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func deadLetterInit(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	cs, ps, err := readSettings(ctx, s)
 	if err != nil {
 		return nil, err
@@ -118,8 +118,8 @@ func headerValues(r *kgo.Record, key string) []string {
 // the App has exited, requiring it to exit 0.
 func producesWith(t *testing.T, h *humustest.Host, tel *humustest.Telemetry, settings kafka.ProducerSettings, run func(ctx context.Context, p *kafka.Producer) error) {
 	t.Helper()
-	_, status := humustest.Start(t, produces(settings, run),
-		humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+	_, status := humustest.Start(t, h.Host(), produces(settings, run),
+		humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 	st := <-status
 	require.Zero(t, st.Code(), "cause: %v", st.Cause())
 }
@@ -156,8 +156,8 @@ func TestInit_produces_a_dead_letter_before_committing(t *testing.T) {
 		})
 
 		tel := humustest.NewTelemetry()
-		p, status := humustest.Start(t, deadLetterInit,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+		p, status := humustest.Start(t, h.Host(), deadLetterInit,
+			humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 			humustest.WithEnv(map[string]string{
 				"KAFKA_BROKERS":  strings.Join(c.ListenAddrs(), ","),
 				"KAFKA_GROUP_ID": "orders-consumer",
@@ -482,8 +482,8 @@ func (c lateCounter) Add(ctx context.Context, n int64, opts ...metric.AddOption)
 // lateBuilder is tel's Builder with its MeterProvider a lateMeterProvider,
 // logging the SDK's Shutdown with log.
 func lateBuilder(tel *humustest.Telemetry, delay time.Duration, log func(format string, args ...any)) telemetry.Builder {
-	return func(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
-		sdk, err := tel.Builder()(ctx, p, dial)
+	return func(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
+		sdk, err := tel.Builder()(ctx, p, n)
 		sdk.MeterProvider = lateMeterProvider{MeterProvider: sdk.MeterProvider, delay: delay, log: log}
 		shutdown := sdk.Shutdown
 		sdk.Shutdown = func(ctx context.Context) error {
@@ -504,9 +504,9 @@ func TestProducer_records_kotels_produce_counters_when_the_hook_runs_late(t *tes
 		log := func(format string, args ...any) {
 			t.Logf("at %v: "+format, append([]any{time.Since(start)}, args...)...)
 		}
-		_, status := humustest.Start(t, produces(producerSettings(c.ListenAddrs()...), func(ctx context.Context, p *kafka.Producer) error {
+		_, status := humustest.Start(t, h.Host(), produces(producerSettings(c.ListenAddrs()...), func(ctx context.Context, p *kafka.Producer) error {
 			return p.Produce(ctx, value(0), value(1), value(2))
-		}), humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(lateBuilder(tel, time.Second, log))))
+		}), humustest.WithApp(humus.WithTelemetry(lateBuilder(tel, time.Second, log))))
 		st := <-status
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
 		log("the App exited")
@@ -530,10 +530,10 @@ func TestProducer_grace_period_cuts_the_wait_for_kotels_produce_counters_short(t
 		log := func(format string, args ...any) {
 			t.Logf("at %v: "+format, append([]any{time.Since(start)}, args...)...)
 		}
-		_, status := humustest.Start(t, produces(producerSettings(c.ListenAddrs()...), func(ctx context.Context, p *kafka.Producer) error {
+		_, status := humustest.Start(t, h.Host(), produces(producerSettings(c.ListenAddrs()...), func(ctx context.Context, p *kafka.Producer) error {
 			return p.Produce(ctx, value(0))
 		}),
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(lateBuilder(tel, time.Minute, log))),
+			humustest.WithApp(humus.WithTelemetry(lateBuilder(tel, time.Minute, log))),
 			humustest.WithEnv(map[string]string{"HUMUS_SHUTDOWN_GRACE_PERIOD": "2s"}),
 		)
 
@@ -562,8 +562,8 @@ func TestInit_dead_letter_is_counted_by_kotel_when_the_hook_runs_late(t *testing
 		log := func(format string, args ...any) {
 			t.Logf("at %v: "+format, append([]any{time.Since(start)}, args...)...)
 		}
-		p, status := humustest.Start(t, deadLetterInit,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(lateBuilder(tel, time.Second, log))),
+		p, status := humustest.Start(t, h.Host(), deadLetterInit,
+			humustest.WithApp(humus.WithTelemetry(lateBuilder(tel, time.Second, log))),
 			humustest.WithEnv(map[string]string{
 				"KAFKA_BROKERS":  strings.Join(c.ListenAddrs(), ","),
 				"KAFKA_GROUP_ID": "orders-consumer",

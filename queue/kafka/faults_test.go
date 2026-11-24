@@ -75,7 +75,7 @@ func faultsCodec(t *testing.T) jsonscenario.Codec {
 func withFaults(t *testing.T) humus.Option {
 	t.Helper()
 	codec := faultsCodec(t)
-	return humus.WithFaults(func(context.Context, *humus.Setup) (fault.Settings, error) {
+	return humus.WithFaults(func(context.Context, *humus.Setup, humus.Host) (fault.Settings, error) {
 		d := fault.DefaultSettings()
 		d.Decoder = codec
 		return d, nil
@@ -101,11 +101,11 @@ func scenarioBaggage(t *testing.T, s fit.Scenario) string {
 // exit 0. faults turns failure injection on.
 func producesUnder(t *testing.T, h *humustest.Host, tel *humustest.Telemetry, faults bool, bag string, settings kafka.ProducerSettings, run func(ctx context.Context, p *kafka.Producer) error) {
 	t.Helper()
-	opts := []humus.Option{humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())}
+	opts := []humus.Option{humus.WithTelemetry(tel.Builder())}
 	if faults {
 		opts = append(opts, withFaults(t))
 	}
-	_, status := humustest.Start(t, produces(settings, run),
+	_, status := humustest.Start(t, h.Host(), produces(settings, run),
 		humustest.WithApp(opts...),
 		humustest.WithEnv(map[string]string{"BAGGAGE": bag}),
 	)
@@ -329,11 +329,11 @@ func TestProducer_strips_the_scenario_unless_ForwardScenario_is_set(t *testing.T
 // exit 0. faults turns failure injection on.
 func consumeUnder(t *testing.T, h *humustest.Host, tel *humustest.Telemetry, faults bool, s kafka.Settings, p queue.ProcessorFunc[kafka.Message]) {
 	t.Helper()
-	opts := []humus.Option{humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())}
+	opts := []humus.Option{humus.WithTelemetry(tel.Builder())}
 	if faults {
 		opts = append(opts, withFaults(t))
 	}
-	proc, status := humustest.Start(t, consumes(s, p), humustest.WithApp(opts...))
+	proc, status := humustest.Start(t, h.Host(), consumes(s, p), humustest.WithApp(opts...))
 	synctest.Wait()
 	proc.Signal(syscall.SIGTERM)
 	st := <-status

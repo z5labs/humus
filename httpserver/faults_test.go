@@ -113,15 +113,15 @@ func runFaults(t *testing.T, run faultsRun) faultsResult {
 		settings.TLS.ClientCAs = ca.Pool()
 	}
 
-	opts := []humus.Option{humus.WithHost(host.Host()), humus.WithTelemetry(tel.Builder())}
+	opts := []humus.Option{humus.WithTelemetry(tel.Builder())}
 	if run.faults {
-		opts = append(opts, humus.WithFaults(func(context.Context, *humus.Setup) (fault.Settings, error) {
+		opts = append(opts, humus.WithFaults(func(context.Context, *humus.Setup, humus.Host) (fault.Settings, error) {
 			d := fault.DefaultSettings()
 			d.Decoder = c
 			return d, nil
 		}))
 	}
-	p, status := humustest.Start(t, serves(settings, mux), humustest.WithApp(opts...))
+	p, status := humustest.Start(t, host.Host(), serves(settings, mux), humustest.WithApp(opts...))
 	<-host.Listening("localhost:8443")
 
 	cl := client(host, ca, offersBoth)

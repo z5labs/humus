@@ -29,7 +29,7 @@ import (
 // Shutdown so that the drain lasts its whole delay, sends SIGTERM once the
 // App listens for it, and returns how long after SIGTERM Shutdown was called
 // and how much of the grace period its context had left.
-func shutdownTiming(t *testing.T, app humus.App, p *bedrocktest.Process) (drain, grace time.Duration) {
+func shutdownTiming(t *testing.T, app humus.App[humus.Host], p *bedrocktest.Process) (drain, grace time.Duration) {
 	t.Helper()
 	var shutdownAt time.Time
 	svc := serving(func(ctx context.Context) error {
@@ -57,7 +57,7 @@ func shutdownTiming(t *testing.T, app humus.App, p *bedrocktest.Process) (drain,
 
 func TestApp_Run_settings_default_to_the_App_fields(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		app := humus.App{
+		app := humus.App[humus.Host]{
 			Host:                humus.OSHost(),
 			ShutdownGracePeriod: 4 * time.Second,
 			Drain:               humus.DrainDelay(2 * time.Second),
@@ -79,7 +79,7 @@ func TestApp_Run_settings_default_to_the_App_fields(t *testing.T) {
 func TestApp_Run_HUMUS_SHUTDOWN_DRAIN_DELAY_replaces_the_Drain(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		d := &countedDrain{}
-		app := humus.App{
+		app := humus.App[humus.Host]{
 			Host:                humustest.NewHost(t).Host(),
 			ShutdownGracePeriod: 4 * time.Second,
 			Drain:               d.Drain,
@@ -105,7 +105,7 @@ func TestApp_Run_HUMUS_SHUTDOWN_DRAIN_DELAY_replaces_the_Drain(t *testing.T) {
 
 func TestApp_Run_HUMUS_SHUTDOWN_DRAIN_DELAY_adds_a_drain(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		app := humus.App{
+		app := humus.App[humus.Host]{
 			Host:                humustest.NewHost(t).Host(),
 			ShutdownGracePeriod: 4 * time.Second,
 			Telemetry:           telemetry.NoopBuilder,
@@ -124,7 +124,7 @@ func TestApp_Run_HUMUS_SHUTDOWN_DRAIN_DELAY_adds_a_drain(t *testing.T) {
 
 func TestApp_Run_HUMUS_SHUTDOWN_GRACE_PERIOD_overrides_ShutdownGracePeriod(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		app := humus.App{
+		app := humus.App[humus.Host]{
 			Host:                humus.OSHost(),
 			ShutdownGracePeriod: 4 * time.Second,
 			Telemetry:           telemetry.NoopBuilder,
@@ -146,7 +146,7 @@ func TestApp_Run_HUMUS_SHUTDOWN_GRACE_PERIOD_overrides_ShutdownGracePeriod(t *te
 
 func TestApp_Run_variables_override_fields_that_would_fail(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		app := humus.App{
+		app := humus.App[humus.Host]{
 			Host:      humus.OSHost(),
 			Telemetry: telemetry.NoopBuilder, // ShutdownGracePeriod is zero
 		}
@@ -169,10 +169,10 @@ func TestApp_Run_variables_override_fields_that_would_fail(t *testing.T) {
 // runConfigFailure runs app on a Process with env, and checks that it exits
 // ExitConfig without listening for signals or calling Init, and writes its
 // cause to stderr. It returns the cause.
-func runConfigFailure(t *testing.T, app humus.App, env map[string]string) error {
+func runConfigFailure(t *testing.T, app humus.App[humus.Host], env map[string]string) error {
 	t.Helper()
 	initCalled := false
-	app.Init = func(context.Context, *humus.Setup) ([]humus.Service, error) {
+	app.Init = func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 		initCalled = true
 		return nil, nil
 	}
@@ -205,7 +205,7 @@ func runConfigFailure(t *testing.T, app humus.App, env map[string]string) error 
 
 func TestApp_Run_zero_ShutdownGracePeriod_exits_78(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		cause := runConfigFailure(t, humus.App{Host: humus.OSHost(), Telemetry: telemetry.NoopBuilder}, nil)
+		cause := runConfigFailure(t, humus.App[humus.Host]{Host: humus.OSHost(), Telemetry: telemetry.NoopBuilder}, nil)
 
 		if want := "config HUMUS_SHUTDOWN_GRACE_PERIOD: must be positive"; cause.Error() != want {
 			t.Errorf("cause = %q, want %q", cause, want)
@@ -224,7 +224,7 @@ func TestApp_Run_a_grace_period_that_is_not_positive_exits_78(t *testing.T) {
 	for _, value := range []string{"0s", "-5s"} {
 		t.Run(value, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				app := humus.App{Host: humus.OSHost(), ShutdownGracePeriod: 10 * time.Second, Telemetry: telemetry.NoopBuilder}
+				app := humus.App[humus.Host]{Host: humus.OSHost(), ShutdownGracePeriod: 10 * time.Second, Telemetry: telemetry.NoopBuilder}
 
 				cause := runConfigFailure(t, app, map[string]string{
 					"HUMUS_SHUTDOWN_GRACE_PERIOD": value,
@@ -241,7 +241,7 @@ func TestApp_Run_a_grace_period_that_is_not_positive_exits_78(t *testing.T) {
 func TestApp_Run_negative_drain_delay_exits_78(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		d := &countedDrain{}
-		app := humus.App{
+		app := humus.App[humus.Host]{
 			Host:                humus.OSHost(),
 			ShutdownGracePeriod: 10 * time.Second,
 			Drain:               d.Drain,
@@ -268,7 +268,7 @@ func TestApp_Run_negative_drain_delay_exits_78(t *testing.T) {
 
 func TestApp_Run_malformed_settings_are_reported_together(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		app := humus.App{Host: humus.OSHost(), ShutdownGracePeriod: 10 * time.Second, Telemetry: telemetry.NoopBuilder}
+		app := humus.App[humus.Host]{Host: humus.OSHost(), ShutdownGracePeriod: 10 * time.Second, Telemetry: telemetry.NoopBuilder}
 
 		cause := runConfigFailure(t, app, map[string]string{
 			"HUMUS_SHUTDOWN_GRACE_PERIOD": "30",

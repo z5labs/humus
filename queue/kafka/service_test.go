@@ -43,13 +43,13 @@ func TestService_at_least_once_stops_on_a_failure_and_redelivers(t *testing.T) {
 		bad := errors.New("cannot process")
 		run := func(fail bool) (bedrock.ExitStatus, []int64) {
 			var seen []int64
-			p, status := humustest.Start(t, consumes(settings(c.ListenAddrs()...), func(ctx context.Context, m kafka.Message) error {
+			p, status := humustest.Start(t, h.Host(), consumes(settings(c.ListenAddrs()...), func(ctx context.Context, m kafka.Message) error {
 				seen = append(seen, m.Offset)
 				if fail && m.Offset == 3 {
 					return bad
 				}
 				return nil
-			}), humustest.WithApp(humus.WithHost(h.Host())))
+			}))
 			if !fail {
 				synctest.Wait() // every record is processed and committed
 				p.Signal(syscall.SIGTERM)
@@ -80,13 +80,13 @@ func TestService_SIGTERM_lets_the_record_in_flight_finish_and_commits_it(t *test
 		entered := make(chan struct{}, 5)
 		finished := make(chan int64, 5)
 		ctxErrs := make(chan error, 5)
-		p, status := humustest.Start(t, consumes(settings(c.ListenAddrs()...), func(ctx context.Context, m kafka.Message) error {
+		p, status := humustest.Start(t, h.Host(), consumes(settings(c.ListenAddrs()...), func(ctx context.Context, m kafka.Message) error {
 			entered <- struct{}{}
 			time.Sleep(3 * time.Second)
 			ctxErrs <- ctx.Err()
 			finished <- m.Offset
 			return nil
-		}), humustest.WithApp(humus.WithHost(h.Host())))
+		}))
 		<-entered // offset 0 is in flight
 		p.Signal(syscall.SIGTERM)
 
@@ -146,7 +146,7 @@ func requireTwoPartitionsProcessedConcurrently(t *testing.T, h *humustest.Host, 
 		started   = map[int32]chan struct{}{0: make(chan struct{}), 1: make(chan struct{})}
 		processed = make(chan struct{})
 	)
-	p, status := humustest.Start(t, consumes(settings(c.ListenAddrs()...), func(ctx context.Context, m kafka.Message) error {
+	p, status := humustest.Start(t, h.Host(), consumes(settings(c.ListenAddrs()...), func(ctx context.Context, m kafka.Message) error {
 		mu.Lock()
 		inFlight++
 		maxFlight = max(maxFlight, inFlight)
@@ -169,7 +169,7 @@ func requireTwoPartitionsProcessedConcurrently(t *testing.T, h *humustest.Host, 
 		}
 		mu.Unlock()
 		return nil
-	}), humustest.WithApp(humus.WithHost(h.Host())))
+	}))
 	select {
 	case <-processed:
 	case st := <-status:
@@ -231,13 +231,13 @@ func TestService_at_most_once(t *testing.T) {
 			bad := errors.New("cannot process")
 			var seen []int64
 			tel := humustest.NewTelemetry()
-			p, status := humustest.Start(t, consumes(s, func(ctx context.Context, m kafka.Message) error {
+			p, status := humustest.Start(t, h.Host(), consumes(s, func(ctx context.Context, m kafka.Message) error {
 				seen = append(seen, m.Offset)
 				if m.Offset == 1 {
 					return bad
 				}
 				return nil
-			}), humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+			}), humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 			synctest.Wait()
 			p.Signal(syscall.SIGTERM)
 
@@ -267,10 +267,10 @@ func TestService_at_most_once(t *testing.T) {
 			s := settings(c.ListenAddrs()...)
 			s.Delivery = queue.AtMostOnce
 			var atStart []int64
-			p, status := humustest.Start(t, consumes(s, func(ctx context.Context, m kafka.Message) error {
+			p, status := humustest.Start(t, h.Host(), consumes(s, func(ctx context.Context, m kafka.Message) error {
 				atStart = append(atStart, committed(c)[0])
 				return nil
-			}), humustest.WithApp(humus.WithHost(h.Host())))
+			}))
 			synctest.Wait()
 			p.Signal(syscall.SIGTERM)
 
@@ -295,7 +295,7 @@ func TestService_at_most_once(t *testing.T) {
 				inFlight  int
 				maxFlight int
 			)
-			p, status := humustest.Start(t, consumes(s, func(ctx context.Context, m kafka.Message) error {
+			p, status := humustest.Start(t, h.Host(), consumes(s, func(ctx context.Context, m kafka.Message) error {
 				mu.Lock()
 				inFlight++
 				maxFlight = max(maxFlight, inFlight)
@@ -306,7 +306,7 @@ func TestService_at_most_once(t *testing.T) {
 				seen = append(seen, m.Offset)
 				mu.Unlock()
 				return nil
-			}), humustest.WithApp(humus.WithHost(h.Host())))
+			}))
 			synctest.Wait()
 			time.Sleep(time.Second)
 			synctest.Wait()
@@ -355,13 +355,12 @@ func TestService_grace_period_cuts_the_record_in_flight_short(t *testing.T) {
 		entered := make(chan struct{}, 1)
 		var cancelledAfter time.Duration
 		var signalled time.Time
-		p, status := humustest.Start(t, consumes(settings(c.ListenAddrs()...), func(ctx context.Context, m kafka.Message) error {
+		p, status := humustest.Start(t, h.Host(), consumes(settings(c.ListenAddrs()...), func(ctx context.Context, m kafka.Message) error {
 			entered <- struct{}{}
 			<-ctx.Done()
 			cancelledAfter = time.Since(signalled)
 			return ctx.Err()
 		}),
-			humustest.WithApp(humus.WithHost(h.Host())),
 			humustest.WithEnv(map[string]string{"HUMUS_SHUTDOWN_GRACE_PERIOD": "2s"}),
 		)
 		<-entered
@@ -468,8 +467,8 @@ func requireRevokeCommitsTheRecordInFlight(t *testing.T, h *humustest.Host, c *k
 		}
 	}
 
-	first, firstStatus := humustest.Start(t, consumes(settings(c.ListenAddrs()...), processor(0)),
-		humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+	first, firstStatus := humustest.Start(t, h.Host(), consumes(settings(c.ListenAddrs()...), processor(0)),
+		humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 	for _, p := range []int32{0, 1} {
 		select {
 		case <-started[p]:
@@ -482,8 +481,7 @@ func requireRevokeCommitsTheRecordInFlight(t *testing.T, h *humustest.Host, c *k
 		}
 	}
 
-	second, secondStatus := humustest.Start(t, consumes(settings(c.ListenAddrs()...), processor(1)),
-		humustest.WithApp(humus.WithHost(h.Host())))
+	second, secondStatus := humustest.Start(t, h.Host(), consumes(settings(c.ListenAddrs()...), processor(1)))
 	time.Sleep(time.Minute)
 	synctest.Wait()
 
@@ -539,10 +537,10 @@ func TestService_failures(t *testing.T) {
 			answerOffsetCommit(c, kerr.UnknownMemberID.Code, false)
 
 			var seen []int64
-			p, status := humustest.Start(t, consumes(settings(c.ListenAddrs()...), func(ctx context.Context, m kafka.Message) error {
+			p, status := humustest.Start(t, h.Host(), consumes(settings(c.ListenAddrs()...), func(ctx context.Context, m kafka.Message) error {
 				seen = append(seen, m.Offset)
 				return nil
-			}), humustest.WithApp(humus.WithHost(h.Host())))
+			}))
 			synctest.Wait()
 			require.Equal(t, []int64{0, 1, 2}, seen)
 
@@ -569,10 +567,10 @@ func TestService_failures(t *testing.T) {
 					s := settings(c.ListenAddrs()...)
 					s.GroupProtocol = protocol
 					var seen []int64
-					p, status := humustest.Start(t, consumes(s, func(ctx context.Context, m kafka.Message) error {
+					p, status := humustest.Start(t, h.Host(), consumes(s, func(ctx context.Context, m kafka.Message) error {
 						seen = append(seen, m.Offset)
 						return nil
-					}), humustest.WithApp(humus.WithHost(h.Host())))
+					}))
 					// Under the consumer protocol, franz-go waits 500ms
 					// on a commit refused with STALE_MEMBER_EPOCH for
 					// the heartbeat to bring a new epoch, before it
@@ -602,9 +600,9 @@ func TestService_failures(t *testing.T) {
 			produce(t, h, c, 3)
 			answerOffsetCommit(c, kerr.GroupAuthorizationFailed.Code, true)
 
-			_, status := humustest.Start(t, consumes(settings(c.ListenAddrs()...), func(context.Context, kafka.Message) error {
+			_, status := humustest.Start(t, h.Host(), consumes(settings(c.ListenAddrs()...), func(context.Context, kafka.Message) error {
 				return nil
-			}), humustest.WithApp(humus.WithHost(h.Host())))
+			}))
 
 			st := <-status
 			require.Equal(t, humus.ExitFailure, st.Code())
@@ -619,9 +617,9 @@ func TestService_failures(t *testing.T) {
 			produce(t, h, c, 3)
 			answerFetch(c, kerr.TopicAuthorizationFailed.Code)
 
-			_, status := humustest.Start(t, consumes(settings(c.ListenAddrs()...), func(context.Context, kafka.Message) error {
+			_, status := humustest.Start(t, h.Host(), consumes(settings(c.ListenAddrs()...), func(context.Context, kafka.Message) error {
 				return nil
-			}), humustest.WithApp(humus.WithHost(h.Host())))
+			}))
 
 			st := <-status
 			require.Equal(t, humus.ExitFailure, st.Code())
@@ -634,9 +632,9 @@ func TestService_keeps_serving_while_the_brokers_are_unreachable(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t) // nothing listens on it
 		tel := humustest.NewTelemetry()
-		p, status := humustest.Start(t, consumes(settings("127.0.0.1:9092"), func(context.Context, kafka.Message) error {
+		p, status := humustest.Start(t, h.Host(), consumes(settings("127.0.0.1:9092"), func(context.Context, kafka.Message) error {
 			return nil
-		}), humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+		}), humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 
 		time.Sleep(time.Minute)
 		select {
@@ -674,10 +672,10 @@ func TestService_TLS(t *testing.T) {
 		s := settings(c.ListenAddrs()...)
 		s.TLS = cfg
 		var seen []int64
-		p, status := humustest.Start(t, consumes(s, func(ctx context.Context, m kafka.Message) error {
+		p, status := humustest.Start(t, h.Host(), consumes(s, func(ctx context.Context, m kafka.Message) error {
 			seen = append(seen, m.Offset)
 			return nil
-		}), humustest.WithApp(humus.WithHost(h.Host())))
+		}))
 		synctest.Wait()
 		p.Signal(syscall.SIGTERM)
 
@@ -703,10 +701,10 @@ func TestService_SASL(t *testing.T) {
 					s := settings(c.ListenAddrs()...)
 					s.SASL = m.of(user, password)
 					var seen []int64
-					p, status := humustest.Start(t, consumes(s, func(ctx context.Context, m kafka.Message) error {
+					p, status := humustest.Start(t, h.Host(), consumes(s, func(ctx context.Context, m kafka.Message) error {
 						seen = append(seen, m.Offset)
 						return nil
-					}), humustest.WithApp(humus.WithHost(h.Host())))
+					}))
 					synctest.Wait()
 					p.Signal(syscall.SIGTERM)
 
@@ -724,9 +722,9 @@ func TestService_SASL(t *testing.T) {
 
 					s := settings(c.ListenAddrs()...)
 					s.SASL = m.of(user, rand.Text())
-					_, status := humustest.Start(t, consumes(s, func(context.Context, kafka.Message) error {
+					_, status := humustest.Start(t, h.Host(), consumes(s, func(context.Context, kafka.Message) error {
 						return nil
-					}), humustest.WithApp(humus.WithHost(h.Host())))
+					}))
 
 					st := <-status
 					require.Equal(t, humus.ExitFailure, st.Code())
@@ -745,9 +743,9 @@ func TestService_logs_the_partitions_it_is_assigned_revoked_and_loses(t *testing
 		produceTo(t, h, c, map[int32]int{0: 1, 1: 1})
 
 		tel := humustest.NewTelemetry()
-		p, status := humustest.Start(t, consumes(settings(c.ListenAddrs()...), func(context.Context, kafka.Message) error {
+		p, status := humustest.Start(t, h.Host(), consumes(settings(c.ListenAddrs()...), func(context.Context, kafka.Message) error {
 			return nil
-		}), humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+		}), humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 		synctest.Wait()
 
 		// The coordinator no longer knows the member: its partitions are
@@ -920,12 +918,12 @@ func TestNewService(t *testing.T) {
 				return nil, nil, false
 			})
 			bad := errors.New("init failed after NewService")
-			_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+			_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 				if _, err := kafka.NewService(s, settings(c.ListenAddrs()...), nop); err != nil {
 					return nil, err
 				}
 				return nil, bad
-			}, humustest.WithApp(humus.WithHost(h.Host())))
+			})
 
 			st := <-status
 			require.ErrorIs(t, st.Cause(), bad)
@@ -1035,7 +1033,7 @@ func requireFailureLetsTheOtherPartitionsFinish(t *testing.T, h *humustest.Host,
 		inFlight = make(chan struct{})
 		failed   = make(chan struct{})
 	)
-	p, status := humustest.Start(t, consumes(settings(c.ListenAddrs()...), func(ctx context.Context, m kafka.Message) error {
+	p, status := humustest.Start(t, h.Host(), consumes(settings(c.ListenAddrs()...), func(ctx context.Context, m kafka.Message) error {
 		mu.Lock()
 		started[m.Partition] = append(started[m.Partition], m.Offset)
 		select {
@@ -1072,7 +1070,7 @@ func requireFailureLetsTheOtherPartitionsFinish(t *testing.T, h *humustest.Host,
 		seen[m.Partition] = append(seen[m.Partition], m.Offset)
 		mu.Unlock()
 		return nil
-	}), humustest.WithApp(humus.WithHost(h.Host())))
+	}))
 
 	var st bedrock.ExitStatus
 	select {
@@ -1105,10 +1103,10 @@ func TestService_at_most_once_skips_and_logs_a_batch_whose_commit_was_refused(t 
 		s.Delivery = queue.AtMostOnce
 		var seen []int64
 		tel := humustest.NewTelemetry()
-		p, status := humustest.Start(t, consumes(s, func(ctx context.Context, m kafka.Message) error {
+		p, status := humustest.Start(t, h.Host(), consumes(s, func(ctx context.Context, m kafka.Message) error {
 			seen = append(seen, m.Offset)
 			return nil
-		}), humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+		}), humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 		synctest.Wait()
 
 		produce(t, h, c, 2) // offsets 3 and 4: the Service keeps serving
@@ -1142,7 +1140,7 @@ func TestService_a_lost_partition_commits_nothing_and_is_processed_again(t *test
 			committed0 []int64
 		)
 		first := true
-		p, status := humustest.Start(t, consumes(settings(c.ListenAddrs()...), func(ctx context.Context, m kafka.Message) error {
+		p, status := humustest.Start(t, h.Host(), consumes(settings(c.ListenAddrs()...), func(ctx context.Context, m kafka.Message) error {
 			seen = append(seen, m.Offset)
 			if first {
 				first = false
@@ -1154,7 +1152,7 @@ func TestService_a_lost_partition_commits_nothing_and_is_processed_again(t *test
 				committed0 = append(committed0, committed(c)[0])
 			}
 			return nil
-		}), humustest.WithApp(humus.WithHost(h.Host())))
+		}))
 		time.Sleep(time.Minute)
 		synctest.Wait()
 		p.Signal(syscall.SIGTERM)
@@ -1249,8 +1247,8 @@ func TestService_a_fenced_member_commits_nothing_more_for_the_partitions_it_held
 			status <-chan bedrock.ExitStatus
 		}
 		start := func(name string, opts ...humus.Option) app {
-			p, status := humustest.Start(t, consumes(s, processor(name)),
-				humustest.WithApp(append([]humus.Option{humus.WithHost(h.Host())}, opts...)...))
+			p, status := humustest.Start(t, h.Host(), consumes(s, processor(name)),
+				humustest.WithApp(append([]humus.Option{}, opts...)...))
 			return app{p, status}
 		}
 

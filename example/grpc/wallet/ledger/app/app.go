@@ -51,7 +51,7 @@ const (
 
 const scenarioKey = "acme.fault"
 
-func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
+func Faults(ctx context.Context, s *humus.Setup, h humus.Host) (fault.Settings, error) {
 	codec, err := jsonscenario.New(scenarioKey)
 	if err != nil {
 		return fault.Settings{}, err
@@ -65,7 +65,7 @@ func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
 	}).Read(ctx)
 }
 
-func BuildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+func BuildTelemetry(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 	d := telemetry.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(p.Environment, name) }
 	exporter := func(name string, def telemetry.Exporter) config.Value[telemetry.Exporter] {
@@ -88,22 +88,22 @@ func BuildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Diale
 	if err != nil {
 		return telemetry.SDK{}, err
 	}
-	return telemetry.New(ctx, s, dial, p.Stdout)
+	return telemetry.New(ctx, s, n, p.Stdout)
 }
 
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	return InitWith(ctx, s, openPostgres)
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	return InitWith(ctx, s, h, openPostgres)
 }
 
-type OpenStore func(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (st server.Store, ping func(context.Context) error, err error)
+type OpenStore func(ctx context.Context, s *humus.Setup, h humus.Host, cfg *pgxpool.Config) (st server.Store, ping func(context.Context) error, err error)
 
-func InitWith(ctx context.Context, s *humus.Setup, open OpenStore) ([]humus.Service, error) {
-	set, err := readSettings(ctx, s)
+func InitWith(ctx context.Context, s *humus.Setup, h humus.Host, open OpenStore) ([]humus.Service, error) {
+	set, err := readSettings(ctx, s, h)
 	if err != nil {
 		return nil, err
 	}
 
-	st, ping, err := open(ctx, s, set.Database)
+	st, ping, err := open(ctx, s, h, set.Database)
 	if err != nil {
 		return nil, err
 	}
@@ -200,9 +200,9 @@ type sourced struct {
 	Postgres  postgres
 }
 
-func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
+func readSettings(ctx context.Context, s *humus.Setup, h humus.Host) (settings, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
-	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.Filesystem)) }
+	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(h.Filesystem)) }
 
 	got, err := config.Struct(func(r *config.Resolver) sourced {
 		return sourced{
@@ -216,7 +216,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 				},
 				WatchInterval: r.Get(env("WATCH_INTERVAL").Parse(time.ParseDuration).Default(defaultWatchInterval).Validate(positive)),
 			},
-			ServerTLS: r.Get(env("GRPC_TLS_PEM_FILE").Parse(pemTLS(s.Host.Filesystem))),
+			ServerTLS: r.Get(env("GRPC_TLS_PEM_FILE").Parse(pemTLS(h.Filesystem))),
 			ClientCAs: r.Get(file("GRPC_CLIENT_CA_FILE").Parse(certPool)),
 			Postgres: postgres{
 				URL:      r.Get(env("POSTGRES_URL").Parse(parsePostgresURL).Validate(checkPostgresURL)),
@@ -302,13 +302,13 @@ func poolConfig(p postgres) (*pgxpool.Config, error) {
 	return cfg, nil
 }
 
-func openPostgres(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (server.Store, func(context.Context) error, error) {
+func openPostgres(ctx context.Context, s *humus.Setup, h humus.Host, cfg *pgxpool.Config) (server.Store, func(context.Context) error, error) {
 	cfg.ConnConfig.DialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		if network == "unix" {
 			var d net.Dialer
 			return d.DialContext(ctx, network, addr)
 		}
-		return s.Host.DialTCP(ctx, network, addr)
+		return h.DialTCP(ctx, network, addr)
 	}
 	cfg.ConnConfig.LookupFunc = func(_ context.Context, host string) ([]string, error) {
 		return []string{host}, nil

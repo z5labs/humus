@@ -16,7 +16,7 @@
 // The end user's Init sources the [Settings], builds the queue.Processor,
 // and returns the [Service] that [NewService] builds:
 //
-//	func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+//	func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 //		settings, err := readSettings(ctx, s) // kafka.Settings, sourced with config.Struct
 //		if err != nil {
 //			return nil, err

@@ -58,7 +58,7 @@ func startAttached(t *testing.T, tel *humustest.Telemetry) attached {
 	host := humustest.NewHost(t)
 	failing := new(atomic.Bool)
 
-	init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		hs := health.NewService(health.Liveness(health.MonitorFunc(func(context.Context) (bool, error) {
 			if failing.Load() {
 				return false, errSecret
@@ -83,8 +83,8 @@ func startAttached(t *testing.T, tel *humustest.Telemetry) attached {
 		return []humus.Service{svc, hs}, nil
 	}
 
-	p, status := humustest.Start(t, init,
-		humustest.WithApp(humus.WithHost(host.Host()), humus.WithTelemetry(tel.Builder())),
+	p, status := humustest.Start(t, host.Host(), init,
+		humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 	)
 	<-host.Listening("localhost:8443")
 	synctest.Wait() // until every Service is serving
@@ -269,8 +269,8 @@ func TestAPIInit_answers_the_probes_on_the_APIs_port(t *testing.T) {
 		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 			"tls.pem": pemFile(t, ca.Issue(t, "localhost")),
 		}))
-		p, status := httpservertest.Start(t, APIInit,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		p, status := httpservertest.Start(t, h.Host(), APIInit,
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			humustest.WithEnv(map[string]string{"ADDR": ":8443", "TLS_PEM_FILE": "tls.pem"}),
 		)
 		<-h.Listening("localhost:8443")

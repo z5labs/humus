@@ -25,6 +25,7 @@ import (
 	"github.com/z5labs/bedrock/host/hosttest"
 
 	"github.com/z5labs/humus"
+	humusfault "github.com/z5labs/humus/fault"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/telemetry"
 )
@@ -40,11 +41,11 @@ func (s *fakeService) Serve(ctx context.Context) error    { return s.serve(ctx) 
 func (s *fakeService) Shutdown(ctx context.Context) error { return s.shutdown(ctx) }
 
 // noServices is an Init that returns no Services.
-func noServices(context.Context, *humus.Setup) ([]humus.Service, error) { return nil, nil }
+func noServices(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) { return nil, nil }
 
 // services returns an Init that returns svcs.
-func services(svcs ...humus.Service) func(context.Context, *humus.Setup) ([]humus.Service, error) {
-	return func(context.Context, *humus.Setup) ([]humus.Service, error) {
+func services(svcs ...humus.Service) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
+	return func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 		return svcs, nil
 	}
 }
@@ -110,8 +111,8 @@ func TestApp_the_drain_ends_once_every_Serve_has_returned(t *testing.T) {
 			},
 		}
 
-		p, status := humustest.Start(t,
-			func(context.Context, *humus.Setup) ([]humus.Service, error) {
+		p, status := humustest.Start(t, humustest.NewHost(t).Host(),
+			func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 				return []humus.Service{svc}, nil
 			},
 			humustest.WithApp(humus.WithDrain(humus.DrainDelay(5*time.Second))),
@@ -138,8 +139,8 @@ func TestApp_a_Service_that_serves_until_Shutdown_gets_the_whole_drain(t *testin
 			},
 		}
 
-		p, status := humustest.Start(t,
-			func(context.Context, *humus.Setup) ([]humus.Service, error) {
+		p, status := humustest.Start(t, humustest.NewHost(t).Host(),
+			func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 				return []humus.Service{svc}, nil
 			},
 			humustest.WithApp(humus.WithDrain(humus.DrainDelay(5*time.Second))),
@@ -167,8 +168,8 @@ func TestStart_with_no_options_runs_Mains_defaults_on_a_test_Host(t *testing.T) 
 			require.True(t, ok, "Shutdown's context has the grace period's deadline")
 			grace = time.Until(deadline)
 		})
-		init := func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-			ln, err := s.Host.ListenTCP(ctx, "tcp", ":8080")
+		init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			ln, err := h.ListenTCP(ctx, "tcp", ":8080")
 			if err != nil {
 				return nil, err
 			}
@@ -177,7 +178,7 @@ func TestStart_with_no_options_runs_Mains_defaults_on_a_test_Host(t *testing.T) 
 			return []humus.Service{svc}, nil
 		}
 
-		p, status := humustest.Start(t, init)
+		p, status := humustest.Start(t, humustest.NewHost(t).Host(), init)
 		at := sigterm(p)
 		st := <-status
 
@@ -202,7 +203,7 @@ func TestStart_with_no_options_runs_Mains_defaults_on_a_test_Host(t *testing.T) 
 func TestStart_has_no_drain_by_default(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var shutdownAt time.Time
-		p, status := humustest.Start(t, services(untilShutdown(func(context.Context) {
+		p, status := humustest.Start(t, humustest.NewHost(t).Host(), services(untilShutdown(func(context.Context) {
 			shutdownAt = time.Now()
 		})), humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 		at := sigterm(p)
@@ -213,7 +214,7 @@ func TestStart_has_no_drain_by_default(t *testing.T) {
 	})
 }
 
-func TestWithApp_uses_the_Host_and_telemetry_it_is_given(t *testing.T) {
+func TestStart_uses_the_host_and_the_telemetry_it_is_given(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
 		tel := humustest.NewTelemetry()
@@ -226,8 +227,8 @@ func TestWithApp_uses_the_Host_and_telemetry_it_is_given(t *testing.T) {
 			},
 			shutdown: func(context.Context) error { return nil },
 		}
-		init := func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-			ln, err := s.Host.ListenTCP(ctx, "tcp", "api.internal:8080")
+		init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			ln, err := h.ListenTCP(ctx, "tcp", "api.internal:8080")
 			if err != nil {
 				return nil, err
 			}
@@ -236,8 +237,8 @@ func TestWithApp_uses_the_Host_and_telemetry_it_is_given(t *testing.T) {
 		}
 		listening := h.Listening("api.internal:8080")
 
-		p, status := humustest.Start(t, init,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+		p, status := humustest.Start(t, h.Host(), init,
+			humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 		)
 		<-listening // on h, not on the Host Start built
 		sigterm(p)
@@ -252,61 +253,52 @@ func TestWithApp_uses_the_Host_and_telemetry_it_is_given(t *testing.T) {
 
 func TestWithApp_given_twice_applies_both_in_order_and_a_later_option_wins(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		var order []string
-		record := func(name string) humus.Option {
-			return func(a *humus.App) {
-				// Each Option sees what the ones before it set.
-				order = append(order, name+"@"+a.ShutdownGracePeriod.String())
-			}
-		}
 		var grace time.Duration
 		svc := untilShutdown(func(ctx context.Context) {
 			deadline, _ := ctx.Deadline()
 			grace = time.Until(deadline)
 		})
 
-		p, status := humustest.Start(t, services(svc),
-			humustest.WithApp(record("first"), humus.WithShutdownGracePeriod(time.Second), record("second")),
-			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder), record("third"), humus.WithShutdownGracePeriod(3*time.Second)),
+		p, status := humustest.Start(t, humustest.NewHost(t).Host(), services(svc),
+			humustest.WithApp(humus.WithShutdownGracePeriod(time.Second), humus.WithShutdownGracePeriod(2*time.Second)),
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder), humus.WithShutdownGracePeriod(3*time.Second)),
 		)
 		sigterm(p)
 		st := <-status
 
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
-		require.Equal(t, []string{"first@20s", "second@1s", "third@1s"}, order)
 		require.Equal(t, 3*time.Second, grace, "the later option wins")
 	})
 }
 
-// TestWithApp_an_Option_sees_the_test_Host_and_Init_and_may_wrap_them
-// wraps the Host Start built, to see what the App listens on, and wraps
-// Init, to run a Service of its own next to the end user's.
-func TestWithApp_an_Option_sees_the_test_Host_and_Init_and_may_wrap_them(t *testing.T) {
+// TestStart_runs_a_wrapped_init_on_a_wrapped_host wraps the host it gives
+// Start, to see what the App listens on, and wraps init, to run a Service
+// of its own next to the end user's, as a test does now that no Option can
+// wrap either.
+func TestStart_runs_a_wrapped_init_on_a_wrapped_host(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		own := &stopsOnContext{}
 		added := &stopsOnContext{}
-		var sawHost, sawInit bool
 		var listened []string
-		wrap := func(a *humus.App) {
-			sawHost = a.Host.IPNetwork != nil && a.Host.Filesystem != nil
-			sawInit = a.Init != nil
-
-			listen := a.Host.ListenTCP
-			a.Host.IPNetwork = hosttest.Seams{Network: a.Host.IPNetwork, OnListenTCP: func(ctx context.Context, network, address string) (net.Listener, error) {
+		th := humustest.NewHost(t)
+		h := humus.Host{
+			IPNetwork: hosttest.Seams{Network: th, OnListenTCP: func(ctx context.Context, network, address string) (net.Listener, error) {
 				listened = append(listened, address)
-				return listen(ctx, network, address)
-			}}
-			init := a.Init
-			a.Init = func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-				svcs, err := init(ctx, s)
+				return th.ListenTCP(ctx, network, address)
+			}},
+			Filesystem: th.Filesystem(),
+		}
+		withAdded := func(init humus.Init[humus.Host]) humus.Init[humus.Host] {
+			return func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+				svcs, err := init(ctx, s, h)
 				if err != nil {
 					return nil, err
 				}
 				return append(svcs, added), nil
 			}
 		}
-		init := func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-			ln, err := s.Host.ListenTCP(ctx, "tcp", ":9090")
+		init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			ln, err := h.ListenTCP(ctx, "tcp", ":9090")
 			if err != nil {
 				return nil, err
 			}
@@ -314,26 +306,90 @@ func TestWithApp_an_Option_sees_the_test_Host_and_Init_and_may_wrap_them(t *test
 			return []humus.Service{own}, nil
 		}
 
-		p, status := humustest.Start(t, init,
-			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder), wrap),
+		p, status := humustest.Start(t, h, withAdded(init),
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		)
 		sigterm(p)
 		st := <-status
 
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
-		require.True(t, sawHost, "the Option saw the test Host")
-		require.True(t, sawInit, "the Option saw Init")
-		require.Equal(t, []string{":9090"}, listened, "the wrapped Host")
+		require.Equal(t, []string{":9090"}, listened, "the wrapped host")
 		require.EqualValues(t, 1, own.served.Load(), "Serve calls on the end user's Service")
 		require.EqualValues(t, 1, added.served.Load(), "Serve calls on the added Service")
 	})
+}
+
+// ownHost is an App's own host: the test host's network, embedded so that
+// ownHost is a humus.Network, and a name humus doesn't know.
+type ownHost struct {
+	humus.IPNetwork
+	name string
+}
+
+// TestStart_runs_an_App_on_its_own_host gives Init and Faults the host
+// Start is given, of the App's own type.
+func TestStart_runs_an_App_on_its_own_host(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var faultsName, initName string
+		faults := func(_ context.Context, _ *humus.Setup, h ownHost) (humusfault.Settings, error) {
+			faultsName = h.name
+			return humusfault.Settings{}, errors.New("no failure injection")
+		}
+		init := func(_ context.Context, _ *humus.Setup, h ownHost) ([]humus.Service, error) {
+			initName = h.name
+			return nil, nil
+		}
+
+		_, status := humustest.Start(t, ownHost{IPNetwork: humustest.NewHost(t), name: "own"}, init,
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(faults)),
+		)
+		st := <-status
+
+		require.Equal(t, humus.ExitFailure, st.Code(), "cause: %v", st.Cause())
+		require.Equal(t, "own", faultsName, "Faults got the App's host")
+		require.Empty(t, initName, "Init never ran after Faults failed")
+	})
+}
+
+// TestStart_fails_the_test_when_Apply_fails gives WithApp an Option made
+// for an App on another host type, and the zero Option.
+func TestStart_fails_the_test_when_Apply_fails(t *testing.T) {
+	ownFaults := func(context.Context, *humus.Setup, ownHost) (humusfault.Settings, error) {
+		return humusfault.DefaultSettings(), nil
+	}
+	cases := []struct {
+		name string
+		opt  humus.Option
+		want string
+	}{
+		{"an Option for another host type", humus.WithFaults(ownFaults), "humustest: Start: humus: WithFaults was made for an App on humustest_test.ownHost, not on humus.Host"},
+		{"the zero Option", humus.Option{}, "humustest: Start: humus: option 1 is the zero Option: only humus's With functions make an Option"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				tb := &fatalTB{}
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					humustest.Start(tb, humustest.NewHost(t).Host(), noServices,
+						humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder), c.opt),
+					)
+					t.Error("Start returned after Apply failed")
+				}()
+				<-done
+
+				require.Equal(t, c.want, tb.fatal)
+			})
+		})
+	}
 }
 
 func TestStart_the_process_options_reach_Setup_Process(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var args []string
 		var bucket, stdin string
-		init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			args = s.Process.Args
 			v, err := s.Process.Environment.Value("EXPORT_BUCKET")
 			if err != nil {
@@ -348,7 +404,7 @@ func TestStart_the_process_options_reach_Setup_Process(t *testing.T) {
 			return nil, nil
 		}
 
-		_, status := humustest.Start(t, init,
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), init,
 			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			humustest.WithEnv(map[string]string{"EXPORT_BUCKET": "nightly"}),
 			humustest.WithArgs("-dry-run", "rows.csv"),
@@ -368,7 +424,7 @@ func TestStart_the_last_of_each_process_option_wins(t *testing.T) {
 		var env bedrock.Environment
 		var args []string
 		var stdin string
-		init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			env = s.Process.Environment
 			args = s.Process.Args
 			b, err := io.ReadAll(s.Process.Stdin)
@@ -379,7 +435,7 @@ func TestStart_the_last_of_each_process_option_wins(t *testing.T) {
 			return nil, nil
 		}
 
-		_, status := humustest.Start(t, init,
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), init,
 			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			humustest.WithEnv(map[string]string{"EXPORT_BUCKET": "nightly", "EXPORT_REGION": "eu"}),
 			humustest.WithArgs("first"),
@@ -404,28 +460,25 @@ func TestStart_the_last_of_each_process_option_wins(t *testing.T) {
 
 func TestStart_panics(t *testing.T) {
 	require.PanicsWithValue(t, "humustest: Start called with a nil init", func() {
-		humustest.Start(t, nil)
+		humustest.Start(t, humustest.NewHost(t).Host(), nil)
 	})
 	require.PanicsWithValue(t, "humustest: Start called with a nil Option", func() {
-		humustest.Start(t, noServices, humustest.WithArgs("x"), nil)
-	})
-	require.PanicsWithValue(t, "humustest: WithApp called with a nil humus.Option", func() {
-		humustest.WithApp(humus.WithDrain(nil), nil)
+		humustest.Start(t, humustest.NewHost(t).Host(), noServices, humustest.WithArgs("x"), nil)
 	})
 	require.PanicsWithValue(t, "humustest: WithStdin called with a nil io.Reader", func() {
 		humustest.WithStdin(nil)
 	})
 }
 
-// helloService serves hello over HTTP on ":8080" of its Setup's Host, as
-// the end user's HTTP Service would. It keeps serving until Shutdown.
+// helloService serves hello over HTTP on ":8080" of its host, as the end
+// user's HTTP Service would. It keeps serving until Shutdown.
 type helloService struct {
-	setup *humus.Setup
-	srv   http.Server
+	host humus.Host
+	srv  http.Server
 }
 
 func (h *helloService) Serve(ctx context.Context) error {
-	ln, err := h.setup.Host.ListenTCP(ctx, "tcp", ":8080")
+	ln, err := h.host.ListenTCP(ctx, "tcp", ":8080")
 	if err != nil {
 		return err
 	}
@@ -441,17 +494,15 @@ func (h *helloService) Serve(ctx context.Context) error {
 func (h *helloService) Shutdown(ctx context.Context) error { return h.srv.Shutdown(ctx) }
 
 // helloInit is the end user's Init of the package doc's example.
-func helloInit(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
-	return []humus.Service{&helloService{setup: s}}, nil
+func helloInit(_ context.Context, _ *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	return []humus.Service{&helloService{host: h}}, nil
 }
 
 // TestInit_serves_hello is the package doc's example.
 func TestInit_serves_hello(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
-		p, status := humustest.Start(t, helloInit,
-			humustest.WithApp(humus.WithHost(h.Host())),
-		)
+		p, status := humustest.Start(t, h.Host(), helloInit)
 
 		// Wait until every goroutine in the bubble is blocked, which
 		// includes the App blocked in Accept on :8080.
@@ -500,18 +551,17 @@ func TestStart_rejects_a_Host_with_a_nil_field(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				var built, ran bool
-				builder := func(context.Context, bedrock.Process, telemetry.Dialer) (telemetry.SDK, error) {
+				builder := func(context.Context, bedrock.Process, telemetry.Network) (telemetry.SDK, error) {
 					built = true
 					return telemetry.Noop(), nil
 				}
-				init := func(context.Context, *humus.Setup) ([]humus.Service, error) {
+				init := func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 					ran = true
 					return nil, nil
 				}
 
-				p, status := humustest.Start(t, init,
+				p, status := humustest.Start(t, tc.host(humustest.NewHost(t)), init,
 					humustest.WithApp(
-						humus.WithHost(tc.host(humustest.NewHost(t))),
 						humus.WithTelemetry(builder),
 					),
 				)

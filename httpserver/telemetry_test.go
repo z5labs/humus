@@ -70,8 +70,8 @@ func serveOne(t *testing.T, tel *humustest.Telemetry, h http.Handler, req func(t
 	t.Helper()
 	ca := humustest.NewCA(t)
 	host := humustest.NewHost(t)
-	p, status := humustest.Start(t, serves(settingsFor(t, ca), h),
-		humustest.WithApp(humus.WithHost(host.Host()), humus.WithTelemetry(tel.Builder())),
+	p, status := humustest.Start(t, host.Host(), serves(settingsFor(t, ca), h),
+		humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 	)
 	<-host.Listening("localhost:8443")
 

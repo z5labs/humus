@@ -47,7 +47,7 @@ type invoice struct {
 	chargeID string
 }
 
-func (m *memory) open(context.Context, *humus.Setup, *pgxpool.Config) (billing.Invoices, error) {
+func (m *memory) open(context.Context, *humus.Setup, humus.Host, *pgxpool.Config) (billing.Invoices, error) {
 	return m, nil
 }
 
@@ -211,7 +211,7 @@ func newJob(t *testing.T, accounts ...string) *target {
 	return j
 }
 
-func (j *target) run(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error), env map[string]string, opts ...humustest.Option) bedrock.ExitStatus {
+func (j *target) run(t *testing.T, init func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error), env map[string]string, opts ...humustest.Option) bedrock.ExitStatus {
 	t.Helper()
 	all := maps.Clone(j.env)
 	for name, value := range env {
@@ -221,16 +221,15 @@ func (j *target) run(t *testing.T, init func(context.Context, *humus.Setup) ([]h
 		}
 		all[name] = value
 	}
-	_, status := humustest.Start(t, init, append([]humustest.Option{
+	_, status := humustest.Start(t, j.host.Host(), init, append([]humustest.Option{
 		humustest.WithApp(Options()...),
-		humustest.WithApp(humus.WithHost(j.host.Host())),
 		humustest.WithEnv(all),
 	}, opts...)...)
 	return <-status
 }
 
-func (j *target) inMemory(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	return initWith(ctx, s, j.store.open)
+func (j *target) inMemory(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	return initWith(ctx, s, h, j.store.open)
 }
 
 func TestInit_bills_a_month(t *testing.T) {
@@ -311,10 +310,8 @@ func TestInit_a_bad_setting_exits_78(t *testing.T) {
 
 func TestInit_without_its_settings_exits_78_naming_each(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		_, status := humustest.Start(t, Init,
-			humustest.WithApp(Options()...),
-			humustest.WithApp(humus.WithHost(humustest.NewHost(t).Host())),
-		)
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), Init,
+			humustest.WithApp(Options()...))
 
 		st := <-status
 		require.Equal(t, humus.ExitConfig, st.Code())

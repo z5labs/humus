@@ -91,7 +91,7 @@ func TestInit_writes_the_Echo_request_log_to_the_process_stdout(t *testing.T) {
 
 func TestInit_requires_an_address_and_a_certificate(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		_, status := httpservertest.Start(t, Init, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
+		_, status := httpservertest.Start(t, humustest.NewHost(t).Host(), Init, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 
 		st := <-status
 		require.Equal(t, humus.ExitConfig, st.Code())
@@ -114,8 +114,8 @@ func start(t *testing.T, tel telemetry.Builder) service {
 		"tls/tls.crt": certPEM,
 		"tls/tls.key": keyPEM,
 	}))
-	p, status := httpservertest.Start(t, Init,
-		humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel)),
+	p, status := httpservertest.Start(t, h.Host(), Init,
+		humustest.WithApp(humus.WithTelemetry(tel)),
 		humustest.WithEnv(map[string]string{
 			"ADDR":          ":8443",
 			"TLS_CERT_FILE": "tls/tls.crt",

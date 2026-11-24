@@ -48,7 +48,7 @@ func start(t *testing.T, polls backend, opts ...humus.Option) (*http.Client, fun
 	ca := humustest.NewCA(t)
 	cert := ca.Issue(t, "polls.internal")
 	h := humustest.NewHost(t)
-	p, status := httpservertest.Start(t, func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+	p, status := httpservertest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = "polls.internal:8443"
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
@@ -65,7 +65,7 @@ func start(t *testing.T, polls backend, opts ...humus.Option) (*http.Client, fun
 			return nil, err
 		}
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(append([]humus.Option{humus.WithHost(h.Host())}, opts...)...))
+	}, humustest.WithApp(append([]humus.Option{}, opts...)...))
 	<-h.Listening("polls.internal:8443")
 	c := httpservertest.NewClient(h, ca.Pool())
 	return c, func() {

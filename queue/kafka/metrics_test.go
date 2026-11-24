@@ -315,7 +315,7 @@ func TestProducer_metrics_of_two_clusters_are_two_series(t *testing.T) {
 
 		tel := humustest.NewTelemetry()
 		var during map[string]int64
-		_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			fp, err := kafka.NewProducer(s, failingSettings)
 			if err != nil {
 				return nil, err
@@ -330,7 +330,7 @@ func TestProducer_metrics_of_two_clusters_are_two_series(t *testing.T) {
 				during = series(t, collect(t, ctx, tel), "humus.circuit.state")
 				return nil
 			})}, nil
-		}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+		}, humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 		st := <-status
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
 
@@ -358,10 +358,10 @@ func TestProducer_metrics_callback_is_registered_last(t *testing.T) {
 		ps := producerSettings(c.ListenAddrs()...)
 		ps.BreakerPolicy.Probe = nil
 		tel := humustest.NewTelemetry()
-		_, status := humustest.Start(t, produces(ps, func(context.Context, *kafka.Producer) error {
+		_, status := humustest.Start(t, h.Host(), produces(ps, func(context.Context, *kafka.Producer) error {
 			require.FailNow(t, "the job ran with a Producer NewProducer should have rejected")
 			return nil
-		}), humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+		}), humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 		st := <-status
 		require.NotZero(t, st.Code())
 		require.ErrorContains(t, st.Cause(), "ProducerSettings.BreakerPolicy.Probe")

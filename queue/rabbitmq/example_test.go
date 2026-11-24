@@ -80,7 +80,7 @@ func (o *orders) store(m rabbitmq.Message) {
 // Init is the end user's Init: it sources the Settings with config.Struct,
 // builds the Publisher and the Processor, and returns the Service from
 // NewService.
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 	d := rabbitmq.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
@@ -124,10 +124,10 @@ func publisherOn(c rabbitmq.Connection) rabbitmq.PublisherSettings {
 
 // buildTelemetry is the consumer's telemetry.Builder, which names the
 // service.
-func buildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+func buildTelemetry(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 	s := telemetry.DefaultSettings()
 	s.ServiceName = "orders-consumer"
-	return telemetry.New(ctx, s, dial, p.Stdout)
+	return telemetry.New(ctx, s, n, p.Stdout)
 }
 
 // A consumer's main is one call to humus.Main, whose defaults are a
@@ -143,7 +143,7 @@ func Example_main() {
 // certificate, which is also its login. It sources the broker's CA and the
 // client's certificate from PEM files, read through s.Host.Filesystem, and
 // publishes over the same TLS.
-func secureInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func secureInit(ctx context.Context, s *humus.Setup, host humus.Host) ([]humus.Service, error) {
 	d := rabbitmq.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
@@ -151,8 +151,8 @@ func secureInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		k := d
 		k.Connection.Addr = r.Get(env("RABBITMQ_ADDR").Validate(rabbitmq.CheckAddr))
 		// The CA's file is read first, and the client's certificate only once it has been.
-		k.Connection.TLS = r.Get(env("RABBITMQ_TLS_CA_FILE").Parse(readFile(s.Host.Filesystem)).FlatMap(func(ca []byte) config.Value[*tls.Config] {
-			return env("RABBITMQ_TLS_CERT_FILE").Parse(readFile(s.Host.Filesystem)).Parse(clientTLS(ca))
+		k.Connection.TLS = r.Get(env("RABBITMQ_TLS_CA_FILE").Parse(readFile(host.Filesystem)).FlatMap(func(ca []byte) config.Value[*tls.Config] {
+			return env("RABBITMQ_TLS_CERT_FILE").Parse(readFile(host.Filesystem)).Parse(clientTLS(ca))
 		}))
 		// The client certificate is the login: RabbitMQ's rabbitmq_auth_mechanism_ssl plugin takes it.
 		k.Connection.SASL = &amqp.ExternalAuth{}

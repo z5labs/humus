@@ -357,7 +357,7 @@ func testOTLP(t *testing.T, protocol telemetry.Protocol, secure bool) {
 	rcv := startReceiver(t, ln, protocol)
 	dialer := newCountingDialer(host)
 
-	sdk, err := telemetry.New(t.Context(), s, dialer.Dial, nil)
+	sdk, err := telemetry.New(t.Context(), s, dialer, nil)
 	require.NoError(t, err)
 	_, span := sdk.TracerProvider.Tracer("carts").Start(t.Context(), "create cart")
 	span.End()
@@ -390,7 +390,7 @@ func testOTLP(t *testing.T, protocol telemetry.Protocol, secure bool) {
 	require.ElementsMatch(t, []string{"traces", "metrics", "logs"}, signals)
 
 	calls := dialer.Calls()
-	require.NotEmpty(t, calls, "the exporters dial through dial")
+	require.NotEmpty(t, calls, "the exporters dial through the Network")
 	for _, addr := range calls {
 		require.Equal(t, "otlp:4317", addr)
 	}
@@ -427,13 +427,13 @@ func requireNoop(t *testing.T, sdk telemetry.SDK) {
 	require.NoError(t, sdk.Shutdown(t.Context()))
 }
 
-func TestNew_needs_dial_for_OTLP_and_stdout_for_the_console(t *testing.T) {
+func TestNew_needs_a_Network_for_OTLP_and_stdout_for_the_console(t *testing.T) {
 	t.Parallel()
 
 	s := telemetry.DefaultSettings()
 	s.Logs = telemetry.ExporterOTLP
 	_, err := telemetry.New(t.Context(), s, nil, &bytes.Buffer{})
-	require.ErrorContains(t, err, "dial is nil")
+	require.ErrorContains(t, err, "n is nil")
 
 	_, err = telemetry.New(t.Context(), telemetry.DefaultSettings(), failingDialer(t), nil)
 	require.ErrorContains(t, err, "stdout is nil")
@@ -470,7 +470,7 @@ func TestNew_Shutdown_returns_within_ShutdownTimeout_when_the_receiver_never_ans
 				s.OTLP.Endpoint = "otlp:4317"
 				s.OTLP.Protocol = protocol
 				s.ShutdownTimeout = 2 * time.Second
-				sdk, err := telemetry.New(t.Context(), s, host.DialTCP, nil)
+				sdk, err := telemetry.New(t.Context(), s, host, nil)
 				require.NoError(t, err)
 
 				_, span := sdk.TracerProvider.Tracer("carts").Start(t.Context(), "create cart")
@@ -552,7 +552,7 @@ func TestNew_OTLP_Timeout_bounds_each_export(t *testing.T) {
 				s.OTLP.Protocol = protocol
 				s.OTLP.Timeout = time.Second
 				s.ShutdownTimeout = time.Minute
-				sdk, err := telemetry.New(t.Context(), s, host.DialTCP, nil)
+				sdk, err := telemetry.New(t.Context(), s, host, nil)
 				require.NoError(t, err)
 
 				_, span := sdk.TracerProvider.Tracer("carts").Start(t.Context(), "create cart")

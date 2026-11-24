@@ -26,8 +26,9 @@ import (
 // a test runs its App with the drain and the grace period that
 // grpcserver.Main gives it in production. Options given with
 // humustest.WithApp come after the defaults, and win over them.
-func Start(t testing.TB, init func(ctx context.Context, s *humus.Setup) ([]humus.Service, error), opts ...humustest.Option) (*bedrocktest.Process, <-chan bedrock.ExitStatus) {
-	return humustest.Start(t, init, append([]humustest.Option{humustest.WithApp(grpcserver.Defaults())}, opts...)...)
+func Start[H humus.Network](t testing.TB, h H, init humus.Init[H], opts ...humustest.Option) (*bedrocktest.Process, <-chan bedrock.ExitStatus) {
+	t.Helper()
+	return humustest.Start(t, h, init, append([]humustest.Option{humustest.WithApp(grpcserver.Defaults()...)}, opts...)...)
 }
 
 // NewClient returns a client of the Service listening on address in h. It

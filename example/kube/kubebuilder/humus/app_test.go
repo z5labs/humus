@@ -18,7 +18,7 @@ import (
 
 func TestInit_requires_the_controller_and_probes_settings(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		_, status := humustest.Start(t, Init, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), Init, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 
 		st := <-status
 		require.Equal(t, humus.ExitConfig, st.Code())
@@ -34,7 +34,7 @@ func TestInit_requires_the_controller_and_probes_settings(t *testing.T) {
 
 func TestInit_rejects_a_controller_name_the_Lease_cannot_take(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		_, status := humustest.Start(t, Init,
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), Init,
 			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			humustest.WithEnv(map[string]string{"CONTROLLER_NAME": "Memcached_Controller"}),
 		)

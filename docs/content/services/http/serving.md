@@ -41,7 +41,7 @@ both:
 ```go
 // Init is the end user's Init: it sources the Settings, builds the Service
 // with NewService and returns it, with any other Service the process runs.
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	d := httpserver.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
@@ -50,7 +50,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 			// No .Default: Addr and TLS are required, so an unset ADDR or
 			// TLS_PEM_FILE fails as not found.
 			Addr:              r.Get(env("ADDR").Validate(httpserver.CheckAddr)),
-			TLS:               r.Get(env("TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS)),
+			TLS:               r.Get(env("TLS_PEM_FILE").Parse(readFile(h.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS)),
 			HTTP2Only:         r.Get(env("HTTP2_ONLY").Parse(strconv.ParseBool).Default(d.HTTP2Only)),
 			ReadHeaderTimeout: r.Get(env("READ_HEADER_TIMEOUT").Parse(time.ParseDuration).Default(d.ReadHeaderTimeout).Validate(httpserver.CheckReadHeaderTimeout)),
 			ReadTimeout:       r.Get(env("READ_TIMEOUT").Parse(time.ParseDuration).Default(d.ReadTimeout).Validate(httpserver.CheckReadTimeout)),
@@ -197,7 +197,7 @@ one each fail as a config error with exit 78:
 settings, err := config.Struct(func(r *config.Resolver) httpserver.Settings {
 	settings := httpserver.DefaultSettings()
 	settings.Addr = r.Get(env("ADDR").Validate(httpserver.CheckAddr))
-	settings.TLS = r.Get(env("TLS_PKCS12_FILE").Parse(readFile(s.Host.Filesystem)).FlatMap(func(bundle []byte) config.Value[*tls.Config] {
+	settings.TLS = r.Get(env("TLS_PKCS12_FILE").Parse(readFile(h.Filesystem)).FlatMap(func(bundle []byte) config.Value[*tls.Config] {
 		return env("TLS_PKCS12_PASSWORD").Parse(pkcs12TLS(bundle))
 	}).Validate(httpserver.CheckTLS))
 	return settings
@@ -432,10 +432,11 @@ The design is in
 ## The defaults
 
 `httpserver.Main` is `humus.Main` with `httpserver.Defaults()` applied
-before the end user's options, and does nothing else. `Defaults` is one
-`humus.Option` that sets two of `humus.Main`'s
-[defaults]({{< relref "/fundamentals/lifecycle#the-defaults" >}}), and leaves the Host and
-the telemetry `Builder` as `humus.Main`'s:
+before the end user's options, and does nothing else. `Defaults` returns a
+`[]humus.Option` that sets two of `humus.Main`'s
+[defaults]({{< relref "/fundamentals/lifecycle#the-defaults" >}}), and leaves the host and
+the telemetry `Builder` as `humus.Main`'s. There is no package `MainOn`: an App
+on a host of its own calls `humus.MainOn(acquire, init, append(httpserver.Defaults(), opts...)...)`. The two defaults are:
 
 - **A drain of `humus.DrainDelay(5 * time.Second)`.** Kubernetes removes a
   terminating pod from a Service's endpoints asynchronously, so for a while
@@ -732,8 +733,8 @@ func TestMain_serves_HTTP2_and_records_the_span(t *testing.T) {
 		mux := http.NewServeMux()
 		mux.HandleFunc("GET /hello/{name}", greet)
 
-		p, status := httpservertest.Start(t, serves(ca.Issue(t, "localhost"), mux),
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+		p, status := httpservertest.Start(t, h.Host(), serves(ca.Issue(t, "localhost"), mux),
+			humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 		)
 		<-h.Listening("localhost:8443")
 
@@ -779,8 +780,8 @@ ca := humustest.NewCA(t)
 bundle, password := ca.Issue(t, "localhost").PKCS12(t)
 h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{"tls.p12": bundle}))
 
-p, status := httpservertest.Start(t, InitPKCS12,
-	humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+p, status := httpservertest.Start(t, h.Host(), InitPKCS12,
+	humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 	humustest.WithEnv(map[string]string{
 		"ADDR":                ":8443",
 		"TLS_PKCS12_FILE":     "tls.p12",
@@ -802,7 +803,7 @@ required:
 ```go
 func TestInit_without_an_address_or_a_certificate_exits_78(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		_, status := httpservertest.Start(t, Init)
+		_, status := httpservertest.Start(t, humustest.NewHost(t).Host(), Init)
 
 		st := <-status
 		require.Equal(t, humus.ExitConfig, st.Code())

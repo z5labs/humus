@@ -60,8 +60,8 @@ func start(t *testing.T, files map[string][]byte, build telemetry.Builder, args 
 			args[i] = h.Path(arg)
 		}
 	}
-	p, status := humustest.Start(t, Init,
-		humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(build)),
+	p, status := humustest.Start(t, h.Host(), Init,
+		humustest.WithApp(humus.WithTelemetry(build)),
 		humustest.WithArgs(args...),
 	)
 	st := <-status

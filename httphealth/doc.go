@@ -146,7 +146,7 @@
 //		return httphealth.Settings{
 //			// No .Default: both fields are required.
 //			Addr: r.Get(env("PROBES_ADDR").Validate(httphealth.CheckAddr)),
-//			TLS:  r.Get(env("PROBES_TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(httphealth.CheckTLS)),
+//			TLS:  r.Get(env("PROBES_TLS_PEM_FILE").Parse(readFile(h.Filesystem)).Parse(serverTLS).Validate(httphealth.CheckTLS)),
 //		}
 //	}).Read(ctx)
 //	if err != nil {

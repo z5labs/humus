@@ -21,11 +21,10 @@ import (
 // root package's tests check mainApp.
 
 // applied returns the App that opts make of an empty App, in order.
-func applied(opts []humus.Option) humus.App {
-	var a humus.App
-	for _, opt := range opts {
-		opt(&a)
-	}
+func applied(t *testing.T, opts []humus.Option) humus.App[humus.Host] {
+	t.Helper()
+	var a humus.App[humus.Host]
+	require.NoError(t, a.Apply(opts...))
 	return a
 }
 
@@ -36,7 +35,7 @@ func drainTakes(t *testing.T, d humus.Drain) time.Duration {
 	var took time.Duration
 	synctest.Test(t, func(t *testing.T) {
 		start := time.Now()
-		require.NoError(t, d(context.Background(), &humus.Setup{}))
+		require.NoError(t, d(context.Background(), &humus.Setup{}, nil))
 		took = time.Since(start)
 	})
 	return took
@@ -45,9 +44,9 @@ func drainTakes(t *testing.T, d humus.Drain) time.Duration {
 func TestMainOptions(t *testing.T) {
 	t.Run("are Defaults alone when the end user passes none", func(t *testing.T) {
 		opts := mainOptions()
-		require.Len(t, opts, 1)
+		require.Len(t, opts, len(Defaults()))
 
-		a := applied(opts)
+		a := applied(t, opts)
 		require.Equal(t, 15*time.Second, a.ShutdownGracePeriod)
 		require.NotNil(t, a.Drain)
 		require.Equal(t, 5*time.Second, drainTakes(t, a.Drain))
@@ -55,20 +54,20 @@ func TestMainOptions(t *testing.T) {
 
 	t.Run("put Defaults before the end user's options", func(t *testing.T) {
 		opts := mainOptions(humus.WithShutdownGracePeriod(30 * time.Second))
-		require.Len(t, opts, 2)
+		require.Len(t, opts, len(Defaults())+1)
 
-		first := applied(opts[:1])
+		first := applied(t, opts[:len(Defaults())])
 		require.Equal(t, 15*time.Second, first.ShutdownGracePeriod, "the first option is Defaults")
 		require.Equal(t, 5*time.Second, drainTakes(t, first.Drain), "the first option is Defaults")
 
-		a := applied(opts)
+		a := applied(t, opts)
 		require.Equal(t, 30*time.Second, a.ShutdownGracePeriod, "the end user's option wins")
 		require.NotNil(t, a.Drain)
 		require.Equal(t, 5*time.Second, drainTakes(t, a.Drain), "the drain is still Defaults'")
 	})
 
 	t.Run("let the end user remove the drain", func(t *testing.T) {
-		a := applied(mainOptions(humus.WithDrain(nil)))
+		a := applied(t, mainOptions(humus.WithDrain(nil)))
 		require.Nil(t, a.Drain)
 		require.Equal(t, 15*time.Second, a.ShutdownGracePeriod)
 	})
@@ -78,7 +77,7 @@ func TestMainOptions(t *testing.T) {
 			humus.WithShutdownGracePeriod(30*time.Second),
 			humus.WithShutdownGracePeriod(25*time.Second),
 		)
-		require.Len(t, opts, 3)
-		require.Equal(t, 25*time.Second, applied(opts).ShutdownGracePeriod, "the last option wins")
+		require.Len(t, opts, len(Defaults())+2)
+		require.Equal(t, 25*time.Second, applied(t, opts).ShutdownGracePeriod, "the last option wins")
 	})
 }

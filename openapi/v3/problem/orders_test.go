@@ -59,8 +59,8 @@ func startOrders(t *testing.T) *ordersApp {
 	t.Helper()
 	ca := humustest.NewCA(t)
 	h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{"tls.pem": keyPairPEM(t, ca.Issue(t, "localhost"))}))
-	p, status := httpservertest.Start(t, Init,
-		humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+	p, status := httpservertest.Start(t, h.Host(), Init,
+		humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		humustest.WithEnv(map[string]string{"ADDR": ":8443", "TLS_PEM_FILE": "tls.pem"}),
 	)
 	select {
@@ -240,8 +240,8 @@ func TestInit_serves_its_document(t *testing.T) {
 
 func TestInit_without_its_settings_exits_78(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		_, status := httpservertest.Start(t, Init,
-			humustest.WithApp(humus.WithHost(humustest.NewHost(t).Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		_, status := httpservertest.Start(t, humustest.NewHost(t).Host(), Init,
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		)
 
 		st := <-status

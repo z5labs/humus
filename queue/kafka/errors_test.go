@@ -270,9 +270,9 @@ func TestServe_ended_by_TOPIC_AUTHORIZATION_FAILED_returns_an_Error(t *testing.T
 		produce(t, h, c, 3)
 		c.Fault(kfake.Fault{Keys: []kmsg.Key{kmsg.Fetch}, Topic: topic, Err: kerr.TopicAuthorizationFailed, Count: -1})
 
-		_, status := humustest.Start(t, consumes(settings(c.ListenAddrs()...), func(context.Context, kafka.Message) error {
+		_, status := humustest.Start(t, h.Host(), consumes(settings(c.ListenAddrs()...), func(context.Context, kafka.Message) error {
 			return nil
-		}), humustest.WithApp(humus.WithHost(h.Host())))
+		}))
 
 		st := <-status
 		require.Equal(t, humus.ExitFailure, st.Code())
@@ -291,9 +291,9 @@ func TestService_refused_SASL_credentials_give_SASL_AUTHENTICATION_FAILED(t *tes
 
 		s := settings(c.ListenAddrs()...)
 		s.SASL = kafka.Plain(user, rand.Text())
-		_, status := humustest.Start(t, consumes(s, func(context.Context, kafka.Message) error {
+		_, status := humustest.Start(t, h.Host(), consumes(s, func(context.Context, kafka.Message) error {
 			return nil
-		}), humustest.WithApp(humus.WithHost(h.Host())))
+		}))
 
 		st := <-status
 		require.Equal(t, humus.ExitFailure, st.Code())
@@ -381,13 +381,13 @@ func TestProducer_a_closed_Producer_fails_records_with_ErrProducerClosed(t *test
 			after := make(chan struct{})
 			produced := make(chan error, 1)
 			tel := humustest.NewTelemetry()
-			_, status := humustest.Start(t, produces(producerSettings(c.ListenAddrs()...), func(_ context.Context, p *kafka.Producer) error {
+			_, status := humustest.Start(t, h.Host(), produces(producerSettings(c.ListenAddrs()...), func(_ context.Context, p *kafka.Producer) error {
 				go func() {
 					<-after
 					produced <- p.Produce(context.Background(), value(0))
 				}()
 				return nil
-			}), humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+			}), humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 
 			st := <-status
 			require.Zero(t, st.Code(), "cause: %v", st.Cause())
@@ -407,12 +407,12 @@ func TestProducer_a_closed_Producer_fails_records_with_ErrProducerClosed(t *test
 
 			produced := make(chan error, 1)
 			tel := humustest.NewTelemetry()
-			_, status := humustest.Start(t, produces(producerSettings(c.ListenAddrs()...), func(_ context.Context, p *kafka.Producer) error {
+			_, status := humustest.Start(t, h.Host(), produces(producerSettings(c.ListenAddrs()...), func(_ context.Context, p *kafka.Producer) error {
 				go func() { produced <- p.Produce(context.Background(), value(0)) }()
 				<-held
 				return nil
 			}),
-				humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+				humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 				humustest.WithEnv(map[string]string{"HUMUS_SHUTDOWN_GRACE_PERIOD": "2s"}),
 			)
 

@@ -67,8 +67,8 @@ func callOnce(t *testing.T, tel *humustest.Telemetry, ts testpb.TestServiceServe
 	t.Helper()
 	ca := humustest.NewCA(t)
 	h := humustest.NewHost(t)
-	p, exit := humustest.Start(t, serves(settingsFor(t, ca, ":9090"), ts),
-		humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+	p, exit := humustest.Start(t, h.Host(), serves(settingsFor(t, ca, ":9090"), ts),
+		humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 	)
 	<-h.Listening("carts:9090")
 
@@ -203,7 +203,7 @@ func TestService_records_gRFC_A66_metrics_with_a_second_stats_handler(t *testing
 		h := humustest.NewHost(t)
 		tel := humustest.NewTelemetry()
 		settings := settingsFor(t, ca, ":9090")
-		init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			svc, err := grpcserver.NewService(s, settings, opentelemetry.ServerOption(opentelemetry.Options{
 				MetricsOptions: opentelemetry.MetricsOptions{MeterProvider: s.Telemetry.MeterProvider},
 			}))
@@ -213,7 +213,7 @@ func TestService_records_gRFC_A66_metrics_with_a_second_stats_handler(t *testing
 			testpb.RegisterTestServiceServer(svc, &testServer{})
 			return []humus.Service{svc}, nil
 		}
-		p, exit := humustest.Start(t, init, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+		p, exit := humustest.Start(t, h.Host(), init, humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 		<-h.Listening("carts:9090")
 
 		client := testpb.NewTestServiceClient(grpcservertest.NewClient(t, h, "carts:9090", ca.Pool()))

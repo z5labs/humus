@@ -41,7 +41,7 @@ func (e *exporter) Run(ctx context.Context) error {
 
 // Init is the end user's Init: it builds the run's dependencies, releases
 // them with s.OnStop, and returns the job's Service.
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	bucket, err := config.Env(s.Process.Environment, "EXPORT_BUCKET").Read(ctx)
 	if err != nil {
 		return nil, err // exit 78
@@ -54,10 +54,10 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 }
 
 // buildTelemetry is the job's telemetry.Builder, which names the service.
-func buildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+func buildTelemetry(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 	s := telemetry.DefaultSettings()
 	s.ServiceName = "exporter"
-	return telemetry.New(ctx, s, dial, p.Stdout)
+	return telemetry.New(ctx, s, n, p.Stdout)
 }
 
 // A job's main is one call to humus.Main, whose defaults are a job's, with

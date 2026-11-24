@@ -52,8 +52,8 @@ func start(t *testing.T, files map[string][]byte, env map[string]string, build t
 		}
 		merged[name] = value
 	}
-	p, status := humustest.Start(t, Init,
-		humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(build)),
+	p, status := humustest.Start(t, h.Host(), Init,
+		humustest.WithApp(humus.WithTelemetry(build)),
 		humustest.WithEnv(merged),
 		humustest.WithArgs(args...),
 	)

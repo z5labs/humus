@@ -35,7 +35,7 @@ const catalogAddr = "catalog.internal:8443"
 func startCatalog(t *testing.T, h *humustest.Host, ca *humustest.CA, handler http.Handler) (stop func()) {
 	t.Helper()
 	cert := ca.Issue(t, "catalog.internal")
-	p, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	p, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = catalogAddr
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
@@ -44,7 +44,7 @@ func startCatalog(t *testing.T, h *humustest.Host, ca *humustest.CA, handler htt
 			return nil, err
 		}
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+	}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 	<-h.Listening(catalogAddr)
 	return func() {
 		t.Helper()
@@ -67,7 +67,7 @@ func settings(t *testing.T, ca *humustest.CA, rawURL string) httpclient.Settings
 
 func run(t *testing.T, h *humustest.Host, settings httpclient.Settings, call func(ctx context.Context, c *catalogclient.Client)) {
 	t.Helper()
-	_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		client, err := httpclient.NewClient(s, settings)
 		if err != nil {
 			return nil, err
@@ -77,7 +77,7 @@ func run(t *testing.T, h *humustest.Host, settings httpclient.Settings, call fun
 			call(ctx, c)
 			return nil
 		})}, nil
-	}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+	}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 	st := <-status
 	require.Zero(t, st.Code(), "cause: %v", st.Cause())
 }

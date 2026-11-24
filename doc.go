@@ -13,8 +13,10 @@
 //	func main() { humus.Main(app.Init) }
 //
 // where app.Init is the end user's Init. [Main] runs the App on the OS
-// process with defaults that fit inside Kubernetes' termination budget, and
-// [Option] values, such as [WithTelemetry], change them.
+// process and its host, [OSHost], with defaults that fit inside Kubernetes'
+// termination budget, and [Option] values, such as [WithTelemetry], change
+// them. An App on a host of its own runs with [MainOn], and its Init is
+// given that host with its own type.
 //
 // Nothing in humus reads os.Args, the environment, the standard streams or
 // signals; all of that comes through the bedrock.Process an App is run with.
@@ -29,8 +31,8 @@
 //
 // [App] is the lifecycle every humus app type is built on. Its Telemetry, a
 // telemetry.Builder, builds the App's OpenTelemetry providers before Init.
-// Its Init builds the App's dependencies from a [Setup], which carries that
-// telemetry, registers their release with [Setup.OnStop], and returns the
+// Its [Init] builds the App's dependencies on the host it is given, from a
+// [Setup], which carries that telemetry, registers their release with [Setup.OnStop], and returns the
 // [Service] values to run. Run calls Serve on each of them, and when a signal
 // arrives or the first Service returns, it cancels Serve's context, waits for
 // the drain, a [Drain] that ends once every Serve has returned, calls

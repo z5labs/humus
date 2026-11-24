@@ -221,7 +221,7 @@ func TestClient_metrics_of_two_clients_of_one_origin_add_up(t *testing.T) {
 
 		settings := paymentsSettings(t, ca)
 		tel := humustest.NewTelemetry()
-		_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			first, err := httpclient.NewClient(s, settings)
 			if err != nil {
 				return nil, err
@@ -236,7 +236,7 @@ func TestClient_metrics_of_two_clients_of_one_origin_add_up(t *testing.T) {
 				_, err := get(ctx, second, "https://payments:8443/")
 				return err
 			})}, nil
-		}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+		}, humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 		requireExitZero(t, <-status)
 
 		rm := collect(t, context.Background(), tel)

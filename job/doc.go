@@ -17,14 +17,14 @@
 //		humus.Main(Init, humus.WithTelemetry(buildTelemetry))
 //	}
 //
-//	func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+//	func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 //		pool, err := openPool(ctx, s)
 //		if err != nil {
 //			return nil, err
 //		}
 //		s.OnStop(func(context.Context) error { pool.Close(); return nil })
 //
-//		e := &exporter{pool: pool, fs: s.Host.Filesystem}
+//		e := &exporter{pool: pool, fs: h.Filesystem}
 //		return []humus.Service{job.NewService(s, e.Run)}, nil
 //	}
 //

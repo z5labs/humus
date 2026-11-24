@@ -51,8 +51,8 @@ func TestAdminInit(t *testing.T) {
 			ClientAuth:   tls.VerifyClientCertIfGiven,
 			ClientCAs:    ca.Pool(),
 		}
-		p, status := httpservertest.Start(t, AdminInit(dir, tlsConfig),
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+		p, status := httpservertest.Start(t, h.Host(), AdminInit(dir, tlsConfig),
+			humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 		<-h.Listening("localhost:8443")
 		s := &server{t: t, h: h, ca: ca, tel: tel, client: httpservertest.NewClient(h, ca.Pool()), p: p, status: status}
 

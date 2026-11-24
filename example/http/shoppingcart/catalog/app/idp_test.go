@@ -91,7 +91,7 @@ func (p *idp) token(t *testing.T, scopes ...string) string {
 
 func (p *idp) serve(t *testing.T, host humus.Host, addr string, cert *humustest.Certificate) (stop func()) {
 	t.Helper()
-	proc, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	proc, status := humustest.Start(t, host, func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = addr
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
@@ -102,7 +102,7 @@ func (p *idp) serve(t *testing.T, host humus.Host, addr string, cert *humustest.
 			return nil, err
 		}
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(telemetry.NoopBuilder)))
+	}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 	return func() {
 		t.Helper()
 		<-proc.Notified(syscall.SIGTERM)

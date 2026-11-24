@@ -44,7 +44,7 @@ const maxBodyBytes = 64 << 10
 
 const scenarioKey = "acme.fault"
 
-func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
+func Faults(ctx context.Context, s *humus.Setup, h humus.Host) (fault.Settings, error) {
 	codec, err := jsonscenario.New(scenarioKey)
 	if err != nil {
 		return fault.Settings{}, err
@@ -58,7 +58,7 @@ func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
 	}).Read(ctx)
 }
 
-func BuildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+func BuildTelemetry(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 	d := telemetry.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(p.Environment, name) }
 	exporter := func(name string, def telemetry.Exporter) config.Value[telemetry.Exporter] {
@@ -81,22 +81,22 @@ func BuildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Diale
 	if err != nil {
 		return telemetry.SDK{}, err
 	}
-	return telemetry.New(ctx, s, dial, p.Stdout)
+	return telemetry.New(ctx, s, n, p.Stdout)
 }
 
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	return InitWith(ctx, s, openPostgres)
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	return InitWith(ctx, s, h, openPostgres)
 }
 
-type OpenStore func(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (store endpoint.Store, ping func(context.Context) error, err error)
+type OpenStore func(ctx context.Context, s *humus.Setup, h humus.Host, cfg *pgxpool.Config) (store endpoint.Store, ping func(context.Context) error, err error)
 
-func InitWith(ctx context.Context, s *humus.Setup, open OpenStore) ([]humus.Service, error) {
-	settings, err := readSettings(ctx, s)
+func InitWith(ctx context.Context, s *humus.Setup, h humus.Host, open OpenStore) ([]humus.Service, error) {
+	settings, err := readSettings(ctx, s, h)
 	if err != nil {
 		return nil, err
 	}
 
-	store, ping, err := open(ctx, s, settings.Database)
+	store, ping, err := open(ctx, s, h, settings.Database)
 	if err != nil {
 		return nil, err
 	}
@@ -147,10 +147,10 @@ type keySetSettings struct {
 
 type serverCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error)
 
-func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
+func readSettings(ctx context.Context, s *humus.Setup, h humus.Host) (settings, error) {
 	d := httpserver.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
-	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.Filesystem)) }
+	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(h.Filesystem)) }
 
 	read, err := config.Struct(func(r *config.Resolver) settings {
 		client := httpclient.DefaultSettings()
@@ -173,9 +173,9 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 			HTTP: httpserver.Settings{
 				Addr: r.Get(env("ADDR").Validate(httpserver.CheckAddr)),
 				TLS: &tls.Config{
-					GetCertificate: r.Get(env("TLS_CERT_FILE").Validate(holdsCertificate(s.Host.Filesystem)).FlatMap(func(certFile string) config.Value[serverCertificate] {
+					GetCertificate: r.Get(env("TLS_CERT_FILE").Validate(holdsCertificate(h.Filesystem)).FlatMap(func(certFile string) config.Value[serverCertificate] {
 						return env("TLS_KEY_FILE").Parse(func(keyFile string) (serverCertificate, error) {
-							cfg, err := certfile.Config(s.Host.Filesystem, certFile, keyFile)
+							cfg, err := certfile.Config(h.Filesystem, certFile, keyFile)
 							if err != nil {
 								return nil, err
 							}
@@ -278,13 +278,13 @@ func readFile(fsys humus.Filesystem) func(name string) ([]byte, error) {
 	}
 }
 
-func openPostgres(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (endpoint.Store, func(context.Context) error, error) {
+func openPostgres(ctx context.Context, s *humus.Setup, h humus.Host, cfg *pgxpool.Config) (endpoint.Store, func(context.Context) error, error) {
 	cfg.ConnConfig.DialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		if network == "unix" {
 			var d net.Dialer
 			return d.DialContext(ctx, network, addr)
 		}
-		return s.Host.DialTCP(ctx, network, addr)
+		return h.DialTCP(ctx, network, addr)
 	}
 	cfg.ConnConfig.LookupFunc = func(_ context.Context, host string) ([]string, error) {
 		return []string{host}, nil

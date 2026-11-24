@@ -55,8 +55,8 @@ func (tg *target) run(t *testing.T, env map[string]string) bedrock.ExitStatus {
 		}
 		all[name] = value
 	}
-	_, status := humustest.Start(t, migrate.Init,
-		humustest.WithApp(humus.WithHost(tg.host.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+	_, status := humustest.Start(t, tg.host.Host(), migrate.Init,
+		humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		humustest.WithEnv(all),
 	)
 	return <-status
@@ -91,8 +91,8 @@ func TestInit_a_bad_setting_exits_78(t *testing.T) {
 
 func TestInit_without_its_settings_exits_78_naming_each(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		_, status := humustest.Start(t, migrate.Init,
-			humustest.WithApp(humus.WithHost(humustest.NewHost(t).Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), migrate.Init,
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		)
 
 		st := <-status

@@ -42,8 +42,8 @@ func (s *stuckServer) UnaryCall(ctx context.Context, _ *testpb.SimpleRequest) (*
 
 // serves returns an Init whose only Service serves ts on ":9090", over TLS
 // with cert.
-func serves(cert *humustest.Certificate, ts testpb.TestServiceServer) func(context.Context, *humus.Setup) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+func serves(cert *humustest.Certificate, ts testpb.TestServiceServer) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
+	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		svc, err := grpcserver.NewService(s, grpcserver.Settings{
 			Addr: ":9090",
 			TLS:  &tls.Config{Certificates: []tls.Certificate{cert.TLS()}},
@@ -94,9 +94,9 @@ func TestStart_applies_the_defaults_before_the_test_options(t *testing.T) {
 				h := humustest.NewHost(t)
 				ts := &stuckServer{entered: make(chan struct{}), cancelled: make(chan time.Time, 1)}
 				opts := append([]humustest.Option{
-					humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+					humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 				}, c.opts...)
-				p, exit := grpcservertest.Start(t, serves(ca.Issue(t, "carts"), ts), opts...)
+				p, exit := grpcservertest.Start(t, h.Host(), serves(ca.Issue(t, "carts"), ts), opts...)
 				<-h.Listening("carts:9090")
 
 				client := testpb.NewTestServiceClient(grpcservertest.NewClient(t, h, "carts:9090", ca.Pool()))

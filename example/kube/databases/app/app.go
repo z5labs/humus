@@ -44,7 +44,7 @@ const (
 	scenarioAnnotation = "postgres.example.com/failure-scenario"
 )
 
-func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
+func Faults(ctx context.Context, s *humus.Setup, h humus.Host) (fault.Settings, error) {
 	codec, err := jsonscenario.New("acme.fault")
 	if err != nil {
 		return fault.Settings{}, err
@@ -58,7 +58,7 @@ func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
 	}).Read(ctx)
 }
 
-func BuildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+func BuildTelemetry(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 	d := telemetry.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(p.Environment, name) }
 	exporter := func(name string, def telemetry.Exporter) config.Value[telemetry.Exporter] {
@@ -81,11 +81,11 @@ func BuildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Diale
 	if err != nil {
 		return telemetry.SDK{}, err
 	}
-	return telemetry.New(ctx, s, dial, p.Stdout)
+	return telemetry.New(ctx, s, n, p.Stdout)
 }
 
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	set, err := readSettings(ctx, s)
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	set, err := readSettings(ctx, s, h)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +98,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	admin, err := openPostgres(ctx, s, set.Admin)
+	admin, err := openPostgres(ctx, s, h, set.Admin)
 	if err != nil {
 		return nil, err
 	}
@@ -134,13 +134,13 @@ type settings struct {
 	TrustedPrefix string
 }
 
-func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
+func readSettings(ctx context.Context, s *humus.Setup, h humus.Host) (settings, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
-	read := readFile(s.Host.Filesystem)
+	read := readFile(h.Filesystem)
 
 	return config.Struct(func(r *config.Resolver) settings {
 		tokenFile := r.Get(env("KUBERNETES_TOKEN_FILE").Default(serviceAccount + "token").Validate(func(name string) error {
-			_, err := readToken(s.Host.Filesystem, name)
+			_, err := readToken(h.Filesystem, name)
 			return err
 		}))
 
@@ -160,7 +160,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 				),
 				TLS: r.Get(env("KUBERNETES_CA_FILE").Default(serviceAccount + "ca.crt").Parse(read).Parse(certPool).Map(trusting).Validate(kube.CheckTLS)),
 				Token: func(context.Context) (string, error) {
-					return readToken(s.Host.Filesystem, tokenFile)
+					return readToken(h.Filesystem, tokenFile)
 				},
 			},
 			Controller: k,
@@ -169,7 +169,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 			Port:       r.Get(env("POSTGRES_PORT").Parse(strconv.Atoi).Default(5432).Validate(checkPostgresPort)),
 			Probes: httphealth.Settings{
 				Addr: r.Get(env("PROBES_ADDR").Validate(httphealth.CheckAddr)),
-				TLS:  r.Get(env("PROBES_TLS_PEM_FILE").Parse(pemTLS(s.Host.Filesystem)).Validate(httphealth.CheckTLS)),
+				TLS:  r.Get(env("PROBES_TLS_PEM_FILE").Parse(pemTLS(h.Filesystem)).Validate(httphealth.CheckTLS)),
 			},
 			TrustedPrefix: r.Get(env("FAULT_TRUSTED_NAMESPACE_PREFIX").Default("")),
 		}
@@ -215,13 +215,13 @@ func adminDSN(b []byte) (*pgxpool.Config, error) {
 	return cfg, nil
 }
 
-func openPostgres(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (*postgres.Server, error) {
+func openPostgres(ctx context.Context, s *humus.Setup, h humus.Host, cfg *pgxpool.Config) (*postgres.Server, error) {
 	cfg.ConnConfig.DialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		if network == "unix" {
 			var d net.Dialer
 			return d.DialContext(ctx, network, addr)
 		}
-		return s.Host.DialTCP(ctx, network, addr)
+		return h.DialTCP(ctx, network, addr)
 	}
 	cfg.ConnConfig.LookupFunc = func(_ context.Context, host string) ([]string, error) {
 		return []string{host}, nil

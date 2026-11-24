@@ -131,12 +131,12 @@ func TestNewService_opens_no_connection(t *testing.T) {
 
 		// An Init that fails after NewService: the App runs no Service, and
 		// no OnStop function.
-		_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			if _, err := rabbitmq.NewService(s, settings(), noop); err != nil {
 				return nil, err
 			}
 			return nil, context.Canceled
-		}, humustest.WithApp(humus.WithHost(h.Host())))
+		})
 		st := <-status
 		require.ErrorIs(t, st.Cause(), context.Canceled)
 		synctest.Wait()

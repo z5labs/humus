@@ -89,7 +89,7 @@ func startPayments(t *testing.T, h *humustest.Host, ca *humustest.CA, c *charges
 		c.mu.Unlock()
 		_, _ = io.WriteString(w, "paid")
 	})
-	p, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	p, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = ":8443"
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
@@ -98,7 +98,7 @@ func startPayments(t *testing.T, h *humustest.Host, ca *humustest.CA, c *charges
 			return nil, err
 		}
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+	}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 	<-h.Listening("payments:8443")
 	return func() {
 		p.Signal(syscall.SIGTERM)
@@ -153,8 +153,8 @@ func TestInit_trusts_the_mesh_and_forwards_to_payments(t *testing.T) {
 		var payments charges
 		defer startPayments(t, h, ca, &payments)()
 
-		p, status := humustest.Start(t, Init,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		p, status := humustest.Start(t, h.Host(), Init,
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			humustest.WithApp(humus.WithFaults(Faults)),
 			humustest.WithEnv(ordersEnv),
 		)
@@ -180,7 +180,7 @@ func TestInit_trusts_the_mesh_and_forwards_to_payments(t *testing.T) {
 
 func TestFaults_a_bad_FAULT_MAX_DELAY_exits_78(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		_, status := humustest.Start(t, Init,
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), Init,
 			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(Faults)),
 			humustest.WithEnv(map[string]string{"FAULT_MAX_DELAY": "0s"}),
 		)

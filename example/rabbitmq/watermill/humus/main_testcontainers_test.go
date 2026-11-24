@@ -126,8 +126,8 @@ func start(t *testing.T) *service {
 		"PROBES_TLS_CERT_FILE": writeFile(t, dir, "tls.crt", certPEM),
 		"PROBES_TLS_KEY_FILE":  writeFile(t, dir, "tls.key", keyPEM),
 	}
-	p, status := humustest.Start(t, Init,
-		humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(telemetry.NoopBuilder)),
+	p, status := humustest.Start(t, humus.OSHost(), Init,
+		humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		humustest.WithEnv(env),
 	)
 

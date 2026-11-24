@@ -46,8 +46,8 @@ func startSDK(t *testing.T, routes ...hypermedia.Route) sdkApp {
 		"tls.pem": pemFile(t, ca.Issue(t, "sdk.internal")),
 	}))
 	tel := humustest.NewTelemetry()
-	init := func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-		settings, err := readSettings(ctx, s)
+	init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		settings, err := readSettings(ctx, s, h)
 		if err != nil {
 			return nil, err
 		}
@@ -61,8 +61,8 @@ func startSDK(t *testing.T, routes ...hypermedia.Route) sdkApp {
 		}
 		return []humus.Service{svc}, nil
 	}
-	p, status := httpservertest.Start(t, init,
-		humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+	p, status := httpservertest.Start(t, h.Host(), init,
+		humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 		humustest.WithEnv(map[string]string{
 			"ADDR":         "sdk.internal:8443",
 			"TLS_PEM_FILE": h.Path("tls.pem"),

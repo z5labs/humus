@@ -226,12 +226,12 @@ func (s *httpService) Shutdown(ctx context.Context) error {
 // test waits for the App to listen with Listening, then dials it.
 func TestHost_Listening_an_App_in_real_time(t *testing.T) {
 	host := humustest.NewHost(t)
-	app := humus.App{
+	app := humus.App[humus.Host]{
 		Host:                host.Host(),
 		ShutdownGracePeriod: 10 * time.Second,
 		Telemetry:           telemetry.NoopBuilder,
-		Init: func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
-			ln, err := s.Host.ListenTCP(t.Context(), "tcp", ":8080")
+		Init: func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			ln, err := h.ListenTCP(t.Context(), "tcp", ":8080")
 			if err != nil {
 				return nil, err
 			}

@@ -30,10 +30,10 @@ import (
 func TestTelemetry_writes_JSON_lines_to_stdout_and_starts_nothing(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		p := bedrocktest.NewProcess(t)
-		dial := func(context.Context, string, string) (net.Conn, error) {
+		dial := dialFunc(func(context.Context, string, string) (net.Conn, error) {
 			t.Error("the telemetry default dialled out")
 			return nil, net.ErrClosed
-		}
+		})
 
 		sdk, err := defaults.Telemetry(t.Context(), p.Process(), dial)
 		require.NoError(t, err)
@@ -65,4 +65,11 @@ func TestShutdownGracePeriod_fits_Kubernetes_termination_budget(t *testing.T) {
 	// 30s terminationGracePeriodSeconds, less telemetry's 5s shutdown and a
 	// margin for the process to exit.
 	require.Equal(t, "20s", defaults.ShutdownGracePeriod.String())
+}
+
+// dialFunc is a telemetry.Network whose DialTCP is the func itself.
+type dialFunc func(ctx context.Context, network, address string) (net.Conn, error)
+
+func (f dialFunc) DialTCP(ctx context.Context, network, address string) (net.Conn, error) {
+	return f(ctx, network, address)
 }

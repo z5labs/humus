@@ -77,7 +77,7 @@ func TestServer_meets_the_Service_contract(t *testing.T) {
 func TestServer_serves_plain_text_through_the_drain(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
-		init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			srv, err := server.New(s, callerScope, ":8081", nil)
 			if err != nil {
 				return nil, err
@@ -87,8 +87,7 @@ func TestServer_serves_plain_text_through_the_drain(t *testing.T) {
 			}
 			return []humus.Service{srv}, nil
 		}
-		p, exit := humustest.Start(t, init, humustest.WithApp(
-			humus.WithHost(h.Host()),
+		p, exit := humustest.Start(t, h.Host(), init, humustest.WithApp(
 			humus.WithTelemetry(telemetry.NoopBuilder),
 			humus.WithDrain(humus.DrainDelay(5*time.Second)),
 		))

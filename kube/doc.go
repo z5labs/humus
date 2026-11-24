@@ -66,11 +66,11 @@
 // KUBERNETES_SERVICE_PORT in every container, and mounts the service
 // account's CA and token in /var/run/secrets/kubernetes.io/serviceaccount/.
 // The end user's Init sources Server from the two variables, and reads the
-// CA and the token through s.Host.Filesystem:
+// CA and the token through the filesystem of the host Init is given, h:
 //
 //	const serviceAccount = "/var/run/secrets/kubernetes.io/serviceaccount/"
 //
-//	ca, err := readFile(s.Host.Filesystem, serviceAccount+"ca.crt") // the end user's helper
+//	ca, err := readFile(h.Filesystem, serviceAccount+"ca.crt") // the end user's helper
 //	if err != nil {
 //		return nil, err
 //	}
@@ -83,7 +83,7 @@
 //			Server: net.JoinHostPort(r.Get(env("KUBERNETES_SERVICE_HOST")), r.Get(env("KUBERNETES_SERVICE_PORT"))),
 //			TLS:    &tls.Config{RootCAs: roots},
 //			Token: func(context.Context) (string, error) {
-//				b, err := readFile(s.Host.Filesystem, serviceAccount+"token")
+//				b, err := readFile(h.Filesystem, serviceAccount+"token")
 //				return string(bytes.TrimSpace(b)), err
 //			},
 //		}
@@ -100,9 +100,9 @@
 //
 // For local development, the end user fills the Connection from a
 // kubeconfig's embedded data, as kind and k3s write it, with client-go's
-// clientcmd.Load. The end user reads the file, through s.Host.Filesystem:
+// clientcmd.Load. The end user reads the file, through h.Filesystem:
 //
-//	b, err := readFile(s.Host.Filesystem, path)
+//	b, err := readFile(h.Filesystem, path)
 //	if err != nil {
 //		return kube.Connection{}, err
 //	}

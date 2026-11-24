@@ -39,7 +39,7 @@ otelhttp's options, grpc's `stats/opentelemetry` options, and
 logger from `s.Telemetry`:
 
 ```go
-func CartsInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func CartsInit(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	tracer := s.Telemetry.TracerProvider.Tracer("carts")
 	logger := otelslog.NewLogger("carts", otelslog.WithLoggerProvider(s.Telemetry.LoggerProvider))
 	return []humus.Service{&cartJob{tracer: tracer, logger: logger}}, nil
@@ -72,7 +72,7 @@ passes no `Builder` sees on `p.Stdout()` the JSON lines production would
 write. This example runs the App of this page that way:
 
 ```go
-p, status := humustest.Start(t, CartsInit)
+p, status := humustest.Start(t, humustest.NewHost(t).Host(), CartsInit)
 st := <-status
 
 printConsoleLogs(p.Stdout(), "carts")
@@ -108,7 +108,7 @@ explains the pattern. This `Builder` keeps the OpenTelemetry specification's
 variable names, but the names are yours to choose:
 
 ```go
-func buildCartsTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+func buildCartsTelemetry(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 	d := telemetry.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(p.Environment, name) }
 	exporter := func(name string, def telemetry.Exporter) config.Value[telemetry.Exporter] {
@@ -130,7 +130,7 @@ func buildCartsTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.
 	if err != nil {
 		return telemetry.SDK{}, err // exit 78: every bad variable, one line each
 	}
-	return telemetry.New(ctx, s, dial, p.Stdout)
+	return telemetry.New(ctx, s, n, p.Stdout)
 }
 ```
 
@@ -192,8 +192,8 @@ range. A zero field means zero, never "use the default".
 
 The godoc of each field is the reference; the table is its summary. The
 `OTLP` fields are checked even when no signal is exported over OTLP. The
-OTLP exporters dial the collector through the `Dialer` the `Builder` is
-given, which is the Host's `DialTCP`, and over `http/protobuf` each signal is
+OTLP exporters dial the collector through the `telemetry.Network` the
+`Builder` is given, which is the App's host, and over `http/protobuf` each signal is
 sent to its spec path: `/v1/traces`, `/v1/metrics` and `/v1/logs`.
 
 **humus reads none of these variables.** The last column names the
@@ -642,7 +642,7 @@ client's `humus.circuit.calls`, and renames the HTTP client's
 
 ```go
 func ordersTelemetry(reader sdkmetric.Reader) telemetry.Builder {
-	return func(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+	return func(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 		s := telemetry.DefaultSettings()
 		s.ServiceName = "orders"
 		// The resource telemetry.New builds for traces and logs:
@@ -651,7 +651,7 @@ func ordersTelemetry(reader sdkmetric.Reader) telemetry.Builder {
 		if err != nil {
 			return telemetry.SDK{}, err
 		}
-		sdk, err := telemetry.New(ctx, s, dial, p.Stdout)
+		sdk, err := telemetry.New(ctx, s, n, p.Stdout)
 		if err != nil {
 			return telemetry.SDK{}, err
 		}
@@ -705,7 +705,7 @@ answers 500, and reads `humus.circuit.state` once the App has exited:
 
 ```go
 tel := humustest.NewTelemetry()
-_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 	c, err := httpclient.NewClient(s, settings)
 	if err != nil {
 		return nil, err
@@ -714,7 +714,7 @@ _, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus
 		getN(t, ctx, c, 5, "https://payments:8443/") // five 500s open the breaker
 		return nil
 	})}, nil
-}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+}, humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 st := <-status
 require.Zero(t, st.Code())
 
@@ -760,7 +760,7 @@ it recorded after the App has shut it down:
 
 ```go
 tel := humustest.NewTelemetry()
-_, status := humustest.Start(t, CartsInit,
+_, status := humustest.Start(t, humustest.NewHost(t).Host(), CartsInit,
 	humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 )
 st := <-status

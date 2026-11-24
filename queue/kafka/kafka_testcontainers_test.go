@@ -235,7 +235,7 @@ func realSettings(t *testing.T, group, topic string) kafka.Settings {
 // humus.OSHost(), with opts after it.
 func startOnOS(t *testing.T, s kafka.Settings, p queue.ProcessorFunc[kafka.Message], opts ...humus.Option) (*bedrocktest.Process, <-chan bedrock.ExitStatus) {
 	t.Helper()
-	return humustest.Start(t, consumes(s, p), humustest.WithApp(append([]humus.Option{humus.WithHost(humus.OSHost())}, opts...)...))
+	return humustest.Start(t, humus.OSHost(), consumes(s, p), humustest.WithApp(append([]humus.Option{}, opts...)...))
 }
 
 // terminate sends p SIGTERM, once the App listens for it, and returns the
@@ -1157,9 +1157,9 @@ func TestKafka_an_idempotent_Producer_with_acks_all_produces_what_the_Service_co
 		records[i] = kafka.Record{Topic: topic, Key: []byte("one key"), Value: []byte(strconv.Itoa(i))}
 	}
 	produced := humustest.NewTelemetry()
-	_, status := humustest.Start(t, produces(ps, func(ctx context.Context, p *kafka.Producer) error {
+	_, status := humustest.Start(t, humus.OSHost(), produces(ps, func(ctx context.Context, p *kafka.Producer) error {
 		return p.Produce(ctx, records...)
-	}), humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(produced.Builder())))
+	}), humustest.WithApp(humus.WithTelemetry(produced.Builder())))
 	st := exited(t, status)
 	require.Zero(t, st.Code(), "the Producer's App: %v", st.Cause())
 

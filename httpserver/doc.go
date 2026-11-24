@@ -8,7 +8,7 @@
 // [NewService] builds a [Service] that serves an http.Handler, in the end
 // user's Init, from [Settings] the end user sources:
 //
-//	func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+//	func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 //		settings, err := readSettings(ctx, s) // httpserver.Settings, sourced with config.Struct
 //		if err != nil {
 //			return nil, err
@@ -266,7 +266,7 @@
 //		return httpserver.Settings{
 //			// No .Default: Addr and TLS are required.
 //			Addr:              r.Get(env("ADDR").Validate(httpserver.CheckAddr)),
-//			TLS:               r.Get(env("TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS)),
+//			TLS:               r.Get(env("TLS_PEM_FILE").Parse(readFile(h.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS)),
 //			HTTP2Only:         r.Get(env("HTTP2_ONLY").Parse(strconv.ParseBool).Default(d.HTTP2Only)),
 //			ReadHeaderTimeout: r.Get(env("READ_HEADER_TIMEOUT").Parse(time.ParseDuration).Default(d.ReadHeaderTimeout).Validate(httpserver.CheckReadHeaderTimeout)),
 //			ReadTimeout:       r.Get(env("READ_TIMEOUT").Parse(time.ParseDuration).Default(d.ReadTimeout).Validate(httpserver.CheckReadTimeout)),

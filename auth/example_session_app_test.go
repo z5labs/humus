@@ -31,8 +31,8 @@ func TestSessionInit(t *testing.T) {
 		dir := memDirectory{"bob": {password: rand.Text()}}
 		sessions := NewSessions()
 		tlsConfig := &tls.Config{Certificates: []tls.Certificate{ca.Issue(t, "localhost").TLS()}}
-		p, status := httpservertest.Start(t, SessionInit(dir, sessions, tlsConfig),
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+		p, status := httpservertest.Start(t, h.Host(), SessionInit(dir, sessions, tlsConfig),
+			humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 		<-h.Listening("localhost:8443")
 		client := httpservertest.NewClient(h, ca.Pool())
 		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }

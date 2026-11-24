@@ -46,7 +46,7 @@ func publishErrs(t *testing.T, c rabbitmq.Connection, ms ...rabbitmq.Publishing)
 	settings := rabbitmq.DefaultPublisherSettings()
 	settings.Connection = c
 	errs := make([]error, len(ms))
-	_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	_, status := humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		pub, err := rabbitmq.NewPublisher(s, settings)
 		if err != nil {
 			return nil, err
@@ -57,7 +57,7 @@ func publishErrs(t *testing.T, c rabbitmq.Connection, ms ...rabbitmq.Publishing)
 			}
 			return nil
 		})}, nil
-	}, humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(telemetry.NoopBuilder)))
+	}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 	st := exit(t, status)
 	require.Zero(t, st.Code(), "cause: %v", st.Cause())
 	return errs
@@ -153,7 +153,7 @@ func TestPublisher_a_UserID_that_isnt_the_login_is_406_PRECONDITION_FAILED_once_
 	settings.Connection = plainText(t)
 	var errs [2]error
 	tel := humustest.NewTelemetry()
-	_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	_, status := humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		pub, err := rabbitmq.NewPublisher(s, settings)
 		if err != nil {
 			return nil, err
@@ -163,7 +163,7 @@ func TestPublisher_a_UserID_that_isnt_the_login_is_406_PRECONDITION_FAILED_once_
 			errs[1] = pub.Publish(ctx, rabbitmq.Publishing{RoutingKey: q, MessageID: "own", UserID: user, Body: []byte("own")})
 			return nil
 		})}, nil
-	}, humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(tel.Builder())))
+	}, humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 	st := exit(t, status)
 	require.Zero(t, st.Code(), "cause: %v", st.Cause())
 
@@ -206,7 +206,7 @@ func TestPublisher_carries_its_trace_to_the_Service_that_consumes_the_message(t 
 		pubErr    error
 	)
 	tel := humustest.NewTelemetry()
-	_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	_, status := humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		settings := rabbitmq.DefaultPublisherSettings()
 		settings.Connection = plainText(t)
 		pub, err := rabbitmq.NewPublisher(s, settings)
@@ -240,7 +240,7 @@ func TestPublisher_carries_its_trace_to_the_Service_that_consumes_the_message(t 
 			}
 			return nil
 		})}, nil
-	}, humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(tel.Builder())))
+	}, humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 	st := exit(t, status)
 	require.Zero(t, st.Code(), "cause: %v", st.Cause())
 	mu.Lock()
@@ -287,7 +287,7 @@ func TestPublisher_a_Publish_right_after_close_all_connections_is_confirmed_on_a
 		published           = make(chan struct{})
 		closed              = make(chan struct{})
 	)
-	_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	_, status := humustest.Start(t, host, func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		pub, err := rabbitmq.NewPublisher(s, settings)
 		if err != nil {
 			return nil, err
@@ -303,7 +303,7 @@ func TestPublisher_a_Publish_right_after_close_all_connections_is_confirmed_on_a
 			secondErr = pub.Publish(ctx, rabbitmq.Publishing{RoutingKey: q, MessageID: "after", Body: []byte("after")})
 			return nil
 		})}, nil
-	}, humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(telemetry.NoopBuilder)))
+	}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 
 	<-published
 	closeAllConnections(t)

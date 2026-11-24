@@ -267,8 +267,8 @@ httpserver.Main(Init, humus.WithTelemetry(buildTelemetry))
 `httpserver.NewService`, next to the probes:
 
 ```go
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	settings, err := readSettings(ctx, s)
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	settings, err := readSettings(ctx, s, h)
 	if err != nil {
 		return nil, err
 	}
@@ -339,13 +339,13 @@ From here on, these are humus's:
 `httpserver` requires:
 
 ```go
-func readSettings(ctx context.Context, s *humus.Setup) (httpserver.Settings, error) {
+func readSettings(ctx context.Context, s *humus.Setup, h humus.Host) (httpserver.Settings, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 	return config.Struct(func(r *config.Resolver) httpserver.Settings {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = r.Get(env("ADDR").Validate(httpserver.CheckAddr))
 		settings.TLS = r.Get(env("TLS_CERT_FILE").FlatMap(func(certFile string) config.Value[*tls.Config] {
-			return env("TLS_KEY_FILE").Parse(serverTLS(s.Host.Filesystem, certFile))
+			return env("TLS_KEY_FILE").Parse(serverTLS(h.Filesystem, certFile))
 		}).Validate(httpserver.CheckTLS))
 		return settings
 	}).Read(ctx)
@@ -389,8 +389,8 @@ func start(t *testing.T, tel telemetry.Builder) service {
 	}))
 	host := h.Host()
 	host.IPNetwork = hosttest.Seams{Network: host.IPNetwork, OnListenTCP: withClientAddr(host.ListenTCP)}
-	p, status := httpservertest.Start(t, Init,
-		humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(tel)),
+	p, status := httpservertest.Start(t, host, Init,
+		humustest.WithApp(humus.WithTelemetry(tel)),
 		humustest.WithEnv(map[string]string{
 			"ADDR":          ":8443",
 			"TLS_CERT_FILE": "tls/tls.crt",

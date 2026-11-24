@@ -41,7 +41,7 @@ func Options() []humus.Option {
 	}
 }
 
-func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
+func Faults(ctx context.Context, s *humus.Setup, h humus.Host) (fault.Settings, error) {
 	codec, err := jsonscenario.New("acme.fault")
 	if err != nil {
 		return fault.Settings{}, err
@@ -55,19 +55,19 @@ func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
 	}).Read(ctx)
 }
 
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	return initWith(ctx, s, openPostgres)
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	return initWith(ctx, s, h, openPostgres)
 }
 
-type openStore func(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (billing.Invoices, error)
+type openStore func(ctx context.Context, s *humus.Setup, h humus.Host, cfg *pgxpool.Config) (billing.Invoices, error)
 
-func initWith(ctx context.Context, s *humus.Setup, open openStore) ([]humus.Service, error) {
-	set, err := readSettings(ctx, s)
+func initWith(ctx context.Context, s *humus.Setup, h humus.Host, open openStore) ([]humus.Service, error) {
+	set, err := readSettings(ctx, s, h)
 	if err != nil {
 		return nil, err
 	}
 
-	invoices, err := open(ctx, s, set.Database)
+	invoices, err := open(ctx, s, h, set.Database)
 	if err != nil {
 		return nil, err
 	}
@@ -95,9 +95,9 @@ type settings struct {
 	Concurrency int
 }
 
-func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
+func readSettings(ctx context.Context, s *humus.Setup, h humus.Host) (settings, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
-	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.Filesystem)) }
+	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(h.Filesystem)) }
 
 	return config.Struct(func(r *config.Resolver) settings {
 		client := httpclient.DefaultSettings()
@@ -191,13 +191,13 @@ func checkConcurrency(n int) error {
 	return nil
 }
 
-func openPostgres(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (billing.Invoices, error) {
+func openPostgres(ctx context.Context, s *humus.Setup, h humus.Host, cfg *pgxpool.Config) (billing.Invoices, error) {
 	cfg.ConnConfig.DialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		if network == "unix" {
 			var d net.Dialer
 			return d.DialContext(ctx, network, addr)
 		}
-		return s.Host.DialTCP(ctx, network, addr)
+		return h.DialTCP(ctx, network, addr)
 	}
 	cfg.ConnConfig.LookupFunc = func(_ context.Context, host string) ([]string, error) {
 		return []string{host}, nil
@@ -213,7 +213,7 @@ func openPostgres(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (bil
 	return postgres.New(pool, s.Faults), nil
 }
 
-func buildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+func buildTelemetry(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 	d := telemetry.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(p.Environment, name) }
 	exporter := func(name string, def telemetry.Exporter) config.Value[telemetry.Exporter] {
@@ -235,5 +235,5 @@ func buildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Diale
 	if err != nil {
 		return telemetry.SDK{}, err
 	}
-	return telemetry.New(ctx, s, dial, p.Stdout)
+	return telemetry.New(ctx, s, n, p.Stdout)
 }

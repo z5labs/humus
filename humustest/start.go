@@ -6,7 +6,6 @@
 package humustest
 
 import (
-	"context"
 	"io"
 	"testing"
 
@@ -14,7 +13,6 @@ import (
 	"github.com/z5labs/bedrock/bedrocktest"
 
 	"github.com/z5labs/humus"
-	"github.com/z5labs/humus/internal/defaults"
 )
 
 // Option changes the App that Start runs, or the Process it runs on.
@@ -29,13 +27,9 @@ type startOptions struct {
 
 // WithApp applies opts to the App, in order, after Start's defaults. Given
 // more than once, it applies every one's options in the order they were
-// given, so a later option wins. It panics if one of opts is nil.
+// given, so a later option wins. Start fails the test if one of them is the
+// zero humus.Option, or was made for an App on another host type.
 func WithApp(opts ...humus.Option) Option {
-	for _, opt := range opts {
-		if opt == nil {
-			panic("humustest: WithApp called with a nil humus.Option")
-		}
-	}
 	opts = append([]humus.Option(nil), opts...)
 	return func(o *startOptions) {
 		o.app = append(o.app, opts...)
@@ -76,15 +70,17 @@ func withProcess(opt bedrocktest.Option) Option {
 	}
 }
 
-// Start runs the App that humus.Main would run for init with
-// bedrocktest.Start, on a new Process. The App has a new Host of this
-// package's in place of humus.OSHost(), and opts change the App and the
-// Process: humus.WithHost, passed with WithApp, replaces that Host. The
-// Host and Init are set before opts are applied, so an Option given with
-// WithApp sees both and may wrap them. Call Start inside the
-// testing/synctest bubble that runs the App, since the Host is built there.
-// It panics if init or one of opts is nil.
-func Start(t testing.TB, init func(ctx context.Context, s *humus.Setup) ([]humus.Service, error), opts ...Option) (*bedrocktest.Process, <-chan bedrock.ExitStatus) {
+// Start runs the App that humus.MainOn would run for h and init with
+// bedrocktest.Start, on a new Process: humus.Defaults(h, init), with the
+// options given with WithApp applied, and opts change the Process. A test
+// runs its App on the default host with h set to a Host of this package's
+// Host method, and on a host of the App's own with one built from that
+// Host's parts. Start fails t if Apply fails: if an option given with
+// WithApp is the zero humus.Option, or was made for an App on another host
+// type. Call Start inside the testing/synctest bubble that runs the App,
+// with a Host built there. It panics if init or one of opts is nil.
+func Start[H humus.Network](t testing.TB, h H, init humus.Init[H], opts ...Option) (*bedrocktest.Process, <-chan bedrock.ExitStatus) {
+	t.Helper()
 	if init == nil {
 		panic("humustest: Start called with a nil init")
 	}
@@ -96,16 +92,9 @@ func Start(t testing.TB, init func(ctx context.Context, s *humus.Setup) ([]humus
 		opt(&o)
 	}
 
-	// humus.Main's defaults, from the same internal package, with a test
-	// Host in place of humus.OSHost().
-	a := humus.App{
-		Host:                NewHost(t).Host(),
-		ShutdownGracePeriod: defaults.ShutdownGracePeriod,
-		Telemetry:           defaults.Telemetry,
-		Init:                init,
-	}
-	for _, opt := range o.app {
-		opt(&a)
+	a := humus.Defaults(h, init)
+	if err := a.Apply(o.app...); err != nil {
+		t.Fatalf("humustest: Start: %v", err)
 	}
 	return bedrocktest.Start(t, a, o.process...)
 }

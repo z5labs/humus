@@ -157,7 +157,7 @@ func TestNew_MetricExport_Interval_sets_when_the_first_export_starts(t *testing.
 				rcv := startMetricsReceiver(t, listen(t, host, "otlp:4317"), protocol, 0)
 
 				origin := time.Now()
-				sdk, err := telemetry.New(t.Context(), metricSettings(protocol, 2*time.Second), host.DialTCP, nil)
+				sdk, err := telemetry.New(t.Context(), metricSettings(protocol, 2*time.Second), host, nil)
 				require.NoError(t, err)
 				counter, err := sdk.MeterProvider.Meter("carts").Int64Counter("carts.created")
 				require.NoError(t, err)
@@ -250,7 +250,7 @@ func TestNew_MetricExport_Interval_runs_from_the_start_of_one_export_to_the_star
 					origin := time.Now()
 					s := metricSettings(protocol, 2*time.Second)
 					s.ShutdownTimeout = time.Minute
-					sdk, err := telemetry.New(t.Context(), s, host.DialTCP, nil)
+					sdk, err := telemetry.New(t.Context(), s, host, nil)
 					require.NoError(t, err)
 					counter, err := sdk.MeterProvider.Meter("carts").Int64Counter("carts.created")
 					require.NoError(t, err)
@@ -292,7 +292,7 @@ func TestNew_MetricExport_Timeout_bounds_each_periodic_export_but_not_the_last(t
 				s.MetricExport.Timeout = time.Second
 				s.OTLP.Timeout = 3 * time.Second
 				s.ShutdownTimeout = 5 * time.Second
-				sdk, err := telemetry.New(t.Context(), s, host.DialTCP, nil)
+				sdk, err := telemetry.New(t.Context(), s, host, nil)
 				require.NoError(t, err)
 				counter, err := sdk.MeterProvider.Meter("carts").Int64Counter("carts.created")
 				require.NoError(t, err)

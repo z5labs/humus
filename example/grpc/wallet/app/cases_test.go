@@ -242,8 +242,8 @@ func startHarnessWith(t *testing.T, pl place, walletTel, ledgerTel telemetry.Bui
 	n := newNetwork(pl.host.DialTCP)
 	host := pl.host
 	host.IPNetwork = hosttest.Seams{Network: host.IPNetwork, OnDialTCP: n.DialTCP}
-	walletApp := humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(walletTel), humus.WithFaults(Faults))
-	ledgerApp := humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(ledgerTel), humus.WithFaults(ledgerapp.Faults))
+	walletApp := humustest.WithApp(humus.WithTelemetry(walletTel), humus.WithFaults(Faults))
+	ledgerApp := humustest.WithApp(humus.WithTelemetry(ledgerTel), humus.WithFaults(ledgerapp.Faults))
 
 	provider := newIdP(t)
 	keysCert := ca.Issue(t, keysHost)
@@ -269,11 +269,11 @@ func startHarnessWith(t *testing.T, pl place, walletTel, ledgerTel telemetry.Bui
 		env["GRPC_ADDR"] = r.addr
 		env["PROBES_ADDR"] = probes
 		r.start = func() (*bedrocktest.Process, <-chan bedrock.ExitStatus) {
-			return grpcservertest.Start(t, func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+			return grpcservertest.Start(t, host, func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 				if pl.ledger == nil {
-					return ledgerapp.Init(ctx, s)
+					return ledgerapp.Init(ctx, s, h)
 				}
-				return ledgerapp.InitWith(ctx, s, pl.ledger)
+				return ledgerapp.InitWith(ctx, s, h, pl.ledger)
 			}, ledgerApp, humustest.WithEnv(env))
 		}
 		r.ready = func(ctx context.Context) error { return serving(ctx, pl.host.DialTCP, r, probes) }
@@ -297,7 +297,7 @@ func startHarnessWith(t *testing.T, pl place, walletTel, ledgerTel telemetry.Bui
 		"FAULT_TRUST_SCOPE":   trustScope,
 	}
 	w.start = func() (*bedrocktest.Process, <-chan bedrock.ExitStatus) {
-		return grpcservertest.Start(t, Init, walletApp, humustest.WithEnv(walletEnv))
+		return grpcservertest.Start(t, host, Init, walletApp, humustest.WithEnv(walletEnv))
 	}
 	w.ready = func(ctx context.Context) error { return serving(ctx, pl.host.DialTCP, w, walletProbes) }
 	require.NoError(t, wallet.run(ctx, w))

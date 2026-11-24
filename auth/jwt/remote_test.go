@@ -164,7 +164,7 @@ func newNetwork(t *testing.T, handler http.Handler) *network {
 	t.Helper()
 	n := &network{h: humustest.NewHost(t), ca: humustest.NewCA(t)}
 	cert := n.ca.Issue(t, "idp")
-	p, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	p, status := humustest.Start(t, n.h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = ":8443"
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
@@ -173,7 +173,7 @@ func newNetwork(t *testing.T, handler http.Handler) *network {
 			return nil, err
 		}
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(n.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+	}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 	select {
 	case <-n.h.Listening("idp:8443"):
 	case st := <-status:
@@ -218,7 +218,7 @@ func startAPI(t *testing.T, n *network) *api {
 	t.Helper()
 	cert := n.ca.Issue(t, "carts")
 	tel := humustest.NewTelemetry()
-	p, status := httpservertest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	p, status := httpservertest.Start(t, n.h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		keys, err := remoteKeySet(s, n.ca.Pool())
 		if err != nil {
 			return nil, err
@@ -248,7 +248,7 @@ func startAPI(t *testing.T, n *network) *api {
 			return nil, err
 		}
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(n.h.Host()), humus.WithTelemetry(tel.Builder())))
+	}, humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 	select {
 	case <-n.h.Listening("carts:9443"):
 	case st := <-status:
@@ -320,7 +320,7 @@ func fetch(t *testing.T, n *network) ([]jwt.Key, error) {
 		keys    []jwt.Key
 		keysErr error
 	)
-	_, st := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	_, st := humustest.Start(t, n.h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		remote, err := remoteKeySet(s, n.ca.Pool())
 		if err != nil {
 			return nil, err
@@ -329,7 +329,7 @@ func fetch(t *testing.T, n *network) ([]jwt.Key, error) {
 			keys, keysErr = remote.Keys(ctx)
 			return nil
 		})}, nil
-	}, humustest.WithApp(humus.WithHost(n.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+	}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 	exit := <-st
 	require.Zero(t, exit.Code(), "cause: %v", exit.Cause())
 	return keys, keysErr

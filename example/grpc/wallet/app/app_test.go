@@ -229,8 +229,8 @@ func (f *fixture) start(t *testing.T, env map[string]string) (*bedrocktest.Proce
 		}
 		merged[name] = value
 	}
-	return grpcservertest.Start(t, Init,
-		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(f.tel), humus.WithFaults(Faults)),
+	return grpcservertest.Start(t, f.h.Host(), Init,
+		humustest.WithApp(humus.WithTelemetry(f.tel), humus.WithFaults(Faults)),
 		humustest.WithEnv(merged),
 	)
 }
@@ -239,7 +239,7 @@ func (f *fixture) startLedger(t *testing.T) (*fakeLedger, func()) {
 	t.Helper()
 	l := newFakeLedger()
 	cert := f.ca.Issue(t, "ledger").TLS()
-	p, exit := grpcservertest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	p, exit := grpcservertest.Start(t, f.h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		svc, err := grpcserver.NewService(s, grpcserver.Settings{
 			Addr: ledgerAddr,
 			TLS: &tls.Config{
@@ -255,7 +255,7 @@ func (f *fixture) startLedger(t *testing.T) (*fakeLedger, func()) {
 		}
 		ledgerpb.RegisterLedgerServer(svc, l)
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(Faults)))
+	}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(Faults)))
 	<-f.h.Listening(ledgerAddr)
 
 	var once sync.Once

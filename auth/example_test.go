@@ -42,8 +42,8 @@ type Directory interface {
 // open. An operator authenticates with a client certificate the server's
 // TLS verified, or with a password, and changing anything needs the
 // "admin" role.
-func AdminInit(dir Directory, tlsConfig *tls.Config) func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+func AdminInit(dir Directory, tlsConfig *tls.Config) func(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		// A certificate is verified by the handshake, against ClientCAs:
 		// its common name is the operator, who has every role.
 		cert := auth.MutualTLS("cert", func(_ context.Context, chains [][]*x509.Certificate) (Operator, error) {

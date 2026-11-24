@@ -34,14 +34,14 @@ func main() {
 	humus.Main(Init, humus.WithTelemetry(buildTelemetry))
 }
 
-func buildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+func buildTelemetry(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 	s := telemetry.DefaultSettings()
 	s.ServiceName = "orderevents"
-	return telemetry.New(ctx, s, dial, p.Stderr)
+	return telemetry.New(ctx, s, n, p.Stderr)
 }
 
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	settings, err := readSettings(ctx, s)
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	settings, err := readSettings(ctx, s, h)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +88,7 @@ type sourced struct {
 	KafkaTLS *tls.Config
 }
 
-func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
+func readSettings(ctx context.Context, s *humus.Setup, h humus.Host) (settings, error) {
 	args, err := parseArgs(s.Process)
 	if err != nil {
 		return settings{}, err
@@ -107,8 +107,8 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 				OrderID:  r.Get(args.orderIDValue().Default(rand.Text()).Validate(notEmpty)),
 				Types:    r.Get(args.typesValue().Validate(noneEmpty)),
 			},
-			KafkaCA:  r.Get(env("KAFKA_TLS_CA_FILE").Parse(readFile(s.Host.Filesystem)).Parse(certPool)),
-			KafkaTLS: r.Get(env("KAFKA_TLS_CERT_FILE").Parse(pemTLS(s.Host.Filesystem))),
+			KafkaCA:  r.Get(env("KAFKA_TLS_CA_FILE").Parse(readFile(h.Filesystem)).Parse(certPool)),
+			KafkaTLS: r.Get(env("KAFKA_TLS_CERT_FILE").Parse(pemTLS(h.Filesystem))),
 		}
 	}).Read(ctx)
 	if err != nil {

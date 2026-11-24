@@ -26,8 +26,8 @@ import (
 	"github.com/z5labs/humus/telemetry"
 )
 
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	settings, err := readSettings(ctx, s)
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	settings, err := readSettings(ctx, s, h)
 	if err != nil {
 		return nil, err
 	}
@@ -66,13 +66,13 @@ func route(c *gin.Context) {
 	c.Next()
 }
 
-func readSettings(ctx context.Context, s *humus.Setup) (httpserver.Settings, error) {
+func readSettings(ctx context.Context, s *humus.Setup, h humus.Host) (httpserver.Settings, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 	return config.Struct(func(r *config.Resolver) httpserver.Settings {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = r.Get(env("ADDR").Validate(httpserver.CheckAddr))
 		settings.TLS = r.Get(env("TLS_CERT_FILE").FlatMap(func(certFile string) config.Value[*tls.Config] {
-			return env("TLS_KEY_FILE").Parse(serverTLS(s.Host.Filesystem, certFile))
+			return env("TLS_KEY_FILE").Parse(serverTLS(h.Filesystem, certFile))
 		}).Validate(httpserver.CheckTLS))
 		return settings
 	}).Read(ctx)
@@ -105,7 +105,7 @@ func readFile(fsys humus.Filesystem, name string) ([]byte, error) {
 	return io.ReadAll(f)
 }
 
-func buildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+func buildTelemetry(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 	d := telemetry.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(p.Environment, name) }
 	exporter := func(name string, def telemetry.Exporter) config.Value[telemetry.Exporter] {
@@ -128,5 +128,5 @@ func buildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Diale
 	if err != nil {
 		return telemetry.SDK{}, err
 	}
-	return telemetry.New(ctx, s, dial, p.Stdout)
+	return telemetry.New(ctx, s, n, p.Stdout)
 }

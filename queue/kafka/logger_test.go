@@ -96,8 +96,8 @@ func (l minSeverityLogger) Enabled(ctx context.Context, param log.EnabledParamet
 // from min.
 func enabledFrom(tel *humustest.Telemetry, min log.Severity) telemetry.Builder {
 	build := tel.Builder()
-	return func(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
-		sdk, err := build(ctx, p, dial)
+	return func(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
+		sdk, err := build(ctx, p, n)
 		sdk.LoggerProvider = minSeverityProvider{lp: sdk.LoggerProvider, min: min}
 		return sdk, err
 	}
@@ -121,14 +121,14 @@ func serveUnreachable(t *testing.T, b telemetry.Builder) kgo.LogLevel {
 
 	h := humustest.NewHost(t)
 	var level kgo.LogLevel
-	p, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	p, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		svc, err := kafka.NewService(s, settings(unreachable), queue.ProcessorFunc[kafka.Message](func(context.Context, kafka.Message) error { return nil }))
 		if err != nil {
 			return nil, err
 		}
 		level = kafka.KgoLevel(svc)
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(b)))
+	}, humustest.WithApp(humus.WithTelemetry(b)))
 
 	time.Sleep(time.Minute)
 	p.Signal(syscall.SIGTERM)

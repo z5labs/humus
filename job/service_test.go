@@ -38,8 +38,8 @@ import (
 )
 
 // runs returns an Init whose only Service is a job that runs run.
-func runs(run func(context.Context) error) func(context.Context, *humus.Setup) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+func runs(run func(context.Context) error) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
+	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		return []humus.Service{job.NewService(s, run)}, nil
 	}
 }
@@ -56,7 +56,7 @@ func setup(t *testing.T, tel *humustest.Telemetry) *humus.Setup {
 func TestService_a_run_that_returns_nil_exits_0(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		tel := humustest.NewTelemetry()
-		_, status := humustest.Start(t, runs(func(context.Context) error {
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), runs(func(context.Context) error {
 			time.Sleep(time.Minute) // fake time: returns at once
 			return nil
 		}), humustest.WithApp(humus.WithTelemetry(tel.Builder())))
@@ -78,7 +78,7 @@ func TestService_a_run_that_returns_nil_exits_0(t *testing.T) {
 func TestService_SIGTERM_interrupts_the_run_and_exits_1(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		tel := humustest.NewTelemetry()
-		p, status := humustest.Start(t, runs(func(ctx context.Context) error {
+		p, status := humustest.Start(t, humustest.NewHost(t).Host(), runs(func(ctx context.Context) error {
 			<-ctx.Done()
 			return context.Cause(ctx)
 		}), humustest.WithApp(humus.WithTelemetry(tel.Builder())))
@@ -97,7 +97,7 @@ func TestService_SIGTERM_interrupts_the_run_and_exits_1(t *testing.T) {
 
 func TestService_SIGTERM_and_a_run_that_returns_ctx_Err_exits_1(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		p, status := humustest.Start(t, runs(func(ctx context.Context) error {
+		p, status := humustest.Start(t, humustest.NewHost(t).Host(), runs(func(ctx context.Context) error {
 			<-ctx.Done()
 			return ctx.Err()
 		}))
@@ -124,7 +124,7 @@ func TestService_a_run_that_fails_exits_1(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		tel := humustest.NewTelemetry()
 		errExport := errors.New("export: the bucket is gone")
-		_, status := humustest.Start(t, runs(func(context.Context) error {
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), runs(func(context.Context) error {
 			return errExport
 		}), humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 
@@ -142,7 +142,7 @@ func TestService_a_run_that_fails_exits_1(t *testing.T) {
 func TestService_an_interrupted_run_that_returns_nil_exits_0(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		tel := humustest.NewTelemetry()
-		p, status := humustest.Start(t, runs(func(ctx context.Context) error {
+		p, status := humustest.Start(t, humustest.NewHost(t).Host(), runs(func(ctx context.Context) error {
 			<-ctx.Done()
 			return nil // it chose to treat stopping early as done
 		}), humustest.WithApp(humus.WithTelemetry(tel.Builder())))
@@ -158,7 +158,7 @@ func TestService_an_interrupted_run_that_returns_nil_exits_0(t *testing.T) {
 
 func TestService_a_run_that_ignores_its_context_ends_after_the_grace_period(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		p, status := humustest.Start(t, runs(func(context.Context) error {
+		p, status := humustest.Start(t, humustest.NewHost(t).Host(), runs(func(context.Context) error {
 			time.Sleep(time.Hour) // ignores its context
 			return nil
 		}))
@@ -193,7 +193,7 @@ func TestService_HUMUS_SHUTDOWN_GRACE_PERIOD_overrides_the_default_and_there_is_
 			time.Sleep(time.Hour)
 			return nil
 		}
-		p, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		p, status := humustest.Start(t, humustest.NewHost(t).Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			svc = &recordShutdown{Service: job.NewService(s, ignoresCtx)}
 			return []humus.Service{svc}, nil
 		}, humustest.WithEnv(map[string]string{"HUMUS_SHUTDOWN_GRACE_PERIOD": "5s"}))
@@ -215,7 +215,7 @@ func TestService_HUMUS_SHUTDOWN_GRACE_PERIOD_overrides_the_default_and_there_is_
 func TestService_a_failed_Init_exits_78_and_never_runs_the_job(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var ran atomic.Bool
-		_, status := humustest.Start(t, func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), func(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			if _, err := config.Env(s.Process.Environment, "EXPORT_BUCKET").Read(ctx); err != nil {
 				return nil, err
 			}
@@ -237,7 +237,7 @@ func TestService_a_failed_Init_exits_78_and_never_runs_the_job(t *testing.T) {
 func TestService_the_runs_context_carries_its_span(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		tel := humustest.NewTelemetry()
-		_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			tracer := s.Telemetry.TracerProvider.Tracer("exporter")
 			logger := otelslog.NewLogger("exporter", otelslog.WithLoggerProvider(s.Telemetry.LoggerProvider))
 			return []humus.Service{job.NewService(s, func(ctx context.Context) error {
@@ -398,7 +398,7 @@ func TestService_joins_the_trace_in_TRACEPARENT(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		tel := humustest.NewTelemetry()
 		var schedule string
-		_, status := humustest.Start(t, runs(func(ctx context.Context) error {
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), runs(func(ctx context.Context) error {
 			schedule = baggage.FromContext(ctx).Member("schedule").Value()
 			return nil
 		}),
@@ -434,7 +434,7 @@ func TestService_a_malformed_TRACEPARENT_starts_a_new_trace(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				tel := humustest.NewTelemetry()
-				p, status := humustest.Start(t, runs(func(context.Context) error { return nil }),
+				p, status := humustest.Start(t, humustest.NewHost(t).Host(), runs(func(context.Context) error { return nil }),
 					humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 					humustest.WithEnv(tc.env),
 				)
@@ -463,7 +463,7 @@ func TestService_a_malformed_TRACEPARENT_starts_a_new_trace(t *testing.T) {
 func TestService_TRACESTATE_reaches_the_spans_trace_state(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		tel := humustest.NewTelemetry()
-		_, status := humustest.Start(t, runs(func(context.Context) error { return nil }),
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), runs(func(context.Context) error { return nil }),
 			humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 			humustest.WithEnv(map[string]string{
 				"TRACEPARENT": traceparent,
@@ -481,7 +481,7 @@ func TestService_TRACESTATE_reaches_the_spans_trace_state(t *testing.T) {
 func TestService_only_the_run_joins_the_trace(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		tel := humustest.NewTelemetry()
-		_, status := humustest.Start(t, func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), func(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			_, span := s.Telemetry.TracerProvider.Tracer("init").Start(ctx, "init")
 			span.End()
 			return []humus.Service{job.NewService(s, func(context.Context) error { return nil })}, nil
@@ -517,12 +517,12 @@ func (testPropagator) Fields() []string { return []string{"x-test.parent"} }
 func TestService_reads_the_variables_of_the_Builders_propagator(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		tel := humustest.NewTelemetry()
-		build := func(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
-			sdk, err := tel.Builder()(ctx, p, dial)
+		build := func(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
+			sdk, err := tel.Builder()(ctx, p, n)
 			sdk.Propagator = testPropagator{}
 			return sdk, err
 		}
-		_, status := humustest.Start(t, runs(func(context.Context) error { return nil }),
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), runs(func(context.Context) error { return nil }),
 			humustest.WithApp(humus.WithTelemetry(build)),
 			humustest.WithEnv(map[string]string{
 				"X_TEST_PARENT": traceparent,
@@ -544,7 +544,7 @@ func TestService_reads_the_variables_of_the_Builders_propagator(t *testing.T) {
 func TestInit_runs_the_job_and_releases_its_dependencies(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		tel := humustest.NewTelemetry()
-		p, status := humustest.Start(t, Init,
+		p, status := humustest.Start(t, humustest.NewHost(t).Host(), Init,
 			humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 			humustest.WithEnv(map[string]string{"EXPORT_BUCKET": "nightly"}),
 		)
@@ -558,7 +558,7 @@ func TestInit_runs_the_job_and_releases_its_dependencies(t *testing.T) {
 
 func TestInit_without_its_bucket_exits_78(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		_, status := humustest.Start(t, Init)
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), Init)
 
 		st := <-status
 		require.Equal(t, humus.ExitConfig, st.Code(), "cause: %v", st.Cause())
@@ -570,7 +570,7 @@ func TestInit_without_its_bucket_exits_78(t *testing.T) {
 
 func TestService_a_job_next_to_the_health_Service_ends_the_App(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			run := func(context.Context) error { return nil }
 			return []humus.Service{
 				health.NewService(),
@@ -609,7 +609,7 @@ func TestService_a_job_next_to_a_probes_server_ends_the_App(t *testing.T) {
 			}
 		}
 
-		_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			probes, err := httphealth.NewService(s, probeSettings, health.Liveness(progress))
 			if err != nil {
 				return nil, err
@@ -618,7 +618,7 @@ func TestService_a_job_next_to_a_probes_server_ends_the_App(t *testing.T) {
 				probes,
 				job.NewService(s, run),
 			}, nil
-		}, humustest.WithApp(humus.WithHost(h.Host())))
+		})
 		<-h.Listening("localhost:8081")
 		synctest.Wait()
 

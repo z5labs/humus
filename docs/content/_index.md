@@ -24,7 +24,7 @@ settings, builds its dependencies, registers their release, and returns the
 Services the App runs until it shuts down:
 
 ```go
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	out := s.Process.Stdout
 	s.OnStop(func(context.Context) error {
 		_, err := fmt.Fprintln(out, "on stop: close the cache")

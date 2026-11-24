@@ -191,7 +191,7 @@ func runFaults(t *testing.T, run faultsRun) faultsResult {
 		got.record(ss.Context(), "stream interceptor")
 		return handler(srv, ss)
 	}
-	init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		svc, err := grpcserver.NewService(s, settings, grpc.ChainUnaryInterceptor(unary), grpc.ChainStreamInterceptor(stream))
 		if err != nil {
 			return nil, err
@@ -201,15 +201,15 @@ func runFaults(t *testing.T, run faultsRun) faultsResult {
 		return []humus.Service{svc}, nil
 	}
 
-	opts := []humus.Option{humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())}
+	opts := []humus.Option{humus.WithTelemetry(tel.Builder())}
 	if run.faults {
-		opts = append(opts, humus.WithFaults(func(context.Context, *humus.Setup) (fault.Settings, error) {
+		opts = append(opts, humus.WithFaults(func(context.Context, *humus.Setup, humus.Host) (fault.Settings, error) {
 			d := fault.DefaultSettings()
 			d.Decoder = c
 			return d, nil
 		}))
 	}
-	p, exit := grpcservertest.Start(t, init, humustest.WithApp(opts...))
+	p, exit := grpcservertest.Start(t, h.Host(), init, humustest.WithApp(opts...))
 	<-h.Listening("carts:9090")
 
 	var dial []grpc.DialOption

@@ -31,7 +31,7 @@ import (
 // Example_telemetry. It keeps the OpenTelemetry specification's variable
 // names, mapping each one onto a field of telemetry.Settings: humus reads
 // none of them itself.
-func buildCartsTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+func buildCartsTelemetry(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 	d := telemetry.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(p.Environment, name) }
 	exporter := func(name string, def telemetry.Exporter) config.Value[telemetry.Exporter] {
@@ -53,13 +53,13 @@ func buildCartsTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.
 	if err != nil {
 		return telemetry.SDK{}, err // exit 78: every bad variable, one line each
 	}
-	return telemetry.New(ctx, s, dial, p.Stdout)
+	return telemetry.New(ctx, s, n, p.Stdout)
 }
 
 // CartsInit is the Init of the App in Example_telemetry. It takes the
 // Service's tracer and logger from s.Telemetry, never from OpenTelemetry's
 // globals, and bridges the LoggerProvider to slog with otelslog.
-func CartsInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func CartsInit(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	tracer := s.Telemetry.TracerProvider.Tracer("carts")
 	logger := otelslog.NewLogger("carts", otelslog.WithLoggerProvider(s.Telemetry.LoggerProvider))
 	return []humus.Service{&cartJob{tracer: tracer, logger: logger}}, nil
@@ -97,7 +97,7 @@ func runCarts(env map[string]string) {
 	t := new(exampleTB)
 	defer t.runCleanups()
 
-	p, status := humustest.Start(t, CartsInit,
+	p, status := humustest.Start(t, humustest.NewHost(t).Host(), CartsInit,
 		humustest.WithApp(humus.WithTelemetry(buildCartsTelemetry)),
 		humustest.WithEnv(env),
 	)
@@ -159,7 +159,7 @@ func Example_telemetry() {
 }
 
 // A service that exports anything passes its own Builder to humus.Main with
-// humus.WithTelemetry. Like Example_main, this example is compiled but never
+// humus.WithTelemetry. Like ExampleMain, this example is compiled but never
 // run.
 func Example_telemetryMain() {
 	humus.Main(CartsInit, humus.WithTelemetry(buildCartsTelemetry))
@@ -172,7 +172,7 @@ func Example_telemetryDefault() {
 	t := new(exampleTB)
 	defer t.runCleanups()
 
-	p, status := humustest.Start(t, CartsInit)
+	p, status := humustest.Start(t, humustest.NewHost(t).Host(), CartsInit)
 	st := <-status
 
 	printConsoleLogs(p.Stdout(), "carts")
@@ -190,7 +190,7 @@ func Example_telemetryRecorder() {
 	defer t.runCleanups()
 
 	tel := humustest.NewTelemetry()
-	_, status := humustest.Start(t, CartsInit,
+	_, status := humustest.Start(t, humustest.NewHost(t).Host(), CartsInit,
 		humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 	)
 	st := <-status

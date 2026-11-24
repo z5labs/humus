@@ -97,8 +97,8 @@ func (c *target) startWith(t *testing.T, env map[string]string, build telemetry.
 		}
 		merged[name] = value
 	}
-	proc, st := humustest.Start(t, Init,
-		humustest.WithApp(humus.WithHost(c.h.Host()), humus.WithTelemetry(build), humus.WithFaults(Faults)),
+	proc, st := humustest.Start(t, c.h.Host(), Init,
+		humustest.WithApp(humus.WithTelemetry(build), humus.WithFaults(Faults)),
 		humustest.WithEnv(merged),
 	)
 	return proc.Signal, st
@@ -347,14 +347,14 @@ func TestOpenPostgres_dials_through_the_Host(t *testing.T) {
 
 		cfg, err := adminDSN([]byte("postgres://postgres:" + c.password + "@postgres.internal:5432/postgres?sslmode=disable"))
 		require.NoError(t, err)
-		init := func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-			admin, err := openPostgres(ctx, s, cfg)
+		init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			admin, err := openPostgres(ctx, s, h, cfg)
 			if err != nil {
 				return nil, err
 			}
 			return nil, admin.Drop(ctx, "orders")
 		}
-		_, status := humustest.Start(t, init, humustest.WithApp(humus.WithHost(c.h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+		_, status := humustest.Start(t, c.h.Host(), init, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 
 		st := <-status
 		<-accepted

@@ -29,8 +29,8 @@ import (
 
 // drainApp returns an App on a new humustest Host, with a 10s grace period,
 // no-op telemetry and drain, whose Init returns svcs.
-func drainApp(t *testing.T, drain humus.Drain, svcs ...humus.Service) humus.App {
-	return humus.App{
+func drainApp(t *testing.T, drain humus.Drain, svcs ...humus.Service) humus.App[humus.Host] {
+	return humus.App[humus.Host]{
 		Host:                humustest.NewHost(t).Host(),
 		ShutdownGracePeriod: 10 * time.Second,
 		Drain:               drain,
@@ -68,14 +68,14 @@ type countedDrain struct {
 	calls int
 }
 
-func (d *countedDrain) Drain(ctx context.Context, s *humus.Setup) error {
+func (d *countedDrain) Drain(ctx context.Context, s *humus.Setup, n humus.Network) error {
 	d.mu.Lock()
 	d.calls++
 	d.mu.Unlock()
 	if d.drain == nil {
 		return nil
 	}
-	return d.drain(ctx, s)
+	return d.drain(ctx, s, n)
 }
 
 func (d *countedDrain) count() int {
@@ -86,7 +86,7 @@ func (d *countedDrain) count() int {
 
 // signalled starts app on p, sends SIGTERM once the App listens for it, and
 // returns the time it was sent and the channel the status arrives on.
-func signalled(t *testing.T, app humus.App, p *bedrocktest.Process) (time.Time, <-chan bedrock.ExitStatus) {
+func signalled(t *testing.T, app humus.App[humus.Host], p *bedrocktest.Process) (time.Time, <-chan bedrock.ExitStatus) {
 	t.Helper()
 	status := start(t, app, p)
 	<-p.Notified(syscall.SIGTERM)
@@ -110,7 +110,7 @@ func TestApp_the_drain_ends_once_every_Serve_has_returned(t *testing.T) {
 				return nil
 			},
 		}
-		app := humus.App{
+		app := humus.App[humus.Host]{
 			Host:                humustest.NewHost(t).Host(),
 			ShutdownGracePeriod: 10 * time.Second,
 			Drain:               humus.DrainDelay(5 * time.Second),
@@ -137,7 +137,7 @@ func TestApp_a_Service_that_serves_until_Shutdown_gets_the_whole_drain(t *testin
 			shutdownAt = time.Now()
 			return nil
 		})
-		app := humus.App{
+		app := humus.App[humus.Host]{
 			Host:                humustest.NewHost(t).Host(),
 			ShutdownGracePeriod: 10 * time.Second,
 			Drain:               humus.DrainDelay(5 * time.Second),
@@ -226,7 +226,7 @@ func TestApp_Run_a_nil_Drain_does_not_wait(t *testing.T) {
 func TestApp_Run_the_Drain_context_may_be_done_at_once(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var doneAt time.Time
-		d := &countedDrain{drain: func(ctx context.Context, _ *humus.Setup) error {
+		d := &countedDrain{drain: func(ctx context.Context, _ *humus.Setup, _ humus.Network) error {
 			<-ctx.Done()
 			doneAt = time.Now()
 			return nil
@@ -253,7 +253,7 @@ func TestApp_Run_the_Drain_context_may_be_done_at_once(t *testing.T) {
 
 func TestApp_Run_a_Drain_returning_ctx_Err_fails_the_App(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		drain := func(ctx context.Context, _ *humus.Setup) error {
+		drain := func(ctx context.Context, _ *humus.Setup, _ humus.Network) error {
 			<-ctx.Done()
 			return ctx.Err()
 		}
@@ -357,9 +357,9 @@ func TestApp_Run_the_Drain_context_keeps_values_but_not_cancellation(t *testing.
 			value    any
 			errAtEnd error
 		)
-		drain := func(ctx context.Context, s *humus.Setup) error {
+		drain := func(ctx context.Context, s *humus.Setup, n humus.Network) error {
 			value = ctx.Value(key{})
-			err := humus.DrainDelay(3*time.Second)(ctx, s)
+			err := humus.DrainDelay(3*time.Second)(ctx, s, n)
 			errAtEnd = ctx.Err()
 			return err
 		}
@@ -398,7 +398,7 @@ func TestApp_Run_the_Drain_context_keeps_values_but_not_cancellation(t *testing.
 func TestApp_Run_a_failing_Drain_fails_the_App_and_still_shuts_down(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		errDrain := errors.New("deregister target: load balancer unreachable")
-		drain := func(context.Context, *humus.Setup) error { return errDrain }
+		drain := func(context.Context, *humus.Setup, humus.Network) error { return errDrain }
 		api, consumer := serving(nil), &fakeService{}
 		app, tel := recorded(drainApp(t, drain, api, consumer))
 
@@ -424,11 +424,11 @@ func TestApp_Run_a_failing_Drain_fails_the_App_and_still_shuts_down(t *testing.T
 func TestApp_Run_gives_the_Drain_the_Setup_Init_was_given(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var initSetup, drainSetup *humus.Setup
-		app := drainApp(t, func(_ context.Context, s *humus.Setup) error {
+		app := drainApp(t, func(_ context.Context, s *humus.Setup, _ humus.Network) error {
 			drainSetup = s
 			return nil
 		})
-		app.Init = func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		app.Init = func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			initSetup = s
 			return []humus.Service{serving(nil)}, nil
 		}
@@ -447,7 +447,7 @@ func TestApp_Run_gives_the_Drain_the_Setup_Init_was_given(t *testing.T) {
 
 func TestApp_Run_does_not_recover_a_panic_in_the_Drain(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		drain := func(context.Context, *humus.Setup) error { panic("drain exploded") }
+		drain := func(context.Context, *humus.Setup, humus.Network) error { panic("drain exploded") }
 		job := &fakeService{serve: func(context.Context) error { return nil }}
 		app := drainApp(t, drain, job, &fakeService{})
 		p := bedrocktest.NewProcess(t)
@@ -468,7 +468,7 @@ func TestDrainDelay(t *testing.T) {
 	t.Run("returns nil when its delay ends", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			begin := time.Now()
-			err := humus.DrainDelay(5*time.Second)(t.Context(), nil)
+			err := humus.DrainDelay(5*time.Second)(t.Context(), nil, nil)
 
 			if err != nil {
 				t.Errorf("err = %v, want nil", err)
@@ -485,7 +485,7 @@ func TestDrainDelay(t *testing.T) {
 			defer cancel()
 
 			begin := time.Now()
-			err := humus.DrainDelay(5*time.Second)(ctx, nil)
+			err := humus.DrainDelay(5*time.Second)(ctx, nil, nil)
 
 			if err != nil {
 				t.Errorf("err = %v, want nil", err)
@@ -499,7 +499,7 @@ func TestDrainDelay(t *testing.T) {
 	t.Run("of zero returns at once", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			begin := time.Now()
-			err := humus.DrainDelay(0)(t.Context(), nil)
+			err := humus.DrainDelay(0)(t.Context(), nil, nil)
 
 			if err != nil {
 				t.Errorf("err = %v, want nil", err)

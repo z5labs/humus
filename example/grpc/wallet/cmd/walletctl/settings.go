@@ -109,12 +109,12 @@ type settings struct {
 	ID          string
 }
 
-func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
+func readSettings(ctx context.Context, s *humus.Setup, h humus.Host) (settings, error) {
 	args, err := parseArgs(s.Process)
 	if err != nil {
 		return settings{}, err
 	}
-	file := func(name string) config.Value[[]byte] { return args.value(name).Parse(readFile(s.Host.Filesystem)) }
+	file := func(name string) config.Value[[]byte] { return args.value(name).Parse(readFile(h.Filesystem)) }
 
 	return config.Struct(func(r *config.Resolver) settings {
 		set := settings{Command: args.command}

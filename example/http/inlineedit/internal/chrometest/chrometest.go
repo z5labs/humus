@@ -69,14 +69,14 @@ type UI struct {
 	BeforeFirstSave string
 }
 
-func Run(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error), ui UI) {
+func Run(t *testing.T, init func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error), ui UI) {
 	ca := humustest.NewCA(t)
 	cert := ca.Issue(t, testcontainers.HostInternal, "127.0.0.1")
 	addr := freeAddr(t)
 	_, port, err := net.SplitHostPort(addr)
 	require.NoError(t, err)
-	p, status := httpservertest.Start(t, init,
-		humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(telemetry.NoopBuilder)),
+	p, status := httpservertest.Start(t, humus.OSHost(), init,
+		humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		humustest.WithEnv(map[string]string{
 			"ADDR":         addr,
 			"TLS_PEM_FILE": writePEM(t, cert),

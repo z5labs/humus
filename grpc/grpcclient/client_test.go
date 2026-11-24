@@ -158,7 +158,7 @@ func (a app) run(t *testing.T) (*grpcclient.Client, error) {
 		client  *grpcclient.Client
 		workErr error
 	)
-	init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		var services []humus.Service
 		if a.backend != nil {
 			addr := a.backendAddr
@@ -189,7 +189,7 @@ func (a app) run(t *testing.T) (*grpcclient.Client, error) {
 	if tel == nil {
 		tel = telemetry.NoopBuilder
 	}
-	_, status := humustest.Start(t, init, humustest.WithApp(humus.WithHost(a.host), humus.WithTelemetry(tel)))
+	_, status := humustest.Start(t, a.host, init, humustest.WithApp(humus.WithTelemetry(tel)))
 	st := <-status
 	require.Zero(t, st.Code(), "cause: %v", st.Cause())
 	return client, workErr
@@ -516,14 +516,14 @@ func TestNewClient_opts(t *testing.T) {
 			ca := humustest.NewCA(t)
 			h := humustest.NewHost(t)
 			b := &backend{answer: unavailable}
-			p, exit := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+			p, exit := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 				srv, err := grpcserver.NewService(s, grpcserver.Settings{Addr: "backend:9090", TLS: serving(t, ca, "backend")})
 				if err != nil {
 					return nil, err
 				}
 				testpb.RegisterTestServiceServer(srv, b)
 				return []humus.Service{srv}, nil
-			}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+			}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 			<-h.Listening("backend:9090")
 
 			conn := grpcservertest.NewClient(t, h, "backend:9090", ca.Pool(), grpc.WithDefaultServiceConfig(retryPolicy))
@@ -639,14 +639,14 @@ func TestClient_closes_its_connection_at_OnStop(t *testing.T) {
 			settings.Addr = "backend:9090"
 
 			var client *grpcclient.Client
-			_, exit := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+			_, exit := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 				c, err := grpcclient.NewClient(s, settings)
 				if err != nil {
 					return nil, err
 				}
 				client = c
 				return nil, errInit
-			}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+			}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 			st := <-exit
 			require.ErrorIs(t, st.Cause(), errInit)
 

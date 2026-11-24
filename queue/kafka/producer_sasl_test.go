@@ -53,10 +53,10 @@ func TestProducer_SASL(t *testing.T) {
 					ps.SASL = m.of(user, password)
 					tel := humustest.NewTelemetry()
 					var err error
-					_, status := humustest.Start(t, produces(ps, func(ctx context.Context, p *kafka.Producer) error {
+					_, status := humustest.Start(t, h.Host(), produces(ps, func(ctx context.Context, p *kafka.Producer) error {
 						err = p.Produce(ctx, value(0))
 						return nil
-					}), humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+					}), humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 
 					st := <-status
 					require.Zero(t, st.Code(), "cause: %v", st.Cause())
@@ -76,10 +76,10 @@ func TestProducer_SASL(t *testing.T) {
 					ps := producerSettings(c.ListenAddrs()...)
 					ps.SASL = m.of(user, rand.Text())
 					var err error
-					_, status := humustest.Start(t, produces(ps, func(ctx context.Context, p *kafka.Producer) error {
+					_, status := humustest.Start(t, h.Host(), produces(ps, func(ctx context.Context, p *kafka.Producer) error {
 						err = p.Produce(ctx, value(0))
 						return nil
-					}), humustest.WithApp(humus.WithHost(h.Host())))
+					}))
 
 					st := <-status
 					require.Zero(t, st.Code(), "cause: %v", st.Cause())
@@ -103,7 +103,7 @@ func TestProducer_SASL(t *testing.T) {
 				first, second, third error
 				tookFirst, tookLater time.Duration
 			)
-			_, status := humustest.Start(t, produces(ps, func(ctx context.Context, p *kafka.Producer) error {
+			_, status := humustest.Start(t, h.Host(), produces(ps, func(ctx context.Context, p *kafka.Producer) error {
 				start := time.Now()
 				first = p.Produce(ctx, value(0))
 				tookFirst = time.Since(start)
@@ -113,7 +113,7 @@ func TestProducer_SASL(t *testing.T) {
 				third = p.Produce(ctx, value(2), value(3))
 				tookLater = time.Since(start)
 				return nil
-			}), humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+			}), humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 
 			st := <-status
 			require.Zero(t, st.Code(), "cause: %v", st.Cause())
@@ -159,7 +159,7 @@ func TestProducer_SASL(t *testing.T) {
 			ps.SASL = kafka.Plain(user, rand.Text())
 			tel := humustest.NewTelemetry()
 			errs := make([]error, 5)
-			_, status := humustest.Start(t, produces(ps, func(ctx context.Context, p *kafka.Producer) error {
+			_, status := humustest.Start(t, h.Host(), produces(ps, func(ctx context.Context, p *kafka.Producer) error {
 				var wg sync.WaitGroup
 				for i := range errs {
 					wg.Go(func() {
@@ -168,7 +168,7 @@ func TestProducer_SASL(t *testing.T) {
 				}
 				wg.Wait()
 				return nil
-			}), humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())))
+			}), humustest.WithApp(humus.WithTelemetry(tel.Builder())))
 
 			st := <-status
 			require.Zero(t, st.Code(), "cause: %v", st.Cause())

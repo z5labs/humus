@@ -265,8 +265,8 @@ humus.Main(Init, humus.WithTelemetry(buildTelemetry))
 `Init` builds the `Client`, the controller and its probes:
 
 ```go
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	settings, err := readSettings(ctx, s)
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	settings, err := readSettings(ctx, s, h)
 	if err != nil {
 		return nil, err
 	}
@@ -300,7 +300,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 the environment:
 
 ```go
-func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
+func readSettings(ctx context.Context, s *humus.Setup, h humus.Host) (settings, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
 	return config.Struct(func(r *config.Resolver) settings {
@@ -313,9 +313,9 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 		return settings{
 			Connection: kube.Connection{
 				Server: net.JoinHostPort(r.Get(env("KUBERNETES_SERVICE_HOST")), r.Get(env("KUBERNETES_SERVICE_PORT"))),
-				TLS:    r.Get(env("KUBERNETES_CA_FILE").Default(serviceAccount + "ca.crt").Parse(trusting(s.Host.Filesystem)).Validate(kube.CheckTLS)),
+				TLS:    r.Get(env("KUBERNETES_CA_FILE").Default(serviceAccount + "ca.crt").Parse(trusting(h.Filesystem)).Validate(kube.CheckTLS)),
 				Token: func(context.Context) (string, error) {
-					b, err := readFile(s.Host.Filesystem, tokenFile)
+					b, err := readFile(h.Filesystem, tokenFile)
 					return string(bytes.TrimSpace(b)), err
 				},
 			},
@@ -323,7 +323,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 			Probes: httphealth.Settings{
 				Addr: r.Get(env("PROBES_ADDR").Validate(httphealth.CheckAddr)),
 				TLS: r.Get(env("PROBES_TLS_CERT_FILE").FlatMap(func(certFile string) config.Value[*tls.Config] {
-					return env("PROBES_TLS_KEY_FILE").Parse(serverTLS(s.Host.Filesystem, certFile))
+					return env("PROBES_TLS_KEY_FILE").Parse(serverTLS(h.Filesystem, certFile))
 				}).Validate(httphealth.CheckTLS)),
 			},
 		}
@@ -672,8 +672,8 @@ The cases run against the whole humus controller, with `humustest.Start`
 and `humus.OSHost()`, against k3s:
 
 ```go
-p, status := humustest.Start(t, Init,
-	humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(telemetry.NoopBuilder)),
+p, status := humustest.Start(t, humus.OSHost(), Init,
+	humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 	humustest.WithEnv(map[string]string{
 		"KUBERNETES_SERVICE_HOST": server.Hostname(),
 		"KUBERNETES_SERVICE_PORT": server.Port(),

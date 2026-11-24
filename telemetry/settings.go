@@ -217,7 +217,7 @@ type BatchSettings struct {
 // OTLPSettings configures the OTLP exporters.
 type OTLPSettings struct {
 	// Endpoint is the collector's address. It is dialled through the
-	// Dialer given to New, and for http/protobuf each signal is sent to its
+	// Network given to New, and for http/protobuf each signal is sent to its
 	// spec path: /v1/traces, /v1/metrics and /v1/logs.
 	//
 	// Default: "localhost:4317". Valid: host:port. Check:

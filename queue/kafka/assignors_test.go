@@ -19,7 +19,6 @@ import (
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/queue"
 	"github.com/z5labs/humus/queue/kafka"
@@ -107,7 +106,7 @@ func TestService_Assignors(t *testing.T) {
 				start := func(app int, assignors []kafka.Assignor) func() {
 					s := settings(c.ListenAddrs()...)
 					s.Assignors = assignors
-					p, status := humustest.Start(t, consumes(s, processed.processor(app)), humustest.WithApp(humus.WithHost(h.Host())))
+					p, status := humustest.Start(t, h.Host(), consumes(s, processed.processor(app)))
 					return func() {
 						p.Signal(syscall.SIGTERM)
 						st := <-status

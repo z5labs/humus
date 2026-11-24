@@ -38,7 +38,7 @@ var (
 // The grace period is checked after its default, so a bad default fails the
 // same way as a bad variable: with a *config.Error naming the variable. Both
 // values are read even when one fails, and every failure is returned, joined.
-func (a App) readSettings(ctx context.Context, env bedrock.Environment) (settings, error) {
+func (a App[H]) readSettings(ctx context.Context, env bedrock.Environment) (settings, error) {
 	return config.Struct(func(r *config.Resolver) settings {
 		return settings{
 			gracePeriod: r.Get(

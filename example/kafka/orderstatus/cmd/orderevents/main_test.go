@@ -116,8 +116,8 @@ func (c *cli) start(t *testing.T, env map[string]string, build telemetry.Builder
 		}
 		merged[name] = value
 	}
-	p, status := humustest.Start(t, Init,
-		humustest.WithApp(humus.WithHost(c.h.Host()), humus.WithTelemetry(build)),
+	p, status := humustest.Start(t, c.h.Host(), Init,
+		humustest.WithApp(humus.WithTelemetry(build)),
 		humustest.WithEnv(merged),
 		humustest.WithArgs(args...),
 	)

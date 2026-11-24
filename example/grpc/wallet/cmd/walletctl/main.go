@@ -36,14 +36,14 @@ func main() {
 	humus.Main(Init, humus.WithTelemetry(buildTelemetry))
 }
 
-func buildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+func buildTelemetry(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 	s := telemetry.DefaultSettings()
 	s.ServiceName = "walletctl"
-	return telemetry.New(ctx, s, dial, p.Stderr)
+	return telemetry.New(ctx, s, n, p.Stderr)
 }
 
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	set, err := readSettings(ctx, s)
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	set, err := readSettings(ctx, s, h)
 	if err != nil {
 		return nil, err
 	}

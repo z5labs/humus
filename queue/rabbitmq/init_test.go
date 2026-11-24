@@ -106,7 +106,7 @@ func TestOrders_fails_an_order_with_no_ID(t *testing.T) {
 
 func TestInit_without_its_address_login_and_queue_exits_78(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		_, status := humustest.Start(t, Init)
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), Init)
 
 		st := <-status
 		require.Equal(t, humus.ExitConfig, st.Code(), "cause: %v", st.Cause())
@@ -120,7 +120,7 @@ func TestInit_without_its_address_login_and_queue_exits_78(t *testing.T) {
 func TestInit_with_a_URI_for_its_address_exits_78_without_quoting_it(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		password := rand.Text()
-		_, status := humustest.Start(t, Init, humustest.WithEnv(map[string]string{
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), Init, humustest.WithEnv(map[string]string{
 			"RABBITMQ_ADDR":     "amqp://orders:" + password + "@rabbit:5672/",
 			"RABBITMQ_USERNAME": "orders",
 			"RABBITMQ_PASSWORD": password,
@@ -140,8 +140,8 @@ func TestInit_waits_for_a_broker_that_is_down_and_exits_0_on_SIGTERM(t *testing.
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
 		tel := humustest.NewTelemetry()
-		p, status := humustest.Start(t, Init,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+		p, status := humustest.Start(t, h.Host(), Init,
+			humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 			humustest.WithEnv(map[string]string{
 				"RABBITMQ_ADDR":     "rabbit:5672",
 				"RABBITMQ_USERNAME": "orders",
@@ -215,8 +215,7 @@ func TestSecureInit_presents_its_client_certificate_to_the_broker(t *testing.T) 
 			_, _ = tc.Read(make([]byte, 1)) // until the Service hangs up
 		}()
 
-		p, status := humustest.Start(t, secureInit,
-			humustest.WithApp(humus.WithHost(h.Host())),
+		p, status := humustest.Start(t, h.Host(), secureInit,
 			humustest.WithEnv(map[string]string{
 				"RABBITMQ_ADDR":          "rabbit:5671",
 				"RABBITMQ_TLS_CA_FILE":   "etc/rabbitmq/ca.pem",
@@ -239,8 +238,7 @@ func TestSecureInit_without_the_client_certificate_exits_78(t *testing.T) {
 		h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 			"etc/rabbitmq/ca.pem": []byte("not a certificate"),
 		}))
-		_, status := humustest.Start(t, secureInit,
-			humustest.WithApp(humus.WithHost(h.Host())),
+		_, status := humustest.Start(t, h.Host(), secureInit,
 			humustest.WithEnv(map[string]string{
 				"RABBITMQ_ADDR":        "rabbit:5671",
 				"RABBITMQ_TLS_CA_FILE": "etc/rabbitmq/ca.pem",

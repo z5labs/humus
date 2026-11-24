@@ -33,14 +33,14 @@ func main() {
 	humus.Main(Init, humus.WithTelemetry(buildTelemetry))
 }
 
-func buildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+func buildTelemetry(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 	s := telemetry.DefaultSettings()
 	s.ServiceName = "mailrequest"
-	return telemetry.New(ctx, s, dial, p.Stderr)
+	return telemetry.New(ctx, s, n, p.Stderr)
 }
 
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	settings, err := readSettings(ctx, s)
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	settings, err := readSettings(ctx, s, h)
 	if err != nil {
 		return nil, err
 	}
@@ -80,13 +80,13 @@ type settings struct {
 	Request   request
 }
 
-func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
+func readSettings(ctx context.Context, s *humus.Setup, h humus.Host) (settings, error) {
 	args, err := parseArgs(s.Process)
 	if err != nil {
 		return settings{}, err
 	}
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
-	file := readFile(s.Host.Filesystem)
+	file := readFile(h.Filesystem)
 
 	return config.Struct(func(r *config.Resolver) settings {
 		publisher := rabbitmq.DefaultPublisherSettings()

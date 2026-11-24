@@ -111,10 +111,10 @@ func newFixture(t *testing.T) fixture {
 	}
 }
 
-func (f fixture) start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error)) (*bedrocktest.Process, <-chan bedrock.ExitStatus) {
+func (f fixture) start(t *testing.T, init func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error)) (*bedrocktest.Process, <-chan bedrock.ExitStatus) {
 	t.Helper()
-	return httpservertest.Start(t, init,
-		humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(f.telemetry), humus.WithFaults(Faults)),
+	return httpservertest.Start(t, f.h.Host(), init,
+		humustest.WithApp(humus.WithTelemetry(f.telemetry), humus.WithFaults(Faults)),
 		humustest.WithEnv(f.env),
 	)
 }
@@ -142,7 +142,7 @@ func newFakeDatabase() *fakeDatabase {
 	return &fakeDatabase{Store: storetest.New(), listenerUp: true}
 }
 
-func (db *fakeDatabase) open(_ context.Context, s *humus.Setup, _ *pgxpool.Config) (backend, error) {
+func (db *fakeDatabase) open(_ context.Context, s *humus.Setup, _ humus.Host, _ *pgxpool.Config) (backend, error) {
 	return backend{
 		store:     fakeStore{db: db, Store: db.WithFaults(s.Faults)},
 		results:   db.Store,
@@ -152,8 +152,8 @@ func (db *fakeDatabase) open(_ context.Context, s *humus.Setup, _ *pgxpool.Confi
 	}, nil
 }
 
-func (db *fakeDatabase) init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	return initWith(ctx, s, db.open)
+func (db *fakeDatabase) init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	return initWith(ctx, s, h, db.open)
 }
 
 type fakeStore struct {
@@ -239,12 +239,12 @@ type service struct {
 	client *http.Client
 }
 
-func start(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error)) *service {
+func start(t *testing.T, init func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error)) *service {
 	t.Helper()
 	return newFixture(t).serve(t, init)
 }
 
-func (f fixture) serve(t *testing.T, init func(context.Context, *humus.Setup) ([]humus.Service, error)) *service {
+func (f fixture) serve(t *testing.T, init func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error)) *service {
 	t.Helper()
 	p, status := f.start(t, init)
 	select {
@@ -416,8 +416,8 @@ var settingNames = []string{"ADDR", "TLS_CERT_FILE", "TLS_KEY_FILE", "DATABASE_U
 
 func TestInit_without_its_settings_exits_78_naming_each(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		_, status := httpservertest.Start(t, Init,
-			humustest.WithApp(humus.WithHost(humustest.NewHost(t).Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		_, status := httpservertest.Start(t, humustest.NewHost(t).Host(), Init,
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		)
 
 		st := <-status
@@ -517,10 +517,10 @@ func TestInit_reads_the_database_URL_from_its_file(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var cfg *pgxpool.Config
 		db := newFakeDatabase()
-		s := start(t, func(ctx context.Context, setup *humus.Setup) ([]humus.Service, error) {
-			return initWith(ctx, setup, func(ctx context.Context, setup *humus.Setup, c *pgxpool.Config) (backend, error) {
+		s := start(t, func(ctx context.Context, setup *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			return initWith(ctx, setup, h, func(ctx context.Context, setup *humus.Setup, h humus.Host, c *pgxpool.Config) (backend, error) {
 				cfg = c
-				return db.open(ctx, setup, c)
+				return db.open(ctx, setup, h, c)
 			})
 		})
 

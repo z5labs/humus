@@ -123,7 +123,7 @@ func TestTrustScenario_an_operator_of_two_controllers_carries_a_scenario_down(t 
 
 	var watched sightings
 	codec := faultsCodec(t)
-	p, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	p, status := humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		client, err := kube.NewClient(s, cluster.conn)
 		if err != nil {
 			return nil, err
@@ -152,8 +152,7 @@ func TestTrustScenario_an_operator_of_two_controllers_carries_a_scenario_down(t 
 		}
 		return []humus.Service{memcachedCtrl, deploymentCtrl}, nil
 	}, humustest.WithApp(
-		humus.WithHost(humus.OSHost()),
-		humus.WithFaults(func(context.Context, *humus.Setup) (fault.Settings, error) {
+		humus.WithFaults(func(context.Context, *humus.Setup, humus.Host) (fault.Settings, error) {
 			settings := fault.DefaultSettings()
 			settings.Decoder = codec
 			return settings, nil

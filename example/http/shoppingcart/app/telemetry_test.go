@@ -315,8 +315,8 @@ func TestInit_with_a_bad_telemetry_setting_exits_78(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
 				f.env[name] = value
-				_, status := httpservertest.Start(t, Init,
-					humustest.WithApp(humus.WithHost(f.h.Host()), humus.WithTelemetry(BuildTelemetry), humus.WithFaults(Faults)),
+				_, status := httpservertest.Start(t, f.h.Host(), Init,
+					humustest.WithApp(humus.WithTelemetry(BuildTelemetry), humus.WithFaults(Faults)),
 					humustest.WithEnv(f.env),
 				)
 				st := <-status

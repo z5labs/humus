@@ -87,7 +87,7 @@ func always(a func(http.ResponseWriter)) func(int, http.ResponseWriter) {
 func startProvider(t *testing.T, h *humustest.Host, ca *humustest.CA, handler http.Handler) (stop func()) {
 	t.Helper()
 	cert := ca.Issue(t, "provider")
-	p, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	p, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = ":8443"
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
@@ -96,7 +96,7 @@ func startProvider(t *testing.T, h *humustest.Host, ca *humustest.CA, handler ht
 			return nil, err
 		}
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+	}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 	select {
 	case <-h.Listening("provider:8443"):
 	case st := <-status:
@@ -127,7 +127,7 @@ func settings(t *testing.T, ca *humustest.CA) provider.Settings {
 
 func run(t *testing.T, h *humustest.Host, settings provider.Settings, f func(ctx context.Context, c *provider.Client)) {
 	t.Helper()
-	_, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		c, err := provider.New(s, settings)
 		if err != nil {
 			return nil, err
@@ -136,7 +136,7 @@ func run(t *testing.T, h *humustest.Host, settings provider.Settings, f func(ctx
 			f(ctx, c)
 			return nil
 		})}, nil
-	}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+	}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 	st := <-status
 	require.Zero(t, st.Code(), "cause: %v", st.Cause())
 }
@@ -439,10 +439,10 @@ func TestNew_rejects_bad_settings(t *testing.T) {
 				s := settings(t, humustest.NewCA(t))
 				tc.change(&s)
 
-				_, status := humustest.Start(t, func(_ context.Context, setup *humus.Setup) ([]humus.Service, error) {
+				_, status := humustest.Start(t, h.Host(), func(_ context.Context, setup *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 					_, err := provider.New(setup, s)
 					return nil, err
-				}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+				}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 				st := <-status
 
 				require.NotZero(t, st.Code())
