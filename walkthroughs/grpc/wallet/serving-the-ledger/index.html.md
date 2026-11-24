@@ -248,7 +248,7 @@ The probes are `grpchealth.NewService`, on a plaintext port of their own,
 probes don't use TLS on most clusters:
 
 ```go
-probes, err := grpchealth.NewService(s, set.Probes, health.Readiness(newReached(ping)))
+probes, err := grpchealth.NewService(ctx, s, h, set.Probes, health.Readiness(newReached(ping)))
 if err != nil {
 	return nil, err
 }

@@ -56,7 +56,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 		return nil, err // exit 78, naming every bad variable
 	}
 
-	svc, err := grpcserver.NewService(s, settings)
+	svc, err := grpcserver.NewService(ctx, s, h, settings)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +235,7 @@ with `grpc.ChainUnaryInterceptor` and `grpc.ChainStreamInterceptor`, keepalive
 parameters, with `grpc.KeepaliveParams` and `grpc.KeepaliveEnforcementPolicy`,
 message size limits, with `grpc.MaxRecvMsgSize` and `grpc.MaxSendMsgSize`, and
 a second stats handler, as in
-`grpcserver.NewService(s, settings, unary, stream)`, with the two
+`grpcserver.NewService(ctx, s, h, settings, unary, stream)`, with the two
 interceptors `grpcauth.Interceptors` returns, as
 [Authentication](#authentication) shows.
 
@@ -600,7 +600,7 @@ unary, stream, err := grpcauth.Interceptors(s,
 if err != nil {
 	return nil, err
 }
-svc, err := grpcserver.NewService(s, grpcserver.Settings{Addr: ":9090", TLS: tlsConfig}, unary, stream)
+svc, err := grpcserver.NewService(ctx, s, h, grpcserver.Settings{Addr: ":9090", TLS: tlsConfig}, unary, stream)
 if err != nil {
 	return nil, err
 }
@@ -684,7 +684,7 @@ in `opts` as a second stats handler, given the Setup's `MeterProvider`, and
 grpc-go calls it after humus's:
 
 ```go
-svc, err := grpcserver.NewService(s, settings, opentelemetry.ServerOption(opentelemetry.Options{
+svc, err := grpcserver.NewService(ctx, s, h, settings, opentelemetry.ServerOption(opentelemetry.Options{
 	MetricsOptions: opentelemetry.MetricsOptions{MeterProvider: s.Telemetry.MeterProvider},
 }))
 ```
@@ -914,7 +914,7 @@ Service of the end user's own that wraps it is checked the same way:
 func TestService_meets_the_Service_contract(t *testing.T) {
 	humustest.TestService(t, func(t *testing.T, s *humus.Setup) humus.Service {
 		cert := humustest.NewCA(t).Issue(t, "carts")
-		svc, err := grpcserver.NewService(s, grpcserver.Settings{
+		svc, err := grpcserver.NewService(t.Context(), s, humustest.NewHost(t), grpcserver.Settings{
 			Addr: ":9090",
 			TLS:  &tls.Config{Certificates: []tls.Certificate{cert.TLS()}},
 		})

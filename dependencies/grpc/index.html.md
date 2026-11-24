@@ -62,13 +62,13 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 
 	// One Client for the dependency, built once and shared by every RPC
 	// the service serves.
-	carts, err := grpcclient.NewClient(s, cartsSettings)
+	carts, err := grpcclient.NewClient(s, h, cartsSettings)
 	if err != nil {
 		return nil, err
 	}
 
 	api := &api{carts: testpb.NewTestServiceClient(carts)}
-	svc, err := grpcserver.NewService(s, serverSettings)
+	svc, err := grpcserver.NewService(ctx, s, h, serverSettings)
 	if err != nil {
 		return nil, err
 	}
@@ -150,11 +150,11 @@ budget:
 // Two Clients of one address, each with its own Settings, and
 // so its own breaker, built once in Init and shared by
 // everything that calls them.
-payments, err := grpcclient.NewClient(s, paymentsSettings)
+payments, err := grpcclient.NewClient(s, h, paymentsSettings)
 if err != nil {
 	return nil, err
 }
-ledger, err := grpcclient.NewClient(s, ledgerSettings)
+ledger, err := grpcclient.NewClient(s, h, ledgerSettings)
 if err != nil {
 	return nil, err
 }
@@ -814,11 +814,11 @@ whatever exposes the probes, here a `grpchealth` probes port, as
 [Health](/humus/fundamentals/health/#exposing-the-probes) describes:
 
 ```go
-carts, err := grpcclient.NewClient(s, cartsSettings)
+carts, err := grpcclient.NewClient(s, h, cartsSettings)
 if err != nil {
 	return nil, err
 }
-svc, err := grpcserver.NewService(s, serverSettings)
+svc, err := grpcserver.NewService(ctx, s, h, serverSettings)
 if err != nil {
 	return nil, err
 }
@@ -827,7 +827,7 @@ testpb.RegisterTestServiceServer(svc, &api{carts: testpb.NewTestServiceClient(ca
 // The service turns ready once its Client has connected to
 // carts, and stays ready through an outage of carts after
 // that.
-probes, err := grpchealth.NewService(s, probeSettings, health.Readiness(carts.Connected()))
+probes, err := grpchealth.NewService(ctx, s, h, probeSettings, health.Readiness(carts.Connected()))
 if err != nil {
 	return nil, err
 }
@@ -918,8 +918,8 @@ test. `grpcclient`'s own tests start one with a helper:
 func startCarts(t *testing.T, h *humustest.Host, ca *humustest.CA) (stop func()) {
 	t.Helper()
 	cert := ca.Issue(t, "carts")
-	p, exit := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		svc, err := grpcserver.NewService(s, grpcserver.Settings{
+	p, exit := humustest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		svc, err := grpcserver.NewService(ctx, s, h, grpcserver.Settings{
 			Addr: "carts:9090",
 			TLS:  &tls.Config{Certificates: []tls.Certificate{cert.TLS()}},
 		})

@@ -350,7 +350,7 @@ old, so each caller dials again through the Kubernetes Service and reaches
 whichever pod it picks:
 
 ```go
-svc, err := grpcserver.NewService(s, set.GRPC,
+svc, err := grpcserver.NewService(ctx, s, h, set.GRPC,
 	unary,
 	stream,
 	grpc.KeepaliveParams(keepalive.ServerParameters{MaxConnectionAge: maxConnectionAge}),
@@ -376,7 +376,7 @@ ledger is ready once it has reached PostgreSQL, as
 shows:
 
 ```go
-probes, err := grpchealth.NewService(s, set.Probes, health.Readiness(newReached(ping)))
+probes, err := grpchealth.NewService(ctx, s, h, set.Probes, health.Readiness(newReached(ping)))
 ```
 
 The wallet is ready once its Client has connected to the ledger, as
@@ -384,7 +384,7 @@ The wallet is ready once its Client has connected to the ledger, as
 shows:
 
 ```go
-probes, err := grpchealth.NewService(s, set.Probes, health.Readiness(ledger.Connected()))
+probes, err := grpchealth.NewService(ctx, s, h, set.Probes, health.Readiness(ledger.Connected()))
 ```
 
 Both latch.

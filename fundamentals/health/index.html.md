@@ -236,7 +236,7 @@ is the gRPC health v1 server. It is registered on the end user's
 and answers from a health Service returned next to it:
 
 ```go
-svc, err := grpcserver.NewService(s, settings)
+svc, err := grpcserver.NewService(ctx, s, h, settings)
 if err != nil {
 	return nil, err
 }
@@ -364,12 +364,12 @@ reachable in plain text, and their own services stay TLS-only on the
 `grpcserver.Service`'s port:
 
 ```go
-svc, err := grpcserver.NewService(s, cfg.grpc)
+svc, err := grpcserver.NewService(ctx, s, h, cfg.grpc)
 if err != nil {
 	return nil, err
 }
 testpb.RegisterTestServiceServer(svc, greeter{}) // the end user's own service
-probes, err := grpchealth.NewService(s, cfg.probes)
+probes, err := grpchealth.NewService(ctx, s, h, cfg.probes)
 if err != nil {
 	return nil, err
 }
@@ -611,11 +611,11 @@ whose `grpc` probes can't use TLS, puts it in the readiness of its probes
 port:
 
 ```go
-carts, err := grpcclient.NewClient(s, cartsSettings)
+carts, err := grpcclient.NewClient(s, h, cartsSettings)
 if err != nil {
 	return nil, err
 }
-svc, err := grpcserver.NewService(s, serverSettings)
+svc, err := grpcserver.NewService(ctx, s, h, serverSettings)
 if err != nil {
 	return nil, err
 }
@@ -624,7 +624,7 @@ testpb.RegisterTestServiceServer(svc, &api{carts: testpb.NewTestServiceClient(ca
 // The service turns ready once its Client has connected to
 // carts, and stays ready through an outage of carts after
 // that.
-probes, err := grpchealth.NewService(s, probeSettings, health.Readiness(carts.Connected()))
+probes, err := grpchealth.NewService(ctx, s, h, probeSettings, health.Readiness(carts.Connected()))
 if err != nil {
 	return nil, err
 }
