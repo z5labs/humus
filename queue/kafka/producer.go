@@ -165,7 +165,7 @@ func NewProducer(s *humus.Setup, settings ProducerSettings) (*Producer, error) {
 	}
 	cl, err := kgo.NewClient(opts...)
 	if err != nil {
-		return nil, fmt.Errorf("kafka: NewProducer: building the client: %w", err)
+		return nil, fmt.Errorf("kafka: NewProducer: building the client: %w", fromClient(err))
 	}
 	// humus.circuit.state's callback is registered last, once nothing after
 	// it can fail, so a NewProducer that returns an error leaves none
@@ -246,7 +246,7 @@ func (p *Producer) refusalErr() error {
 // on Produce's goroutine after that.
 //
 // When ctx is done first, Close fails the records still in the client with
-// kgo.ErrClientClosed, the breaker may not count the calls of those
+// ErrProducerClosed, the breaker may not count the calls of those
 // records, kotel's counters may miss records franz-go has yet to report to
 // it, and stop returns an error that wraps ctx's error.
 func (p *Producer) stop(ctx context.Context) error {
@@ -421,7 +421,12 @@ func (m *kotelMeter) wait(ctx context.Context) error {
 // wraps a *circuit.RejectedError, which matches circuit.ErrRejected and says
 // how much longer the breaker stays open, at once and with nothing sent,
 // while the breaker is open; and an error that wraps ctx's error, at once,
-// when ctx is done first. A call whose ctx is already done sends nothing.
+// when ctx is done first. In a record's error, errors.As finds an *Error when
+// the cluster answered with a Kafka error code, errors.Is finds
+// ErrDeliveryTimeout and context.DeadlineExceeded when DeliveryTimeout
+// passed, and ErrProducerClosed when the Producer was closed. A Produce
+// after the Producer's OnStop function has run returns an error that wraps
+// ErrProducerClosed, at once. A call whose ctx is already done sends nothing.
 // Records handed to the client before ctx is done go on to their result,
 // within DeliveryTimeout, and never fail another call's records. A record
 // that failed may still have been stored, so a caller that produces it
@@ -431,8 +436,8 @@ func (m *kotelMeter) wait(ctx context.Context) error {
 // records, it returns nil.
 //
 // When a broker refuses the credentials, Produce returns an error naming
-// the broker as host:port, which matches the refusal's kerr code, such as
-// kerr.SaslAuthenticationFailed, with errors.Is. A call waiting on its
+// the broker as host:port, in which errors.As finds the refusal's *Error,
+// such as SASL_AUTHENTICATION_FAILED. A call waiting on its
 // records returns it as soon as the broker refuses, and every call after
 // that returns it at once, with nothing sent: the Producer doesn't try the
 // credentials again. The records of a call that returned the refusal stay
@@ -483,7 +488,7 @@ func (p *Producer) Produce(ctx context.Context, records ...Record) error {
 		return fmt.Errorf("kafka: producing: %w", err)
 	}
 	if !p.calls.add() {
-		return fmt.Errorf("kafka: producing: %w", kgo.ErrClientClosed)
+		return fmt.Errorf("kafka: producing: %w", ErrProducerClosed)
 	}
 	// The call stays in p.calls until the breaker has counted it, on the
 	// goroutine it is handed off to below, or until Produce returns
@@ -675,7 +680,7 @@ var _ kgo.HookProduceRecordUnbuffered = sendHook{}
 // handed to ProduceSync. An acknowledged record's span gets its partition
 // and offset, and a failed record's span gets the error. Both instruments
 // get the record's partition when one was chosen, and error.type when it
-// failed.
+// failed, of the error as recordError translates it.
 func (h sendHook) OnProduceRecordUnbuffered(r *kgo.Record, err error) {
 	s, ok := r.Context.Value(sendingKey{}).(*sending)
 	if !ok {
@@ -693,7 +698,7 @@ func (h sendHook) OnProduceRecordUnbuffered(r *kgo.Record, err error) {
 			semconv.MessagingKafkaOffset(int(r.Offset)),
 		)
 	} else {
-		attrs = append(attrs, recordFailure(s.span, err))
+		attrs = append(attrs, recordFailure(s.span, recordError(err)))
 	}
 	s.span.End()
 
@@ -712,14 +717,15 @@ func recordFailure(span trace.Span, err error) attribute.KeyValue {
 	return errType
 }
 
-// produceError joins the error of each record of rs that failed, in the
-// order of krs, with its topic, and its partition when one was chosen. It
-// returns nil when every record was acknowledged.
+// produceError joins the error of each record of rs that failed, as
+// recordError translates it, in the order of krs, with its topic, and its
+// partition when one was chosen. It returns nil when every record was
+// acknowledged.
 func produceError(krs []*kgo.Record, rs kgo.ProduceResults) error {
 	failed := make(map[*kgo.Record]error, len(rs))
 	for _, r := range rs {
 		if r.Err != nil {
-			failed[r.Record] = r.Err
+			failed[r.Record] = recordError(r.Err)
 		}
 	}
 	if len(failed) == 0 {

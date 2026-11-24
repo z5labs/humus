@@ -258,7 +258,7 @@ func TestProducer_metrics_count_a_topics_own_failure_as_ignored(t *testing.T) {
 			err = p.Produce(ctx, kafka.Record{Topic: topic, Value: make([]byte, 1_000_013)}) // larger than ProducerBatchMaxBytes
 			return nil
 		})
-		require.ErrorIs(t, err, kerr.MessageTooLarge)
+		requireCode(t, err, messageTooLarge)
 
 		rm := collect(t, context.Background(), tel)
 		require.Equal(t, map[string]int64{"humus.circuit.outcome=ignored": 1},

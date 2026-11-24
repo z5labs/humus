@@ -175,6 +175,16 @@
 // code from Kafka that franz-go doesn't retry; an error code franz-go
 // retries, or a failure to connect, is franz-go's to recover from.
 //
+// When the cluster answered with a Kafka error code, errors.As finds it in
+// the error Serve returns as an [*Error], with the code's number, Kafka's
+// name for it, such as TOPIC_AUTHORIZATION_FAILED, and whether the protocol
+// marks it retriable. errors.Is(err, &kafka.Error{Code: 29}) matches any
+// error with that code. A broker's refusal of the credentials is one too,
+// such as SASL_AUTHENTICATION_FAILED. No error the Service returns has
+// franz-go's types or values in it: any other error from the client keeps
+// its message, and the standard library's errors it wraps, such as context,
+// net and crypto/tls errors.
+//
 // An at-least-once failure stops the whole Service, not just its partition.
 // The other partitions finish their record in flight and commit, so only
 // the failed record and those after it are processed again, when the App
@@ -302,11 +312,17 @@
 //
 // When every record was acknowledged, Produce returns nil. Otherwise it
 // returns one error joining each failed record's error, with its topic,
-// and its partition when one was chosen, so errors.Is finds
-// kgo.ErrRecordTimeout, context.DeadlineExceeded or a kerr code in it. A
-// failed call doesn't say which of its records were stored: the records
-// that failed may have been stored anyway. Produce rejects a record with no
-// Topic before it sends anything, and returns nil when given no records.
+// and its partition when one was chosen. In a record's error, errors.As
+// finds an [*Error] when the cluster answered with a Kafka error code, such
+// as MESSAGE_TOO_LARGE, and errors.Is finds [ErrDeliveryTimeout], which
+// matches context.DeadlineExceeded too, when the record wasn't acknowledged
+// within DeliveryTimeout, whether its call's deadline or franz-go's own
+// timeout failed it. A record failed because the Producer was closed is
+// [ErrProducerClosed]. As for the Service, no error the Producer returns has
+// franz-go's types or values in it. A failed call doesn't say which of its
+// records were stored: the records that failed may have been stored
+// anyway. Produce rejects a record with no Topic before it sends anything,
+// and returns nil when given no records.
 //
 // A circuit breaker, bedrock's circuit.Breaker, guards the cluster, so
 // that while the cluster keeps failing Produce fails at once rather than
@@ -345,8 +361,9 @@
 //     franz-go has given up on the topic. One topic's mistake doesn't open
 //     the breaker for the others;
 //   - a failure is anything else, the cluster not storing records in time:
-//     DeliveryTimeout passing, kgo.ErrRecordTimeout, a retriable error code
-//     franz-go stopped on, or a connection that failed.
+//     DeliveryTimeout passing, which a record's error says with
+//     [ErrDeliveryTimeout], a retriable error code franz-go stopped on, or a
+//     connection that failed.
 //
 // One breaker covers every partition. When one broker of three is down,
 // the calls to the partitions it leads fail and the rest succeed, which the
@@ -366,8 +383,8 @@
 // server.address and server.port naming the broker, and the calls waiting
 // on their records return the refusal. From then on every Produce returns
 // it at once, with nothing sent. The error names the broker as host:port,
-// as the Service's does, and errors.Is finds its kerr code, such as
-// kerr.SaslAuthenticationFailed. Credentials don't fix themselves while the
+// as the Service's does, and errors.As finds its [*Error] in it, such as
+// SASL_AUTHENTICATION_FAILED. Credentials don't fix themselves while the
 // process runs, so the Producer never tries them again: a Processor that
 // produces fails its record, and under queue.AtLeastOnce the Service stops
 // and the App is restarted with whatever the secret holds then.
@@ -390,13 +407,13 @@
 // returned the credentials' refusal, one whose context was done after its
 // records were handed to the client, and one whose caller is still
 // waiting. When the grace period runs out first, closing the client fails
-// what is left with kgo.ErrClientClosed, those records are lost, the
+// what is left with [ErrProducerClosed], those records are lost, the
 // breaker may not count their calls, kotel's counters may miss records
 // franz-go had yet to report to it, and the function returns an error that
 // wraps the context's error, which the lifecycle reports as a
 // *humus.GracePeriodError. A Produce after that, from a goroutine the end
 // user left running, fails at once with an error that wraps
-// kgo.ErrClientClosed. If the end user's Init fails after
+// [ErrProducerClosed]. If the end user's Init fails after
 // NewProducer, the lifecycle runs the function too, so the client is
 // closed and none of franz-go's goroutines outlive the App.
 //

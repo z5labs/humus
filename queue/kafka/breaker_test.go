@@ -173,7 +173,7 @@ func TestProduce_a_records_own_failure_does_not_open_the_breaker(t *testing.T) {
 
 		require.Len(t, errs, 10)
 		for i, err := range errs {
-			require.ErrorIs(t, err, kerr.MessageTooLarge, "call %d", i)
+			requireCode(t, err, messageTooLarge, "call %d", i)
 		}
 		require.NoError(t, last, "the breaker is still closed")
 		require.Empty(t, breakerLogs(tel))
@@ -379,11 +379,11 @@ func TestProduce_a_call_after_a_refusal_does_not_reach_the_breaker(t *testing.T)
 			return nil
 		})
 
-		require.ErrorIs(t, first, kerr.SaslAuthenticationFailed)
+		requireCode(t, first, saslAuthenticationFailed)
 		require.Equal(t, []string{breakerOpen}, breakerLogs(tel), "the first call's records counted")
 		require.Len(t, later, 3)
 		for i, err := range later {
-			require.ErrorIs(t, err, kerr.SaslAuthenticationFailed, "call %d", i)
+			requireCode(t, err, saslAuthenticationFailed, "call %d", i)
 			require.NotErrorIs(t, err, circuit.ErrRejected, "the refusal is returned before the breaker; call %d", i)
 		}
 	})
@@ -475,7 +475,7 @@ func TestProduce_a_refused_call_whose_records_fail_while_the_App_stops_is_counte
 			return nil
 		})
 
-		require.ErrorIs(t, first, kerr.SaslAuthenticationFailed)
+		requireCode(t, first, saslAuthenticationFailed)
 		require.Equal(t, []string{breakerOpen}, breakerLogs(tel), "the first call's records counted")
 		require.Equal(t, int64(1), sum(t, tel, serviceScope, "humus.circuit.calls"), "the first call counted")
 	})
@@ -525,7 +525,7 @@ func TestProduce_the_App_stops_once_a_refused_call_is_counted(t *testing.T) {
 		st := <-status
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
 
-		require.ErrorIs(t, first, kerr.SaslAuthenticationFailed)
+		requireCode(t, first, saslAuthenticationFailed)
 		// assert, not require: without the wait, a FailNow while the
 		// Producer's goroutine is still counting the call panics the
 		// bubble.
@@ -651,7 +651,11 @@ func TestClassify(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	record := func(err error) error { return fmt.Errorf("kafka: producing to orders, partition 0: %w", err) }
+	// record is a record's error as Produce returns it: franz-go's result,
+	// translated as the Producer translates it.
+	record := func(err error) error {
+		return fmt.Errorf("kafka: producing to orders, partition 0: %w", kafka.RecordError(err))
+	}
 	testCases := []struct {
 		name string
 		err  error

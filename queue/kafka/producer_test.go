@@ -545,7 +545,7 @@ func TestProducer_grace_period_cuts_the_OnStop_flush_short(t *testing.T) {
 		require.ErrorContains(t, st.Cause(), "kafka: flushing the Producer")
 
 		err := <-produced
-		require.ErrorIs(t, err, kgo.ErrClientClosed, "Close failed the held record")
+		require.ErrorIs(t, err, kafka.ErrProducerClosed, "Close failed the held record")
 	})
 }
 
@@ -574,7 +574,7 @@ func TestProducer_after_Close_Produce_fails(t *testing.T) {
 		require.Zero(t, st.Code(), "cause: %v", st.Cause())
 		close(after)
 		err := <-produced
-		require.ErrorIs(t, err, kgo.ErrClientClosed)
+		require.ErrorIs(t, err, kafka.ErrProducerClosed)
 		require.Zero(t, took, "Produce returned at once")
 		require.Empty(t, readAll(t, h, c, topic))
 	})
@@ -603,7 +603,7 @@ func TestNewProducer_Init_failing_after_it_closes_the_client(t *testing.T) {
 		st := <-status
 		require.ErrorIs(t, st.Cause(), bad)
 		require.NotContains(t, st.Cause().Error(), "on stop", "the OnStop function flushed and closed the client")
-		require.ErrorIs(t, pr.Produce(context.Background(), value(1)), kgo.ErrClientClosed)
+		require.ErrorIs(t, pr.Produce(context.Background(), value(1)), kafka.ErrProducerClosed)
 		require.Len(t, readAll(t, h, c, topic), 1)
 		// synctest.Test fails if any of franz-go's goroutines is left
 		// when the bubble ends.

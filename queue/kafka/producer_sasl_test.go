@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kfake"
 	"go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
@@ -84,7 +83,7 @@ func TestProducer_SASL(t *testing.T) {
 
 					st := <-status
 					require.Zero(t, st.Code(), "cause: %v", st.Cause())
-					require.ErrorIs(t, err, kerr.SaslAuthenticationFailed)
+					requireCode(t, err, saslAuthenticationFailed)
 					require.ErrorContains(t, err, "kafka: authenticating to "+c.ListenAddrs()[0]+": ", "the error names the broker")
 				})
 			})
@@ -120,7 +119,7 @@ func TestProducer_SASL(t *testing.T) {
 			require.Zero(t, st.Code(), "cause: %v", st.Cause())
 
 			broker := c.ListenAddrs()[0]
-			require.ErrorIs(t, first, kerr.SaslAuthenticationFailed)
+			requireCode(t, first, saslAuthenticationFailed)
 			require.ErrorContains(t, first, "kafka: authenticating to "+broker+": ", "the error names the broker")
 			require.Less(t, tookFirst, ps.DeliveryTimeout, "the first call failed on the refusal, not at its deadline")
 
@@ -174,7 +173,7 @@ func TestProducer_SASL(t *testing.T) {
 			st := <-status
 			require.Zero(t, st.Code(), "cause: %v", st.Cause())
 			for _, err := range errs {
-				require.ErrorIs(t, err, kerr.SaslAuthenticationFailed)
+				requireCode(t, err, saslAuthenticationFailed)
 				require.Equal(t, errs[0], err)
 			}
 			require.Len(t, records(tel.Logs(), refusedBody), 1)
