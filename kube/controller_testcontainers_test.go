@@ -96,8 +96,8 @@ func controllerSettings() kube.Settings {
 func startController(t *testing.T, r kube.Resource[MemcachedSpec, MemcachedStatus], parts ...kube.Part) (*bedrocktest.Process, <-chan bedrock.ExitStatus) {
 	t.Helper()
 	k3sClient(t) // k3s is started
-	return humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		client, err := kube.NewClient(s, cluster.conn)
+	return humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		client, err := kube.NewClient(s, h, cluster.conn)
 		if err != nil {
 			return nil, err
 		}

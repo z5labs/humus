@@ -76,9 +76,9 @@ func faultsCodec(t *testing.T) jsonscenario.Codec {
 
 // faultsSetup returns a Setup on host whose telemetry tel records, with
 // failure injection from the tests' codec.
-func faultsSetup(t *testing.T, host humus.Host, tel *humustest.Telemetry) *humus.Setup {
+func faultsSetup(t *testing.T, tel *humustest.Telemetry) *humus.Setup {
 	t.Helper()
-	s := newSetup(t, host, tel)
+	s := newSetup(t, tel)
 	settings := fault.DefaultSettings()
 	settings.Decoder = faultsCodec(t)
 	in, err := fault.New(settings)
@@ -125,12 +125,12 @@ func newFaultsClient(t *testing.T, faults bool) faultsClient {
 	t.Cleanup(startAPIServer(t, h, ca, server, api, "apiserver"))
 
 	tel := humustest.NewTelemetry()
-	s := newSetup(t, h.Host(), tel)
+	s := newSetup(t, tel)
 	if faults {
-		s = faultsSetup(t, h.Host(), tel)
+		s = faultsSetup(t, tel)
 	}
 	tk := &tokens{queue: []string{newToken(), newToken(), newToken()}}
-	c, err := kube.NewClient(s, kube.Connection{
+	c, err := kube.NewClient(s, h, kube.Connection{
 		Server: server,
 		TLS:    &tls.Config{RootCAs: ca.Pool()},
 		Token:  tk.token,
@@ -469,8 +469,8 @@ func TestClient_a_watch_evaluates_on_the_span_in_its_context(t *testing.T) {
 		defer startAPIServer(t, h, ca, server, api, "apiserver")()
 
 		tel := humustest.NewTelemetry()
-		s := faultsSetup(t, h.Host(), tel)
-		c, err := kube.NewClient(s, kube.Connection{Server: server, TLS: &tls.Config{RootCAs: ca.Pool()}})
+		s := faultsSetup(t, tel)
+		c, err := kube.NewClient(s, h, kube.Connection{Server: server, TLS: &tls.Config{RootCAs: ca.Pool()}})
 		require.NoError(t, err)
 		kc := newClientset(t, c)
 

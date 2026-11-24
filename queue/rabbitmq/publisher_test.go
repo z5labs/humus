@@ -44,7 +44,7 @@ func publisherSettings() rabbitmq.PublisherSettings {
 // newPublisher returns a Publisher of settings on a new stand-in.
 func newPublisher(t *testing.T, settings rabbitmq.PublisherSettings) (*rabbitmq.Publisher, *pubStandIn) {
 	t.Helper()
-	pub, err := rabbitmq.NewPublisher(setup(t), settings)
+	pub, err := rabbitmq.NewPublisher(setup(t), humustest.NewHost(t), settings)
 	require.NoError(t, err)
 	s := newPubStandIn()
 	rabbitmq.SetDial(pub, s.dial)
@@ -444,7 +444,7 @@ func TestPublisher_fails_with_the_dial_error_when_nothing_listens(t *testing.T) 
 
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
-		pub, err := rabbitmq.NewPublisher(&humus.Setup{Host: h.Host(), Telemetry: telemetry.Noop()}, publisherSettings())
+		pub, err := rabbitmq.NewPublisher(&humus.Setup{Telemetry: telemetry.Noop()}, h, publisherSettings())
 		require.NoError(t, err)
 
 		err = pub.Publish(t.Context(), accepted)
@@ -458,8 +458,8 @@ func TestPublisher_fails_with_the_dial_error_when_nothing_listens(t *testing.T) 
 func runPublisher(t *testing.T, s *pubStandIn, settings rabbitmq.PublisherSettings, run func(ctx context.Context, pub *rabbitmq.Publisher) error) (*rabbitmq.Publisher, int) {
 	t.Helper()
 	var pub *rabbitmq.Publisher
-	_, status := humustest.Start(t, humustest.NewHost(t).Host(), func(_ context.Context, setup *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		p, err := rabbitmq.NewPublisher(setup, settings)
+	_, status := humustest.Start(t, humustest.NewHost(t).Host(), func(_ context.Context, setup *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		p, err := rabbitmq.NewPublisher(setup, h, settings)
 		if err != nil {
 			return nil, err
 		}
@@ -498,8 +498,8 @@ func TestPublisher_OnStop_runs_when_Init_fails_after_NewPublisher(t *testing.T) 
 		s := newPubStandIn()
 		s.autoAck = true
 		errInit := errors.New("init failed")
-		_, status := humustest.Start(t, humustest.NewHost(t).Host(), func(ctx context.Context, setup *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-			pub, err := rabbitmq.NewPublisher(setup, publisherSettings())
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), func(ctx context.Context, setup *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			pub, err := rabbitmq.NewPublisher(setup, h, publisherSettings())
 			if err != nil {
 				return nil, err
 			}
@@ -561,8 +561,8 @@ func TestNewPublisher_opens_no_connection(t *testing.T) {
 
 		// An Init that fails after NewPublisher: its OnStop function runs,
 		// with no connection to close.
-		_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-			if _, err := rabbitmq.NewPublisher(s, publisherSettings()); err != nil {
+		_, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			if _, err := rabbitmq.NewPublisher(s, h, publisherSettings()); err != nil {
 				return nil, err
 			}
 			return nil, context.Canceled
@@ -581,7 +581,7 @@ func TestNewPublisher_opens_no_connection(t *testing.T) {
 func TestNewPublisher_accepts_DefaultPublisherSettings_with_Addr_and_SASL_set(t *testing.T) {
 	t.Parallel()
 
-	pub, err := rabbitmq.NewPublisher(setup(t), publisherSettings())
+	pub, err := rabbitmq.NewPublisher(setup(t), humustest.NewHost(t), publisherSettings())
 	require.NoError(t, err)
 	require.NotNil(t, pub)
 }
@@ -599,7 +599,7 @@ func TestNewPublisher_names_every_bad_field_together(t *testing.T) {
 	s.RetryBudget = retry.BudgetConfig{MaxTokens: 2, TokenRatio: 0}
 	s.Breaker = circuit.Config{Window: 0, Probes: circuit.MaxCount + 1, OpenFor: 0, ProbeTimeout: -time.Second}
 	s.BreakerPolicy = circuit.Policy{}
-	pub, err := rabbitmq.NewPublisher(setup(t), s)
+	pub, err := rabbitmq.NewPublisher(setup(t), humustest.NewHost(t), s)
 	require.Nil(t, pub)
 	require.EqualError(t, err, "rabbitmq: NewPublisher: PublisherSettings.Connection.Addr is not host:port\n"+
 		"PublisherSettings.Connection.SASL must be set\n"+
@@ -624,12 +624,12 @@ func TestNewPublisher_rejects_a_BreakerPolicy_with_only_one_function_set(t *test
 
 	s := publisherSettings()
 	s.BreakerPolicy.Probe = nil
-	_, err := rabbitmq.NewPublisher(setup(t), s)
+	_, err := rabbitmq.NewPublisher(setup(t), humustest.NewHost(t), s)
 	require.EqualError(t, err, "rabbitmq: NewPublisher: PublisherSettings.BreakerPolicy.Probe must be set")
 
 	s = publisherSettings()
 	s.BreakerPolicy.Trip = nil
-	_, err = rabbitmq.NewPublisher(setup(t), s)
+	_, err = rabbitmq.NewPublisher(setup(t), humustest.NewHost(t), s)
 	require.EqualError(t, err, "rabbitmq: NewPublisher: PublisherSettings.BreakerPolicy.Trip must be set")
 }
 
@@ -641,7 +641,7 @@ func TestNewPublisher_names_a_BackoffMax_below_BackoffBase_with_the_other_bad_fi
 	s.BackoffBase = 2 * time.Second
 	s.BackoffMax = time.Second
 	s.RetryBudget.TokenRatio = 0
-	pub, err := rabbitmq.NewPublisher(setup(t), s)
+	pub, err := rabbitmq.NewPublisher(setup(t), humustest.NewHost(t), s)
 	require.Nil(t, pub)
 	require.EqualError(t, err, "rabbitmq: NewPublisher: PublisherSettings.Channels must be from 1 to 65535\n"+
 		"PublisherSettings.BackoffMax must be at least PublisherSettings.BackoffBase\n"+
@@ -654,7 +654,7 @@ func TestNewPublisher_accepts_a_BackoffMax_equal_to_BackoffBase(t *testing.T) {
 	s := publisherSettings()
 	s.BackoffBase = time.Second
 	s.BackoffMax = time.Second
-	_, err := rabbitmq.NewPublisher(setup(t), s)
+	_, err := rabbitmq.NewPublisher(setup(t), humustest.NewHost(t), s)
 	require.NoError(t, err)
 }
 
@@ -689,7 +689,7 @@ func TestNewPublisher_checks_every_field(t *testing.T) {
 
 			s := publisherSettings()
 			tc.change(&s)
-			_, err := rabbitmq.NewPublisher(setup(t), s)
+			_, err := rabbitmq.NewPublisher(setup(t), humustest.NewHost(t), s)
 			require.ErrorContains(t, err, "rabbitmq: NewPublisher: "+tc.field+" ")
 		})
 	}

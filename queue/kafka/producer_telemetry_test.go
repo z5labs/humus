@@ -56,11 +56,11 @@ func deadLetterInit(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.
 	if err != nil {
 		return nil, err
 	}
-	dlq, err := kafka.NewProducer(s, ps)
+	dlq, err := kafka.NewProducer(s, h, ps)
 	if err != nil {
 		return nil, err
 	}
-	svc, err := kafka.NewService(s, cs, queue.ProcessorFunc[kafka.Message](func(ctx context.Context, m kafka.Message) error {
+	svc, err := kafka.NewService(s, h, cs, queue.ProcessorFunc[kafka.Message](func(ctx context.Context, m kafka.Message) error {
 		var o order
 		if err := json.Unmarshal(m.Value, &o); err != nil {
 			// A dead letter, stored before the record is committed.

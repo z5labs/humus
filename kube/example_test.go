@@ -135,7 +135,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 		return nil, err
 	}
 
-	client, err := kube.NewClient(s, conn) // opens no connection: Serve does
+	client, err := kube.NewClient(s, h, conn) // opens no connection: Serve does
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +171,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (kube.Settings, error) {
 
 // inPod fills the Connection of a pod from what the kubelet gives every
 // container: the API server's address in two variables, and the service
-// account's CA and token in dir, read through s.Host.Filesystem.
+// account's CA and token in dir, read through h.Filesystem.
 func inPod(ctx context.Context, s *humus.Setup, h humus.Host, dir string) (kube.Connection, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 

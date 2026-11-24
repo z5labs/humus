@@ -22,7 +22,7 @@
 //		if err != nil {
 //			return nil, err
 //		}
-//		svc, err := rabbitmq.NewService(s, settings, queue.ProcessorFunc[rabbitmq.Message](h.Handle))
+//		svc, err := rabbitmq.NewService(s, h, settings, queue.ProcessorFunc[rabbitmq.Message](handler.Handle))
 //		if err != nil {
 //			return nil, err
 //		}
@@ -302,9 +302,9 @@
 // three steps, and ConnectTimeout bounds all three together, as does the
 // context they connect under:
 //
-//  1. they dial Connection.Addr with the Setup's Host, so the broker is
-//     reached only through the Host, and a test can run them on a Host of
-//     its own;
+//  1. they dial Connection.Addr with the [Network] they are given, such as
+//     Init's host, so the broker is reached only through it, and a test
+//     can run them on a network of its own;
 //  2. with TLS set, they run the TLS handshake over that connection, with a
 //     clone of the config whose ServerName is Addr's host when the config
 //     leaves it empty, so the end user's config is never changed;
@@ -384,7 +384,7 @@
 //
 // amqp091's experimental recovery, Config.Recovery since v1.15.0, isn't
 // used. It is experimental, it redials through DialConfig's URL, which humus
-// never builds, rather than through the Host, and it declares the topology
+// never builds, rather than through the Network, and it declares the topology
 // again, which is the end user's. The Service's reconnect is a short loop of
 // the Retrier it connects with at startup, which humus tests.
 //
@@ -404,7 +404,7 @@
 // the pod's probes. A consumer's pod has no server of its own, so that is a
 // probes server made with httphealth.NewService:
 //
-//	consumer, err := rabbitmq.NewService(s, settings, queue.ProcessorFunc[rabbitmq.Message](handler.Handle))
+//	consumer, err := rabbitmq.NewService(s, h, settings, queue.ProcessorFunc[rabbitmq.Message](handler.Handle))
 //	if err != nil {
 //		return nil, err
 //	}
@@ -437,7 +437,7 @@
 // publishes, such as a Processor that publishes an event, or an HTTP
 // handler:
 //
-//	pub, err := rabbitmq.NewPublisher(s, publisherSettings) // rabbitmq.PublisherSettings, sourced with config.Struct
+//	pub, err := rabbitmq.NewPublisher(s, h, publisherSettings) // rabbitmq.PublisherSettings, sourced with config.Struct
 //	if err != nil {
 //		return nil, err
 //	}

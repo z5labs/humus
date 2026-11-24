@@ -299,7 +299,7 @@ type confirmChannel struct {
 //
 // It reports every field of settings that fails its check in one error that
 // names each one, a BackoffMax below BackoffBase included. The Publisher
-// reaches the broker only through s.Host.
+// reaches the broker only through n.
 //
 // It builds the one retry.Budget, from RetryBudget, and the one
 // retry.Retrier, with retry.Exponential(BackoffBase, BackoffMax) and
@@ -325,7 +325,7 @@ type confirmChannel struct {
 // breaker and the retries, as Publish describes. humus.circuit.state's
 // callback is registered last, once nothing after it can fail, so a
 // NewPublisher that returns an error leaves none behind.
-func NewPublisher(s *humus.Setup, settings PublisherSettings) (*Publisher, error) {
+func NewPublisher(s *humus.Setup, n Network, settings PublisherSettings) (*Publisher, error) {
 	if err := checkPublisherSettings(settings); err != nil {
 		return nil, fmt.Errorf("rabbitmq: NewPublisher: %w", err)
 	}
@@ -377,7 +377,7 @@ func NewPublisher(s *humus.Setup, settings PublisherSettings) (*Publisher, error
 	}
 	p.breaker = breaker
 	p.dial = func(ctx context.Context) (publishConn, error) {
-		c, err := connect(ctx, s.Host, settings.Connection)
+		c, err := connect(ctx, n, settings.Connection)
 		if err != nil {
 			return nil, err
 		}

@@ -8,7 +8,6 @@ package server_test
 import (
 	"context"
 	"net"
-	"syscall"
 	"testing"
 	"testing/synctest"
 
@@ -28,7 +27,6 @@ type ctxKey struct{}
 
 func TestNew_listens_only_through_its_Network(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		setupHost := humustest.NewHost(t)
 		h := humustest.NewHost(t)
 		var listens []string
 		var tags []any
@@ -37,9 +35,7 @@ func TestNew_listens_only_through_its_Network(t *testing.T) {
 			tags = append(tags, ctx.Value(ctxKey{}))
 			return h.ListenTCP(ctx, network, address)
 		}}
-		// The Setup's Host is another host, so a listen through it would
-		// be seen there rather than through n.
-		s := &humus.Setup{Host: setupHost.Host(), Telemetry: telemetry.Noop()}
+		s := &humus.Setup{Telemetry: telemetry.Noop()}
 		ctx := context.WithValue(t.Context(), ctxKey{}, "New's ctx")
 
 		srv, err := server.New(ctx, s, n, callerScope, ":8081", nil)
@@ -52,12 +48,6 @@ func TestNew_listens_only_through_its_Network(t *testing.T) {
 		go func() { served <- srv.Serve(t.Context()) }()
 		_, err = plaintext(t, h, "localhost:8081").EmptyCall(t.Context(), &testpb.Empty{})
 		require.NoError(t, err)
-		conn, err := setupHost.DialTCP(t.Context(), "tcp", "localhost:8081")
-		if err == nil {
-			_ = conn.Close()
-			t.Fatal("a dial through the Setup's Host connected, want ECONNREFUSED")
-		}
-		require.ErrorIs(t, err, syscall.ECONNREFUSED)
 
 		require.NoError(t, srv.Shutdown(t.Context()))
 		require.NoError(t, <-served)

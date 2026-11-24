@@ -119,8 +119,8 @@ func appOptions(t *testing.T, tel *humustest.Telemetry, faults bool) []humus.Opt
 // to exit 0. faults turns failure injection on.
 func publishesUnder(t *testing.T, tel *humustest.Telemetry, faults bool, bag string, settings rabbitmq.PublisherSettings, s *pubStandIn, run func(ctx context.Context, p *rabbitmq.Publisher)) {
 	t.Helper()
-	init := func(_ context.Context, setup *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		pub, err := rabbitmq.NewPublisher(setup, settings)
+	init := func(_ context.Context, setup *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		pub, err := rabbitmq.NewPublisher(setup, h, settings)
 		if err != nil {
 			return nil, err
 		}
@@ -430,8 +430,8 @@ func TestPublisher_strips_the_scenario_unless_ForwardScenario_is_set(t *testing.
 // SIGTERM and requires it to exit 0. faults turns failure injection on.
 func consumeUnder(t *testing.T, tel *humustest.Telemetry, faults bool, settings rabbitmq.Settings, ch *standIn, p queue.ProcessorFunc[rabbitmq.Message]) {
 	t.Helper()
-	init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		svc, err := rabbitmq.NewService(s, settings, p)
+	init := func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		svc, err := rabbitmq.NewService(s, h, settings, p)
 		if err != nil {
 			return nil, err
 		}
@@ -561,7 +561,7 @@ func TestService_does_not_recover_a_panic_in_TrustScenario(t *testing.T) {
 	require.NoError(t, err)
 	s := settings()
 	s.TrustScenario = func(rabbitmq.Message) bool { panic("trust") }
-	svc, err := rabbitmq.NewService(&humus.Setup{Host: humustest.NewHost(t).Host(), Telemetry: telemetry.Noop(), Faults: faults}, s, nop)
+	svc, err := rabbitmq.NewService(&humus.Setup{Telemetry: telemetry.Noop(), Faults: faults}, humustest.NewHost(t), s, nop)
 	require.NoError(t, err)
 
 	b, err := baggage.Parse(scenarioBaggage(t, abortAccepted))

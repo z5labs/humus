@@ -265,11 +265,11 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 		return nil, err
 	}
 
-	publisher, err := rabbitmq.NewPublisher(s, settings.Publisher)
+	publisher, err := rabbitmq.NewPublisher(s, h, settings.Publisher)
 	if err != nil {
 		return nil, err
 	}
-	consumer, err := rabbitmq.NewService(s, settings.Consumer, &invoicer{publisher: publisher, attempts: settings.RetryAttempts})
+	consumer, err := rabbitmq.NewService(s, h, settings.Consumer, &invoicer{publisher: publisher, attempts: settings.RetryAttempts})
 	if err != nil {
 		return nil, err
 	}

@@ -12,7 +12,16 @@ import (
 	"net"
 )
 
-// dialFunc dials an address, like humus.Host.DialTCP and kgo.Dialer's function.
+// Network is what a Producer and a Service need of a host: a way to dial.
+// humus.Host implements it, and so does any network of the end user's with
+// this method.
+type Network interface {
+	// DialTCP connects to address over "tcp", "tcp4" or "tcp6", like
+	// net.Dialer.DialContext.
+	DialTCP(ctx context.Context, network, address string) (net.Conn, error)
+}
+
+// dialFunc dials an address, like Network.DialTCP and kgo.Dialer's function.
 type dialFunc func(ctx context.Context, network, address string) (net.Conn, error)
 
 // tlsDialer returns dial when cfg is nil. Otherwise it returns a dialer that

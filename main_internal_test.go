@@ -80,10 +80,9 @@ func runUntilSIGTERM(t *testing.T, app bedrock.App) (*bedrocktest.Process, bedro
 }
 
 // ownHost is a host of an App's own, beside humus's Host: it embeds its
-// network, so it is a Network, and has a field humus doesn't know.
+// network, so it is a Network.
 type ownHost struct {
 	IPNetwork
-	name string
 }
 
 // countingAcquire returns an acquire for h that counts its calls in n.
@@ -223,45 +222,6 @@ func TestApp_runs_every_option_against_the_apps_host(t *testing.T) {
 		require.Equal(t, []string{"faults", "init"}, order, "Faults runs before Init")
 		require.Equal(t, h.dialled, faultsHost.dialled, "Faults gets the App's host")
 		require.Equal(t, h.dialled, initHost.dialled, "Init gets the App's host")
-	})
-}
-
-// TestApp_on_its_own_host_gives_Setup_the_zero_Host checks the stopgap: a
-// runtime that still reads Setup.Host gets the App's host only when it is
-// the default host.
-func TestApp_on_its_own_host_gives_Setup_the_zero_Host(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		var got Host
-		init := func(_ context.Context, s *Setup, _ ownHost) ([]Service, error) {
-			got = s.Host
-			return nil, nil
-		}
-		app := Defaults(ownHost{IPNetwork: OSHost().IPNetwork, name: "own"}, init)
-		app.Telemetry = telemetry.NoopBuilder
-
-		_, status := bedrocktest.Start(t, app)
-		st := <-status
-
-		require.Zero(t, st.Code(), "cause: %v", st.Cause())
-		require.Equal(t, Host{}, got)
-	})
-}
-
-func TestApp_on_the_default_host_gives_Setup_the_Host(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		var got Host
-		init := func(_ context.Context, s *Setup, _ Host) ([]Service, error) {
-			got = s.Host
-			return nil, nil
-		}
-		app := Defaults(OSHost(), init)
-		app.Telemetry = telemetry.NoopBuilder
-
-		_, status := bedrocktest.Start(t, app)
-		st := <-status
-
-		require.Zero(t, st.Code(), "cause: %v", st.Cause())
-		require.Equal(t, OSHost(), got)
 	})
 }
 

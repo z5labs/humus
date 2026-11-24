@@ -111,12 +111,12 @@
 // and grpchealth as gRPC health v1, each attached to a server the App
 // already runs or on a probes port of its own, documented at
 // https://z5labs.github.io/humus/fundamentals/health/. The httpclient package has landed:
-// it calls one HTTP dependency per client through the Setup's Host, retries
+// it calls one HTTP dependency per client through the network it is given, retries
 // what is safe to send twice as the end user's Classify decides, and fails
 // calls at once with a circuit breaker while the dependency keeps failing,
 // documented at https://z5labs.github.io/humus/dependencies/http/. The grpc
 // module's grpcclient package has landed: it calls one gRPC dependency per
-// Client through the Setup's Host, retries as the end user's Classify
+// Client through the network it is given, retries as the end user's Classify
 // decides, fails calls at once with a circuit breaker while the dependency
 // keeps failing, and turns readiness on once it has connected, with
 // Connected, documented at https://z5labs.github.io/humus/dependencies/grpc/. The
@@ -136,7 +136,7 @@
 // The kube module, a new feature rather than one that came back, has
 // landed: its kube package writes Kubernetes controllers as Services on
 // client-go, without controller-runtime, reaching the API server through
-// the Setup's Host, declaring custom resources as Go values whose CRDs it
+// the network it is given, declaring custom resources as Go values whose CRDs it
 // reflects from Go types, and reconciling their objects, or those of
 // Kubernetes' own kinds, with leader election on a Lease, documented at
 // https://z5labs.github.io/humus/services/kubernetes/.

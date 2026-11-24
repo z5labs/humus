@@ -13,7 +13,7 @@ The mailer meets each item. Check your own worker against them:
 | Item | How | Where |
 |---|---|---|
 | Every setting sourced and checked; a bad one exits 78, naming its variable | `config.Struct` and the packages' checks | [The settings]({{< relref "/walkthroughs/rabbitmq/mailer/init#the-settings" >}}) |
-| No secret in the environment, the logs or the spans | the RabbitMQ password, the provider's key and the probes' certificate are files read through `s.Host.Filesystem` | [The secrets, as files]({{< relref "/walkthroughs/rabbitmq/mailer/init#the-secrets-as-files" >}}) |
+| No secret in the environment, the logs or the spans | the RabbitMQ password, the provider's key and the probes' certificate are files read through `h.Filesystem` | [The secrets, as files]({{< relref "/walkthroughs/rabbitmq/mailer/init#the-secrets-as-files" >}}) |
 | Certificates renewed without a restart | the probes' certificate is served through `GetCertificate`, by a small helper of the walkthrough's own that reads its files again when they change | [The probes]({{< relref "/walkthroughs/rabbitmq/mailer/init#the-probes" >}}) |
 | No personal data in the telemetry | addresses and bodies are never logged or put on a span | [What it records]({{< relref "/walkthroughs/rabbitmq/mailer/processing#what-it-records" >}}) |
 | Two replicas, competing for one queue | a PodDisruptionBudget of `minAvailable: 1` | [The disruption budget]({{< relref "/walkthroughs/rabbitmq/mailer/deploying#the-disruption-budget" >}}) |

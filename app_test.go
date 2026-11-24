@@ -741,7 +741,7 @@ func TestApp_Run_gives_Init_the_Process_and_Host(t *testing.T) {
 			t.Errorf("Setup.Process.Args = %q, want %q", gotArgs, want)
 		}
 		if !reflect.DeepEqual(gotHost, app.Host) {
-			t.Error("Setup.Host is not the App's Host")
+			t.Error("Init's host is not the App's Host")
 		}
 	})
 }

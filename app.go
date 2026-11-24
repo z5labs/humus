@@ -149,13 +149,6 @@ type Setup struct {
 	// Process is the bedrock.Process the App is run with.
 	Process bedrock.Process
 
-	// Host is the App's Host when the App's host is the default host,
-	// Host, and the zero Host otherwise. It is here only for the runtime
-	// packages that don't yet take the network they use, and it goes once
-	// none reads it: the end user's code takes the host from the argument
-	// Init is given.
-	Host Host
-
 	// Telemetry is the App's SDK, built by App.Telemetry. Init and the
 	// Services get their tracers, meters and loggers from it. The App shuts
 	// it down after the OnStop functions, so neither Init nor a Service
@@ -411,9 +404,6 @@ func (a App[H]) buildTelemetry(ctx, sigCtx context.Context, p bedrock.Process) (
 // failure in the cause through l.
 func (a App[H]) run(ctx, sigCtx context.Context, stop context.CancelFunc, p bedrock.Process, settings settings, sdk telemetry.SDK, l *lifecycleLog) (int, error) {
 	setup := &Setup{Process: p, Telemetry: sdk}
-	if h, ok := any(a.Host).(Host); ok {
-		setup.Host = h
-	}
 	// startupFailed fails the startup with err, which step prefixes: it runs
 	// the OnStop functions registered so far, and logs the cause.
 	startupFailed := func(step string, err error) (int, error) {

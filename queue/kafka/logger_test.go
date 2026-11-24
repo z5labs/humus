@@ -121,8 +121,8 @@ func serveUnreachable(t *testing.T, b telemetry.Builder) kgo.LogLevel {
 
 	h := humustest.NewHost(t)
 	var level kgo.LogLevel
-	p, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		svc, err := kafka.NewService(s, settings(unreachable), queue.ProcessorFunc[kafka.Message](func(context.Context, kafka.Message) error { return nil }))
+	p, status := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		svc, err := kafka.NewService(s, h, settings(unreachable), queue.ProcessorFunc[kafka.Message](func(context.Context, kafka.Message) error { return nil }))
 		if err != nil {
 			return nil, err
 		}

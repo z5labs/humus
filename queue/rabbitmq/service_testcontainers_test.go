@@ -136,8 +136,8 @@ func consumerSettings(c rabbitmq.Connection, queue string) rabbitmq.Settings {
 
 // consumes returns an Init whose only Service consumes settings with p.
 func consumes(settings rabbitmq.Settings, p queue.ProcessorFunc[rabbitmq.Message]) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
-	return func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		svc, err := rabbitmq.NewService(s, settings, p)
+	return func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		svc, err := rabbitmq.NewService(s, h, settings, p)
 		if err != nil {
 			return nil, err
 		}
@@ -278,7 +278,7 @@ func TestService_processes_in_order_and_drains_on_SIGTERM(t *testing.T) {
 // Settings from the variables example_test.go's Init reads, and returns the
 // Service from NewService.
 func initWith(p queue.ProcessorFunc[rabbitmq.Message]) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
-	return func(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+	return func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 		d := rabbitmq.DefaultSettings()
 		env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 		settings, err := config.Struct(func(r *config.Resolver) rabbitmq.Settings {
@@ -295,7 +295,7 @@ func initWith(p queue.ProcessorFunc[rabbitmq.Message]) func(context.Context, *hu
 		if err != nil {
 			return nil, err
 		}
-		svc, err := rabbitmq.NewService(s, settings, p)
+		svc, err := rabbitmq.NewService(s, h, settings, p)
 		if err != nil {
 			return nil, err
 		}
@@ -468,8 +468,8 @@ func TestService_Consuming_stays_healthy_through_close_all_connections(t *testin
 	var got recorder
 	svcs := make(chan *rabbitmq.Service, 1)
 	tel := humustest.NewTelemetry()
-	p, status := humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
-		svc, err := rabbitmq.NewService(s, consumerSettings(plainText(t), q), queue.ProcessorFunc[rabbitmq.Message](func(_ context.Context, m rabbitmq.Message) error {
+	p, status := humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		svc, err := rabbitmq.NewService(s, h, consumerSettings(plainText(t), q), queue.ProcessorFunc[rabbitmq.Message](func(_ context.Context, m rabbitmq.Message) error {
 			got.add(m)
 			return nil
 		}))

@@ -102,7 +102,7 @@ func (s *httpService) Shutdown(ctx context.Context) error {
 
 func TestHTTPService(t *testing.T) {
 	humustest.TestService(t, func(t *testing.T, s *humus.Setup) humus.Service {
-		return newHTTPService(s, s.Host, ":8080", http.NotFoundHandler())
+		return newHTTPService(s, humustest.NewHost(t).Host(), ":8080", http.NotFoundHandler())
 	})
 }
 
@@ -430,7 +430,7 @@ func TestApp_Run_HTTP_a_whole_App_on_a_test_Host(t *testing.T) {
 }
 
 // tlsFromPKCS12 reads the PKCS#12 bundle that TLS_PKCS12_FILE names,
-// through the Setup's Host, and decrypts it with TLS_PKCS12_PASSWORD. The
+// through h's Filesystem, and decrypts it with TLS_PKCS12_PASSWORD. The
 // setting names are only for illustration.
 func tlsFromPKCS12(ctx context.Context, s *humus.Setup, h humus.Host) (*tls.Config, error) {
 	path, err := config.Env(s.Process.Environment, "TLS_PKCS12_FILE").Read(ctx)

@@ -137,7 +137,7 @@ func TestController_instruments(t *testing.T) {
 		fc := newFakeCluster(t, memcachedObject("cache", 3))
 		var got reconciles
 		tel := humustest.NewTelemetry()
-		s := newSetup(t, noNetwork(t), tel)
+		s := newSetup(t, tel)
 		sv := serve(t, newController(t, s, fc, testSettings(), readyReplicas(&got)))
 		time.Sleep(settle)
 
@@ -188,7 +188,7 @@ func TestController_measures_the_work_queue(t *testing.T) {
 			return kube.Result[MemcachedStatus]{}, nil
 		})
 		tel := humustest.NewTelemetry()
-		s := newSetup(t, noNetwork(t), tel)
+		s := newSetup(t, tel)
 		start := time.Now()
 		sv := serve(t, newController(t, s, fc, testSettings(), rec))
 
@@ -241,7 +241,7 @@ func TestController_counts_no_wait_of_After_or_of_a_backoff(t *testing.T) {
 		settings.RetryBaseDelay = 20 * time.Second
 		settings.RetryMaxDelay = 20 * time.Second
 		tel := humustest.NewTelemetry()
-		s := newSetup(t, noNetwork(t), tel)
+		s := newSetup(t, tel)
 		start := time.Now()
 		sv := serve(t, newController(t, s, fc, settings, rec))
 		time.Sleep(45 * time.Second)
@@ -299,7 +299,7 @@ func TestController_records_each_reconciles_outcome(t *testing.T) {
 				settings.RetryBaseDelay = time.Hour
 				settings.RetryMaxDelay = time.Hour
 				tel := humustest.NewTelemetry()
-				s := newSetup(t, noNetwork(t), tel)
+				s := newSetup(t, tel)
 				sv := serve(t, newController(t, s, fc, settings, rec))
 				time.Sleep(settle)
 				require.Equal(t, 1, got.count())
@@ -337,7 +337,7 @@ func TestController_measures_the_reconciles_in_flight(t *testing.T) {
 		settings := testSettings()
 		settings.Workers = 2
 		tel := humustest.NewTelemetry()
-		s := newSetup(t, noNetwork(t), tel)
+		s := newSetup(t, tel)
 		sv := serve(t, newController(t, s, fc, settings, rec))
 		<-inFlight
 		<-inFlight
@@ -365,14 +365,14 @@ func TestController_standby_records_no_reconcile(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		fc := newFakeCluster(t, memcachedObject("a", 1), memcachedObject("b", 2))
 		var led, stood reconciles
-		leader := serve(t, newController(t, newSetup(t, noNetwork(t), humustest.NewTelemetry()), fc, testSettings(), readyReplicas(&led)))
+		leader := serve(t, newController(t, newSetup(t, humustest.NewTelemetry()), fc, testSettings(), readyReplicas(&led)))
 		time.Sleep(settle)
 		require.Equal(t, identity, fc.holder(t))
 
 		settings := testSettings()
 		settings.LeaderElection.Identity = "replica-2"
 		tel := humustest.NewTelemetry()
-		s := newSetup(t, noNetwork(t), tel)
+		s := newSetup(t, tel)
 		standby := serve(t, newController(t, s, fc, settings, readyReplicas(&stood)))
 		time.Sleep(settle)
 
@@ -414,7 +414,7 @@ func (failingMeter) Float64Gauge(name string, _ ...metric.Float64GaugeOption) (m
 func TestNewController_reports_an_instrument_it_couldnt_create(t *testing.T) {
 	t.Parallel()
 
-	s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
+	s := newSetup(t, humustest.NewTelemetry())
 	client := testClient(t, s)
 	s.Telemetry.MeterProvider = failingMeterProvider{}
 	settings := testSettings()

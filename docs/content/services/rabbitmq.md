@@ -17,7 +17,7 @@ weight: 50
 The [`queue/rabbitmq`](https://pkg.go.dev/github.com/z5labs/humus/queue/rabbitmq)
 package consumes a RabbitMQ queue as a `humus.Service`, with
 [amqp091-go](https://github.com/rabbitmq/amqp091-go), RabbitMQ's own Go
-client. The Service dials the broker through the Setup's Host, consumes one
+client. The Service dials the broker through the network it is given, consumes one
 queue with manual acks, and hands each delivery to the end user's
 `queue.Processor`, in the order the queue delivered them. The end user's
 `Init` sources its `Settings`, builds the Service with `rabbitmq.NewService`,
@@ -136,7 +136,7 @@ builds the `Publisher` and the `Processor`, and returns the Service that
 // Init is the end user's Init: it sources the Settings with config.Struct,
 // builds the Publisher and the Processor, and returns the Service from
 // NewService.
-func Init(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	d := rabbitmq.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
@@ -156,13 +156,13 @@ func Init(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, e
 		return nil, err // exit 78, naming every bad variable
 	}
 
-	pub, err := rabbitmq.NewPublisher(s, publisherOn(settings.Connection)) // opens no connection: the first Publish does
+	pub, err := rabbitmq.NewPublisher(s, h, publisherOn(settings.Connection)) // opens no connection: the first Publish does
 	if err != nil {
 		return nil, err
 	}
-	h := &orders{stored: map[string][]byte{}, events: pub}
+	o := &orders{stored: map[string][]byte{}, events: pub}
 
-	svc, err := rabbitmq.NewService(s, settings, queue.ProcessorFunc[rabbitmq.Message](h.Handle))
+	svc, err := rabbitmq.NewService(s, h, settings, queue.ProcessorFunc[rabbitmq.Message](o.Handle))
 	if err != nil {
 		return nil, err
 	}
@@ -284,12 +284,12 @@ need different ones are
 `Connection.TLS` is the `*tls.Config` the broker is dialled with, and `nil`
 means plain text: humus makes a service as secure as it can, but it can't
 control what the service connects to. The Service runs the TLS handshake
-itself over the connection `s.Host.DialTCP` returns, and an empty `ServerName`
+itself over the connection its network's `DialTCP` returns, and an empty `ServerName`
 defaults to `Addr`'s host, on a clone of the config, so the end user's
 config is never changed. RabbitMQ serves AMQP over TLS on 5671 by default,
 and plain text on 5672.
 
-The end user decodes the certificates from files, read through `s.Host.Filesystem`
+The end user decodes the certificates from files, read through `host.Filesystem`
 so that a test reads them from its own directory and production from the
 real disk, as [Reading a file]({{< relref "/fundamentals/configuration#reading-a-file" >}})
 describes. This chain reads the broker's CA from the PEM file
@@ -633,8 +633,8 @@ backoff, and `Serve` returns `nil`.
 The Service and the Publisher connect the same way, in three steps, and
 `ConnectTimeout` bounds all three together:
 
-1. they dial `Connection.Addr` with the Setup's Host, so the broker is
-   reached only through the Host;
+1. they dial `Connection.Addr` with the network they are given, so the
+   broker is reached only through it;
 2. with `TLS` set, they run the TLS handshake over that connection;
 3. they run the AMQP handshake with `amqp.Open`, logging in with `SASL`,
    opening `Vhost` and proposing `Heartbeat`.
@@ -1511,7 +1511,7 @@ while it waits for a broker:
 ```go
 func TestService_passes_the_Service_contract_with_no_broker(t *testing.T) {
 	humustest.TestService(t, func(t *testing.T, s *humus.Setup) humus.Service {
-		svc, err := rabbitmq.NewService(s, settings(), queue.ProcessorFunc[rabbitmq.Message](func(context.Context, rabbitmq.Message) error {
+		svc, err := rabbitmq.NewService(s, humustest.NewHost(t), settings(), queue.ProcessorFunc[rabbitmq.Message](func(context.Context, rabbitmq.Message) error {
 			return nil
 		}))
 		require.NoError(t, err)

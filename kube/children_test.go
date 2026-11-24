@@ -130,8 +130,8 @@ func newChildClient(t *testing.T) childClient {
 	t.Cleanup(startAPIServer(t, h, ca, server, api, "apiserver"))
 
 	tel := humustest.NewTelemetry()
-	s := faultsSetup(t, h.Host(), tel)
-	c, err := kube.NewClient(s, kube.Connection{Server: server, TLS: &tls.Config{RootCAs: ca.Pool()}})
+	s := faultsSetup(t, tel)
+	c, err := kube.NewClient(s, h, kube.Connection{Server: server, TLS: &tls.Config{RootCAs: ca.Pool()}})
 	require.NoError(t, err)
 	return childClient{s: s, c: c, kc: newClientset(t, c), api: api, tel: tel}
 }

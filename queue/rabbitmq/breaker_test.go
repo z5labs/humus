@@ -99,7 +99,7 @@ func TestPublisher_fails_at_once_once_the_breaker_opens(t *testing.T) {
 		// One attempt per Publish, so each Publish is one attempt through
 		// the breaker.
 		settings.MaxAttempts = 1
-		pub, err := rabbitmq.NewPublisher(&humus.Setup{Host: host, Telemetry: sdk}, settings)
+		pub, err := rabbitmq.NewPublisher(&humus.Setup{Telemetry: sdk}, host, settings)
 		require.NoError(t, err)
 
 		// Nothing listens at rabbit:5672: each attempt fails to dial.

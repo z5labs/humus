@@ -127,7 +127,7 @@ var notServed = &call{}
 // The Service reports through s.Telemetry, and never through
 // OpenTelemetry's globals, under the scope
 // github.com/z5labs/humus/queue/rabbitmq: its logs, a span for every
-// delivery, and two instruments. It reaches the broker only through s.Host.
+// delivery, and two instruments. It reaches the broker only through n.
 //
 // A delivery's span is named "process <queue>", of kind CONSUMER, and
 // Process is given its context. Its parent is the trace context
@@ -156,7 +156,7 @@ var notServed = &call{}
 // names each one, including a Concurrency above Prefetch, and it rejects a
 // nil Processor. It opens no connection and registers no OnStop function,
 // so an Init that fails after it leaks nothing.
-func NewService(s *humus.Setup, settings Settings, p queue.Processor[Message]) (*Service, error) {
+func NewService(s *humus.Setup, n Network, settings Settings, p queue.Processor[Message]) (*Service, error) {
 	if err := checkSettings(settings, p); err != nil {
 		return nil, fmt.Errorf("rabbitmq: NewService: %w", err)
 	}
@@ -197,7 +197,7 @@ func NewService(s *humus.Setup, settings Settings, p queue.Processor[Message]) (
 		stop:       stop,
 	}
 	svc.open = func(ctx context.Context) (channel, io.Closer, error) {
-		return openChannel(ctx, s.Host, settings.Connection)
+		return openChannel(ctx, n, settings.Connection)
 	}
 	return svc, nil
 }
@@ -246,11 +246,11 @@ func checkConnection(prefix string, c Connection) []error {
 	return errs
 }
 
-// openChannel connects to the broker through host and opens a channel. The
+// openChannel connects to the broker through n and opens a channel. The
 // connection is closed if ctx ends while the channel is being opened, or if
 // opening it fails.
-func openChannel(ctx context.Context, host humus.Host, c Connection) (channel, io.Closer, error) {
-	conn, err := connect(ctx, host, c)
+func openChannel(ctx context.Context, n Network, c Connection) (channel, io.Closer, error) {
+	conn, err := connect(ctx, n, c)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -6,15 +6,11 @@
 package httpclient_test
 
 import (
-	"context"
-	"errors"
-	"net"
 	"net/http"
 	"testing"
 	"testing/synctest"
 
 	"github.com/stretchr/testify/require"
-	"github.com/z5labs/bedrock/host/hosttest"
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/httpclient"
@@ -30,16 +26,7 @@ func TestNewClient_dials_only_through_its_Network(t *testing.T) {
 		defer stop()
 
 		n, d := recordDials(h)
-		// The Setup's Host is another host whose every dial fails, so a
-		// dial through it would fail the call rather than reach payments.
-		errSetupHost := errors.New("dialled through the Setup's Host")
-		setupHost := hosttest.Seams{Network: humustest.NewHost(t), OnDialTCP: func(context.Context, string, string) (net.Conn, error) {
-			return nil, errSetupHost
-		}}
-		s := &humus.Setup{
-			Host:      humus.Host{IPNetwork: setupHost, Filesystem: h.Filesystem()},
-			Telemetry: telemetry.Noop(),
-		}
+		s := &humus.Setup{Telemetry: telemetry.Noop()}
 
 		c, err := httpclient.NewClient(s, n, paymentsSettings(t, ca))
 		require.NoError(t, err)

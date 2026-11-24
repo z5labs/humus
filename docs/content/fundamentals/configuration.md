@@ -150,14 +150,14 @@ The check goes **after** `.Default`, and the order matters for two reasons:
 
 `config.Struct` attempts every `Get`, even after one has failed, so a
 misconfigured service reports all of its problems in one error rather than one
-per restart. Read every value through the `Process` and the `Host` in `Setup`,
-never through package `os`, so that the whole App runs in a test.
+per restart. Read every value through the `Setup`'s `Process` and the host `Init` is
+given, never through package `os`, so that the whole App runs in a test.
 
 ## Reading a file
 
 A setting that names a file reads the file inside the field's chain. Here
 `GREETING_FILE` is parsed by `readFile`, which opens the file through
-`s.Host.Filesystem`:
+`h.Filesystem`:
 
 ```go
 // readFile returns a parser for config.Value.Parse that reads the whole

@@ -435,7 +435,7 @@ func TestService_does_not_recover_a_panic_in_TrustScenario(t *testing.T) {
 	require.NoError(t, err)
 	s := settings("localhost:9092")
 	s.TrustScenario = func(kafka.Message) bool { panic("trust") }
-	svc, err := kafka.NewService(&humus.Setup{Host: humus.OSHost(), Telemetry: telemetry.Noop(), Faults: faults}, s,
+	svc, err := kafka.NewService(&humus.Setup{Telemetry: telemetry.Noop(), Faults: faults}, humus.OSHost(), s,
 		queue.ProcessorFunc[kafka.Message](func(context.Context, kafka.Message) error { return nil }))
 	require.NoError(t, err)
 

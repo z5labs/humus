@@ -65,10 +65,10 @@ var errNoService = errors.New("humustest: newService did not return a Service")
 //
 // Each rule is a subtest named after it, and its failure message names the
 // rule the Service broke. Every subtest runs inside testing/synctest, on a
-// new [Host], with a new Service. It runs a humus.App, started with
-// bedrocktest.Start, whose Init calls newService with the subtest's t and the
-// App's Setup, so the Setup's Process is bedrocktest's and its Host is the
-// new Host. The App runs a Service of TestService's own, which makes the
+// new [Host], with a new Service. It runs a humus.App on that Host, started
+// with bedrocktest.Start, whose Init calls newService with the subtest's t
+// and the App's Setup, so the Setup's Process is bedrocktest's. The App runs
+// a Service of TestService's own, which makes the
 // subtest's calls on the Service newService built; when that is done, the
 // App shuts down and runs the functions newService registered with
 // Setup.OnStop, as it does in production.
@@ -90,8 +90,9 @@ var errNoService = errors.New("humustest: newService did not return a Service")
 // a deadlock when the subtest ends. Only the leak subtest fails on it.
 //
 // All of this rests on synctest seeing the Service's goroutines block, so
-// the Service must reach the network and the filesystem only through the
-// Setup's Host. A goroutine blocked where synctest can't see it, such as on
+// the Service must reach the network and the filesystem only through a
+// Host of humustest's, such as one newService builds with NewHost and the
+// subtest's t. A goroutine blocked where synctest can't see it, such as on
 // a real socket, in a syscall, on a sync.Mutex or on a channel made outside
 // the subtest, stops fake time: the subtest's waits never run out, a leak
 // of such a goroutine is never reported, and the test binary hangs until

@@ -100,7 +100,7 @@ func appOptions() humustest.Option {
 	)
 }
 
-// newSetup returns a Setup with telemetry off and no Host, for a test that
+// newSetup returns a Setup with telemetry off, for a test that
 // calls a Service's methods itself.
 func newSetup() *humus.Setup {
 	return &humus.Setup{Telemetry: telemetry.Noop()}

@@ -85,7 +85,7 @@ func TestFinalize_adds_the_finalizer_before_the_first_reconcile(t *testing.T) {
 			cleaned cleanups
 		)
 		tel := humustest.NewTelemetry()
-		s := newSetup(t, noNetwork(t), tel)
+		s := newSetup(t, tel)
 		sv := serve(t, newController(t, s, fc, testSettings(), readyReplicas(&got), kube.Finalize(finalizerName, cleanup(&cleaned, 0))))
 		time.Sleep(settle)
 
@@ -137,7 +137,7 @@ func TestFinalize_calls_f_in_place_of_the_Reconciler(t *testing.T) {
 				got     reconciles
 				cleaned cleanups
 			)
-			s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
+			s := newSetup(t, humustest.NewTelemetry())
 			sv := serve(t, newController(t, s, fc, testSettings(), readyReplicas(&got), kube.Finalize(finalizerName, cleanup(&cleaned, 0))))
 			time.Sleep(settle)
 			require.Equal(t, 2, got.count())
@@ -181,7 +181,7 @@ func TestFinalize_calls_f_in_place_of_the_Reconciler(t *testing.T) {
 				got     reconciles
 				cleaned cleanups
 			)
-			s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
+			s := newSetup(t, humustest.NewTelemetry())
 			sv := serve(t, newController(t, s, fc, testSettings(), readyReplicas(&got), kube.Finalize(finalizerName, cleanup(&cleaned, 0))))
 			time.Sleep(settle)
 			require.Equal(t, []string{"example.com/someone-elses", finalizerName}, fc.object(t, "cache").GetFinalizers())
@@ -212,7 +212,7 @@ func TestFinalize_calls_f_in_place_of_the_Reconciler(t *testing.T) {
 				got     reconciles
 				cleaned cleanups
 			)
-			s := newSetup(t, noNetwork(t), humustest.NewTelemetry())
+			s := newSetup(t, humustest.NewTelemetry())
 			sv := serve(t, newController(t, s, fc, testSettings(), readyReplicas(&got), kube.Finalize(finalizerName, cleanup(&cleaned, 0))))
 			time.Sleep(settle)
 
@@ -238,7 +238,7 @@ func TestFinalize_retries_an_error_then_removes_the_finalizer(t *testing.T) {
 		settings.RetryBaseDelay = time.Second
 		settings.RetryMaxDelay = 4 * time.Second
 		tel := humustest.NewTelemetry()
-		s := newSetup(t, noNetwork(t), tel)
+		s := newSetup(t, tel)
 		sv := serve(t, newController(t, s, fc, settings, readyReplicas(&got), kube.Finalize(finalizerName, cleanup(&cleaned, 3))))
 		time.Sleep(settle)
 
@@ -300,7 +300,7 @@ func TestFinalize_retries_a_failed_apply(t *testing.T) {
 		})
 		var got reconciles
 		tel := humustest.NewTelemetry()
-		s := newSetup(t, noNetwork(t), tel)
+		s := newSetup(t, tel)
 		sv := serve(t, newController(t, s, fc, testSettings(), readyReplicas(&got), kube.Finalize(finalizerName, noCleanup)))
 		time.Sleep(settle)
 
@@ -336,7 +336,7 @@ func TestFinalize_reports_a_finalizer_another_field_manager_set(t *testing.T) {
 			cleaned cleanups
 		)
 		tel := humustest.NewTelemetry()
-		s := newSetup(t, noNetwork(t), tel)
+		s := newSetup(t, tel)
 		sv := serve(t, newController(t, s, fc, testSettings(), readyReplicas(&got), kube.Finalize(finalizerName, cleanup(&cleaned, 0))))
 		time.Sleep(settle)
 		require.Empty(t, fc.metadataApplies(), "the object already has the finalizer")

@@ -563,7 +563,7 @@ func TestService_Process_sees_only_the_producers_baggage(t *testing.T) {
 			mu      sync.Mutex
 			members = map[int64][]string{}
 		)
-		svc, err := kafka.NewService(&humus.Setup{Host: h.Host(), Telemetry: sdk}, settings(c.ListenAddrs()...),
+		svc, err := kafka.NewService(&humus.Setup{Telemetry: sdk}, h, settings(c.ListenAddrs()...),
 			queue.ProcessorFunc[kafka.Message](func(ctx context.Context, m kafka.Message) error {
 				mu.Lock()
 				defer mu.Unlock()

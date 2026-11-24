@@ -342,7 +342,7 @@ if err != nil {
 [Serving HTTP]({{< relref "/services/http/serving#tls" >}}). `CheckAddr` rejects an address
 that isn't `host:port`, `""` included, and a port that isn't a number from
 0 to 65535. `NewService` runs every check again, rejects a nil `Option`,
-and listens on `Addr` through the Setup's Host, in `Init`.
+and listens on `Addr` through the network it is given, in `Init`.
 
 #### TLS on the HTTP probes port
 
@@ -585,7 +585,7 @@ has no server of its own, so its probes go on a probes server, with
 `health.Readiness(consumer.Joined())`:
 
 ```go
-consumer, err := kafka.NewService(s, settings, nop)
+consumer, err := kafka.NewService(s, h, settings, nop)
 if err != nil {
 	return nil, err
 }

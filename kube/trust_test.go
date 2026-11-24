@@ -163,7 +163,7 @@ func TestTrustScenario_carries_a_trusted_objects_scenario_into_its_reconciles(t 
 		value := scenarioValue(t, abort(ownPoint))
 		fc := newFakeCluster(t, annotated(memcachedObject("cache", 3), value))
 		tel := humustest.NewTelemetry()
-		s := faultsSetup(t, noNetwork(t), tel)
+		s := faultsSetup(t, tel)
 
 		var (
 			got      sightings
@@ -221,7 +221,7 @@ func TestTrustScenario_drops_every_other_member_of_the_annotation(t *testing.T) 
 		value := scenarioValue(t, noRules) + ",region=eu,acme.other=1"
 		fc := newFakeCluster(t, annotated(memcachedObject("cache", 3), value))
 		tel := humustest.NewTelemetry()
-		s := faultsSetup(t, noNetwork(t), tel)
+		s := faultsSetup(t, tel)
 
 		var got sightings
 		sv := serve(t, newController(t, s, fc, testSettings(), sighting(s, &got),
@@ -249,7 +249,7 @@ func TestTrustScenario_strips_an_untrusted_objects_scenario_and_an_annotation_th
 			annotated(memcachedObject("garbled", 3), "not baggage"),
 		)
 		tel := humustest.NewTelemetry()
-		s := faultsSetup(t, noNetwork(t), tel)
+		s := faultsSetup(t, tel)
 
 		var got sightings
 		tr := &truster{trusted: []string{"garbled"}}
@@ -295,7 +295,7 @@ func TestTrustScenario_never_asks_about_an_object_without_a_scenario(t *testing.
 			annotated(memcachedObject("tenant", 3), scenarioValue(t, nil)),
 		)
 		tel := humustest.NewTelemetry()
-		s := faultsSetup(t, noNetwork(t), tel)
+		s := faultsSetup(t, tel)
 
 		var got sightings
 		tr := &truster{}
@@ -322,7 +322,7 @@ func TestTrustScenario_an_owned_resources_change_carries_the_owners_scenario(t *
 		value := scenarioValue(t, abort(ownPoint))
 		fc := newFakeCluster(t, annotated(memcachedObject("cache", 3), value))
 		tel := humustest.NewTelemetry()
-		s := faultsSetup(t, noNetwork(t), tel)
+		s := faultsSetup(t, tel)
 
 		var got sightings
 		tr := &truster{trusted: []string{"cache"}}
@@ -370,7 +370,7 @@ func TestTrustScenario_recovers_a_panic_in_trust_and_never_retries_it(t *testing
 			annotated(memcachedObject("other", 2), value),
 		)
 		tel := humustest.NewTelemetry()
-		s := faultsSetup(t, noNetwork(t), tel)
+		s := faultsSetup(t, tel)
 
 		var got sightings
 		tr := &truster{trusted: []string{"other"}}
@@ -428,7 +428,7 @@ func TestTrustScenario_reads_nothing_in_an_App_without_failure_injection(t *test
 			annotated(memcachedObject("garbled", 3), "not baggage"),
 		)
 		tel := humustest.NewTelemetry()
-		s := newSetup(t, noNetwork(t), tel)
+		s := newSetup(t, tel)
 
 		var got sightings
 		tr := &truster{trusted: []string{"cache", "garbled"}}
@@ -455,7 +455,7 @@ func TestTrustScenario_reads_nothing_without_the_Part(t *testing.T) {
 			annotated(memcachedObject("garbled", 3), "not baggage"),
 		)
 		tel := humustest.NewTelemetry()
-		s := faultsSetup(t, noNetwork(t), tel)
+		s := faultsSetup(t, tel)
 
 		var got sightings
 		sv := serve(t, newController(t, s, fc, testSettings(), sighting(s, &got)))
@@ -479,7 +479,7 @@ func TestTrustScenario_carries_a_Kinds_objects_scenario(t *testing.T) {
 			annotated(configMapObject("untrusted", map[string]any{"a": "1"}), value),
 		)
 		tel := humustest.NewTelemetry()
-		s := faultsSetup(t, noNetwork(t), tel)
+		s := faultsSetup(t, tel)
 
 		var got sightings
 		rec := kube.KindReconcilerFunc[corev1.ConfigMap](func(ctx context.Context, cm corev1.ConfigMap) (time.Duration, error) {

@@ -103,11 +103,11 @@ func initWith(ctx context.Context, s *humus.Setup, h humus.Host, open openStore)
 
 	forwarding := set.Producer
 	forwarding.ForwardScenario = true
-	retries, err := kafka.NewProducer(s, forwarding)
+	retries, err := kafka.NewProducer(s, h, forwarding)
 	if err != nil {
 		return nil, err
 	}
-	results, err := kafka.NewProducer(s, set.Producer)
+	results, err := kafka.NewProducer(s, h, set.Producer)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +116,7 @@ func initWith(ctx context.Context, s *humus.Setup, h humus.Host, open openStore)
 		return nil, err
 	}
 
-	consumer, err := kafka.NewService(s, set.Consumer, p)
+	consumer, err := kafka.NewService(s, h, set.Consumer, p)
 	if err != nil {
 		return nil, err
 	}
