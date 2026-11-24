@@ -258,8 +258,9 @@ func (p *Producer) refusalErr() error {
 // and measure them, which runs on a goroutine franz-go starts and doesn't
 // wait for. That wait isn't bounded by ctx, which is already done, and
 // needs no bound: once the client is closed, franz-go fails every record
-// it holds or is handed at once, without waiting on the cluster. The
-// breaker may not count the calls of those records, kotel's counters may
+// it holds or is handed at once, without waiting on the cluster. A call
+// that hands its records to the client only after that wait, such as one
+// still in a fault's Delay, isn't waited for. The breaker may not count the calls of those records, kotel's counters may
 // miss records franz-go has yet to report to it, and stop returns an error
 // that wraps ctx's error.
 func (p *Producer) stop(ctx context.Context) error {

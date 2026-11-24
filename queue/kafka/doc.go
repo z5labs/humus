@@ -418,14 +418,16 @@
 // a goroutine nothing waits for, which can run after Close has returned.
 // That wait isn't bounded by the grace period, which is over, and needs no
 // bound: a closed client fails every record at once, without waiting on
-// the cluster. The breaker may not count those records' calls, kotel's
-// counters may miss records franz-go had yet to report to it, and the
-// function returns an error that wraps the context's error, which the
-// lifecycle reports as a *humus.GracePeriodError. A Produce after that, from a goroutine the end
+// the cluster. A call that hands its records to the client only after
+// that wait, such as one still in a fault's Delay, isn't waited for. The
+// breaker may not count those records' calls, kotel's counters may miss
+// records franz-go had yet to report to it, and the function returns an
+// error that wraps the context's error, which the lifecycle reports as a
+// *humus.GracePeriodError. A Produce after that, from a goroutine the end
 // user left running, fails at once with an error that wraps
-// [ErrProducerClosed]. If the end user's Init fails after
-// NewProducer, the lifecycle runs the function too, so the client is
-// closed and none of franz-go's goroutines outlive the App.
+// [ErrProducerClosed]. If the end user's Init fails after NewProducer, the
+// lifecycle runs the function too, so the client is closed and none of
+// franz-go's goroutines outlive the App.
 //
 // The Producer's client logs through the Setup's LoggerProvider, under the
 // scope github.com/twmb/franz-go/pkg/kgo, as the Service's does.
