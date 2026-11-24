@@ -244,8 +244,8 @@ humus.Main(Init, humus.WithTelemetry(buildTelemetry))
 `Init` builds the `Producer`, the consumer and its probes:
 
 ```go
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	settings, err := readSettings(ctx, s)
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	settings, err := readSettings(ctx, s, h)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +271,7 @@ reads `orders` and `orders.retry`, and the `Producer` produces to the same
 cluster:
 
 ```go
-func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
+func readSettings(ctx context.Context, s *humus.Setup, h humus.Host) (settings, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 	list := func(v string) []string { return strings.Split(v, ",") }
 
@@ -295,7 +295,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 			Probes: httphealth.Settings{
 				Addr: r.Get(env("PROBES_ADDR").Validate(httphealth.CheckAddr)),
 				TLS: r.Get(env("PROBES_TLS_CERT_FILE").FlatMap(func(certFile string) config.Value[*tls.Config] {
-					return env("PROBES_TLS_KEY_FILE").Parse(serverTLS(s.Host.Filesystem, certFile))
+					return env("PROBES_TLS_KEY_FILE").Parse(serverTLS(h.Filesystem, certFile))
 				}).Validate(httphealth.CheckTLS)),
 			},
 		}

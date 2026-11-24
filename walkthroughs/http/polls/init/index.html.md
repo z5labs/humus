@@ -18,10 +18,10 @@ type serverCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error)
 and the service exits 78, naming its variable:
 
 ```go
-func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
+func readSettings(ctx context.Context, s *humus.Setup, h humus.Host) (settings, error) {
 	d := httpserver.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
-	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(s.Host.Filesystem)) }
+	file := func(name string) config.Value[[]byte] { return env(name).Parse(readFile(h.Filesystem)) }
 	timeout := func(name string, def time.Duration, check func(time.Duration) error) config.Value[time.Duration] {
 		return env(name).Parse(time.ParseDuration).Default(def).Validate(check)
 	}
@@ -30,9 +30,9 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 		server := d
 		server.Addr = r.Get(env("ADDR").Validate(httpserver.CheckAddr))
 		server.TLS = &tls.Config{
-			GetCertificate: r.Get(env("TLS_CERT_FILE").Validate(holdsCertificate(s.Host.Filesystem)).FlatMap(func(certFile string) config.Value[serverCertificate] {
+			GetCertificate: r.Get(env("TLS_CERT_FILE").Validate(holdsCertificate(h.Filesystem)).FlatMap(func(certFile string) config.Value[serverCertificate] {
 				return env("TLS_KEY_FILE").Parse(func(keyFile string) (serverCertificate, error) {
-					cfg, err := certfile.Config(s.Host.Filesystem, certFile, keyFile)
+					cfg, err := certfile.Config(h.Filesystem, certFile, keyFile)
 					if err != nil {
 						return nil, err
 					}
@@ -47,7 +47,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 		return settings{
 			HTTP:     server,
 			Database: r.Get(file("DATABASE_URL_FILE").Parse(databaseURL)),
-			TrustCAs: r.Get(env("FAULT_TRUST_CA_FILE").Parse(trustCAs(s.Host.Filesystem)).Default(nil)),
+			TrustCAs: r.Get(env("FAULT_TRUST_CA_FILE").Parse(trustCAs(h.Filesystem)).Default(nil)),
 		}
 	}).Read(ctx)
 	if err != nil {
@@ -272,17 +272,17 @@ type backend struct {
 	listening func(context.Context) error
 }
 
-type openBackend func(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (backend, error)
+type openBackend func(ctx context.Context, s *humus.Setup, h humus.Host, cfg *pgxpool.Config) (backend, error)
 ```
 
 ```go
-func openPostgres(ctx context.Context, s *humus.Setup, cfg *pgxpool.Config) (backend, error) {
+func openPostgres(ctx context.Context, s *humus.Setup, h humus.Host, cfg *pgxpool.Config) (backend, error) {
 	cfg.ConnConfig.DialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		if network == "unix" {
 			var d net.Dialer
 			return d.DialContext(ctx, network, addr)
 		}
-		return s.Host.DialTCP(ctx, network, addr)
+		return h.DialTCP(ctx, network, addr)
 	}
 	cfg.ConnConfig.LookupFunc = func(_ context.Context, host string) ([]string, error) {
 		return []string{host}, nil
@@ -378,8 +378,8 @@ func (l *listener) Shutdown(ctx context.Context) error {
 backend of their own:
 
 ```go
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	return initWith(ctx, s, openPostgres)
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	return initWith(ctx, s, h, openPostgres)
 }
 ```
 
@@ -388,13 +388,13 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 `WriteTimeout` for its feeds, and serves it beside the probes:
 
 ```go
-func initWith(ctx context.Context, s *humus.Setup, open openBackend) ([]humus.Service, error) {
-	settings, err := readSettings(ctx, s)
+func initWith(ctx context.Context, s *humus.Setup, h humus.Host, open openBackend) ([]humus.Service, error) {
+	settings, err := readSettings(ctx, s, h)
 	if err != nil {
 		return nil, err
 	}
 
-	b, err := open(ctx, s, settings.Database)
+	b, err := open(ctx, s, h, settings.Database)
 	if err != nil {
 		return nil, err
 	}
@@ -481,7 +481,7 @@ The telemetry `Builder` names the service `polls`, and sources the OTLP
 endpoint and the exporters from the standard `OTEL_*` variables:
 
 ```go
-func BuildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+func BuildTelemetry(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 	d := telemetry.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(p.Environment, name) }
 	exporter := func(name string, def telemetry.Exporter) config.Value[telemetry.Exporter] {
@@ -504,7 +504,7 @@ func BuildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Diale
 	if err != nil {
 		return telemetry.SDK{}, err
 	}
-	return telemetry.New(ctx, s, dial, p.Stdout)
+	return telemetry.New(ctx, s, n, p.Stdout)
 }
 ```
 
@@ -518,7 +518,7 @@ const scenarioKey = "acme.fault"
 ```
 
 ```go
-func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
+func Faults(ctx context.Context, s *humus.Setup, h humus.Host) (fault.Settings, error) {
 	codec, err := jsonscenario.New(scenarioKey)
 	if err != nil {
 		return fault.Settings{}, err

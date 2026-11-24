@@ -105,7 +105,7 @@ adds monitors to its probes with
 and returns it next to the App's other Services:
 
 ```go
-Init: func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+Init: func(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 	hs := health.NewService(
 		health.Liveness(&working),
 		health.Readiness(health.MonitorFunc(func(ctx context.Context) (bool, error) {
@@ -319,7 +319,7 @@ probeSettings, err := config.Struct(func(r *config.Resolver) httphealth.Settings
 	return httphealth.Settings{
 		// No .Default: both fields are required.
 		Addr: r.Get(env("PROBES_ADDR").Validate(httphealth.CheckAddr)),
-		TLS:  r.Get(env("PROBES_TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(httphealth.CheckTLS)),
+		TLS:  r.Get(env("PROBES_TLS_PEM_FILE").Parse(readFile(h.Filesystem)).Parse(serverTLS).Validate(httphealth.CheckTLS)),
 	}
 }).Read(ctx)
 if err != nil {
@@ -703,7 +703,7 @@ func TestInit_is_not_ready_during_the_drain(t *testing.T) {
 
 		// apiInit returns an API on :8443 and a probes server on :8081, and
 		// no health Service: the probes server owns readiness.
-		apiInit := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		apiInit := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			settings := httpserver.DefaultSettings()
 			settings.Addr = ":8443"
 			settings.TLS = &tls.Config{Certificates: []tls.Certificate{ca.Issue(t, "localhost").TLS()}}
@@ -718,8 +718,8 @@ func TestInit_is_not_ready_during_the_drain(t *testing.T) {
 			return []humus.Service{api, probes}, nil
 		}
 
-		p, status := humustest.Start(t, apiInit,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder), httpserver.Defaults()),
+		p, status := humustest.Start(t, h.Host(), apiInit,
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)), humustest.WithApp(httpserver.Defaults()...),
 		)
 		<-h.Listening("localhost:8081")
 		synctest.Wait()
@@ -815,12 +815,12 @@ func TestServiceIsNotReadyDuringTheDrainDelay(t *testing.T) {
 		hs := health.NewService()
 		readiness := hs.Probes().Readiness
 		api := newServer() // keeps serving, so the drain lasts its whole delay
-		app := humus.App{
+		app := humus.App[humus.Host]{
 			Host:                humustest.NewHost(t).Host(),
 			Telemetry:           telemetry.NoopBuilder,
 			ShutdownGracePeriod: 10 * time.Second,
 			Drain:               humus.DrainDelay(5 * time.Second),
-			Init: func(context.Context, *humus.Setup) ([]humus.Service, error) {
+			Init: func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 				return []humus.Service{api, hs}, nil
 			},
 		}

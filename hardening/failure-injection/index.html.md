@@ -76,7 +76,7 @@ setting, here from `FAULT_MAX_DELAY`:
 // Faults is the orders service's failure injection: a scenario is JSON in
 // the baggage member acme.fault, and an operator sets MaxDelay with
 // FAULT_MAX_DELAY.
-func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
+func Faults(ctx context.Context, s *humus.Setup, h humus.Host) (fault.Settings, error) {
 	codec, err := jsonscenario.New("acme.fault")
 	if err != nil {
 		return fault.Settings{}, err
@@ -689,8 +689,8 @@ scenario from a caller outside the mesh is stripped, and its call is
 served. A trusted scenario that spares payments is forwarded to it:
 
 ```go
-p, status := humustest.Start(t, Init,
-	humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+p, status := humustest.Start(t, h.Host(), Init,
+	humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 	humustest.WithApp(humus.WithFaults(Faults)),
 	humustest.WithEnv(ordersEnv),
 )
@@ -737,7 +737,7 @@ func scenarioBaggage(t *testing.T, s fit.Scenario) string {
 and run a job that produces, under it:
 
 ```go
-_, status := humustest.Start(t, produces(settings, run),
+_, status := humustest.Start(t, h.Host(), produces(settings, run),
 	humustest.WithApp(opts...),
 	humustest.WithEnv(map[string]string{"BAGGAGE": bag}),
 )

@@ -305,8 +305,8 @@ The App reaches k3s as a ServiceAccount, with a token the test requests:
 Its secrets are files, and it trusts scenarios in the cases' namespaces:
 
 ```go
-	p, status := humustest.Start(t, app.Init,
-		humustest.WithApp(humus.WithHost(humus.OSHost()), humus.WithTelemetry(build), humus.WithFaults(app.Faults)),
+	p, status := humustest.Start(t, humus.OSHost(), app.Init,
+		humustest.WithApp(humus.WithTelemetry(build), humus.WithFaults(app.Faults)),
 		humustest.WithEnv(map[string]string{
 			"KUBERNETES_SERVICE_HOST":        server.Hostname(),
 			"KUBERNETES_SERVICE_PORT":        server.Port(),

@@ -38,7 +38,7 @@ returns it:
 // Init is the end user's Init: it sources the Settings, builds the Service
 // with NewService, registers the end user's service on it and returns it,
 // with any other Service the process runs.
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
 	settings, err := config.Struct(func(r *config.Resolver) grpcserver.Settings {
@@ -47,7 +47,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 			Addr: r.Get(env("GRPC_ADDR").Validate(grpcserver.CheckAddr)),
 			// readFile and serverTLS are the end user's own helpers. The
 			// bundle's password is read only once the bundle has been.
-			TLS: r.Get(env("GRPC_TLS_P12_FILE").Parse(readFile(s.Host.Filesystem)).FlatMap(func(bundle []byte) config.Value[*tls.Config] {
+			TLS: r.Get(env("GRPC_TLS_P12_FILE").Parse(readFile(h.Filesystem)).FlatMap(func(bundle []byte) config.Value[*tls.Config] {
 				return env("GRPC_TLS_P12_PASSWORD").Parse(serverTLS(bundle))
 			}).Validate(grpcserver.CheckTLS)),
 		}
@@ -426,10 +426,11 @@ and selects on its context, as it would for any call that takes no context.
 ## The defaults
 
 `grpcserver.Main` is `humus.Main` with `grpcserver.Defaults()` applied before
-the end user's options, and does nothing else. `Defaults` is one
-`humus.Option` that sets two of `humus.Main`'s
-[defaults](/humus/fundamentals/lifecycle/#the-defaults), and leaves the Host and
-the telemetry `Builder` as `humus.Main`'s:
+the end user's options, and does nothing else. `Defaults` returns a
+`[]humus.Option` that sets two of `humus.Main`'s
+[defaults](/humus/fundamentals/lifecycle/#the-defaults), and leaves the host and
+the telemetry `Builder` as `humus.Main`'s. There is no package `MainOn`: an App
+on a host of its own calls `humus.MainOn(acquire, init, append(grpcserver.Defaults(), opts...)...)`. The two defaults are:
 
 - **A drain of `humus.DrainDelay(5 * time.Second)`.** Kubernetes removes a
   terminating pod from a Service's endpoints asynchronously, so for a while
@@ -775,9 +776,7 @@ func TestMain_shutdown_ends_a_stream_with_Unavailable(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
 		h := humustest.NewHost(t)
-		p, exit := grpcservertest.Start(t, serves(settingsFor(t, ca, ":9090"), subscriber{}),
-			humustest.WithApp(humus.WithHost(h.Host())),
-		)
+		p, exit := grpcservertest.Start(t, h.Host(), serves(settingsFor(t, ca, ":9090"), subscriber{}))
 		<-h.Listening("carts:9090")
 
 		client := testpb.NewTestServiceClient(grpcservertest.NewClient(t, h, "carts:9090", ca.Pool()))
@@ -835,8 +834,8 @@ and start the App with it, then call it with a client that trusts the CA:
 ca := humustest.NewCA(t)
 h, env := p12Env(t, ca, ":9090")
 
-p, exit := grpcservertest.Start(t, Init,
-	humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+p, exit := grpcservertest.Start(t, h.Host(), Init,
+	humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 	humustest.WithEnv(env),
 )
 <-h.Listening("carts:9090")
@@ -859,7 +858,7 @@ required:
 ```go
 func TestInit_without_an_address_or_a_certificate_exits_78(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		_, exit := grpcservertest.Start(t, Init)
+		_, exit := grpcservertest.Start(t, humustest.NewHost(t).Host(), Init)
 
 		st := <-exit
 		require.Equal(t, humus.ExitConfig, st.Code())

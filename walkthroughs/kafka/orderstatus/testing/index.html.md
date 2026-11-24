@@ -285,8 +285,8 @@ func (p *processor) cluster(t *testing.T, opts ...kfake.Opt) *kfake.Cluster {
 The test starts it with a store in memory in place of PostgreSQL's:
 
 ```go
-	init := func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-		return initWith(ctx, s, p.store.open)
+	init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+		return initWith(ctx, s, h, p.store.open)
 	}
 ```
 

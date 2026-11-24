@@ -7,7 +7,9 @@ built, shuts its telemetry down and turns the outcome into an exit status.&lt;/p
 &lt;p&gt;A service&amp;rsquo;s &lt;code&gt;main&lt;/code&gt; is &lt;code&gt;func main() { humus.Main(app.Init) }&lt;/code&gt;, where
 &lt;code&gt;app.Init&lt;/code&gt; is the end user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt;. &lt;a href="#main"&gt;&lt;code&gt;humus.Main&lt;/code&gt;&lt;/a&gt; builds the
 &lt;code&gt;humus.App&lt;/code&gt; from its &lt;a href="#the-defaults"&gt;defaults&lt;/a&gt; and that &lt;code&gt;Init&lt;/code&gt;, applies the
-options it is given, and runs the App on the OS process. Options change the
+options it is given, and runs the App on the OS process and its host,
+&lt;code&gt;humus.OSHost()&lt;/code&gt;. An App on a host of its own runs with
+&lt;a href="#mainon"&gt;&lt;code&gt;humus.MainOn&lt;/code&gt;&lt;/a&gt; instead. Options change the
 App&amp;rsquo;s fields, so everything this page says about &lt;code&gt;humus.App&lt;/code&gt; is what &lt;code&gt;Main&lt;/code&gt;
 runs. The runtime packages — REST, gRPC, jobs, queues — export Services for
 &lt;code&gt;Init&lt;/code&gt; to return, not Apps, and one whose Services need a drain wraps &lt;code&gt;Main&lt;/code&gt;
@@ -48,9 +50,10 @@ and, for exposing the probes, in
 &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/humustest"&gt;humustest&lt;/a&gt; makes that
 possible:&lt;/p&gt;
 &lt;ul&gt;
-&lt;li&gt;&lt;strong&gt;&lt;code&gt;humustest.Start&lt;/code&gt;&lt;/strong&gt; hands the end user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt; to the App that
-&lt;code&gt;humus.Main&lt;/code&gt; would run for it, with the same defaults, on a test Host in
-place of &lt;code&gt;humus.OSHost()&lt;/code&gt; and on a new process from
+&lt;li&gt;&lt;strong&gt;&lt;code&gt;humustest.Start&lt;/code&gt;&lt;/strong&gt; hands a host and the end user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt; to the App
+that &lt;code&gt;humus.MainOn&lt;/code&gt; would run for them, with the same defaults, on the
+test&amp;rsquo;s host, built from a test Host in place of &lt;code&gt;humus.OSHost()&lt;/code&gt;, and on a
+new process from
 &lt;a href="https://pkg.go.dev/github.com/z5labs/bedrock/bedrocktest"&gt;bedrocktest&lt;/a&gt;:
 its arguments, environment and stdin, which the test sets, its output, which
 the test reads, and its signals, which the test sends. It returns the

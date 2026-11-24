@@ -20,9 +20,9 @@ type settings struct {
 and the mailer exits 78, naming its variable:
 
 ```go
-func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
+func readSettings(ctx context.Context, s *humus.Setup, h humus.Host) (settings, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
-	file := readFile(s.Host.Filesystem)
+	file := readFile(h.Filesystem)
 
 	read, err := config.Struct(func(r *config.Resolver) settings {
 		consumer := rabbitmq.DefaultSettings()
@@ -62,7 +62,7 @@ func readSettings(ctx context.Context, s *humus.Setup) (settings, error) {
 			},
 			Probes: httphealth.Settings{
 				Addr: r.Get(env("PROBES_ADDR").Validate(httphealth.CheckAddr)),
-				TLS:  r.Get(env("PROBES_TLS_PEM_FILE").Parse(pemTLS(s.Host.Filesystem)).Validate(httphealth.CheckTLS)),
+				TLS:  r.Get(env("PROBES_TLS_PEM_FILE").Parse(pemTLS(h.Filesystem)).Validate(httphealth.CheckTLS)),
 			},
 		}
 	}).Read(ctx)
@@ -221,8 +221,8 @@ forwards the scenario, since a parked request comes back to the mailer, and
 the events' and the dead letters' consumers are other teams':
 
 ```go
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	settings, err := readSettings(ctx, s)
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	settings, err := readSettings(ctx, s, h)
 	if err != nil {
 		return nil, err
 	}
@@ -350,7 +350,7 @@ The telemetry `Builder` names the service `mailer`, and sources the OTLP
 endpoint and the exporters from the standard `OTEL_*` variables:
 
 ```go
-func BuildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+func BuildTelemetry(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 	d := telemetry.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(p.Environment, name) }
 	exporter := func(name string, def telemetry.Exporter) config.Value[telemetry.Exporter] {
@@ -373,7 +373,7 @@ func BuildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Diale
 	if err != nil {
 		return telemetry.SDK{}, err
 	}
-	return telemetry.New(ctx, s, dial, p.Stdout)
+	return telemetry.New(ctx, s, n, p.Stdout)
 }
 ```
 
@@ -385,7 +385,7 @@ member `acme.fault`, and caps a delay at `FAULT_MAX_DELAY`:
 ```go
 const scenarioKey = "acme.fault"
 
-func Faults(ctx context.Context, s *humus.Setup) (fault.Settings, error) {
+func Faults(ctx context.Context, s *humus.Setup, h humus.Host) (fault.Settings, error) {
 	codec, err := jsonscenario.New(scenarioKey)
 	if err != nil {
 		return fault.Settings{}, err

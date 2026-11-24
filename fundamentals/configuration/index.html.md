@@ -103,7 +103,7 @@ package's check, chained with
 [`.Validate`](https://pkg.go.dev/github.com/z5labs/bedrock/config#Value.Validate):
 
 ```go
-func GreeterInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func GreeterInit(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	d := DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
@@ -111,7 +111,7 @@ func GreeterInit(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		return Settings{
 			// The file is read as part of the setting, so a missing file
 			// is a config error named after the variable.
-			Greeting:    r.Get(env("GREETING_FILE").Parse(readFile(s.Host.Filesystem)).Default(d.Greeting)),
+			Greeting:    r.Get(env("GREETING_FILE").Parse(readFile(h.Filesystem)).Default(d.Greeting)),
 			ReadTimeout: r.Get(env("READ_TIMEOUT").Parse(time.ParseDuration).Default(d.ReadTimeout).Validate(CheckReadTimeout)),
 			MaxConns:    r.Get(env("MAX_CONNS").Parse(strconv.Atoi).Default(d.MaxConns).Validate(CheckMaxConns)),
 		}
@@ -325,18 +325,18 @@ runs the App above this way:
 ```go
 h := humustest.NewHost(t, hosttest.WithFiles(files))
 tel := humustest.NewTelemetry()
-p, status := humustest.Start(t, GreeterInit,
-	humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(tel.Builder())),
+p, status := humustest.Start(t, h.Host(), GreeterInit,
+	humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 	humustest.WithEnv(env),
 )
 st := <-status
 ```
 
-`humus.WithHost` replaces the Host `Start` builds with one the example made
-with its files, and `humus.WithTelemetry` passes `humustest.Telemetry`'s
-`Builder`, so the example prints the errors the App logged from the
-recorder's `Logs()`. Both are humus's own options, passed with
-`humustest.WithApp` as `main` passes them to `humus.Main`.
+`Start` runs the App on the host the example made with its files, and
+`humus.WithTelemetry` passes `humustest.Telemetry`'s `Builder`, so the example
+prints the errors the App logged from the recorder's `Logs()`. That is one of
+humus's own options, passed with `humustest.WithApp` as `main` passes it to
+`humus.Main`.
 
 The App runs with `Main`'s defaults, so its grace period is `Main`'s 20s, as
 in production, and a `HUMUS_SHUTDOWN_GRACE_PERIOD` or

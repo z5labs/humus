@@ -30,7 +30,7 @@ Service:
 // Init is the end user's Init: it sources the payments dependency's
 // Settings, builds its client with NewClient, and hands the client to the
 // handler of an httpserver Service.
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	d := httpclient.DefaultSettings()
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
@@ -39,7 +39,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 		// No .Default: BaseURL is required, and the dependency is https,
 		// so PAYMENTS_CA_FILE is too.
 		c.BaseURL = r.Get(env("PAYMENTS_URL").Parse(url.Parse).Validate(httpclient.CheckBaseURL))
-		c.TLS = r.Get(env("PAYMENTS_CA_FILE").Parse(readFile(s.Host.Filesystem)).Parse(trusting).Validate(httpclient.CheckTLS))
+		c.TLS = r.Get(env("PAYMENTS_CA_FILE").Parse(readFile(h.Filesystem)).Parse(trusting).Validate(httpclient.CheckTLS))
 		c.Timeout = r.Get(env("PAYMENTS_TIMEOUT").Parse(time.ParseDuration).Default(d.Timeout).Validate(httpclient.CheckTimeout))
 		return c
 	}).Read(ctx)
@@ -49,7 +49,7 @@ func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
 	serverSettings, err := config.Struct(func(r *config.Resolver) httpserver.Settings {
 		c := httpserver.DefaultSettings()
 		c.Addr = r.Get(env("ADDR").Validate(httpserver.CheckAddr))
-		c.TLS = r.Get(env("TLS_PEM_FILE").Parse(readFile(s.Host.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS))
+		c.TLS = r.Get(env("TLS_PEM_FILE").Parse(readFile(h.Filesystem)).Parse(serverTLS).Validate(httpserver.CheckTLS))
 		return c
 	}).Read(ctx)
 	if err != nil {
@@ -752,7 +752,7 @@ generates for the test. `httpclient`'s own tests start one with a helper:
 func startPaymentsWith(t *testing.T, h *humustest.Host, host humus.Host, tel telemetry.Builder, ca *humustest.CA, handler http.Handler) (stop func()) {
 	t.Helper()
 	cert := ca.Issue(t, "payments")
-	p, status := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	p, status := humustest.Start(t, host, func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = ":8443"
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
@@ -761,7 +761,7 @@ func startPaymentsWith(t *testing.T, h *humustest.Host, host humus.Host, tel tel
 			return nil, err
 		}
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(host), humus.WithTelemetry(tel)))
+	}, humustest.WithApp(humus.WithTelemetry(tel)))
 	<-h.Listening("payments:8443")
 	return func() {
 		p.Signal(syscall.SIGTERM)
@@ -800,9 +800,9 @@ synctest.Test(t, func(t *testing.T) {
 	}))
 	defer stop()
 
-	p, status := humustest.Start(t, Init,
-		humustest.WithApp(httpserver.Defaults()),
-		humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+	p, status := humustest.Start(t, h.Host(), Init,
+		humustest.WithApp(httpserver.Defaults()...),
+		humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 		humustest.WithEnv(map[string]string{
 			"ADDR":             ":9443",
 			"TLS_PEM_FILE":     "tls.pem",

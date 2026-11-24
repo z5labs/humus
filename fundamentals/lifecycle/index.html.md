@@ -10,7 +10,9 @@ built, shuts its telemetry down and turns the outcome into an exit status.
 A service's `main` is `func main() { humus.Main(app.Init) }`, where
 `app.Init` is the end user's `Init`. [`humus.Main`](#main) builds the
 `humus.App` from its [defaults](#the-defaults) and that `Init`, applies the
-options it is given, and runs the App on the OS process. Options change the
+options it is given, and runs the App on the OS process and its host,
+`humus.OSHost()`. An App on a host of its own runs with
+[`humus.MainOn`](#mainon) instead. Options change the
 App's fields, so everything this page says about `humus.App` is what `Main`
 runs. The runtime packages — REST, gRPC, jobs, queues — export Services for
 `Init` to return, not Apps, and one whose Services need a drain wraps `Main`
@@ -47,47 +49,51 @@ humus.Main(Init, humus.WithTelemetry(buildTelemetry))
 
 `Main` builds the App before it runs anything:
 
-1. It starts from `Main`'s [defaults](#the-defaults) for `Host`,
-   `Telemetry`, `ShutdownGracePeriod` and `Drain`.
-2. It sets `Init` to `init`, so an option sees the end user's `Init` and may
-   wrap it, for example to add a Service next to the end user's.
-3. It applies `opts` in order, so a later option wins over an earlier one.
+1. It starts from [`humus.Defaults(humus.OSHost(), init)`](#the-defaults),
+   `Main`'s defaults for `Telemetry`, `ShutdownGracePeriod`, `Drain` and
+   `Faults`, with `Host` set to `humus.OSHost()` and `Init` to `init`.
+2. It applies `opts` in order with `App.Apply`, so a later option wins over an
+   earlier one. If `Apply` fails, `Main` writes its error to the Process's
+   stderr and exits `ExitConfig`.
 
 It is then `bedrock.Main` of that App, the only place a humus program touches
-the real process. It panics if `init` or one of `opts` is nil.
+the real process. It panics if `init` is nil.
 
-An option is a [`humus.Option`](https://pkg.go.dev/github.com/z5labs/humus#Option),
-a `func(*humus.App)`. humus has one for each field `Main` defaults:
+An option is a [`humus.Option`](https://pkg.go.dev/github.com/z5labs/humus#Option).
+Only humus's `With` functions make one, and the zero `Option` is rejected by
+`Apply`. humus has one for each field `Main` defaults other than the host,
+which is `Main`'s or `MainOn`'s to set:
 
 | Option | Sets |
 |---|---|
-| `humus.WithHost(h)` | `App.Host` |
 | `humus.WithTelemetry(b)` | `App.Telemetry`, the App's `telemetry.Builder` |
 | `humus.WithShutdownGracePeriod(d)` | `App.ShutdownGracePeriod`, the grace period when `HUMUS_SHUTDOWN_GRACE_PERIOD` is not set |
 | `humus.WithDrain(d)` | `App.Drain`, the [drain](#the-drain) when `HUMUS_SHUTDOWN_DRAIN_DELAY` is not set. `humus.WithDrain(nil)` removes a drain that an earlier option set |
 | `humus.WithFaults(f)` | `App.Faults`, the function that returns the App's [failure injection](/humus/hardening/failure-injection/) settings |
 
-An option changes exported fields, so an end user or a runtime package can
-write one of their own as a function literal, and one option may set several
-fields.
+An option isn't generic, so every option of an App goes in one list with no
+type argument. `humus.WithFaults` infers the App's host type from the function
+it is given, and `Apply` rejects it, naming both types, for an App on another
+host type. No option can wrap `Init`: code that adds a Service next to the end
+user's wraps `init` before it passes it to `Main`.
 
 `buildTelemetry` is the end user's `Builder`. It starts from the telemetry
 package's defaults, which write log records to standard output, and names the
 service:
 
 ```go
-func buildTelemetry(ctx context.Context, p bedrock.Process, dial telemetry.Dialer) (telemetry.SDK, error) {
+func buildTelemetry(ctx context.Context, p bedrock.Process, n telemetry.Network) (telemetry.SDK, error) {
 	s := telemetry.DefaultSettings()
 	s.ServiceName = "greeter"
-	return telemetry.New(ctx, s, dial, p.Stdout)
+	return telemetry.New(ctx, s, n, p.Stdout)
 }
 ```
 
 A `main` that wants none of `Main`'s defaults can still write
-`bedrock.Main(humus.App{…})`, and sets every field itself:
+`bedrock.Main(humus.App[humus.Host]{…})`, and sets every field itself:
 
 ```go
-bedrock.Main(humus.App{
+bedrock.Main(humus.App[humus.Host]{
 	Host:                humus.OSHost(),
 	ShutdownGracePeriod: 30 * time.Second,                  // when HUMUS_SHUTDOWN_GRACE_PERIOD is not set
 	Drain:               humus.DrainDelay(5 * time.Second), // when HUMUS_SHUTDOWN_DRAIN_DELAY is not set
@@ -96,12 +102,33 @@ bedrock.Main(humus.App{
 })
 ```
 
+## MainOn
+
+[`humus.MainOn(acquire, init, opts...)`](https://pkg.go.dev/github.com/z5labs/humus#MainOn)
+runs an App on a host of its own: a type that embeds its network, so that it
+is a `humus.Network`, and holds whatever else the App wants of its host. Its
+`Init` is given that host, with its own type, so nothing type-asserts it:
+
+```go
+humus.MainOn(newFilesHost, initOnFiles,
+	humus.WithFaults(faultsOnFiles),
+	humus.WithShutdownGracePeriod(30*time.Second),
+)
+```
+
+`MainOn` starts from `humus.Defaults` and applies `opts` before it calls
+`acquire`. If `Apply` fails, it writes the error to the Process's stderr and
+exits `ExitConfig` without calling `acquire`. `acquire` is then called once,
+and an error from it exits as an error from `Init` does. `MainOn` never
+releases the host: a host that needs an orderly close registers it in `Init`
+with `OnStop`. `Main` is `MainOn` on `humus.OSHost()`.
+
 ## The defaults
 
 | Field | `Main`'s default | Why |
 |---|---|---|
-| `Host` | `humus.OSHost()` | `Main` runs only in `main`. A test runs its App with `humustest.Start`, which uses a test Host. |
-| `Telemetry` | `telemetry.New` with `telemetry.DefaultSettings()`, the Host's `DialTCP` and the Process's stdout | Logs go to stdout as JSON lines, and spans get real IDs without being exported. A service that exports anything passes its own `Builder` with `humus.WithTelemetry`. |
+| `Host` | `humus.OSHost()` | `Main` runs only in `main`. A test runs its App with `humustest.Start`, which takes the test's host. |
+| `Telemetry` | `telemetry.New` with `telemetry.DefaultSettings()`, the App's host and the Process's stdout | Logs go to stdout as JSON lines, and spans get real IDs without being exported. A service that exports anything passes its own `Builder` with `humus.WithTelemetry`. |
 | `ShutdownGracePeriod` | 20s | It fits inside Kubernetes' default `terminationGracePeriodSeconds` of 30s, with telemetry's 5s shutdown after it and a margin for the process to exit. |
 | `Drain` | none | Only a Service that a load balancer routes to, and that keeps serving until `Shutdown`, needs a drain, and the package that provides it sets one. |
 | `Faults` | none | Failure injection is off until a service turns it on with `humus.WithFaults`: no scenario is evaluated or stripped. |
@@ -111,7 +138,7 @@ telemetry shutdown, `telemetry.Settings.ShutdownTimeout`: 25s, inside
 Kubernetes' 30s. A drain comes out of the same budget, so a runtime package
 that sets one shortens its grace period to fit.
 
-The defaults live in `Main`, not in `App`. `humus.App`'s fields keep their
+The defaults live in `humus.Defaults`, which `Main` and `MainOn` start from, not in `App`. `humus.App`'s fields keep their
 meaning: a zero `ShutdownGracePeriod` fails startup, and a nil `Drain` doesn't
 wait. An operator overrides the grace period and the drain through their
 [variables](#settings), whatever `Main` or an option set, without a rebuild.
@@ -124,11 +151,13 @@ and the health Service stop on `Serve`'s context, so they run on `humus.Main`'s 
 runtime package whose Services need a drain, such as an HTTP or gRPC server
 that keeps serving until `Shutdown`, wraps `Main` instead:
 
-- It exports its defaults as one `humus.Option`, so that a test runs with
+- It exports its defaults as a `[]humus.Option`, so that a test runs with
   them too.
 - Its `Main` applies those defaults and then the end user's options, and
   calls `humus.Main`. The end user's options come last, so they win over the
   package's.
+- It has no `MainOn`. An App on a host of its own calls
+  `humus.MainOn(acquire, init, append(httpserver.Defaults(), opts...)...)`.
 
 The HTTP server's `Main` and defaults are `httpserver.Main` and
 `httpserver.Defaults`, with a 5s drain and a 10s grace period, which fit
@@ -143,23 +172,23 @@ use stand-ins of the same shape:
 ```go
 // httpDefaults stands in for a runtime package's defaults, such as
 // httpserver.Defaults: a 5s drain and a 10s grace period over humus.Main's.
-func httpDefaults() humus.Option {
-	return func(a *humus.App) {
-		a.Drain = humus.DrainDelay(5 * time.Second)
-		a.ShutdownGracePeriod = 10 * time.Second
+func httpDefaults() []humus.Option {
+	return []humus.Option{
+		humus.WithDrain(humus.DrainDelay(5 * time.Second)),
+		humus.WithShutdownGracePeriod(10 * time.Second),
 	}
 }
 
 // httpMain stands in for a runtime package's Main, such as httpserver.Main:
 // humus.Main with the package's defaults applied before the end user's
 // options, so that the end user's options win.
-func httpMain(init func(ctx context.Context, s *humus.Setup) ([]humus.Service, error), opts ...humus.Option) {
-	humus.Main(init, append([]humus.Option{httpDefaults()}, opts...)...)
+func httpMain(init humus.Init[humus.Host], opts ...humus.Option) {
+	humus.Main(init, append(httpDefaults(), opts...)...)
 }
 ```
 
 The end user's `main` calls the package's `Main`, and its test passes the
-package's defaults with `humustest.WithApp(httpDefaults())`, as
+package's defaults with `humustest.WithApp(httpDefaults()...)`, as
 [Testing](/humus/fundamentals/testing/#runtime-packages) shows, or with the
 package's own `Start`, such as `httpservertest.Start` or
 `grpcservertest.Start`:
@@ -283,11 +312,13 @@ its servers stop. It is a function,
 [`humus.Drain`](https://pkg.go.dev/github.com/z5labs/humus#Drain), so that
 what it waits for is the end user's choice, and so that it can stop waiting
 once nothing is left to drain: a
-`func(ctx context.Context, s *humus.Setup) error`. `App.Drain` holds it. `Main` sets none, and a nil `Drain` means no pause.
+`func(ctx context.Context, s *humus.Setup, n humus.Network) error`, where `n`
+is the App's host. `App.Drain` holds it. `Main` sets none, and a nil `Drain` means no pause.
 
 **It ends once every `Serve` has returned.** Run calls the Drain after
 `Serve`'s context is done, when it hasn't yet received every `Serve`'s
-result, with the `Setup` that `Init` was given. The Drain's context is done
+result, with the `Setup` that `Init` was given and the App's host. The
+Drain's context is done
 once every Service's `Serve` has returned, because nothing is left to drain.
 A Service that stops on `Serve`'s context returns at once or once its work in
 flight is done, and a Service that keeps serving until `Shutdown` doesn't
@@ -338,15 +369,15 @@ when a Service returned on the signal before Run waited for one. When a
 Service returned on its own before any signal, such as a job next to an API,
 it wraps `humus.ErrServiceReturned`, and nothing outside is draining the App.
 A Drain that waited for deregistration then would wait for something nothing
-triggers. This Drain polls a load balancer through `s.Host.DialTCP`, so that it
-runs on a test Host too, and only after a signal:
+triggers. This Drain polls a load balancer through `n.DialTCP`, the App's
+host, so that it runs on a test Host too, and only after a signal:
 
 ```go
-func deregisteringDrain(ctx context.Context, s *humus.Setup) error {
+func deregisteringDrain(ctx context.Context, s *humus.Setup, n humus.Network) error {
 	if errors.Is(humus.ShutdownCause(ctx), humus.ErrServiceReturned) {
 		return nil // no signal came, so nothing is deregistering the pod
 	}
-	return waitUntilDeregistered(ctx, s.Host.DialTCP)
+	return waitUntilDeregistered(ctx, n.DialTCP)
 }
 ```
 
@@ -420,10 +451,11 @@ modification times are real under `synctest`, so code that compares
 ## Setup and OnStop
 
 `Init` is given a [`*humus.Setup`](https://pkg.go.dev/github.com/z5labs/humus#Setup)
-holding the `bedrock.Process` the App is run with, the App's `Host`, its
-telemetry, `Setup.Telemetry`, and its failure injection, `Setup.Faults`.
-`Init` reads its configuration from `Setup.Process`, builds its dependencies
-on `Setup.Host`, takes their tracers, meters and loggers from
+holding the `bedrock.Process` the App is run with, its telemetry,
+`Setup.Telemetry`, and its failure injection, `Setup.Faults`, and the App's
+host as its third argument, `h`. `Init` reads its configuration from
+`Setup.Process`, builds its dependencies on `h`, takes their tracers, meters
+and loggers from
 `Setup.Telemetry`, and returns the Services to run. Every humus server and
 client takes `Setup.Faults` from the `Setup` it is built with, so `Init`
 hands it on by handing on the `Setup`. Its context is done when the
@@ -437,7 +469,7 @@ through too. So register each release as soon as the thing it releases is
 built:
 
 ```go
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	out := s.Process.Stdout
 	s.OnStop(func(context.Context) error {
 		_, err := fmt.Fprintln(out, "on stop: close the cache")
@@ -502,7 +534,7 @@ the context each is given is done when the grace period runs out.
    its default action and ends the process at once, cancels the context
    passed to `Serve`, and logs `shutting down`.
 10. When it hasn't yet received every `Serve`'s result, calls the
-    [drain](#the-drain), with the `Setup` that `Init` was given:
+    [drain](#the-drain), with the `Setup` that `Init` was given and the App's host:
     `humus.DrainDelay` of `HUMUS_SHUTDOWN_DRAIN_DELAY` when that is set, and
     `App.Drain` otherwise. Its context keeps the values of Run's context but
     is not cancelled with it, is done once every `Serve` has returned, and
@@ -547,7 +579,8 @@ context.
 
 **Telemetry is built after `NotifyContext` and before `Init`.** `Run` calls
 `App.Telemetry` with the context that a signal cancels, the `Process`, and the
-Host's `DialTCP`, so the OTLP exporters reach the collector through the `Host`. A
+App's host as its `telemetry.Network`, so the OTLP exporters reach the
+collector through the host. A
 `Builder` that runs a resource detector can be slow, because a cloud detector
 calls its metadata server, so a signal cancels it as it cancels a slow
 `Init`. A failure exits 78 when a `*config.Error` is in its chain, such as a
@@ -617,8 +650,9 @@ A flag usage error is an `Init` failure and exits 1.
 
 An App runs whole inside a test.
 [`humustest.Start`](https://pkg.go.dev/github.com/z5labs/humus/humustest#Start)
-runs the App that `Main` would run for an `Init`, with `Main`'s defaults, on a
-test Host in place of `humus.OSHost()` and on a fake process from
+runs the App that `MainOn` would run for a host and an `Init`, with `Main`'s
+defaults, on the host the test gives it, built from a test Host in place of
+`humus.OSHost()`, and on a fake process from
 [bedrocktest](https://pkg.go.dev/github.com/z5labs/bedrock/bedrocktest),
 whose arguments and environment the test sets, whose output the test reads,
 and to which the test sends fake signals. Options given with
@@ -686,7 +720,7 @@ func TestStart_a_whole_App(t *testing.T) {
 		}}
 
 		var poolClosedAt time.Time
-		init := func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+		init := func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 			s.OnStop(func(context.Context) error {
 				poolClosedAt = time.Now()
 				return nil
@@ -694,7 +728,7 @@ func TestStart_a_whole_App(t *testing.T) {
 			return []humus.Service{api, consumer}, nil
 		}
 
-		p, status := humustest.Start(t, init,
+		p, status := humustest.Start(t, humustest.NewHost(t).Host(), init,
 			humustest.WithApp(humus.WithDrain(humus.DrainDelay(5*time.Second))),
 		)
 		<-p.Notified(syscall.SIGTERM)
@@ -752,7 +786,7 @@ explicitly from `Setup`:
   and use it when the connection string sets no password, and they pick up
   client certificates from `~/.postgresql`. The config they return dials the
   real network: set `cfg.ConnConfig.DialFunc` to one that dials TCP with
-  `s.Host.DialTCP` before opening the pool. `DialTCP` refuses a Unix socket,
+  `h.DialTCP`, the host `Init` is given, before opening the pool. `DialTCP` refuses a Unix socket,
   so it dials one with a `net.Dialer` of its own. Its `LookupFunc` still resolves host names with the real resolver.
 - `flag.CommandLine` and `flag.ExitOnError` read `os.Args` and exit the
   process. Parse `p.Args[1:]` with a `flag.FlagSet` of your own, using

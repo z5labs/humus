@@ -86,12 +86,12 @@ The end user's `Init` sources the `Settings` and the `Connection`, builds the
 // Init is the end user's Init: it sources the Settings and the Connection,
 // builds the Client, a clientset on it and the Reconciler, and returns the
 // Controller, which reconciles Memcacheds and the Deployments they own.
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	settings, err := readSettings(ctx, s)
 	if err != nil {
 		return nil, err // exit 78, naming every bad variable
 	}
-	conn, err := inPod(ctx, s, serviceAccount)
+	conn, err := inPod(ctx, s, h, serviceAccount)
 	if err != nil {
 		return nil, err
 	}
@@ -166,10 +166,10 @@ const serviceAccount = "/var/run/secrets/kubernetes.io/serviceaccount/"
 // inPod fills the Connection of a pod from what the kubelet gives every
 // container: the API server's address in two variables, and the service
 // account's CA and token in dir, read through s.Host.Filesystem.
-func inPod(ctx context.Context, s *humus.Setup, dir string) (kube.Connection, error) {
+func inPod(ctx context.Context, s *humus.Setup, h humus.Host, dir string) (kube.Connection, error) {
 	env := func(name string) config.Value[string] { return config.Env(s.Process.Environment, name) }
 
-	ca, err := readFile(s.Host.Filesystem, dir+"ca.crt")
+	ca, err := readFile(h.Filesystem, dir+"ca.crt")
 	if err != nil {
 		return kube.Connection{}, err
 	}
@@ -185,7 +185,7 @@ func inPod(ctx context.Context, s *humus.Setup, dir string) (kube.Connection, er
 			TLS:    &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
 			// Read again at most once a minute, so a token the kubelet rotates is picked up.
 			Token: func(context.Context) (string, error) {
-				b, err := readFile(s.Host.Filesystem, dir+"token")
+				b, err := readFile(h.Filesystem, dir+"token")
 				return string(bytes.TrimSpace(b)), err
 			},
 		}
@@ -1824,7 +1824,7 @@ real API server below.
 ### The whole App, against k3s
 
 **The whole App runs against k3s in a container.** Its test runs the App
-with `humustest.Start` and `humus.WithHost(humus.OSHost())`, so the Client
+with `humustest.Start` on `humus.OSHost()`, so the Client
 dials the container through the real network, in real time, and the App
 still reads its environment from humustest's process. testcontainers-go's
 k3s module starts `rancher/k3s` as `server --disable-agent`: the API server
@@ -1853,7 +1853,7 @@ CEL rules and enforces its constraints, which `CRD()` leaves to it. The App
 under test is an `Init` of the same shape as the end user's:
 
 ```go
-return humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+return humustest.Start(t, humus.OSHost(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 	client, err := kube.NewClient(s, cluster.conn)
 	if err != nil {
 		return nil, err
@@ -1867,7 +1867,7 @@ return humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Servi
 		return nil, err
 	}
 	return []humus.Service{ctrl}, nil
-}, humustest.WithApp(humus.WithHost(humus.OSHost())))
+})
 ```
 
 It creates a Memcached, waits for its status's `Available` condition, checks

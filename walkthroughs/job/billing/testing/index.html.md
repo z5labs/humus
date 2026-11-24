@@ -328,9 +328,8 @@ func TestInit_passes_the_shared_cases_against_PostgreSQL_and_WireMock(t *testing
 Its `Run` starts the whole App, `Init` and `Options()`, on the OS's Host:
 
 ```go
-p, status := humustest.Start(t, app.Init,
+p, status := humustest.Start(t, humus.OSHost(), app.Init,
 	humustest.WithApp(app.Options()...),
-	humustest.WithApp(humus.WithHost(humus.OSHost())),
 	humustest.WithEnv(all),
 )
 ```

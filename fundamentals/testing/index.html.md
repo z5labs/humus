@@ -4,9 +4,10 @@ A humus App runs whole inside a test.
 [humustest](https://pkg.go.dev/github.com/z5labs/humus/humustest) makes that
 possible:
 
-- **`humustest.Start`** hands the end user's `Init` to the App that
-  `humus.Main` would run for it, with the same defaults, on a test Host in
-  place of `humus.OSHost()` and on a new process from
+- **`humustest.Start`** hands a host and the end user's `Init` to the App
+  that `humus.MainOn` would run for them, with the same defaults, on the
+  test's host, built from a test Host in place of `humus.OSHost()`, and on a
+  new process from
   [bedrocktest](https://pkg.go.dev/github.com/z5labs/bedrock/bedrocktest):
   its arguments, environment and stdin, which the test sets, its output, which
   the test reads, and its signals, which the test sends. It returns the
@@ -32,18 +33,18 @@ and [revision 2](https://github.com/z5labs/humus/discussions/687#discussioncomme
 ## A whole-App test
 
 `helloInit` is the end user's `Init`. Its Service serves hello over HTTP on
-`:8080` of its `Setup`'s Host, and keeps serving until `Shutdown`:
+`:8080` of the host `Init` is given, and keeps serving until `Shutdown`:
 
 ```go
-// helloService serves hello over HTTP on ":8080" of its Setup's Host, as
-// the end user's HTTP Service would. It keeps serving until Shutdown.
+// helloService serves hello over HTTP on ":8080" of its host, as the end
+// user's HTTP Service would. It keeps serving until Shutdown.
 type helloService struct {
-	setup *humus.Setup
-	srv   http.Server
+	host humus.Host
+	srv  http.Server
 }
 
 func (h *helloService) Serve(ctx context.Context) error {
-	ln, err := h.setup.Host.ListenTCP(ctx, "tcp", ":8080")
+	ln, err := h.host.ListenTCP(ctx, "tcp", ":8080")
 	if err != nil {
 		return err
 	}
@@ -59,21 +60,19 @@ func (h *helloService) Serve(ctx context.Context) error {
 func (h *helloService) Shutdown(ctx context.Context) error { return h.srv.Shutdown(ctx) }
 
 // helloInit is the end user's Init of the package doc's example.
-func helloInit(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
-	return []humus.Service{&helloService{setup: s}}, nil
+func helloInit(_ context.Context, _ *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	return []humus.Service{&helloService{host: h}}, nil
 }
 ```
 
-This test hands `helloInit` to `Start`, sends the App a request and stops it
-with SIGTERM:
+This test hands a test Host's `humus.Host` and `helloInit` to `Start`, sends
+the App a request and stops it with SIGTERM:
 
 ```go
 func TestInit_serves_hello(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := humustest.NewHost(t)
-		p, status := humustest.Start(t, helloInit,
-			humustest.WithApp(humus.WithHost(h.Host())),
-		)
+		p, status := humustest.Start(t, h.Host(), helloInit)
 
 		// Wait until every goroutine in the bubble is blocked, which
 		// includes the App blocked in Accept on :8080.
@@ -98,11 +97,11 @@ func TestInit_serves_hello(t *testing.T) {
 }
 ```
 
-The Service listens through `s.Host.ListenTCP`, never through `net.Listen`,
-so it listens on the test Host. `Start` builds a Host of its own, and
-`humus.WithHost(h.Host())` replaces it with one the test holds, so that the
-test can dial it: `h.HTTPClient()` is an `http.Client` that dials the Host,
-with keep-alives off so that no idle connection outlives a request.
+The Service listens through `h.ListenTCP` of the host `Init` is given, never
+through `net.Listen`, so it listens on the test Host. `Start` runs the App on
+the host it is given, which the test holds, so that the test can dial it:
+`h.HTTPClient()` is an `http.Client` that dials the Host, with keep-alives off
+so that no idle connection outlives a request.
 `h.Host()` is the `humus.Host` of the test Host, just as `p.Process()` is the
 `bedrock.Process` of bedrocktest's process.
 
@@ -112,10 +111,12 @@ bubble.
 
 ## Start
 
-`humustest.Start(t, init, opts...)` runs the App that `humus.Main` would run
-for `init`. With no options, that App has:
+`humustest.Start(t, h, init, opts...)` runs the App that `humus.MainOn` would
+run for `h` and `init`. With no options, that App has:
 
-- a new humustest Host, in place of `humus.OSHost()`;
+- the host `h`, which for an App on the default host is a humustest Host's
+  `Host()`, in place of `humus.OSHost()`, and for an App on a host of its
+  own is one built from a humustest Host's parts;
 - `Main`'s telemetry default, so its log records reach `p.Stdout()` as JSON
   lines;
 - `Main`'s 20s grace period, and no drain.
@@ -124,12 +125,13 @@ Its options are of two kinds, in one list, so a whole-App test needs no
 bedrocktest options:
 
 - **`humustest.WithApp(opts...)`** carries humus's own options, the ones
-  `main` passes to `humus.Main`, such as `humus.WithHost`,
-  `humus.WithTelemetry`, `humus.WithShutdownGracePeriod` and
-  `humus.WithDrain`. They are applied after `Start`'s defaults, in order, and
-  `WithApp` given more than once applies every one's options in the order
-  they were given, so a later option wins. An option sees the test Host and
-  `Init`, and may wrap them.
+  `main` passes to `humus.Main`, such as `humus.WithTelemetry`,
+  `humus.WithShutdownGracePeriod` and `humus.WithDrain`. They are applied
+  after `Start`'s defaults, in order, and `WithApp` given more than once
+  applies every one's options in the order they were given, so a later option
+  wins. `Start` fails the test if one is the zero `humus.Option`, or was made
+  for an App on another host type. No option can wrap the host or `Init`: a
+  test that wraps either does so before it passes them to `Start`.
 - **`humustest.WithEnv`, `WithArgs` and `WithStdin`** set the process's
   environment, its arguments after the program name, and its standard input,
   as bedrocktest's options of the same names do.
@@ -137,7 +139,7 @@ bedrocktest options:
 This test sets all three for an `Init` that reads them:
 
 ```go
-_, status := humustest.Start(t, init,
+_, status := humustest.Start(t, humustest.NewHost(t).Host(), init,
 	humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 	humustest.WithEnv(map[string]string{"EXPORT_BUCKET": "nightly"}),
 	humustest.WithArgs("-dry-run", "rows.csv"),
@@ -176,7 +178,7 @@ And the test passes it with `WithApp`, before its own Host and telemetry, so
 that those win:
 
 ```go
-p, status := humustest.Start(t, Init,
+p, status := humustest.Start(t, humustest.NewHost(t).Host(), Init,
 	humustest.WithApp(mainOptions()...),
 	humustest.WithApp(humus.WithTelemetry(tel.Builder())),
 	withEnv(nil),
@@ -204,11 +206,11 @@ func withEnv(more map[string]string) humustest.Option {
 ### Runtime packages
 
 A runtime package whose Services need a drain has a `Main` of its own, with
-its defaults, such as a drain and a shorter grace period, as one
-`humus.Option` ([Runtime packages](/humus/fundamentals/lifecycle/#runtime-packages)).
+its defaults, such as a drain and a shorter grace period, as a
+`[]humus.Option` ([Runtime packages](/humus/fundamentals/lifecycle/#runtime-packages)).
 A test of a `main` that calls the package's `Main` passes the same defaults
 with `WithApp`, before any options of its own, as
-`humustest.Start(t, Init, humustest.WithApp(httpDefaults()))` does with the
+`humustest.Start(t, h.Host(), Init, humustest.WithApp(httpDefaults()...))` does with the
 stand-in on the lifecycle page. Otherwise the test runs on `humus.Main`'s
 defaults, with no drain, and not on the ones production runs with.
 
@@ -245,7 +247,7 @@ records the exception. It is tested in two parts:
   and its publishing behind an interface of its own over `Publish`, which
   the test fakes.
 - **The whole App, against RabbitMQ in a container,** with `humustest.Start`
-  and `humus.WithHost(humus.OSHost())`, in real time. The test declares its
+  on `humus.OSHost()`, in real time. The test declares its
   queues itself, generates the broker's login rather than use `guest`, and
   sits behind a build tag, in a CI job of its own.
 
@@ -260,8 +262,8 @@ runs on `humus.Main`'s defaults, and is tested in three parts:
 - **Its Reconciler, as a function,** handed a plain `kube.Object`, with the
   resources it applies going through client-go's `kubefake.NewClientset()`.
 - **Its CRD,** with a golden test of `Resource.CRD()`'s YAML.
-- **The whole App, against k3s in a container,** with `humustest.Start` and
-  `humus.WithHost(humus.OSHost())`, in real time, behind a build tag, in a
+- **The whole App, against k3s in a container,** with `humustest.Start` on
+  `humus.OSHost()`, in real time, behind a build tag, in a
   CI job of its own.
 
 [Writing a Kubernetes controller](/humus/services/kubernetes/#testing)
@@ -490,7 +492,7 @@ certificate for `carts` from the test's CA:
 func startCarts(t *testing.T, h *humustest.Host, ca *humustest.CA) (stop func()) {
 	t.Helper()
 	cert := ca.Issue(t, "carts")
-	p, exit := humustest.Start(t, func(_ context.Context, s *humus.Setup) ([]humus.Service, error) {
+	p, exit := humustest.Start(t, h.Host(), func(_ context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		svc, err := grpcserver.NewService(s, grpcserver.Settings{
 			Addr: "carts:9090",
 			TLS:  &tls.Config{Certificates: []tls.Certificate{cert.TLS()}},
@@ -500,7 +502,7 @@ func startCarts(t *testing.T, h *humustest.Host, ca *humustest.CA) (stop func())
 		}
 		testpb.RegisterTestServiceServer(svc, carts{})
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)))
+	}, humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)))
 	<-h.Listening("carts:9090")
 	return func() {
 		<-p.Notified(syscall.SIGTERM)
@@ -527,8 +529,8 @@ h := humustest.NewHost(t, hosttest.WithFiles(map[string][]byte{
 stop := startCarts(t, h, ca)
 defer stop()
 
-p, exit := grpcservertest.Start(t, Init,
-	humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+p, exit := grpcservertest.Start(t, h.Host(), Init,
+	humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 	humustest.WithEnv(map[string]string{
 		"GRPC_ADDR":         ":8443",
 		"GRPC_TLS_PEM_FILE": "tls.pem",
@@ -664,15 +666,15 @@ func TestApp_Run_HTTPS_with_a_PKCS12_bundle_from_NewCA(t *testing.T) {
 		hello := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = io.WriteString(w, "hello over TLS")
 		})
-		init := func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-			cfg, err := tlsFromPKCS12(ctx, s)
+		init := func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+			cfg, err := tlsFromPKCS12(ctx, s, h)
 			if err != nil {
 				return nil, err
 			}
-			return []humus.Service{newHTTPSService(s, ":8443", cfg, hello)}, nil
+			return []humus.Service{newHTTPSService(s, h, ":8443", cfg, hello)}, nil
 		}
-		p, status := humustest.Start(t, init,
-			humustest.WithApp(humus.WithHost(h.Host()), humus.WithTelemetry(telemetry.NoopBuilder)),
+		p, status := humustest.Start(t, h.Host(), init,
+			humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			humustest.WithEnv(map[string]string{
 				"TLS_PKCS12_FILE":     h.Path("etc/tls/server.p12"),
 				"TLS_PKCS12_PASSWORD": password,
@@ -708,11 +710,11 @@ func TestApp_Run_HTTPS_with_a_PKCS12_bundle_from_NewCA(t *testing.T) {
 ```
 
 The setting names are only for illustration; each runtime package names its
-own. `tlsFromPKCS12` opens the bundle through `s.Host.Filesystem`, so the App reads it
+own. `tlsFromPKCS12` opens the bundle through `h.Filesystem`, so the App reads it
 from the test's directory here and from the real disk in production:
 
 ```go
-func tlsFromPKCS12(ctx context.Context, s *humus.Setup) (*tls.Config, error) {
+func tlsFromPKCS12(ctx context.Context, s *humus.Setup, h humus.Host) (*tls.Config, error) {
 	path, err := config.Env(s.Process.Environment, "TLS_PKCS12_FILE").Read(ctx)
 	if err != nil {
 		return nil, err
@@ -721,7 +723,7 @@ func tlsFromPKCS12(ctx context.Context, s *humus.Setup) (*tls.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	f, err := s.Host.Filesystem.Open(path)
+	f, err := h.Filesystem.Open(path)
 	if err != nil {
 		return nil, err
 	}
@@ -812,7 +814,7 @@ test of its own:
 ```go
 func TestHTTPService(t *testing.T) {
 	humustest.TestService(t, func(t *testing.T, s *humus.Setup) humus.Service {
-		return newHTTPService(s, ":8080", http.NotFoundHandler())
+		return newHTTPService(s, s.Host, ":8080", http.NotFoundHandler())
 	})
 }
 ```

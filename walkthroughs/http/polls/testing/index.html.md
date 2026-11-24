@@ -5,7 +5,7 @@
 The Site's tests serve it on the humustest Host, with a Store of their own:
 
 ```go
-	p, status := httpservertest.Start(t, func(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+	p, status := httpservertest.Start(t, h.Host(), func(ctx context.Context, s *humus.Setup, _ humus.Host) ([]humus.Service, error) {
 		settings := httpserver.DefaultSettings()
 		settings.Addr = "polls.internal:8443"
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
@@ -22,7 +22,7 @@ The Site's tests serve it on the humustest Host, with a Store of their own:
 			return nil, err
 		}
 		return []humus.Service{svc}, nil
-	}, humustest.WithApp(append([]humus.Option{humus.WithHost(h.Host())}, opts...)...))
+	}, humustest.WithApp(append([]humus.Option{}, opts...)...))
 ```
 
 Each test runs inside `synctest`, and checks the HTML a request gets:
@@ -103,7 +103,7 @@ vote through the other:
 `Init`'s tests give `initWith` a fake database, around a `storetest.Store`:
 
 ```go
-func (db *fakeDatabase) open(_ context.Context, s *humus.Setup, _ *pgxpool.Config) (backend, error) {
+func (db *fakeDatabase) open(_ context.Context, s *humus.Setup, _ humus.Host, _ *pgxpool.Config) (backend, error) {
 	return backend{
 		store:     fakeStore{db: db, Store: db.WithFaults(s.Faults)},
 		results:   db.Store,
@@ -113,8 +113,8 @@ func (db *fakeDatabase) open(_ context.Context, s *humus.Setup, _ *pgxpool.Confi
 	}, nil
 }
 
-func (db *fakeDatabase) init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
-	return initWith(ctx, s, db.open)
+func (db *fakeDatabase) init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
+	return initWith(ctx, s, h, db.open)
 }
 ```
 
@@ -297,8 +297,8 @@ applied:
 		for name, file := range files {
 			env[name] = file
 		}
-		p, status := humustest.Start(t, Init,
-			humustest.WithApp(httpserver.Defaults(), humus.WithHost(humus.OSHost()), humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(Faults)),
+		p, status := humustest.Start(t, humus.OSHost(), Init,
+			humustest.WithApp(httpserver.Defaults()...), humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder), humus.WithFaults(Faults)),
 			humustest.WithEnv(env),
 		)
 		running = append(running, replica{addr: a, p: p, status: status})

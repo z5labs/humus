@@ -30,7 +30,7 @@ import (
 	"github.com/z5labs/humus/job"
 )
 
-func Init(ctx context.Context, s *humus.Setup) ([]humus.Service, error) {
+func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
 	name, err := config.Env(s.Process.Environment, "HELLO_NAME").Read(ctx)
 	if err != nil {
 		return nil, err
@@ -108,7 +108,7 @@ import (
 
 func TestInit_greets_the_name_it_is_given(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		p, status := humustest.Start(t, Init,
+		p, status := humustest.Start(t, humustest.NewHost(t).Host(), Init,
 			humustest.WithEnv(map[string]string{"HELLO_NAME": "Gopher"}),
 		)
 
@@ -124,7 +124,7 @@ func TestInit_greets_the_name_it_is_given(t *testing.T) {
 
 func TestInit_fails_without_a_name(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		_, status := humustest.Start(t, Init)
+		_, status := humustest.Start(t, humustest.NewHost(t).Host(), Init)
 
 		st := <-status
 		if st.Code() != 78 {
