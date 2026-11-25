@@ -10,11 +10,11 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.45.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.45.0
-	github.com/z5labs/bedrock v0.27.0
-	github.com/z5labs/bedrock/circuit v0.27.0
-	github.com/z5labs/bedrock/fit v0.27.0
-	github.com/z5labs/bedrock/host v0.27.0
-	github.com/z5labs/bedrock/retry v0.27.0
+	github.com/z5labs/bedrock v0.28.0
+	github.com/z5labs/bedrock/circuit v0.28.0
+	github.com/z5labs/bedrock/fit v0.28.0
+	github.com/z5labs/bedrock/host v0.28.0
+	github.com/z5labs/bedrock/retry v0.28.0
 	github.com/z5labs/humus v0.18.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/log v1.47.0
