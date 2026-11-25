@@ -8,7 +8,7 @@ Everything the cart's `Init` reads, in one struct:
 type settings struct {
 	HTTP            httpserver.Settings
 	Database        *pgxpool.Config
-	Catalog         httpclient.Settings
+	Catalog         http3client.Settings
 	KeySet          keySetSettings
 	JWT             jwt.Settings
 	FaultTrustScope string
@@ -101,10 +101,10 @@ not `TLS_KEY_FILE`.
 | `HTTP2_ONLY` | whether it serves HTTP/2 only | false |
 | `READ_HEADER_TIMEOUT`, `READ_TIMEOUT`, `WRITE_TIMEOUT`, `IDLE_TIMEOUT`, `MAX_HEADER_BYTES` | `httpserver.Settings`' fields | `httpserver.DefaultSettings()`' |
 | `DATABASE_URL_FILE` | a file holding its PostgreSQL URL | required |
-| `CATALOG_URL` | the catalog's base URL, `https` | required |
+| `CATALOG_URL` | the catalog's base URL, `https`, called over HTTP/3 | required |
 | `CATALOG_CA_FILE` | the CA certificates the catalog is trusted through, PEM | required |
 | `CATALOG_CLIENT_CERT_FILE`, `CATALOG_CLIENT_KEY_FILE` | files holding the client certificate it presents to the catalog and its key, PEM | required |
-| `CATALOG_TIMEOUT`, `CATALOG_ATTEMPT_TIMEOUT`, `CATALOG_MAX_ATTEMPTS` | `httpclient.Settings`' fields, for the catalog | `httpclient.DefaultSettings()`' |
+| `CATALOG_TIMEOUT`, `CATALOG_ATTEMPT_TIMEOUT`, `CATALOG_MAX_ATTEMPTS` | `http3client.Settings`' fields, for the catalog | `http3client.DefaultSettings()`' |
 | `JWKS_URL` | the key set's URL, absolute and `https` | required |
 | `JWKS_CA_FILE` | the CA certificates the key set is trusted through, PEM | the system's roots |
 | `JWKS_TIMEOUT`, `JWKS_ATTEMPT_TIMEOUT`, `JWKS_MAX_ATTEMPTS` | `httpclient.Settings`' fields, for the key set | `httpclient.DefaultSettings()`' |
@@ -124,9 +124,9 @@ against:
 
 | Variable | What it is | Default |
 |---|---|---|
-| `ADDR`, `TLS_CERT_FILE`, `TLS_KEY_FILE`, `DATABASE_URL_FILE` | as the cart's | required |
+| `ADDR`, `TLS_CERT_FILE`, `TLS_KEY_FILE`, `DATABASE_URL_FILE` | as the cart's, and `ADDR` is the UDP address it serves HTTP/3 on too | required |
 | `CLIENT_CA_FILE` | the CA certificates a client certificate is verified against, PEM | required |
-| `HTTP2_ONLY`, `READ_HEADER_TIMEOUT`, `READ_TIMEOUT`, `WRITE_TIMEOUT`, `IDLE_TIMEOUT`, `MAX_HEADER_BYTES` | as the cart's | as the cart's |
+| `HTTP2_ONLY`, `READ_HEADER_TIMEOUT`, `READ_TIMEOUT`, `WRITE_TIMEOUT`, `IDLE_TIMEOUT`, `MAX_HEADER_BYTES` | as the cart's; all but `HTTP2_ONLY` bound HTTP/3 too | as the cart's |
 | `JWKS_URL`, `JWT_ISSUER`, `JWT_AUDIENCE` | as the cart's | required |
 | `JWKS_CA_FILE`, `JWKS_TIMEOUT`, `JWKS_ATTEMPT_TIMEOUT`, `JWKS_MAX_ATTEMPTS`, `JWT_ALGORITHMS`, `JWT_LEEWAY`, `JWT_MIN_REFRESH_INTERVAL`, `JWT_MAX_KEY_AGE` | as the cart's | as the cart's |
 | `FAULT_MAX_DELAY` | as the cart's | 10s |
@@ -345,7 +345,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 
 type openStore func(ctx context.Context, s *humus.Setup, h humus.Host, cfg *pgxpool.Config) (store endpoint.Store, ping func(context.Context) error, err error)
 
-type newCatalog func(s *humus.Setup, n httpclient.Network, settings httpclient.Settings) (catalog endpoint.Catalog, ready func(context.Context) error, err error)
+type newCatalog func(s *humus.Setup, n http3client.Network, settings http3client.Settings) (catalog endpoint.Catalog, ready func(context.Context) error, err error)
 
 func initWith(ctx context.Context, s *humus.Setup, h humus.Host, open openStore, newCatalog newCatalog) ([]humus.Service, error) {
 	settings, err := readSettings(ctx, s, h)
@@ -367,12 +367,14 @@ func initWith(ctx context.Context, s *humus.Setup, h humus.Host, open openStore,
 Then it verifies tokens and builds the API, as
 [Who may do what](/humus/walkthroughs/http/shoppingcart/access/#verifying-tokens)
 and [The cart's API](/humus/walkthroughs/http/shoppingcart/api/#the-api)
-show. The catalog's `Init` is the same, with `InitWith` and no catalog to
-open.
+show. The catalog's `Init` is the same, with `InitWith`, no catalog to
+open, and an `http3server` Service beside its `httpserver` one, as
+[The catalog](/humus/walkthroughs/http/shoppingcart/catalog/#serving-http3)
+shows.
 
 Each `Init` is given the host, `h`, and hands it to each runtime as the
 network it uses: the pool dials through it, `newCatalog` takes it as the
-catalog client's `httpclient.Network`, and `httpserver.NewService` listens
+catalog client's `http3client.Network`, and `httpserver.NewService` listens
 through it.
 
 ## Readiness

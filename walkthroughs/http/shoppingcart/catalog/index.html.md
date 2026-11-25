@@ -1,8 +1,8 @@
 # The catalog
 
 The catalog is a second humus service, written as the cart is: an
-`openapi/v3` API served by `httpserver`, on a PostgreSQL database of its
-own. It has two operations:
+`openapi/v3` API served by `httpserver`, and by `http3server` over HTTP/3,
+on a PostgreSQL database of its own. It has two operations:
 
 - `GET /products/{productId}` answers a product and its price, to a caller
   with a client certificate the internal CA issued, which is the cart;
@@ -178,6 +178,49 @@ ClientCAs:  r.Get(file("CLIENT_CA_FILE").Parse(certPool)),
 
 It doesn't require one, so the kubelet's probes and a writer with only a
 token still connect. `auth.Require(client)` is what makes a read need one.
+
+## Serving HTTP/3
+
+The catalog serves its mux over HTTP/3 too, on the same port, 8443, over
+UDP. Its `http3server.Settings` are its `httpserver.Settings`, field for
+field, with the same TLS config:
+
+```go
+HTTP3: http3server.Settings{
+	Addr:              tcp.Addr,
+	TLS:               tcp.TLS,
+	ReadHeaderTimeout: tcp.ReadHeaderTimeout,
+	ReadTimeout:       tcp.ReadTimeout,
+	WriteTimeout:      tcp.WriteTimeout,
+	IdleTimeout:       tcp.IdleTimeout,
+	MaxHeaderBytes:    tcp.MaxHeaderBytes,
+	TrustScenario:     tcp.TrustScenario,
+},
+```
+
+`Init` returns both Services:
+
+```go
+tcp, err := httpserver.NewService(ctx, s, h, settings.HTTP, mux)
+if err != nil {
+	return nil, err
+}
+udp, err := http3server.NewService(ctx, s, h, settings.HTTP3, mux)
+if err != nil {
+	return nil, err
+}
+return []humus.Service{tcp, udp}, nil
+```
+
+- **One TLS config serves both.** It sets no `MaxVersion`, so it allows
+  TLS 1.3, which QUIC needs, and its client certificates verify over QUIC as
+  over TCP.
+- **The cart calls it over HTTP/3,** as
+  [Calling the catalog](/humus/walkthroughs/http/shoppingcart/calling-the-catalog/)
+  shows. The kubelet's probes, and the tests' port-forwards, stay on TCP.
+- **Both drain in one grace period,** under `httpserver.Main`'s defaults,
+  as [Serving HTTP/3](/humus/services/http/serving-http3/#the-drain)
+  describes.
 
 ## The Store and its injection point
 

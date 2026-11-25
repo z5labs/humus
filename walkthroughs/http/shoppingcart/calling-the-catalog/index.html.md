@@ -1,17 +1,18 @@
 # Calling the catalog
 
-The cart has one `httpclient` client for the catalog. Prices and readiness
-both go through it.
+The cart has one `http3client` client for the catalog, which calls it over
+HTTP/3. Prices and readiness both go through it. The key-set client stays on
+`httpclient`, over TCP.
 
 ## The client's settings
 
-The cart's `readSettings` starts from `httpclient.DefaultSettings()`, and
+The cart's `readSettings` starts from `http3client.DefaultSettings()`, and
 sets the catalog's URL, the CA it trusts the catalog through, and the
 client certificate it presents:
 
 ```go
-catalog := httpclient.DefaultSettings()
-catalog.BaseURL = r.Get(env("CATALOG_URL").Parse(url.Parse).Validate(checkCatalogURL))
+catalog := http3client.DefaultSettings()
+catalog.BaseURL = r.Get(env("CATALOG_URL").Parse(url.Parse).Validate(http3client.CheckBaseURL))
 catalog.TLS = &tls.Config{
 	RootCAs: r.Get(file("CATALOG_CA_FILE").Parse(certPool)),
 	GetClientCertificate: r.Get(env("CATALOG_CLIENT_CERT_FILE").Validate(holdsCertificate(h.Filesystem)).FlatMap(func(certFile string) config.Value[clientCertificate] {
@@ -24,9 +25,9 @@ catalog.TLS = &tls.Config{
 		})
 	})),
 }
-catalog.Timeout = r.Get(env("CATALOG_TIMEOUT").Parse(time.ParseDuration).Default(catalog.Timeout).Validate(httpclient.CheckTimeout))
-catalog.AttemptTimeout = r.Get(env("CATALOG_ATTEMPT_TIMEOUT").Parse(time.ParseDuration).Default(catalog.AttemptTimeout).Validate(httpclient.CheckAttemptTimeout))
-catalog.MaxAttempts = r.Get(env("CATALOG_MAX_ATTEMPTS").Parse(strconv.Atoi).Default(catalog.MaxAttempts).Validate(httpclient.CheckMaxAttempts))
+catalog.Timeout = r.Get(env("CATALOG_TIMEOUT").Parse(time.ParseDuration).Default(catalog.Timeout).Validate(http3client.CheckTimeout))
+catalog.AttemptTimeout = r.Get(env("CATALOG_ATTEMPT_TIMEOUT").Parse(time.ParseDuration).Default(catalog.AttemptTimeout).Validate(http3client.CheckAttemptTimeout))
+catalog.MaxAttempts = r.Get(env("CATALOG_MAX_ATTEMPTS").Parse(strconv.Atoi).Default(catalog.MaxAttempts).Validate(http3client.CheckMaxAttempts))
 catalog.ForwardScenario = true
 ```
 
@@ -34,19 +35,19 @@ catalog.ForwardScenario = true
 type clientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error)
 ```
 
-The catalog asks for a client certificate, so its URL must be `https`:
+`http3client.CheckBaseURL` rejects an `http` URL, since HTTP/3 has no
+plain-text form, so `CATALOG_URL` is `https`, and the cart exits 78 on
+any other.
 
-```go
-func checkCatalogURL(u *url.URL) error {
-	if err := httpclient.CheckBaseURL(u); err != nil {
-		return err
-	}
-	if u.Scheme != "https" {
-		return errors.New("must be an https URL")
-	}
-	return nil
-}
-```
+## HTTP/3 alone
+
+The client speaks HTTP/3 by prior knowledge, and never falls back to TCP.
+It dials each QUIC connection through the cart's Host, with
+`n.DialUDP(ctx, "udp", "catalog:8443")`, so the cluster's DNS and
+kube-proxy carry it as they carry TCP. A catalog that doesn't answer over
+UDP fails each attempt, and the breaker counts it, as
+[Calling a dependency over HTTP/3](/humus/dependencies/http/#calling-a-dependency-over-http3)
+describes.
 
 ## Retries and the breaker
 
@@ -57,12 +58,12 @@ a `GET`, so it is safe to retry:
 |---|---|---|
 | 200, or a 404 | no | a success |
 | 502, 503 or 504 | yes | a failure |
-| a refused or reset connection, or an `AttemptTimeout` | yes | a failure |
+| a QUIC handshake that fails or times out, a reset stream, or an `AttemptTimeout` | yes | a failure |
 | a 500 | no | a failure |
 
 A 404 is the catalog working, so it counts for the catalog, not against it.
 [Calling HTTP services](/humus/dependencies/http/#how-an-attempts-result-counts)
-describes the default.
+describes the default, which `http3client`'s is.
 
 ## `ForwardScenario`
 
@@ -78,8 +79,8 @@ cart's client certificate verified.
 it, a `Catalog` and a readiness check:
 
 ```go
-func openCatalog(s *humus.Setup, n httpclient.Network, settings httpclient.Settings) (endpoint.Catalog, func(context.Context) error, error) {
-	client, err := httpclient.NewClient(s, n, settings)
+func openCatalog(s *humus.Setup, n http3client.Network, settings http3client.Settings) (endpoint.Catalog, func(context.Context) error, error) {
+	client, err := http3client.NewClient(s, n, settings)
 	if err != nil {
 		return nil, nil, err
 	}

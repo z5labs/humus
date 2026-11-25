@@ -8,8 +8,8 @@ of them static, and the image copies them to `/cart`, `/catalog` and
 [`example/http/shoppingcart/Dockerfile`](https://github.com/z5labs/humus/blob/main/example/http/shoppingcart/Dockerfile)
 names the exact images and their versions.
 
-Build it from the repository's root, since the module replaces humus with
-its directory:
+Build it from the repository's root, since the module replaces humus and
+its `http3` module with their directories:
 
 ```sh
 docker build --file example/http/shoppingcart/Dockerfile --tag shoppingcart .
@@ -206,7 +206,22 @@ Secrets:
 
 The catalog's Deployment is the same, with its own names, and the CA it
 checks client certificates against in place of the cart's client
-certificate.
+certificate. It serves HTTP/3 too, on the same port number over UDP, so its
+container has a UDP entry beside the TCP one, written out, since a port is
+TCP unless it says otherwise:
+
+```yaml
+          ports:
+            - name: https
+              containerPort: 8443
+              protocol: TCP
+            - name: h3
+              containerPort: 8443
+              protocol: UDP
+```
+
+Its probes stay `httpGet` on `https`, over TCP, since the kubelet probes
+over TCP only.
 
 A Service in front of each takes the port by name:
 
@@ -224,6 +239,21 @@ spec:
     - name: https
       port: 8443
       targetPort: https
+```
+
+The catalog's Service has the UDP port too, which the cart's HTTP/3 calls
+reach the catalog's pods through:
+
+```yaml
+  ports:
+    - name: https
+      port: 8443
+      targetPort: https
+      protocol: TCP
+    - name: h3
+      port: 8443
+      targetPort: h3
+      protocol: UDP
 ```
 
 ## The disruption budgets
@@ -393,7 +423,9 @@ kubectl --context kind-kind --namespace shoppingcart get secret token-signing-ke
 kubectl --context kind-kind --namespace shoppingcart get secret cart-ca -o jsonpath='{.data.ca\.crt}' | base64 -d >ca.crt
 ```
 
-Forward a port to each service:
+Forward a port to each service. `kubectl port-forward` carries TCP only,
+so these calls are HTTP/2, while the cart's calls to the catalog inside
+the cluster are HTTP/3:
 
 ```sh
 kubectl --context kind-kind --namespace shoppingcart port-forward service/catalog 9443:8443 &
