@@ -72,6 +72,11 @@ An HTTP service can serve a hypermedia UI too, with the `hypermedia` and
 `sse` packages, as
 [Serving a hypermedia UI](https://z5labs.github.io/humus/services/http/hypermedia/)
 shows with the code of [`example/http/inlineedit`](example/http/inlineedit).
+It can serve HTTP/3 beside HTTP/1.1 and HTTP/2, and call a dependency over
+HTTP/3, with the nested `http3` module, as
+[Serving HTTP/3](https://z5labs.github.io/humus/services/http/serving-http3/)
+and [Calling HTTP services](https://z5labs.github.io/humus/dependencies/http/)
+show.
 
 ## Documentation
 
@@ -92,7 +97,7 @@ is a module of its own too, and is never released.
 Require the same version of every humus module you use:
 
 ```sh
-go get github.com/z5labs/humus@vX.Y.Z github.com/z5labs/humus/grpc@vX.Y.Z
+go get github.com/z5labs/humus@vX.Y.Z github.com/z5labs/humus/grpc@vX.Y.Z github.com/z5labs/humus/http3@vX.Y.Z
 ```
 
 A release updates every humus version the docs name, here and on the

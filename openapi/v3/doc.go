@@ -150,12 +150,12 @@
 //
 // An error from the WriterTo cuts the response short. The status, and
 // whatever part of the body was written, have already gone out, so the API
-// aborts the response: on HTTP/2 the stream is reset, and on HTTP/1.1 the
-// connection is closed before the final chunk. The client sees a failed
-// response rather than one that looks complete. A response with a
+// aborts the response: on HTTP/2 and HTTP/3 the stream is reset, and on
+// HTTP/1.1 the connection is closed before the final chunk. The client sees
+// a failed response rather than one that looks complete. A response with a
 // Content-Length that fails after its last byte has the length it was
-// promised, and looks complete, so a WriterTo that does work after the
-// body should leave Len out, so that a failure is seen.
+// promised, and looks complete, so a WriterTo that does work after the body
+// should leave Len out, so that a failure is seen.
 //
 // The status is written before the first byte of the body, as HTTP
 // requires. So a status that depends on that work needs the body copied
@@ -365,19 +365,19 @@
 // for it, since the panic never reaches httpserver.
 //
 // An error from a WriterTo, once the status is written, is the server's
-// too. The API records it as an exception event on the request's span,
-// sets the span's status to Error, and emits one ERROR record, "response
+// too. The API records it as an exception event on the request's span, sets
+// the span's status to Error, and emits one ERROR record, "response
 // failed", in the request's context, with the same attributes. When the
 // client went away, it goes on the span only. The client went away when a
 // write to the writer the WriterTo is handed failed because the connection
-// did: over HTTP/2, such a write can fail before the server cancels the
-// request's context. With no failed write, it went away when the request's
-// context is done. A write the server refuses, a body for a status that
-// has none or more bytes than the WriterTo's Len, is the server's failure,
-// and is logged whatever the request's context: an HTTP/1.1 client that
-// has read the whole Content-Length may close its connection, which
-// cancels the context before the write past the Len fails. Then the API
-// panics with http.ErrAbortHandler, which
-// httpserver and net/http pass through without logging, so httpserver
-// records no "handler panicked" for it.
+// did: over HTTP/2 and HTTP/3, such a write can fail before the server
+// cancels the request's context. With no failed write, it went away when
+// the request's context is done. A write the server refuses, a body for a
+// status that has none or more bytes than the WriterTo's Len, is the
+// server's failure, and is logged whatever the request's context: an
+// HTTP/1.1 client that has read the whole Content-Length may close its
+// connection, which cancels the context before the write past the Len
+// fails. Then the API panics with http.ErrAbortHandler, which httpserver
+// and net/http pass through without logging, so httpserver records no
+// "handler panicked" for it.
 package openapi

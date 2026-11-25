@@ -230,6 +230,11 @@ forget the defaults. `httpserver` ships `httpservertest`, with `Start`, which
 is `humustest.Start` with `httpserver.Defaults()` applied before the test's
 options, and `NewClient`, which returns an HTTP/2 client for the test Host
 that trusts the test's CA. [Serving HTTP]({{< relref "/services/http/serving#testing" >}})
+shows both. The http3 module's `http3server` ships `http3servertest`, with
+`Start`, which is `humustest.Start` with `http3server.Defaults()` applied
+before the test's options, and `NewClient`, which returns an HTTP/3 client
+that dials the Service through the test Host's `DialUDP`, trusting the
+test's CA. [Serving HTTP/3]({{< relref "/services/http/serving-http3#testing" >}})
 shows both. `grpcserver` ships `grpcservertest`, with `Start`, which is
 `humustest.Start` with `grpcserver.Defaults()` applied before the test's
 options, and `NewClient`, which returns a gRPC client that dials the Service
@@ -469,7 +474,9 @@ fmt.Println(string(b))
 `ListenUDP` returns, so a test whose App binds one waits with
 `synctest.Wait()`, which returns once the App is blocked reading the socket,
 before it sends. A datagram sent before then is dropped, as on a real
-network.
+network. An HTTP/3 Service from `http3server` binds one, so its tests wait
+this way, as [Serving HTTP/3]({{< relref "/services/http/serving-http3#testing" >}})
+shows.
 
 ### Resolvers inside synctest
 

@@ -776,8 +776,8 @@ These aren't recovered by the API:
 The status is written before the first byte of the body, as HTTP requires,
 so an error from the `WriterTo` comes once the status, and whatever part of
 the body was written, have already gone out. The API can't change the
-response, so it aborts it: on HTTP/2 the stream is reset, and on HTTP/1.1 the
-connection is closed before the final chunk. The client sees a failed
+response, so it aborts it: on HTTP/2 and HTTP/3 the stream is reset, and on
+HTTP/1.1 the connection is closed before the final chunk. The client sees a failed
 response rather than one that looks complete. The error is the server's,
 unless the client went away, and the API records it as `response failed`.
 
@@ -786,7 +786,7 @@ has a `Len() int` method, as a `*bytes.Reader` does, the API sets
 `Content-Length` to it, so `Len` must be the number of bytes `WriteTo`
 writes: a body longer than its `Len` fails, and one shorter is cut short.
 Otherwise the response is chunked over HTTP/1.1, and has no length on
-HTTP/2. A response with a `Content-Length` that fails after its last byte
+HTTP/2 or HTTP/3. A response with a `Content-Length` that fails after its last byte
 has the length it was promised, and looks complete to the client. So a
 `WriterTo` that does work after the body, as the download above does, leaves
 `Len` out, so that a failure is seen.

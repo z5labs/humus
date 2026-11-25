@@ -7,8 +7,9 @@ description: >
   config.Struct, TLS and plain text, which requests are retried and how the
   end user's Classify decides what an answer means, Retry-After and the
   timeouts, the circuit breaker and its log records, the body rules,
-  HTTP/2 behind a Kubernetes Service, what it records, and how to test the
-  calls against a fake dependency.
+  HTTP/2 behind a Kubernetes Service, calling a dependency over HTTP/3 with
+  http3client, what it records, and how to test the calls against a fake
+  dependency.
 type: docs
 weight: 10
 ---
@@ -627,6 +628,102 @@ the Service, which reaches a pod still in its endpoints, and its calls move
 there. The same holds when the dependency scales up: a new pod gets a
 client's calls only once the client's connection closes, at a pod's
 shutdown or once it has been idle for 90s.
+
+## Calling a dependency over HTTP/3
+
+The http3 module's
+[`http3client`](https://pkg.go.dev/github.com/z5labs/humus/http3/http3client)
+calls a dependency over HTTP/3. Its `NewClient(s, n, settings)` returns a
+plain `*http.Client` too, built once in `Init`, and its API is its own: its
+`Settings`, `Classification`, `DefaultSettings` and checks mirror this
+package's, field for field and default for default, except that HTTP/3 has
+no plain-text form and QUIC requires TLS 1.3. The retries, the breaker, the
+timeouts, `Classify` and the failure injection are this package's, the same
+code, so everything above holds for it.
+
+```go
+paymentsSettings, err := config.Struct(func(r *config.Resolver) http3client.Settings {
+	c := d
+	// No .Default: BaseURL is required. HTTP/3 is always TLS, and with no
+	// PAYMENTS_CA_FILE the client trusts the system's roots.
+	c.BaseURL = r.Get(env("PAYMENTS_URL").Parse(url.Parse).Validate(http3client.CheckBaseURL))
+	c.TLS = r.Get(env("PAYMENTS_CA_FILE").Parse(readFile(h.Filesystem)).Parse(trusting).Default(nil).Validate(http3client.CheckTLS))
+	c.Timeout = r.Get(env("PAYMENTS_TIMEOUT").Parse(time.ParseDuration).Default(d.Timeout).Validate(http3client.CheckTimeout))
+	return c
+}).Read(ctx)
+if err != nil {
+	return nil, err // exit 78, naming every bad variable
+}
+```
+
+`d` is `http3client.DefaultSettings()`. `n` is an `http3client.Network`,
+which lists only `DialUDP`, and `Init` passes its host:
+
+```go
+// One client for the dependency, built once and shared by every
+// request the handler serves. It dials over UDP through h, and never
+// falls back to TCP.
+payments, err := http3client.NewClient(s, h, paymentsSettings)
+if err != nil {
+	return nil, err
+}
+```
+
+**HTTP/3 by prior knowledge, with no fallback.** The client never asks the
+dependency which protocols it speaks, and never falls back to HTTP/2 or
+HTTP/1.1 over TCP. Calling `http3client.NewClient` in place of
+`httpclient.NewClient` is the opt-in, since a service knows its dependency.
+An `http` `BaseURL` fails `CheckBaseURL`, so the App exits 78.
+
+**A blocked UDP path fails each attempt, and then the breaker opens.** A
+dependency that doesn't answer over UDP, or a network between the two that
+drops UDP, looks like a dependency that is down:
+
+- A closed port fails the attempt at once, with `ECONNREFUSED`, since the
+  client dials a connected UDP socket. A path that drops UDP silently fails
+  it at the sooner of `AttemptTimeout` and QUIC's 5s handshake idle timeout,
+  both 5s on the defaults. With `Timeout`'s 10s default, at most two such
+  attempts fit in one call, whatever `MaxAttempts` is.
+- The default `Classify` counts either as `Retry`, `Failure`, so the
+  attempt is retried, within `MaxAttempts` and the retry budget, and the
+  breaker counts every one.
+- Once the breaker opens, calls fail at once, until `OpenFor` has passed
+  and a probe gets an answer.
+
+Nothing tries TCP instead. So a dependency moved behind a proxy or a
+NetworkPolicy that carries only TCP shows as `humus.circuit.calls` with
+`failure`, attempts that fail with no response, and the breaker's
+`circuit breaker open` record, under http3client's scope, not as a slower
+call. The fix is the network's, or
+a client from `httpclient` instead.
+
+The rest of what is particular to HTTP/3:
+
+- **Each connection is a connected UDP socket,** dialled with
+  `n.DialUDP(ctx, "udp", address)`, so the network resolves the name as it
+  does for TCP, and a test's network carries the connection. Its QUIC config
+  sets a 5s handshake idle timeout, a 30s idle timeout, and a keep-alive
+  every 10s on a connection no call is using.
+- **Calls past the streams the server allows at once wait** on the same
+  connection for one to finish: 100 for an `http3server` Service.
+- **quic-go sends a request again, once, inside the same attempt,** when the
+  server rejects its stream with `H3_REQUEST_REJECTED`, or the connection is
+  going away after a GOAWAY, as a humus server's drain does. Neither the
+  breaker nor the retry budget sees it.
+- **`OnStop` closes every connection and socket the client dialled** that is
+  still open, a connection quic-go stopped using after a stream error
+  included, so nothing it dialled outlives the App.
+- **Each attempt's span has `network.protocol.version` `3.0`,** a failed
+  attempt's included, and humus's own instruments are recorded under the
+  client's own scope, `github.com/z5labs/humus/http3/http3client`, so a query
+  over both transports matches both scopes.
+
+A test calls the dependency over humustest's network as it does over TCP:
+the fake dependency serves HTTP/3 on a UDP socket of the same Host, from
+`h.ListenUDP`, and the test waits for its socket with `synctest.Wait()`.
+`TestInit_calls_payments_over_HTTP3`, in
+[`http3client`'s `app_test.go`](https://github.com/z5labs/humus/blob/main/http3/http3client/app_test.go),
+runs a whole App that calls one this way.
 
 ## Telemetry
 
