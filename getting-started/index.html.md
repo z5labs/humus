@@ -9,7 +9,7 @@ exits. It needs Go 1.27 or later, and nothing else. Its code is
 ```sh
 mkdir hello && cd hello
 go mod init example.com/hello
-go get github.com/z5labs/humus@v0.18.0
+go get github.com/z5labs/humus@v0.19.0
 ```
 
 ## 2. Write Init
