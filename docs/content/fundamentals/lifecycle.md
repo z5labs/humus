@@ -882,7 +882,7 @@ explicitly from `Setup`:
   the server against the system's roots, which `crypto/x509` reads from the
   files and directories `SSL_CERT_FILE` and `SSL_CERT_DIR` name in the real
   environment, and from the OS's certificate files on the real disk, not
-  through the Host. An `httpclient` client, or a `grpcclient` Client, whose
+  through the Host. An `httpclient` or `http3client` client, or a `grpcclient` Client, whose
   `Settings.TLS` has no `RootCAs` reads them. A service that calls only its
   own services sets `RootCAs` to its CA, and a test sets it to the pool of a
   CA from `humustest.NewCA`, as
@@ -935,6 +935,23 @@ explicitly from `Setup`:
   their own, such as in `Init`, can still reach the global logger. Setting
   klog's logger, output or flags is process-wide state, and lint denies it
   in every humus module.
+- **quic-go's stderr warning.** quic-go, which the `http3` module serves
+  and calls HTTP/3 with, writes a warning to the real standard error with
+  `log.Printf`, once per process, when it can't raise a UDP socket's receive
+  or send buffer to the 7 MiB it wants: on a real node whose
+  `net.core.rmem_max` or `net.core.wmem_max` is below 3.5 MiB, in a process
+  without `CAP_NET_ADMIN`. It also writes to the real standard error when
+  `QUIC_GO_LOG_LEVEL` turns its own logger on, and when that level isn't one
+  it knows. Silencing them means `log.SetOutput`, which is process-wide
+  state, so humus never calls it. humustest's sockets set their buffers, so
+  a test on a humustest Host writes nothing.
+- **quic-go's `QUIC_GO_*` variables.** It reads `QUIC_GO_LOG_LEVEL`,
+  `QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING`, `QUIC_GO_DISABLE_GSO`,
+  `QUIC_GO_DISABLE_ECN` and `QUIC_GO_DISABLE_CLIENTHELLO_SCRAMBLING` from the
+  real environment, with `os.Getenv`, not from the Process's. An operator who
+  sets one sets it on the process itself, as
+  [Serving HTTP/3]({{< relref "/services/http/serving-http3#the-udp-buffer-warning" >}})
+  describes.
 
 `flag`, `exec.Cmd`, `http.ProxyFromEnvironment` and `slog.Default` are on
 [bedrock's own list](https://pkg.go.dev/github.com/z5labs/bedrock#hdr-Ambient_leaks).

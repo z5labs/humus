@@ -147,6 +147,14 @@
 // error page, and sse writes the Server-Sent Events of a feed that ends
 // once httpserver.ShuttingDown is closed, documented at
 // https://z5labs.github.io/humus/services/http/hypermedia/.
+// The http3 module, a new feature too, has landed: with quic-go, its
+// http3server package serves an http.Handler over HTTP/3 as a Service
+// beside httpserver's, on the same host:port, and drains it itself, and its
+// http3client package calls one HTTP dependency per client over HTTP/3
+// alone, with no fallback to TCP, through httpclient's retries and circuit
+// breaker, documented at
+// https://z5labs.github.io/humus/services/http/serving-http3/ and
+// https://z5labs.github.io/humus/dependencies/http/.
 // The other runtime packages come back through their own proposals.
 //
 // The plan is in the charter, Proposal: humus on the bedrock process model:
