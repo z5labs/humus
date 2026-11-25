@@ -38,8 +38,8 @@ so in **Explore**, with **Tempo**, find the adds by their name:
 |---|---|---|
 | `POST /carts/{cartId}/items` | cart | the add |
 | `GET`, with `server.address` `wiremock` | cart | a fetch of the key set, when the Verifier needs keys |
-| `GET`, with `server.address` `catalog` | cart | each attempt at the catalog, under the add |
-| `GET /products/{productId}` | catalog | the catalog's answer, a child of the cart's attempt |
+| `GET`, with `server.address` `catalog` | cart | each attempt at the catalog, under the add, with `network.protocol.version` `3.0` |
+| `GET /products/{productId}` | catalog | the catalog's answer, a child of the cart's attempt, over HTTP/3 |
 
 So one trace holds both services. A test of the App checks it:
 
@@ -50,9 +50,11 @@ attempts := catalogAttempts(cartSpans, add.SpanContext().TraceID())
 require.NotEmpty(t, attempts, "the cart has no attempt span in the add's trace")
 for _, attempt := range attempts {
 	require.True(t, descends(attempt, add, cartSpans), "the attempt %s is not under the add", attempt.Name())
+	require.Equal(t, "3.0", attr(attempt.Attributes(), "network.protocol.version").AsString(), "the attempt %s", attempt.Name())
 }
 
 product := serverSpan(t, s.catalog.Spans(), http.MethodGet, "/products/"+sku)
+require.Equal(t, "3.0", attr(product.Attributes(), "network.protocol.version").AsString())
 require.Equal(t, add.SpanContext().TraceID(), product.SpanContext().TraceID())
 require.True(t, slices.ContainsFunc(attempts, func(attempt sdktrace.ReadOnlySpan) bool {
 	return attempt.SpanContext().SpanID() == product.Parent().SpanID()
@@ -99,7 +101,7 @@ In Explore, with **Loki**, the cart's records are:
 | `listening`, and each line of `net/http`'s error log, at ERROR | `httpserver` |
 | `request failed`, `operation panicked`, `response failed`, at ERROR | the API, `openapi/v3` |
 | `keys refresh failed`, at WARN | `auth/jwt`, when the key set can't be fetched again |
-| `circuit breaker open`, `circuit breaker half-open`, `circuit breaker closed` | each `httpclient` Client's breaker, with the dependency's `server.address` |
+| `circuit breaker open`, `circuit breaker half-open`, `circuit breaker closed` | each client's breaker, `http3client`'s for the catalog and `httpclient`'s for a key set, with the dependency's `server.address` |
 
 The catalog writes the same, with `service_name="catalog"`. Its only client
 is the key set's.
@@ -130,9 +132,9 @@ Neither service records an instrument of its own. humus records these:
 
 | Instrument | Recorded by |
 |---|---|
-| `http.server.request.duration` | `httpserver`, for each request to either service |
-| `http.client.request.duration` | each `httpclient` Client, for each attempt: the cart's two, and the catalog's for the key set |
-| `humus.circuit.state`, `humus.circuit.calls`, `humus.circuit.transitions`, `humus.retry.decisions` | the same Clients, scope `github.com/z5labs/humus/http/httpclient` |
+| `http.server.request.duration` | `httpserver` and `http3server`, for each request to either service |
+| `http.client.request.duration` | each client, for each attempt: the cart's `http3client` for the catalog, and an `httpclient` in each service for the key set |
+| `humus.circuit.state`, `humus.circuit.calls`, `humus.circuit.transitions`, `humus.retry.decisions` | the same clients, the catalog client's under the scope `github.com/z5labs/humus/http3/http3client`, and the key-set clients' under `github.com/z5labs/humus/http/httpclient` |
 
 In Mimir, a name's dots are underscores, and `service.name` is `job`:
 
@@ -140,17 +142,22 @@ In Mimir, a name's dots are underscores, and `service.name` is `job`:
 sum by (http_response_status_code) (rate(http_server_request_duration_count{job="cart"}[5m]))
 ```
 
-The cart has two clients, and each data point of theirs carries its
-dependency's `server.address`. A test of the App checks they're told apart:
+The cart has two clients, each under its own package's scope, and each
+data point of theirs carries its dependency's `server.address`. A test of
+the App checks they're told apart:
 
 ```go
 for _, name := range []string{"humus.circuit.state", "humus.circuit.calls", "humus.retry.decisions"} {
 	require.Equal(t, []string{"catalog.internal", "idp.internal"}, serverAddresses(rm, name), name)
+	require.Equal(t, []string{"catalog.internal"}, serverAddresses(scoped(rm, "github.com/z5labs/humus/http3/http3client"), name), name)
+	require.Equal(t, []string{"idp.internal"}, serverAddresses(scoped(rm, "github.com/z5labs/humus/http/httpclient"), name), name)
 }
 ```
 
+So the dashboard and the rules match both scopes:
+
 ```text
-sum by (server_address, humus_circuit_state) (humus_circuit_state{job="cart", otel_scope_name="github.com/z5labs/humus/http/httpclient"})
+sum by (server_address, humus_circuit_state) (humus_circuit_state{job="cart", otel_scope_name=~"github.com/z5labs/humus/http/httpclient|github.com/z5labs/humus/http3/http3client"})
 ```
 
 The Collector adds each pod's attributes, so the two replicas of a service
@@ -243,14 +250,14 @@ The breakers' rules keep `server_address`, so an alert says which
 dependency:
 
 ```yaml
-              expr: max by (server_address) (humus_circuit_state{job="cart", otel_scope_name="github.com/z5labs/humus/http/httpclient", humus_circuit_state="open"}) or on () vector(0)
+              expr: max by (server_address) (humus_circuit_state{job="cart", otel_scope_name=~"github.com/z5labs/humus/http/httpclient|github.com/z5labs/humus/http3/http3client", humus_circuit_state="open"}) or on () vector(0)
 ```
 
 A counter's rule adds the series that first appeared in its window, which
 `increase` alone reads as no change:
 
 ```yaml
-              expr: (sum by (server_address) (increase(humus_circuit_transitions{job="cart", otel_scope_name="github.com/z5labs/humus/http/httpclient", humus_circuit_state="open"}[5m]) or (humus_circuit_transitions{job="cart", otel_scope_name="github.com/z5labs/humus/http/httpclient", humus_circuit_state="open"} unless humus_circuit_transitions{job="cart", otel_scope_name="github.com/z5labs/humus/http/httpclient", humus_circuit_state="open"} offset 5m))) or on () vector(0)
+              expr: (sum by (server_address) (increase(humus_circuit_transitions{job="cart", otel_scope_name=~"github.com/z5labs/humus/http/httpclient|github.com/z5labs/humus/http3/http3client", humus_circuit_state="open"}[5m]) or (humus_circuit_transitions{job="cart", otel_scope_name=~"github.com/z5labs/humus/http/httpclient|github.com/z5labs/humus/http3/http3client", humus_circuit_state="open"} unless humus_circuit_transitions{job="cart", otel_scope_name=~"github.com/z5labs/humus/http/httpclient|github.com/z5labs/humus/http3/http3client", humus_circuit_state="open"} offset 5m))) or on () vector(0)
 ```
 
 ## The dashboard

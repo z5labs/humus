@@ -110,7 +110,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: max by (server_address) (humus_circuit_state{job="cart", otel_scope_name="github.com/z5labs/humus/http/httpclient", humus_circuit_state="open"}) or on () vector(0)
+              expr: max by (server_address) (humus_circuit_state{job="cart", otel_scope_name=~"github.com/z5labs/humus/http/httpclient|github.com/z5labs/humus/http3/http3client", humus_circuit_state="open"}) or on () vector(0)
           - refId: B
             datasourceUid: __expr__
             model:
@@ -141,7 +141,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: (sum by (server_address) (increase(humus_circuit_transitions{job="cart", otel_scope_name="github.com/z5labs/humus/http/httpclient", humus_circuit_state="open"}[5m]) or (humus_circuit_transitions{job="cart", otel_scope_name="github.com/z5labs/humus/http/httpclient", humus_circuit_state="open"} unless humus_circuit_transitions{job="cart", otel_scope_name="github.com/z5labs/humus/http/httpclient", humus_circuit_state="open"} offset 5m))) or on () vector(0)
+              expr: (sum by (server_address) (increase(humus_circuit_transitions{job="cart", otel_scope_name=~"github.com/z5labs/humus/http/httpclient|github.com/z5labs/humus/http3/http3client", humus_circuit_state="open"}[5m]) or (humus_circuit_transitions{job="cart", otel_scope_name=~"github.com/z5labs/humus/http/httpclient|github.com/z5labs/humus/http3/http3client", humus_circuit_state="open"} unless humus_circuit_transitions{job="cart", otel_scope_name=~"github.com/z5labs/humus/http/httpclient|github.com/z5labs/humus/http3/http3client", humus_circuit_state="open"} offset 5m))) or on () vector(0)
           - refId: B
             datasourceUid: __expr__
             model:
@@ -172,7 +172,7 @@ groups:
             model:
               refId: A
               instant: true
-              expr: (sum by (server_address) (increase(humus_retry_decisions{job="cart", otel_scope_name="github.com/z5labs/humus/http/httpclient", humus_retry_decision="throttled"}[5m]) or (humus_retry_decisions{job="cart", otel_scope_name="github.com/z5labs/humus/http/httpclient", humus_retry_decision="throttled"} unless humus_retry_decisions{job="cart", otel_scope_name="github.com/z5labs/humus/http/httpclient", humus_retry_decision="throttled"} offset 5m))) or on () vector(0)
+              expr: (sum by (server_address) (increase(humus_retry_decisions{job="cart", otel_scope_name=~"github.com/z5labs/humus/http/httpclient|github.com/z5labs/humus/http3/http3client", humus_retry_decision="throttled"}[5m]) or (humus_retry_decisions{job="cart", otel_scope_name=~"github.com/z5labs/humus/http/httpclient|github.com/z5labs/humus/http3/http3client", humus_retry_decision="throttled"} unless humus_retry_decisions{job="cart", otel_scope_name=~"github.com/z5labs/humus/http/httpclient|github.com/z5labs/humus/http3/http3client", humus_retry_decision="throttled"} offset 5m))) or on () vector(0)
           - refId: B
             datasourceUid: __expr__
             model:

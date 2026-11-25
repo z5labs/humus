@@ -114,9 +114,11 @@ func TestInit_traces_an_add_across_the_cart_and_the_catalog(t *testing.T) {
 		require.NotEmpty(t, attempts, "the cart has no attempt span in the add's trace")
 		for _, attempt := range attempts {
 			require.True(t, descends(attempt, add, cartSpans), "the attempt %s is not under the add", attempt.Name())
+			require.Equal(t, "3.0", attr(attempt.Attributes(), "network.protocol.version").AsString(), "the attempt %s", attempt.Name())
 		}
 
 		product := serverSpan(t, s.catalog.Spans(), http.MethodGet, "/products/"+sku)
+		require.Equal(t, "3.0", attr(product.Attributes(), "network.protocol.version").AsString())
 		require.Equal(t, add.SpanContext().TraceID(), product.SpanContext().TraceID())
 		require.True(t, slices.ContainsFunc(attempts, func(attempt sdktrace.ReadOnlySpan) bool {
 			return attempt.SpanContext().SpanID() == product.Parent().SpanID()
@@ -194,6 +196,16 @@ func serverAddresses(rm metricdata.ResourceMetrics, name string) []string {
 	return addrs
 }
 
+func scoped(rm metricdata.ResourceMetrics, scope string) metricdata.ResourceMetrics {
+	var out metricdata.ResourceMetrics
+	for _, sm := range rm.ScopeMetrics {
+		if sm.Scope.Name == scope {
+			out.ScopeMetrics = append(out.ScopeMetrics, sm)
+		}
+	}
+	return out
+}
+
 func TestInit_measures_the_catalog_client_and_the_key_set_client_apart(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s := startObserved(t)
@@ -208,6 +220,8 @@ func TestInit_measures_the_catalog_client_and_the_key_set_client_apart(t *testin
 		require.NoError(t, err)
 		for _, name := range []string{"humus.circuit.state", "humus.circuit.calls", "humus.retry.decisions"} {
 			require.Equal(t, []string{"catalog.internal", "idp.internal"}, serverAddresses(rm, name), name)
+			require.Equal(t, []string{"catalog.internal"}, serverAddresses(scoped(rm, "github.com/z5labs/humus/http3/http3client"), name), name)
+			require.Equal(t, []string{"idp.internal"}, serverAddresses(scoped(rm, "github.com/z5labs/humus/http/httpclient"), name), name)
 		}
 	})
 }

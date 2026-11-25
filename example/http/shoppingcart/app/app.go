@@ -41,6 +41,7 @@ import (
 	"github.com/z5labs/humus/http/httpclient"
 	"github.com/z5labs/humus/http/httphealth"
 	"github.com/z5labs/humus/http/httpserver"
+	"github.com/z5labs/humus/http3/http3client"
 	"github.com/z5labs/humus/openapi/v3"
 	"github.com/z5labs/humus/openapi/v3/jsoncodec"
 	"github.com/z5labs/humus/openapi/v3/problem"
@@ -71,7 +72,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 
 type openStore func(ctx context.Context, s *humus.Setup, h humus.Host, cfg *pgxpool.Config) (store endpoint.Store, ping func(context.Context) error, err error)
 
-type newCatalog func(s *humus.Setup, n httpclient.Network, settings httpclient.Settings) (catalog endpoint.Catalog, ready func(context.Context) error, err error)
+type newCatalog func(s *humus.Setup, n http3client.Network, settings http3client.Settings) (catalog endpoint.Catalog, ready func(context.Context) error, err error)
 
 func initWith(ctx context.Context, s *humus.Setup, h humus.Host, open openStore, newCatalog newCatalog) ([]humus.Service, error) {
 	settings, err := readSettings(ctx, s, h)
@@ -170,8 +171,8 @@ func trustTokens(faults fault.Injector, verify func(context.Context, string) (en
 	}
 }
 
-func openCatalog(s *humus.Setup, n httpclient.Network, settings httpclient.Settings) (endpoint.Catalog, func(context.Context) error, error) {
-	client, err := httpclient.NewClient(s, n, settings)
+func openCatalog(s *humus.Setup, n http3client.Network, settings http3client.Settings) (endpoint.Catalog, func(context.Context) error, error) {
+	client, err := http3client.NewClient(s, n, settings)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -202,7 +203,7 @@ func readiness(client *http.Client, u *url.URL) func(context.Context) error {
 type settings struct {
 	HTTP            httpserver.Settings
 	Database        *pgxpool.Config
-	Catalog         httpclient.Settings
+	Catalog         http3client.Settings
 	KeySet          keySetSettings
 	JWT             jwt.Settings
 	FaultTrustScope string
@@ -229,8 +230,8 @@ func readSettings(ctx context.Context, s *humus.Setup, h humus.Host) (settings, 
 		client.AttemptTimeout = r.Get(env("JWKS_ATTEMPT_TIMEOUT").Parse(time.ParseDuration).Default(client.AttemptTimeout).Validate(httpclient.CheckAttemptTimeout))
 		client.MaxAttempts = r.Get(env("JWKS_MAX_ATTEMPTS").Parse(strconv.Atoi).Default(client.MaxAttempts).Validate(httpclient.CheckMaxAttempts))
 
-		catalog := httpclient.DefaultSettings()
-		catalog.BaseURL = r.Get(env("CATALOG_URL").Parse(url.Parse).Validate(checkCatalogURL))
+		catalog := http3client.DefaultSettings()
+		catalog.BaseURL = r.Get(env("CATALOG_URL").Parse(url.Parse).Validate(http3client.CheckBaseURL))
 		catalog.TLS = &tls.Config{
 			RootCAs: r.Get(file("CATALOG_CA_FILE").Parse(certPool)),
 			GetClientCertificate: r.Get(env("CATALOG_CLIENT_CERT_FILE").Validate(holdsCertificate(h.Filesystem)).FlatMap(func(certFile string) config.Value[clientCertificate] {
@@ -243,9 +244,9 @@ func readSettings(ctx context.Context, s *humus.Setup, h humus.Host) (settings, 
 				})
 			})),
 		}
-		catalog.Timeout = r.Get(env("CATALOG_TIMEOUT").Parse(time.ParseDuration).Default(catalog.Timeout).Validate(httpclient.CheckTimeout))
-		catalog.AttemptTimeout = r.Get(env("CATALOG_ATTEMPT_TIMEOUT").Parse(time.ParseDuration).Default(catalog.AttemptTimeout).Validate(httpclient.CheckAttemptTimeout))
-		catalog.MaxAttempts = r.Get(env("CATALOG_MAX_ATTEMPTS").Parse(strconv.Atoi).Default(catalog.MaxAttempts).Validate(httpclient.CheckMaxAttempts))
+		catalog.Timeout = r.Get(env("CATALOG_TIMEOUT").Parse(time.ParseDuration).Default(catalog.Timeout).Validate(http3client.CheckTimeout))
+		catalog.AttemptTimeout = r.Get(env("CATALOG_ATTEMPT_TIMEOUT").Parse(time.ParseDuration).Default(catalog.AttemptTimeout).Validate(http3client.CheckAttemptTimeout))
+		catalog.MaxAttempts = r.Get(env("CATALOG_MAX_ATTEMPTS").Parse(strconv.Atoi).Default(catalog.MaxAttempts).Validate(http3client.CheckMaxAttempts))
 		catalog.ForwardScenario = true
 
 		tokens := jwt.DefaultSettings()
@@ -321,16 +322,6 @@ func databaseURL(b []byte) (*pgxpool.Config, error) {
 		return nil, errors.New("must hold a PostgreSQL URL")
 	}
 	return cfg, nil
-}
-
-func checkCatalogURL(u *url.URL) error {
-	if err := httpclient.CheckBaseURL(u); err != nil {
-		return err
-	}
-	if u.Scheme != "https" {
-		return errors.New("must be an https URL")
-	}
-	return nil
 }
 
 func checkKeySetURL(u *url.URL) error {

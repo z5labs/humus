@@ -2,7 +2,10 @@ module github.com/z5labs/humus/example/http/shoppingcart
 
 go 1.27.0
 
-replace github.com/z5labs/humus => ../../..
+replace (
+	github.com/z5labs/humus => ../../..
+	github.com/z5labs/humus/http3 => ../../../http3
+)
 
 require (
 	github.com/go-jose/go-jose/v4 v4.1.9
@@ -18,6 +21,7 @@ require (
 	github.com/z5labs/bedrock/fit v0.28.0
 	github.com/z5labs/bedrock/host v0.28.0
 	github.com/z5labs/humus v0.18.0
+	github.com/z5labs/humus/http3 v0.18.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/sdk v1.47.0
 	go.opentelemetry.io/otel/sdk/log v1.47.0
@@ -71,6 +75,8 @@ require (
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/power-devops/perfstat v0.0.0-20260916203055-22a1a467d9f0 // indirect
+	github.com/quic-go/qpack v0.6.0 // indirect
+	github.com/quic-go/quic-go v0.66.0 // indirect
 	github.com/shirou/gopsutil/v4 v4.26.10 // indirect
 	github.com/shopspring/decimal v1.6.0 // indirect
 	github.com/sirupsen/logrus v1.10.2 // indirect

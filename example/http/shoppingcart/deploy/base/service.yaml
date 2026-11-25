@@ -25,3 +25,8 @@ spec:
     - name: https
       port: 8443
       targetPort: https
+      protocol: TCP
+    - name: h3
+      port: 8443
+      targetPort: h3
+      protocol: UDP

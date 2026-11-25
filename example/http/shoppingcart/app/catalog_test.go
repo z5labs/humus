@@ -20,8 +20,8 @@ import (
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/example/http/shoppingcart/endpoint"
-	"github.com/z5labs/humus/http/httpclient"
-	"github.com/z5labs/humus/http/httpserver"
+	"github.com/z5labs/humus/http3/http3client"
+	"github.com/z5labs/humus/http3/http3server"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/telemetry"
 )
@@ -61,7 +61,7 @@ func (c *fakeCatalog) fail(err error) {
 	c.err = err
 }
 
-func (c *fakeCatalog) open(*humus.Setup, httpclient.Network, httpclient.Settings) (endpoint.Catalog, func(context.Context) error, error) {
+func (c *fakeCatalog) open(*humus.Setup, http3client.Network, http3client.Settings) (endpoint.Catalog, func(context.Context) error, error) {
 	return c, func(context.Context) error { return nil }, nil
 }
 
@@ -135,7 +135,7 @@ func (c *catalogServer) clients() []string {
 func (c *catalogServer) serve(t *testing.T, host humus.Host, addr string, cert *humustest.Certificate, clientCAs *x509.CertPool) (stop func()) {
 	t.Helper()
 	proc, status := humustest.Start(t, host, func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
-		settings := httpserver.DefaultSettings()
+		settings := http3server.DefaultSettings()
 		settings.Addr = addr
 		settings.TLS = &tls.Config{
 			Certificates: []tls.Certificate{cert.TLS()},
@@ -145,7 +145,7 @@ func (c *catalogServer) serve(t *testing.T, host humus.Host, addr string, cert *
 		mux := http.NewServeMux()
 		mux.Handle("GET /products/{productId}", c)
 		mux.HandleFunc("GET /health/readiness", c.readiness)
-		svc, err := httpserver.NewService(ctx, s, h, settings, mux)
+		svc, err := http3server.NewService(ctx, s, h, settings, mux)
 		if err != nil {
 			return nil, err
 		}

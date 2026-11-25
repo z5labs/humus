@@ -24,8 +24,8 @@ import (
 	"github.com/z5labs/humus/example/http/shoppingcart/database"
 	"github.com/z5labs/humus/example/http/shoppingcart/endpoint"
 	"github.com/z5labs/humus/fault/jsonscenario"
-	"github.com/z5labs/humus/http/httpclient"
 	"github.com/z5labs/humus/http/httpserver/httpservertest"
+	"github.com/z5labs/humus/http3/http3client"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/telemetry"
 )
@@ -146,7 +146,7 @@ func TestInit_forwards_a_trusted_scenario_that_aborts_the_catalogs_query(t *test
 
 		d := unavailable(t, s.addItem(t, cartID, token, abort(catalogdatabase.Point)))
 		require.Contains(t, d.Detail, "catalog")
-		require.Equal(t, httpclient.DefaultSettings().MaxAttempts, s.products.queried())
+		require.Equal(t, http3client.DefaultSettings().MaxAttempts, s.products.queried())
 
 		s.stop(t)
 	})
