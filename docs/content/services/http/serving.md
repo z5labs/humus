@@ -23,7 +23,7 @@ runs the same App in a test, on the same defaults, with an HTTP/2 client.
 
 The package serves an `http.Handler` and has no REST DSL, which is
 [`openapi/v3`]({{< relref "/services/http/openapi" >}})'s. It exports no App, runs no health Service and serves no probes:
-[`httphealth`](https://pkg.go.dev/github.com/z5labs/humus/httphealth)
+[`httphealth`](https://pkg.go.dev/github.com/z5labs/humus/http/httphealth)
 answers them, as [Health probes](#health-probes) describes. The design behind
 everything on this page is in
 [Proposal: HTTP server foundation](https://github.com/z5labs/humus/discussions/680),
@@ -550,7 +550,7 @@ explains:
 ## Health probes
 
 **An API answers its probes on its own port.** The end user's `Init` mounts
-[`httphealth.NewHandler`](https://pkg.go.dev/github.com/z5labs/humus/httphealth#NewHandler)
+[`httphealth.NewHandler`](https://pkg.go.dev/github.com/z5labs/humus/http/httphealth#NewHandler)
 at `"/health/"` of the mux the Service serves, without `http.StripPrefix`,
 and returns the [health Service]({{< relref "/fundamentals/health#the-health-service" >}})
 whose `Probes` it answers from next to the HTTP Service:
@@ -580,7 +580,7 @@ readinessProbe:
 
 **An API that requires client certificates** can't be probed on its own
 port, since the kubelet presents none. It serves its probes with
-[`httphealth.NewService`](https://pkg.go.dev/github.com/z5labs/humus/httphealth#NewService)
+[`httphealth.NewService`](https://pkg.go.dev/github.com/z5labs/humus/http/httphealth#NewService)
 on a port of its own, over HTTPS, which owns the App's readiness, so `Init`
 returns it next to the HTTP Service and no health Service.
 [Health]({{< relref "/fundamentals/health#exposing-the-probes" >}}) shows both wirings, the

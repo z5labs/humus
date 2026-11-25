@@ -24,7 +24,7 @@ import (
 	"github.com/z5labs/humus/example/kube/kubebuilder/humus/api/v1alpha1"
 	"github.com/z5labs/humus/example/kube/kubebuilder/humus/internal/controller"
 	"github.com/z5labs/humus/health"
-	"github.com/z5labs/humus/httphealth"
+	"github.com/z5labs/humus/http/httphealth"
 	"github.com/z5labs/humus/kube"
 	"github.com/z5labs/humus/telemetry"
 )

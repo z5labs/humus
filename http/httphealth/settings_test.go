@@ -11,7 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/z5labs/humus/httphealth"
+	"github.com/z5labs/humus/http/httphealth"
 	"github.com/z5labs/humus/humustest"
 )
 

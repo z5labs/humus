@@ -19,7 +19,7 @@ import (
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/health"
-	"github.com/z5labs/humus/httphealth"
+	"github.com/z5labs/humus/http/httphealth"
 	"github.com/z5labs/humus/queue/rabbitmq"
 	"github.com/z5labs/humus/telemetry"
 )

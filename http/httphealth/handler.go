@@ -18,7 +18,7 @@ import (
 )
 
 // loggerName is the name of the logger the handler logs through.
-const loggerName = "github.com/z5labs/humus/httphealth"
+const loggerName = "github.com/z5labs/humus/http/httphealth"
 
 // The paths the handler answers.
 const (
