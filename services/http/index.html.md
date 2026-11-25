@@ -1,7 +1,9 @@
 # HTTP
 
 An HTTP service serves an `http.Handler` over TLS with `httpserver`, which
-[Serving HTTP](/humus/services/http/serving/) covers first. [Serving
+[Serving HTTP](/humus/services/http/serving/) covers first, and
+[Serving HTTP/3](/humus/services/http/serving-http3/) serves the
+same handler over HTTP/3 beside it with the http3 module's `http3server`. [Serving
 an API with OpenAPI](/humus/services/http/openapi/) then builds that
 handler from typed operations on typed paths with `openapi/v3`, which writes
 the API's OpenAPI document from the same declarations. [Serving a hypermedia

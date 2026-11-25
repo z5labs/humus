@@ -398,8 +398,9 @@ the run's span in full.
 ## humus's own instruments
 
 humus defines four instruments of its own for the circuit breaker and the
-retries of its four outbound clients: `httpclient`, `grpcclient`, the Kafka
-`Producer` and the RabbitMQ `Publisher`. Each client records all four,
+retries of its five outbound clients: `httpclient`, the http3 module's
+`http3client`, `grpcclient`, the Kafka `Producer` and the RabbitMQ
+`Publisher`. Each client records all four,
 except the Kafka `Producer`, which records no `humus.retry.decisions`. The
 `kube` module's `Controller` records six more, for its work queue and its
 reconciles, under `humus.kube.controller.`.
@@ -477,22 +478,32 @@ OpenTelemetry's instrumentation breaks calls down already.
 | Client | Meter scope | The dependency's attributes |
 |---|---|---|
 | [`httpclient`](/humus/dependencies/http/#humuss-own-instruments) | `github.com/z5labs/humus/http/httpclient` | `server.address` and `server.port` of `BaseURL`'s origin |
+| [`http3client`](/humus/dependencies/http/#calling-a-dependency-over-http3) | `github.com/z5labs/humus/http3/http3client` | `server.address` and `server.port` of `BaseURL`'s origin |
 | [`grpcclient`](/humus/dependencies/grpc/#humuss-own-instruments) | `github.com/z5labs/humus/grpc/grpcclient` | `server.address` and `server.port` of `Addr` |
 | [Kafka `Producer`](/humus/services/kafka/#humuss-own-instruments) | `github.com/z5labs/humus/queue/kafka` | `messaging.system`, set to `kafka`, and `server.address` and `server.port` of the first of `ProducerSettings.Brokers` |
 | [RabbitMQ `Publisher`](/humus/services/rabbitmq/#humuss-own-instruments) | `github.com/z5labs/humus/queue/rabbitmq` | `server.address` and `server.port` of `Connection.Addr` |
 
 The HTTP and gRPC scopes hold no other instrument: `otelhttp` and `otelgrpc`
-record in scopes of their own. The Kafka and RabbitMQ scopes also hold
+record in scopes of their own. `http3client` records `httpclient`'s
+instruments, with the same attributes, under its own scope, so a query over
+both transports matches both scopes. The Kafka and RabbitMQ scopes also hold
 OpenTelemetry's messaging instruments. The Kafka `Producer`'s first broker
 is the seed the end user named first, not the broker that answered: the
 breaker guards the cluster, and the seed is what names it in the settings.
 So two `Producer`s for two clusters are two series.
+
+The HTTP servers record no instrument of their own, and log under scopes of
+their own, their import paths: `github.com/z5labs/humus/http/httpserver` for
+HTTP/1.1 and HTTP/2, and `github.com/z5labs/humus/http3/http3server` for
+HTTP/3, as [Serving HTTP/3](/humus/services/http/serving-http3/#telemetry)
+lists.
 
 What one call is, and when it counts, differs by client:
 
 | | `humus.circuit.state` | `humus.circuit.transitions` | `humus.circuit.calls` | `humus.retry.decisions` |
 |---|---|---|---|---|
 | `httpclient` | yes | yes | one per attempt | one per attempt |
+| `http3client` | yes | yes | one per attempt | one per attempt |
 | `grpcclient` | yes | yes | one per unary attempt, and one per stream open | one per unary attempt, and one per attempt to open a stream |
 | Kafka `Producer` | yes | yes | one per `Produce`, whatever its number of records | no |
 | RabbitMQ `Publisher` | yes | yes | one per attempt | one per attempt |
@@ -592,7 +603,7 @@ increase(humus_retry_decisions_total{humus_retry_decision="throttled"}[5m]) > 0
 
 An instrument of humus's own measures state that humus decides, that no
 OpenTelemetry instrumentation or the orchestrator measures already, and that
-changes many times over a process's life. Only the four clients' breakers
+changes many times over a process's life. Only the five clients' breakers
 and retries, and a Kubernetes controller's work queue and reconciles, pass
 that rule. Everything else was decided against it:
 

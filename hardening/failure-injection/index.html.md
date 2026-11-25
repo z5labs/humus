@@ -217,6 +217,7 @@ it has one, so an attempt the breaker rejects evaluates nothing:
 | Client | Point | An abort | A delay |
 |---|---|---|---|
 | [`httpclient`](/humus/dependencies/http/) | `http:<host>:<port>` of `BaseURL`, with the scheme's port when the URL has none, such as `http:payments:8443` | a transport error: the call returns an `*url.Error` wrapping the `*fault.InjectedError`, with no response, and nothing is sent | waited inside `AttemptTimeout`, so it is in the attempt's span and in `http.client.request.duration` |
+| [`http3client`](/humus/dependencies/http/#calling-a-dependency-over-http3) | `http:<host>:<port>` of `BaseURL`, as `httpclient`'s, so one rule targets the dependency over either transport | as `httpclient`'s | as `httpclient`'s |
 | [`grpcclient`](/humus/dependencies/grpc/) | `grpc:<service>/<method>`: the full method without its leading slash, as `rpc.method` writes it, such as `grpc:payments.v1.Payments/Charge` | status `Unavailable`, wrapping the `*fault.InjectedError`. grpc-go isn't called, so the Client records the attempt's span itself | waited before grpc-go is called, inside `Timeout`. Cut short, it ends as grpc-go would, `DeadlineExceeded` or `Canceled` |
 | The Kafka [`Producer`](/humus/services/kafka/#producing) | `kafka:<topic>`, one evaluation per record, such as `kafka:orders` | every record of the call fails unsent. A call is one unit, as the breaker counts it, so one record's abort fails them all | the call waits the longest `Delay` of its records, inside `DeliveryTimeout` |
 | The RabbitMQ [`Publisher`](/humus/services/rabbitmq/#publishing) | `rabbitmq:<exchange>:<routing key>`, leaving out what is empty, as `messaging.destination.name` writes it, such as `rabbitmq:orders:accepted` | the attempt fails with nothing sent, marked as a lost connection's error is: `rabbitmq: publishing to …: fit: injected failure at …` | waited inside `Timeout`, before the attempt takes a channel |
@@ -287,6 +288,7 @@ end user's code runs, unless its `TrustScenario` setting trusts the caller:
 | Server | `TrustScenario` is given |
 |---|---|
 | [`httpserver`](/humus/services/http/serving/) | the `*http.Request`, as it arrived |
+| [`http3server`](/humus/services/http/serving-http3/) | the `*http.Request`, as it arrived |
 | [`grpcserver`](/humus/services/grpc/serving/) | the RPC's context, which holds its peer and its incoming metadata, and its full method |
 | The Kafka [consumer](/humus/services/kafka/) | the record's `kafka.Message` |
 | The RabbitMQ [consumer](/humus/services/rabbitmq/) | the delivery's `rabbitmq.Message` |
@@ -304,7 +306,7 @@ end user's code runs, unless its `TrustScenario` setting trusts the caller:
   other request. It is set in code, not sourced: whom a server trusts is the
   end user's design decision, not an operator's.
 - **A panic in it is handled** as its server handles a panic of the end
-  user's code: `httpserver` and `grpcserver` fail that request, the
+  user's code: `httpserver`, `http3server` and `grpcserver` fail that request, the
   consumers recover nothing, as for a `Processor`, and a controller recovers
   it as a Reconciler's panic, and doesn't retry the object.
 
@@ -454,8 +456,8 @@ Service's strip, like every other request.
 
 Every humus client strips the scenario from what it sends, after its point
 has read it, unless `ForwardScenario` is set in its settings:
-`httpclient.Settings`, `grpcclient.Settings`, `kafka.ProducerSettings` and
-`rabbitmq.PublisherSettings`. A dependency the end user hasn't decided about
+`httpclient.Settings`, `http3client.Settings`, `grpcclient.Settings`,
+`kafka.ProducerSettings` and `rabbitmq.PublisherSettings`. A dependency the end user hasn't decided about
 is a trust boundary too: it may be a third party that would only log the
 scenario, or a service of another team, with another codec. Every other
 baggage member, and the trace context, still goes, and each strip adds a
@@ -508,7 +510,7 @@ attempt is retried, and the breaker counts it, as that failure would be:
 
 | Client | An abort | A delay cut short |
 |---|---|---|
-| `httpclient` | a transport error: `Retry`, `Failure`, under the default `Classify` | `Retry`, `Failure`, as `AttemptTimeout`'s own error is |
+| `httpclient` and `http3client` | a transport error: `Retry`, `Failure`, under the default `Classify` | `Retry`, `Failure`, as `AttemptTimeout`'s own error is |
 | `grpcclient` | `Unavailable`: `Retry`, `Failure`, under the default `Classify` | `DeadlineExceeded`: `Stop`, `Failure`. `Canceled`: `Stop`, `Ignored` |
 | Kafka `Producer` | `Failure`. The Producer retries nothing of its own, and franz-go is never reached | by `DeliveryTimeout`: `Failure`, as records not stored in time are |
 | RabbitMQ `Publisher` | as a lost connection: `Retry`, `Failure` | as an attempt whose context ended: no further attempt, and `Failure` when the deadline passed, `Ignored` when the caller cancelled |

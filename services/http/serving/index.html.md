@@ -8,6 +8,8 @@ the defaults an HTTP server behind a load balancer needs: a 5s drain and a
 10s grace period. Its test package,
 [`httpservertest`](https://pkg.go.dev/github.com/z5labs/humus/http/httpserver/httpservertest),
 runs the same App in a test, on the same defaults, with an HTTP/2 client.
+[Serving HTTP/3](/humus/services/http/serving-http3/) serves the
+same handler over HTTP/3 beside it.
 
 The package serves an `http.Handler` and has no REST DSL, which is
 [`openapi/v3`](/humus/services/http/openapi/)'s. It exports no App, runs no health Service and serves no probes:
@@ -301,6 +303,14 @@ only HTTP/1.1:
 
 It is a `Settings` field, so an operator turns it on from the manifest, with
 `HTTP2_ONLY=true` in `Init` above, once every client speaks HTTP/2.
+
+### HTTP/3
+
+The Service serves HTTP/1.1 and HTTP/2 over TCP. HTTP/3 is a Service of its
+own, from the http3 module's `http3server`, which the end user's `Init`
+returns beside this one, on the same `host:port` and with the same handler
+and TLS config. [Serving HTTP/3](/humus/services/http/serving-http3/)
+covers it.
 
 ### No h2c
 
@@ -869,4 +879,4 @@ The Service keeps serving after `Serve`'s context is done, so the subtest
 for `Shutdown` after `Serve` has returned on its own reports SKIP, as
 `TestService` documents.
 
-Next: [Serving an API with OpenAPI](/humus/services/http/openapi/)
+Next: [Serving HTTP/3](/humus/services/http/serving-http3/)

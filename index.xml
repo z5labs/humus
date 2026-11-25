@@ -94,15 +94,9 @@ user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt; sources its &lt;code&gt;Settings&
 the defaults an HTTP server behind a load balancer needs: a 5s drain and a
 10s grace period. Its test package,
 &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/http/httpserver/httpservertest"&gt;&lt;code&gt;httpservertest&lt;/code&gt;&lt;/a&gt;,
-runs the same App in a test, on the same defaults, with an HTTP/2 client.&lt;/p&gt;
-&lt;p&gt;The package serves an &lt;code&gt;http.Handler&lt;/code&gt; and has no REST DSL, which is
-&lt;a href="https://z5labs.github.io/humus/services/http/openapi/"&gt;&lt;code&gt;openapi/v3&lt;/code&gt;&lt;/a&gt;&amp;rsquo;s. It exports no App, runs no health Service and serves no probes:
-&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/http/httphealth"&gt;&lt;code&gt;httphealth&lt;/code&gt;&lt;/a&gt;
-answers them, as &lt;a href="#health-probes"&gt;Health probes&lt;/a&gt; describes. The design behind
-everything on this page is in
-&lt;a href="https://github.com/z5labs/humus/discussions/680"&gt;Proposal: HTTP server foundation&lt;/a&gt;,
-with its &lt;a href="https://github.com/z5labs/humus/discussions/680#discussioncomment-18988464"&gt;revision 1&lt;/a&gt;
-and &lt;a href="https://github.com/z5labs/humus/discussions/680#discussioncomment-18988543"&gt;revision 2&lt;/a&gt;.&lt;/p&gt;</description></item><item><title>The App lifecycle</title><link>https://z5labs.github.io/humus/fundamentals/lifecycle/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/fundamentals/lifecycle/</guid><description>&lt;p&gt;Every humus application is a &lt;a href="https://pkg.go.dev/github.com/z5labs/bedrock#App"&gt;&lt;code&gt;bedrock.App&lt;/code&gt;&lt;/a&gt;,
+runs the same App in a test, on the same defaults, with an HTTP/2 client.
+&lt;a href="https://z5labs.github.io/humus/services/http/serving-http3/"&gt;Serving HTTP/3&lt;/a&gt; serves the
+same handler over HTTP/3 beside it.&lt;/p&gt;</description></item><item><title>The App lifecycle</title><link>https://z5labs.github.io/humus/fundamentals/lifecycle/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/fundamentals/lifecycle/</guid><description>&lt;p&gt;Every humus application is a &lt;a href="https://pkg.go.dev/github.com/z5labs/bedrock#App"&gt;&lt;code&gt;bedrock.App&lt;/code&gt;&lt;/a&gt;,
 and the root package&amp;rsquo;s &lt;a href="https://pkg.go.dev/github.com/z5labs/humus#App"&gt;&lt;code&gt;humus.App&lt;/code&gt;&lt;/a&gt;
 is the lifecycle every humus service runs. It reads its settings, listens for
 signals, builds its telemetry and the user&amp;rsquo;s dependencies, runs one or more
@@ -136,7 +130,21 @@ shutdown become humus&amp;rsquo;s.&lt;/p&gt;
 &lt;a href="https://github.com/ThreeDotsLabs/watermill-amqp"&gt;watermill-amqp&lt;/a&gt;, is built
 on amqp091-go, as &lt;code&gt;queue/rabbitmq&lt;/code&gt; is, so the client stays and the code
 around it changes. The guide&amp;rsquo;s steps go from the Watermill service to the
-humus service, rather than each leaving a service that runs.&lt;/p&gt;</description></item><item><title>Configuring a humus service</title><link>https://z5labs.github.io/humus/fundamentals/configuration/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/fundamentals/configuration/</guid><description>&lt;p&gt;humus packages are configured with plain Go values. They read no environment
+humus service, rather than each leaving a service that runs.&lt;/p&gt;</description></item><item><title>Serving HTTP/3</title><link>https://z5labs.github.io/humus/services/http/serving-http3/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/services/http/serving-http3/</guid><description>&lt;p&gt;The &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/http3/http3server"&gt;&lt;code&gt;http3server&lt;/code&gt;&lt;/a&gt;
+package serves an &lt;code&gt;http.Handler&lt;/code&gt; over HTTP/3 as a &lt;code&gt;humus.Service&lt;/code&gt;. It is in
+the nested module &lt;code&gt;github.com/z5labs/humus/http3&lt;/code&gt;, which keeps
+&lt;a href="https://github.com/quic-go/quic-go"&gt;quic-go&lt;/a&gt; out of the core module. No
+quic-go type is in its API, and none of httpserver&amp;rsquo;s: it has its own
+&lt;code&gt;Settings&lt;/code&gt;, &lt;code&gt;DefaultSettings&lt;/code&gt;, a check per field, &lt;code&gt;Defaults&lt;/code&gt; and &lt;code&gt;Main&lt;/code&gt;. Its
+test package,
+&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/http3/http3server/http3servertest"&gt;&lt;code&gt;http3servertest&lt;/code&gt;&lt;/a&gt;,
+runs the same App in a test, on the same defaults, with an HTTP/3 client.&lt;/p&gt;
+&lt;p&gt;HTTP/3 is served beside &lt;a href="https://z5labs.github.io/humus/services/http/serving/"&gt;Serving HTTP&lt;/a&gt;&amp;rsquo;s
+Service, not in place of it, so it is off unless the end user&amp;rsquo;s &lt;code&gt;Init&lt;/code&gt;
+returns it. The design is in
+&lt;a href="https://github.com/z5labs/humus/discussions/1438"&gt;Proposal: HTTP/3&lt;/a&gt;, with
+its &lt;a href="https://github.com/z5labs/humus/discussions/1438#discussioncomment-19867936"&gt;revision 1&lt;/a&gt;
+and &lt;a href="https://github.com/z5labs/humus/discussions/1438#discussioncomment-19871416"&gt;revision 2&lt;/a&gt;.&lt;/p&gt;</description></item><item><title>Configuring a humus service</title><link>https://z5labs.github.io/humus/fundamentals/configuration/</link><pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate><guid>https://z5labs.github.io/humus/fundamentals/configuration/</guid><description>&lt;p&gt;humus packages are configured with plain Go values. They read no environment
 variables for their settings, define no variable names and read no files on
 your behalf; the few variables humus does read are
 &lt;a href="#the-variables-humus-reads"&gt;listed below&lt;/a&gt;. Every
