@@ -11,7 +11,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/z5labs/bedrock v0.28.0
 	github.com/z5labs/bedrock/host v0.28.0
-	github.com/z5labs/humus v0.18.0
+	github.com/z5labs/humus v0.19.0
 	github.com/z5labs/humus/example/http/huma/cases v0.0.0-00010101000000-000000000000
 )
 
