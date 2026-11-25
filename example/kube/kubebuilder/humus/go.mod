@@ -13,9 +13,9 @@ require (
 	github.com/testcontainers/testcontainers-go v0.45.0
 	github.com/testcontainers/testcontainers-go/modules/k3s v0.45.0
 	github.com/z5labs/bedrock v0.28.0
-	github.com/z5labs/humus v0.18.0
+	github.com/z5labs/humus v0.19.0
 	github.com/z5labs/humus/example/kube/kubebuilder/cases v0.0.0-00010101000000-000000000000
-	github.com/z5labs/humus/kube v0.18.0
+	github.com/z5labs/humus/kube v0.19.0
 	k8s.io/api v0.37.1
 	k8s.io/apiextensions-apiserver v0.37.1
 	k8s.io/apimachinery v0.37.1
