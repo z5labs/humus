@@ -33,7 +33,7 @@ import (
 	"github.com/z5labs/humus/fault"
 	"github.com/z5labs/humus/fault/jsonscenario"
 	"github.com/z5labs/humus/health"
-	"github.com/z5labs/humus/httphealth"
+	"github.com/z5labs/humus/http/httphealth"
 	"github.com/z5labs/humus/kube"
 	"github.com/z5labs/humus/telemetry"
 )

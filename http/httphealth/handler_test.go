@@ -26,7 +26,7 @@ import (
 
 	"github.com/z5labs/humus"
 	"github.com/z5labs/humus/health"
-	"github.com/z5labs/humus/httphealth"
+	"github.com/z5labs/humus/http/httphealth"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/telemetry"
 )
@@ -37,7 +37,7 @@ import (
 // the attached handler serves it on an httpserver.Service.
 
 // scope is the instrumentation scope of the handler's logger.
-const scope = "github.com/z5labs/humus/httphealth"
+const scope = "github.com/z5labs/humus/http/httphealth"
 
 // errSecret is what a failing monitor returns. It names a host and a user,
 // which a probe's body must never hold.

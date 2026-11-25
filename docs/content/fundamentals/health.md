@@ -17,7 +17,7 @@ readiness is owned by a [health Service](#the-health-service) it returns
 from `Init` like any other Service. All of it is in the
 [`health`](https://pkg.go.dev/github.com/z5labs/humus/health) package, which
 depends on nothing but the standard library and serves no protocol.
-[`httphealth`](https://pkg.go.dev/github.com/z5labs/humus/httphealth) and
+[`httphealth`](https://pkg.go.dev/github.com/z5labs/humus/http/httphealth) and
 [`grpc/grpchealth`](https://pkg.go.dev/github.com/z5labs/humus/grpc/grpchealth)
 [expose the probes](#exposing-the-probes) to Kubernetes.
 
@@ -165,7 +165,7 @@ Service is in the slice `Init` returns.
 
 Two packages serve an App's probes to an orchestrator, one per protocol:
 
-- [`httphealth`](https://pkg.go.dev/github.com/z5labs/humus/httphealth), in
+- [`httphealth`](https://pkg.go.dev/github.com/z5labs/humus/http/httphealth), in
   the core module, answers Kubernetes' `httpGet` probes;
 - [`grpc/grpchealth`](https://pkg.go.dev/github.com/z5labs/humus/grpc/grpchealth),
   in the `grpc` module, answers
@@ -209,7 +209,7 @@ consumer's or a job's pod with a probes server stays on `humus.Main`.
 
 ### Attached probes
 
-[`httphealth.NewHandler`](https://pkg.go.dev/github.com/z5labs/humus/httphealth#NewHandler)
+[`httphealth.NewHandler`](https://pkg.go.dev/github.com/z5labs/humus/http/httphealth#NewHandler)
 answers the probes from a health Service's `Probes`. It routes on the full
 path, so it is mounted at `"/health/"` of the mux the API is served on,
 without `http.StripPrefix`, next to the API, and the health Service is
@@ -281,7 +281,7 @@ covers both.
 
 ### Probes servers
 
-[`httphealth.NewService`](https://pkg.go.dev/github.com/z5labs/humus/httphealth#NewService)
+[`httphealth.NewService`](https://pkg.go.dev/github.com/z5labs/humus/http/httphealth#NewService)
 and [`grpchealth.NewService`](https://pkg.go.dev/github.com/z5labs/humus/grpc/grpchealth#NewService)
 serve the probes, and nothing else, on a port of their own. **A probes
 server owns the App's readiness, as a health Service does.** It builds a
@@ -559,7 +559,7 @@ before it has started. One that starts fast needs none.
 
 - **A monitor's error is one ERROR record,** through the Setup's
   `LoggerProvider`, under the package's import path,
-  `github.com/z5labs/humus/httphealth` or
+  `github.com/z5labs/humus/http/httphealth` or
   `github.com/z5labs/humus/grpc/grpchealth`, in the request's context. Its
   body is the error, and its attribute `humus.health.probe` is `liveness`
   or `readiness`. A monitor that is unhealthy without an error, such as the

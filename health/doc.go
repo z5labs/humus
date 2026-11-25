@@ -73,7 +73,7 @@
 // orchestrator's probes, and it depends on nothing but the standard library.
 // Two packages expose the probes, one per protocol:
 //
-//   - github.com/z5labs/humus/httphealth answers HTTP probes, such as
+//   - github.com/z5labs/humus/http/httphealth answers HTTP probes, such as
 //     Kubernetes' httpGet probes, at /health/liveness and /health/readiness,
 //     with a handler attached to the end user's HTTPS server or a probes
 //     server on a port of its own;
