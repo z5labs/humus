@@ -381,7 +381,10 @@ func TestService_Shutdown(t *testing.T) {
 				<-r.Context().Done()
 				cancelled <- time.Since(signalled)
 			})
-			p, status := http3servertest.Start(t, h.Host(), serves(settingsFor(t, ca), handler),
+			// WriteTimeout would cancel the context first.
+			settings := settingsFor(t, ca)
+			settings.WriteTimeout = 0
+			p, status := http3servertest.Start(t, h.Host(), serves(settings, handler),
 				humustest.WithApp(humus.WithTelemetry(telemetry.NoopBuilder)),
 			)
 			synctest.Wait()

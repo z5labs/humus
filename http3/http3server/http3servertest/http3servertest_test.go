@@ -31,12 +31,15 @@ import (
 // humustest Hosts, with certificates from a CA generated for each test.
 
 // serves returns an Init whose only Service serves h over HTTP/3 on :8443,
-// with cert.
+// with cert and no WriteTimeout.
 func serves(cert *humustest.Certificate, h http.Handler) func(context.Context, *humus.Setup, humus.Host) ([]humus.Service, error) {
 	return func(ctx context.Context, s *humus.Setup, n humus.Host) ([]humus.Service, error) {
 		settings := http3server.DefaultSettings()
 		settings.Addr = ":8443"
 		settings.TLS = &tls.Config{Certificates: []tls.Certificate{cert.TLS()}}
+		// No WriteTimeout, which would otherwise cancel the request of a
+		// handler that blocks through the grace period first.
+		settings.WriteTimeout = 0
 		svc, err := http3server.NewService(ctx, s, n, settings, h)
 		if err != nil {
 			return nil, err
