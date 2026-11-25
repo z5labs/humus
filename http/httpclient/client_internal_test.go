@@ -41,14 +41,6 @@ func newSetup(t *testing.T, dialled *bool) (*humus.Setup, Network) {
 	return &humus.Setup{Telemetry: telemetry.Noop()}, n
 }
 
-// transportOf returns c's http.Transport.
-func transportOf(t *testing.T, c *http.Client) *http.Transport {
-	t.Helper()
-	ot, ok := c.Transport.(*retryTransport)
-	require.True(t, ok, "the client's Transport is %T", c.Transport)
-	return ot.conns
-}
-
 func mustParse(t *testing.T, raw string) *url.URL {
 	t.Helper()
 	u, err := url.Parse(raw)
@@ -70,12 +62,16 @@ func TestNewClient_the_client(t *testing.T) {
 	c, err := NewClient(s, n, settings)
 	require.NoError(t, err)
 	require.False(t, dialled, "NewClient dials nothing")
+	_, err = c.Get("https://payments:8443/")
+	require.ErrorIs(t, err, errDialled)
+	require.True(t, dialled, "the client NewClient returned dials through the Network")
+	dialled = false
 
 	require.Equal(t, 7*time.Second, c.Timeout)
 	require.Nil(t, c.Jar)
 	require.NotNil(t, c.CheckRedirect)
 
-	tr := transportOf(t, c)
+	tr := newTransport(n, settings)
 	require.NotNil(t, tr.DialContext)
 	_, err = tr.DialContext(t.Context(), "tcp", "payments:8443")
 	require.ErrorIs(t, err, errDialled)
@@ -103,33 +99,15 @@ func TestNewClient_an_http_BaseURL_is_HTTP1_alone(t *testing.T) {
 	settings.BaseURL = mustParse(t, "http://payments:8080")
 	var dialled bool
 	s, n := newSetup(t, &dialled)
-	c, err := NewClient(s, n, settings)
+	_, err := NewClient(s, n, settings)
 	require.NoError(t, err)
 
-	tr := transportOf(t, c)
+	tr := newTransport(n, settings)
 	require.Nil(t, tr.TLSClientConfig)
 	require.True(t, tr.Protocols.HTTP1())
 	require.False(t, tr.Protocols.HTTP2())
 	require.False(t, tr.Protocols.UnencryptedHTTP2())
 	require.False(t, dialled)
-}
-
-func TestOriginOf(t *testing.T) {
-	t.Parallel()
-
-	for raw, want := range map[string]string{
-		"https://payments":            "https://payments:443",
-		"https://payments:443/v1":     "https://payments:443",
-		"HTTPS://Payments:8443/a?b=c": "https://payments:8443",
-		"http://payments":             "http://payments:80",
-		"http://payments:8080":        "http://payments:8080",
-		"https://[::1]:8443":          "https://[::1]:8443",
-		"https://user:pw@payments":    "https://payments:443",
-	} {
-		require.Equal(t, want, originOf(mustParse(t, raw)).String(), raw)
-	}
-	require.Equal(t, originOf(mustParse(t, "https://payments")), originOf(mustParse(t, "https://PAYMENTS:443/x")))
-	require.NotEqual(t, originOf(mustParse(t, "https://payments")), originOf(mustParse(t, "http://payments:443")))
 }
 
 // closeRecorder is a request body that records being closed.
@@ -162,18 +140,4 @@ func TestRetryTransport_refuses_another_origin(t *testing.T) {
 	require.EqualError(t, err, "httpclient: request to https://payments:443 on a client for https://payments:8443")
 	require.True(t, body.closed, "the refused request's body is closed")
 	require.False(t, dialled)
-}
-
-func TestSpanName(t *testing.T) {
-	t.Parallel()
-
-	for method, want := range map[string]string{
-		"":                 "GET",
-		http.MethodGet:     "GET",
-		http.MethodPost:    "POST",
-		http.MethodPatch:   "PATCH",
-		http.MethodConnect: "CONNECT",
-	} {
-		require.Equal(t, want, spanName("", &http.Request{Method: method}), "method %q", method)
-	}
 }

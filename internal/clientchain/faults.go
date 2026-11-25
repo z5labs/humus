@@ -3,7 +3,7 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-package httpclient
+package clientchain
 
 import (
 	"net"
@@ -26,7 +26,7 @@ func pointOf(o origin) string {
 }
 
 // injectFaults is the layer just inside the attempt timeout, around the
-// call to the http.Transport: the injection layer. Each attempt the breaker
+// call to the bottom Transport: the injection layer. Each attempt the breaker
 // admits evaluates point with faults, in the attempt's context, whose span
 // is otelhttp's. A Delay is waited there, inside AttemptTimeout. An abort,
 // or a Delay the attempt's context cuts short, fails the attempt with a

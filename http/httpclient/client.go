@@ -11,14 +11,11 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
-	"github.com/z5labs/bedrock/circuit"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/internal/clientchain"
 )
 
 // The pool of a client's http.Transport. It keeps as many idle connections,
@@ -28,10 +25,6 @@ const (
 	maxIdleConns    = 100
 	idleConnTimeout = 90 * time.Second
 )
-
-// maxRedirects is how many redirects a client follows, as net/http's
-// default policy does.
-const maxRedirects = 10
 
 // Network is what a client needs of a host: a way to dial. humus.Host
 // implements it, and so does any network of the end user's with this
@@ -82,29 +75,25 @@ func NewClient(s *humus.Setup, n Network, settings Settings) (*http.Client, erro
 	if err != nil {
 		return nil, fmt.Errorf("httpclient: NewClient: %w", err)
 	}
-	retrier, err := newRetrier(settings)
+	c, err := clientchain.New(s, "httpclient", scopeName, chainSettings(settings), newTransport(n, settings))
 	if err != nil {
-		// checkSettings accepts only what retry accepts, so this is
-		// humus's bug.
-		return nil, fmt.Errorf("httpclient: NewClient: %w", err)
+		return nil, err
 	}
+	s.OnStop(func(context.Context) error {
+		c.CloseIdleConnections()
+		return nil
+	})
+	return c, nil
+}
 
-	base := originOf(settings.BaseURL)
-	meter := s.Telemetry.MeterProvider.Meter(scopeName)
-	m, err := newInstruments(meter, base)
-	if err != nil {
-		// The instruments' names and options are humus's own, so this is
-		// humus's bug.
-		return nil, fmt.Errorf("httpclient: NewClient: creating its instruments: %w", err)
-	}
-	logger := s.Telemetry.LoggerProvider.Logger(scopeName)
-	breaker, err := circuit.New(settings.Breaker, settings.BreakerPolicy, m.countCalls(countVerdict), newObserver(logger, m))
-	if err != nil {
-		// checkSettings accepts only what circuit accepts, so this is
-		// humus's bug too.
-		return nil, fmt.Errorf("httpclient: NewClient: building the circuit breaker: %w", err)
-	}
+// scopeName names the client's meter, which records humus's own
+// instruments, and its logger, which the breaker logs through, so the
+// instruments and the records share a scope.
+const scopeName = "github.com/z5labs/humus/http/httpclient"
 
+// newTransport returns the http.Transport at the bottom of the client's
+// layers, which dials through n.
+func newTransport(n Network, settings Settings) *http.Transport {
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
 	tr := &http.Transport{
@@ -115,69 +104,33 @@ func NewClient(s *humus.Setup, n Network, settings Settings) (*http.Client, erro
 		MaxIdleConnsPerHost: maxIdleConns,
 		IdleConnTimeout:     idleConnTimeout,
 	}
-	if base.scheme == "https" {
+	if strings.EqualFold(settings.BaseURL.Scheme, "https") {
 		// HTTP/2 is offered first in ALPN, and HTTP/1.1 after it. An http
 		// BaseURL is HTTP/1.1 alone, since humus serves no h2c.
 		tr.TLSClientConfig = settings.TLS.Clone()
 		protocols.SetHTTP2(true)
 	}
+	return tr
+}
 
-	// The layers, outermost first: the origin check and the retries, then
-	// otelhttp, then the breaker, which classifies each attempt, then the
-	// attempt timeout, then the injection layer, then the http.Transport. otelhttp sits inside the
-	// origin check, so a refused request is not an attempt, and outside
-	// the breaker, so an attempt the breaker rejects has a span, and the
-	// layers that see each attempt's span find it in the request's
-	// context. The breaker sits inside the retries, so each attempt is a
-	// call it admits or rejects. The injection layer sits inside the
-	// breaker and the attempt timeout, so an attempt a fault ends is
-	// classified, and a Delay is bounded, as the failure it emulates is.
-	// Every provider and the propagator are passed, so otelhttp never falls
-	// back to OpenTelemetry's globals.
-	injected := injectFaults{
-		faults:     s.Faults,
-		point:      pointOf(base),
-		forward:    settings.ForwardScenario,
-		propagator: s.Telemetry.Propagator,
-		next:       tr,
-	}
-	attempts := attemptTransport{
-		classify: settings.Classify,
-		breaker:  breaker,
-		metrics:  m,
-		next:     newAttemptTimeout(settings.AttemptTimeout, injected),
-	}
-	instrumented := otelhttp.NewTransport(attempts,
-		otelhttp.WithTracerProvider(s.Telemetry.TracerProvider),
-		otelhttp.WithMeterProvider(s.Telemetry.MeterProvider),
-		otelhttp.WithPropagators(s.Telemetry.Propagator),
-		otelhttp.WithSpanNameFormatter(spanName),
-	)
-
-	c := &http.Client{
-		Transport: &retryTransport{origin: base, retrier: retrier, metrics: m, next: instrumented, conns: tr},
-		Timeout:   settings.Timeout,
-		Jar:       nil,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if originOf(req.URL) != base {
-				return http.ErrUseLastResponse
-			}
-			if len(via) >= maxRedirects {
-				return fmt.Errorf("stopped after %d redirects", maxRedirects)
-			}
-			return nil
+// chainSettings returns the fields of settings the layers are built from.
+func chainSettings(settings Settings) clientchain.Settings {
+	classify := settings.Classify
+	return clientchain.Settings{
+		BaseURL:        settings.BaseURL,
+		Timeout:        settings.Timeout,
+		AttemptTimeout: settings.AttemptTimeout,
+		MaxAttempts:    settings.MaxAttempts,
+		BackoffBase:    settings.BackoffBase,
+		BackoffMax:     settings.BackoffMax,
+		RetryBudget:    settings.RetryBudget,
+		Classify: func(resp *http.Response, err error) clientchain.Classification {
+			return clientchain.Classification(classify(resp, err))
 		},
+		Breaker:         settings.Breaker,
+		BreakerPolicy:   settings.BreakerPolicy,
+		ForwardScenario: settings.ForwardScenario,
 	}
-	// humus.circuit.state's callback is registered last, once nothing after
-	// it can fail, so a NewClient that returns an error leaves none behind.
-	if err := m.observeState(meter, breaker); err != nil {
-		return nil, fmt.Errorf("httpclient: NewClient: registering humus.circuit.state's callback: %w", err)
-	}
-	s.OnStop(func(context.Context) error {
-		c.CloseIdleConnections()
-		return nil
-	})
-	return c, nil
 }
 
 // checkSettings runs every check on settings, and the agreement of TLS with
@@ -228,36 +181,4 @@ func checkSettings(settings Settings) error {
 		}
 	}
 	return errors.Join(errs...)
-}
-
-// origin is the scheme, host and port of a URL, with the scheme's default
-// port when the URL has none. Two URLs of one origin are equal origins.
-type origin struct {
-	scheme string
-	host   string
-	port   string
-}
-
-// originOf returns u's origin. Its scheme and host are lowercase, as both
-// compare without regard to case.
-func originOf(u *url.URL) origin {
-	o := origin{
-		scheme: strings.ToLower(u.Scheme),
-		host:   strings.ToLower(u.Hostname()),
-		port:   u.Port(),
-	}
-	if o.port == "" {
-		switch o.scheme {
-		case "https":
-			o.port = "443"
-		case "http":
-			o.port = "80"
-		}
-	}
-	return o
-}
-
-// String returns the origin as scheme://host:port.
-func (o origin) String() string {
-	return o.scheme + "://" + net.JoinHostPort(o.host, o.port)
 }

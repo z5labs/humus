@@ -3,7 +3,7 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-package httpclient
+package clientchain
 
 import (
 	"context"
@@ -28,6 +28,7 @@ import (
 // classifies its result, once, for the retry layer outside otelhttp, and
 // settles the attempt's ticket with the result's Breaker outcome.
 type attemptTransport struct {
+	name     string
 	classify func(resp *http.Response, err error) Classification
 	breaker  *circuit.Breaker
 	metrics  *instruments
@@ -103,7 +104,7 @@ func (t attemptTransport) RoundTrip(r *http.Request) (resp *http.Response, err e
 		}
 	}()
 	c := t.classify(resp, err)
-	mustBeValid(c)
+	mustBeValid(t.name, c)
 	classified = true
 	a.class, a.classified = c, true
 
@@ -140,7 +141,7 @@ func decided(call context.Context) Classification {
 	return Classification{Retry: retry.Stop, Breaker: circuit.Ignored}
 }
 
-// attemptTimeout is the layer just outside the http.Transport. It cancels
+// attemptTimeout is the layer just outside the injection layer. It cancels
 // an attempt's context once d has passed, unless the response's headers
 // arrive first, with cause, which wraps context.DeadlineExceeded. Once they
 // arrive, the context lives until the response's body is closed.
@@ -150,11 +151,12 @@ type attemptTimeout struct {
 	next  http.RoundTripper
 }
 
-// newAttemptTimeout returns the layer that bounds each attempt by d.
-func newAttemptTimeout(d time.Duration, next http.RoundTripper) attemptTimeout {
+// newAttemptTimeout returns the layer that bounds each attempt by d. Its
+// cause starts with name.
+func newAttemptTimeout(name string, d time.Duration, next http.RoundTripper) attemptTimeout {
 	return attemptTimeout{
 		d:     d,
-		cause: fmt.Errorf("httpclient: the attempt had no response after %s: %w", d, context.DeadlineExceeded),
+		cause: fmt.Errorf("%s: the attempt had no response after %s: %w", name, d, context.DeadlineExceeded),
 		next:  next,
 	}
 }

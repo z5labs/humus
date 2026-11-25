@@ -3,7 +3,7 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-package httpclient
+package clientchain
 
 import (
 	"bytes"
@@ -58,11 +58,11 @@ type result struct {
 }
 
 func (r *result) Error() string {
-	return fmt.Sprintf("httpclient: an attempt classified %s", r.class.Retry)
+	return fmt.Sprintf("clientchain: an attempt classified %s", r.class.Retry)
 }
 
-// newRetrier builds the client's retry.Retrier from settings, which
-// checkSettings has passed.
+// newRetrier builds the client's retry.Retrier from settings, which the
+// client's checks have passed.
 func newRetrier(settings Settings) (*retry.Retrier, error) {
 	budget, err := retry.NewBudget(settings.RetryBudget)
 	if err != nil {
@@ -76,7 +76,7 @@ func newRetrier(settings Settings) (*retry.Retrier, error) {
 	classify := func(_ context.Context, err error) (retry.Outcome, time.Duration) {
 		var r *result
 		if !errors.As(err, &r) {
-			panic(fmt.Sprintf("httpclient: an attempt's result is a %T", err))
+			panic(fmt.Sprintf("clientchain: an attempt's result is a %T", err))
 		}
 		c := r.class
 		if c.Retry == retry.Retry && c.RetryAfter > backoffMax {
@@ -92,14 +92,16 @@ func newRetrier(settings Settings) (*retry.Retrier, error) {
 
 // retryTransport is the client's outermost layer. It refuses every request
 // to an origin other than its own, before anything is sent, and retries
-// the rest through next with retrier. conns is the http.Transport at the
-// bottom of next, which holds the client's connections.
+// the rest through next with retrier. conns is the Transport at the bottom
+// of next, which holds the client's connections. name starts each of its
+// errors.
 type retryTransport struct {
+	name    string
 	origin  origin
 	retrier *retry.Retrier
 	metrics *instruments
 	next    http.RoundTripper
-	conns   *http.Transport
+	conns   Transport
 }
 
 // RoundTrip implements http.RoundTripper. A refused request's body is
@@ -109,7 +111,7 @@ func (t *retryTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 		if r.Body != nil {
 			_ = r.Body.Close()
 		}
-		return nil, fmt.Errorf("httpclient: request to %s on a client for %s", o, t.origin)
+		return nil, fmt.Errorf("%s: request to %s on a client for %s", t.name, o, t.origin)
 	}
 
 	call := r.Context()
@@ -126,7 +128,7 @@ func (t *retryTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 			body, bodyErr := r.GetBody()
 			if bodyErr != nil {
 				t.metrics.done(call, at, &result{class: Classification{Retry: retry.Stop, Breaker: circuit.Ignored}})
-				return nil, fmt.Errorf("httpclient: rewinding the request's body: %w", bodyErr)
+				return nil, fmt.Errorf("%s: rewinding the request's body: %w", t.name, bodyErr)
 			}
 			req = r.Clone(call)
 			req.Body = body

@@ -123,21 +123,3 @@ func isDigits(s string) bool {
 	}
 	return s != ""
 }
-
-// mustBeValid panics if c is a Classification no classifier may return: a
-// zero or unknown Outcome, or retry.Retry with a negative RetryAfter.
-func mustBeValid(c Classification) {
-	switch c.Retry {
-	case retry.Success, retry.Retry, retry.Stop:
-	default:
-		panic("httpclient: Settings.Classify returned a Classification whose Retry is " + c.Retry.String() + ", not a retry.Outcome")
-	}
-	switch c.Breaker {
-	case circuit.Success, circuit.Failure, circuit.Ignored:
-	default:
-		panic("httpclient: Settings.Classify returned a Classification whose Breaker is " + c.Breaker.String() + ", not a circuit.Outcome")
-	}
-	if c.Retry == retry.Retry && c.RetryAfter < 0 {
-		panic("httpclient: Settings.Classify returned retry.Retry with a negative RetryAfter, " + c.RetryAfter.String())
-	}
-}
