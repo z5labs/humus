@@ -320,7 +320,7 @@ A process that runs a job next to other Services, such as a probes server
 or a metrics server, returns them all from the end user's `Init`, with the
 job's among them. A Kubernetes Job's pod usually needs no probes, but a
 long-running job that wants a liveness probe returns
-[`httphealth.NewService`](https://pkg.go.dev/github.com/z5labs/humus/httphealth#NewService)'s
+[`httphealth.NewService`](https://pkg.go.dev/github.com/z5labs/humus/http/httphealth#NewService)'s
 Service next to the job, which owns the App's readiness, so it needs no
 health Service. Its liveness monitor, here `progress`, is the job's own: with
 none, the probe checks only that the process answers:

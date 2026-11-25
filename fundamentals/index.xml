@@ -40,7 +40,7 @@ readiness is owned by a &lt;a href="#the-health-service"&gt;health Service&lt;/a
 from &lt;code&gt;Init&lt;/code&gt; like any other Service. All of it is in the
 &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/health"&gt;&lt;code&gt;health&lt;/code&gt;&lt;/a&gt; package, which
 depends on nothing but the standard library and serves no protocol.
-&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/httphealth"&gt;&lt;code&gt;httphealth&lt;/code&gt;&lt;/a&gt; and
+&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/http/httphealth"&gt;&lt;code&gt;httphealth&lt;/code&gt;&lt;/a&gt; and
 &lt;a href="https://pkg.go.dev/github.com/z5labs/humus/grpc/grpchealth"&gt;&lt;code&gt;grpc/grpchealth&lt;/code&gt;&lt;/a&gt;
 &lt;a href="#exposing-the-probes"&gt;expose the probes&lt;/a&gt; to Kubernetes.&lt;/p&gt;
 &lt;p&gt;The design behind this page is in

@@ -8,7 +8,7 @@ the defaults an HTTP server behind a load balancer needs: a 5s drain and a
 runs the same App in a test, on the same defaults, with an HTTP/2 client.&lt;/p&gt;
 &lt;p&gt;The package serves an &lt;code&gt;http.Handler&lt;/code&gt; and has no REST DSL, which is
 &lt;a href="https://z5labs.github.io/humus/services/http/openapi/"&gt;&lt;code&gt;openapi/v3&lt;/code&gt;&lt;/a&gt;&amp;rsquo;s. It exports no App, runs no health Service and serves no probes:
-&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/httphealth"&gt;&lt;code&gt;httphealth&lt;/code&gt;&lt;/a&gt;
+&lt;a href="https://pkg.go.dev/github.com/z5labs/humus/http/httphealth"&gt;&lt;code&gt;httphealth&lt;/code&gt;&lt;/a&gt;
 answers them, as &lt;a href="#health-probes"&gt;Health probes&lt;/a&gt; describes. The design behind
 everything on this page is in
 &lt;a href="https://github.com/z5labs/humus/discussions/680"&gt;Proposal: HTTP server foundation&lt;/a&gt;,
