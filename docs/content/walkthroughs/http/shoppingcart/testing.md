@@ -513,8 +513,9 @@ The `Target` reaches both services through `kubectl port-forward`, which
 carries TCP only, so the test's own calls are HTTP/2. The cart's calls to
 the catalog, in `CatalogDown`, `SlowCatalog` and every case that adds an
 item, are HTTP/3 between the pods, through the catalog's Service and
-kube-proxy. The `Target` reads the rest from the cluster: the issuer, the audiences and the trust
-scope from the services' ConfigMaps, and the CA from its Secret:
+kube-proxy. The `Target` reads the rest from the cluster: the issuer, the
+audiences and the trust scope from the services' ConfigMaps, and the CA
+from its Secret:
 
 ```go
 	client := newClient(t)
