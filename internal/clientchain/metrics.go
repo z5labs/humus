@@ -3,7 +3,7 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-package httpclient
+package clientchain
 
 import (
 	"context"
@@ -17,11 +17,6 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 )
-
-// scopeName names the client's meter, which records humus's own
-// instruments, and its logger, which the breaker logs through, so the
-// instruments and the records share a scope.
-const scopeName = "github.com/z5labs/humus/http/httpclient"
 
 // The keys of the attributes humus defines for its instruments and the
 // breaker's log records.

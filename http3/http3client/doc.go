@@ -23,6 +23,62 @@
 // and port of BaseURL, with the scheme's default port when the URL has
 // none, so https://payments and https://payments:443 are one origin.
 //
+// [NewClient] returns an *http.Client for it, built once in the end user's
+// Init and shared by everything that calls the dependency. It retries,
+// breaks, bounds each attempt and the call, and injects failures at
+// http:<host>:<port>, as httpclient's client does: the layers that do so
+// are the same code.
+//
+// # HTTP/3 alone, with no fallback
+//
+// The client speaks HTTP/3 by prior knowledge: it never asks the dependency
+// which protocols it speaks, and never falls back to HTTP/2 or HTTP/1.1
+// over TCP. Calling NewClient in place of httpclient's is the opt-in, since
+// a service knows its dependency. A dependency that doesn't answer over UDP,
+// or a network that drops UDP, fails each attempt: a closed port at once,
+// and a silent path once QUIC's 5s handshake idle timeout passes. The
+// breaker counts each failure, and once it opens, calls fail at once until
+// the dependency answers a probe.
+//
+// # Dialling through the Network
+//
+// The client dials each QUIC connection with n.DialUDP(ctx, "udp",
+// address), where address is BaseURL's host and port, so the [Network]
+// resolves the name as it does for TCP, and a test's network carries the
+// connection. quic-go never opens a socket or resolves a name itself. Each
+// connection has a connected socket of its own, whose buffer sizes quic-go
+// sets through it, so it writes no warning about them. Its QUIC config sets
+// out a 5s handshake idle timeout, a 30s idle timeout and a keep-alive every
+// 10s on a connection no call is using. Calls past the 100 streams a server
+// allows at once wait on the same connection for one to finish.
+//
+// quic-go sends a request again, once, inside the same attempt, when the
+// server rejects its stream with H3_REQUEST_REJECTED, or the connection is
+// going away after a GOAWAY: neither the breaker nor the retry budget sees
+// it.
+//
+// # Closing on stop
+//
+// NewClient registers a function with s.OnStop that closes every QUIC
+// connection and socket the client dialled that is still open. That
+// includes a connection quic-go stopped using after a stream error, which
+// it never closes, and which CloseIdleConnections doesn't reach. So nothing
+// the client dialled outlives the App, or a testing/synctest bubble.
+//
+// # Telemetry
+//
+// Every attempt is a client span, measured by otelhttp with s.Telemetry's
+// providers and propagator. Its network.protocol.version is 3.0, a failed
+// attempt's included: the client sets each request's Proto to HTTP/3.0
+// before otelhttp reads it. The client records httpclient's own
+// instruments, humus.circuit.state, humus.circuit.transitions,
+// humus.circuit.calls and humus.retry.decisions, with the same attributes,
+// and each change of the breaker's state is a log record, as httpclient's
+// are. Both are under the client's own scope,
+// github.com/z5labs/humus/http3/http3client, so a query that covers both
+// transports matches both scopes. quic-go's client logs only at Debug, and
+// nothing of it is recorded.
+//
 // # TLS
 //
 // HTTP/3 runs over QUIC, which carries nothing in plain text, so BaseURL's

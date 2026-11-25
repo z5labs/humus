@@ -3,7 +3,7 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-package httpclient
+package clientchain
 
 import (
 	"context"
@@ -26,7 +26,7 @@ type verdict struct {
 }
 
 func (v verdict) Error() string {
-	return "httpclient: an attempt counted as " + v.outcome.String()
+	return "clientchain: an attempt counted as " + v.outcome.String()
 }
 
 // countVerdict is the breaker's classifier: the outcome of a verdict. The
@@ -35,7 +35,7 @@ func (v verdict) Error() string {
 func countVerdict(_ context.Context, err error) circuit.Outcome {
 	var v verdict
 	if !errors.As(err, &v) {
-		panic(fmt.Sprintf("httpclient: a ticket settled with a %T", err))
+		panic(fmt.Sprintf("clientchain: a ticket settled with a %T", err))
 	}
 	return v.outcome
 }

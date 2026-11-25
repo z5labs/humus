@@ -18,7 +18,7 @@
 // and closes both once the connection has closed. Close closes every
 // connection still open, so nothing it dialled outlives it, whatever quic-go
 // does with a connection it stops using. http3servertest's client dials
-// through it, and http3client will.
+// through it, and so does http3client.
 package quicdial
 
 import (
