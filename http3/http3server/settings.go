@@ -41,10 +41,11 @@ type Settings struct {
 	// Default: 2s. Valid: not negative. Check: CheckReadHeaderTimeout.
 	ReadHeaderTimeout time.Duration
 
-	// ReadTimeout bounds reading a whole request stream, its body included.
-	// Once it has passed, from the end of the request's headers, a read of
-	// the body fails, so a slow upload ends. Zero means no timeout. A
-	// handler moves its own deadline with http.ResponseController.
+	// ReadTimeout bounds reading a request's body, from the end of its
+	// headers, and its headers too when ReadHeaderTimeout is zero. Once it
+	// has passed, a read of the body fails, so a slow upload ends. Zero
+	// means no timeout. A handler moves its own deadline with
+	// http.ResponseController.
 	//
 	// Default: 5s. Valid: not negative. Check: CheckReadTimeout.
 	ReadTimeout time.Duration
@@ -53,8 +54,10 @@ type Settings struct {
 	// headers. When it passes, the request's context is cancelled, every
 	// read and write of its stream fails, and once the handler returns, the
 	// stream is reset with H3_INTERNAL_ERROR, even for a handler that never
-	// wrote. Zero means no timeout. A handler that streams extends its own
-	// deadline with http.ResponseController.
+	// wrote. The reset waits for the handler, so a handler that ignores its
+	// context holds its stream until it returns. Zero means no timeout. A
+	// handler that streams extends its own deadline with
+	// http.ResponseController.
 	//
 	// Default: 10s. Valid: not negative. Check: CheckWriteTimeout.
 	WriteTimeout time.Duration

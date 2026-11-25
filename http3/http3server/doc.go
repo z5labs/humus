@@ -45,14 +45,19 @@
 // the caller. A panic resets the request's stream with H3_INTERNAL_ERROR,
 // where HTTP/2 resets the stream too.
 //
-// ReadTimeout and WriteTimeout bound each request's stream, as net/http
-// bounds an HTTP/2 stream, from the end of the request's headers. Once
-// ReadTimeout has passed, a read of the body fails, so a slow upload ends.
-// When WriteTimeout passes, the request's context is cancelled, the
-// stream's reads and writes fail, and once the handler returns, the stream
-// is reset with H3_INTERNAL_ERROR, so a handler that never writes doesn't
-// hold its goroutine. A handler that streams moves either deadline with
-// http.ResponseController's SetReadDeadline and SetWriteDeadline.
+// ReadTimeout and WriteTimeout bound each request's stream from the end of
+// the request's headers, where net/http starts an HTTP/2 stream's timers.
+// Once ReadTimeout has passed, a read of the body fails, so a slow upload
+// ends. When WriteTimeout passes, the request's context is cancelled and
+// the stream's reads and writes fail, so a handler that watches its context
+// or writes returns, and a handler that never writes doesn't hold its
+// goroutine. The stream is reset with H3_INTERNAL_ERROR once the handler
+// returns, and not before: quic-go gives a handler no other way to reset
+// its stream, so a handler that ignores its context and never writes holds
+// the stream until it returns, where HTTP/2 resets it at the timer. A
+// handler that streams moves either deadline with http.ResponseController's
+// SetReadDeadline and SetWriteDeadline. A handler that takes its stream
+// over with http3.HTTPStreamer lifts both bounds.
 //
 // QUIC's limits are code, not settings, as HTTP/2's stream limit is in
 // httpserver. Each one is passed explicitly, so a quic-go bump changes

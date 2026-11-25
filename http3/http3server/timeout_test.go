@@ -9,6 +9,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"syscall"
 	"testing"
@@ -184,8 +185,8 @@ func TestService_bounds_each_request_stream_with_WriteTimeout(t *testing.T) {
 			r := <-get(t, c, "https://localhost:8443/")
 			requireReset(t, r.err)
 			errs := <-moved
-			require.Error(t, errs[0], "SetWriteDeadline")
-			require.Error(t, errs[1], "SetReadDeadline")
+			require.ErrorIs(t, errs[0], http.ErrHandlerTimeout, "SetWriteDeadline")
+			require.ErrorIs(t, errs[1], http.ErrHandlerTimeout, "SetReadDeadline")
 		})
 	})
 }
@@ -206,7 +207,7 @@ func TestService_bounds_each_request_stream_with_ReadTimeout(t *testing.T) {
 		got := upload(t, ctx, c, "https://localhost:8443/", 10)
 
 		e := <-ends
-		require.Error(t, e.err, "the slow upload ended")
+		require.ErrorIs(t, e.err, os.ErrDeadlineExceeded, "the slow upload ended at the read deadline")
 		require.Equal(t, 3*time.Second, e.after)
 		cancel()
 		<-got
@@ -379,5 +380,70 @@ func TestService_zero_timeouts_bound_nothing(t *testing.T) {
 			require.NoError(t, e.err)
 			require.Equal(t, 20*time.Second, e.after)
 		})
+	})
+}
+
+// streamOf takes over w's stream through the first http3.HTTPStreamer on
+// w's Unwrap chain, or returns nil if it has none.
+func streamOf(w http.ResponseWriter) *http3.Stream {
+	for {
+		if s, ok := w.(http3.HTTPStreamer); ok {
+			return s.HTTPStream()
+		}
+		u, ok := w.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			return nil
+		}
+		w = u.Unwrap()
+	}
+}
+
+func TestService_lifts_the_bounds_of_a_stream_its_handler_takes_over(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ca := humustest.NewCA(t)
+		h := humustest.NewHost(t)
+		settings := settingsFor(t, ca)
+		settings.ReadTimeout = time.Second
+		settings.WriteTimeout = 2 * time.Second
+		taken := make(chan *http3.Stream, 1)
+		handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			if err := http.NewResponseController(w).Flush(); err != nil {
+				taken <- nil
+				return
+			}
+			taken <- streamOf(w)
+		})
+		c, stop := startWith(t, h, ca, settings, handler)
+		defer stop()
+
+		pr, pw := io.Pipe()
+		defer func() { _ = pw.Close() }()
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "https://localhost:8443/", pr)
+		require.NoError(t, err)
+		resp, err := c.Do(req)
+		require.NoError(t, err)
+		defer func() { _ = resp.Body.Close() }()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		str := <-taken
+		require.NotNil(t, str, "the handler took its stream over")
+		defer str.CancelRead(0)
+		defer str.CancelWrite(0)
+
+		// Past both ReadTimeout and WriteTimeout, the stream still reads and
+		// writes.
+		time.Sleep(5 * time.Second)
+		_, err = pw.Write([]byte("x"))
+		require.NoError(t, err)
+		b := make([]byte, 1)
+		_, err = io.ReadFull(str, b)
+		require.NoError(t, err, "a read past ReadTimeout")
+		require.Equal(t, "x", string(b))
+
+		_, err = str.Write([]byte("y"))
+		require.NoError(t, err, "a write past WriteTimeout")
+		_, err = io.ReadFull(resp.Body, b)
+		require.NoError(t, err)
+		require.Equal(t, "y", string(b))
 	})
 }

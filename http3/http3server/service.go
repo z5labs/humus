@@ -63,9 +63,10 @@ type Service struct {
 // when it is zero, closes a connection with no request in flight.
 // ReadTimeout and WriteTimeout bound each request's stream from the end of
 // its headers: once ReadTimeout has passed, a read of the body fails, and
-// when WriteTimeout passes, the request's context is cancelled and its
-// stream is reset with H3_INTERNAL_ERROR once the handler returns. A
-// handler moves either deadline with http.ResponseController. Half the
+// when WriteTimeout passes, the request's context is cancelled, the
+// stream's reads and writes fail, and its stream is reset with
+// H3_INTERNAL_ERROR once the handler returns. A handler moves either
+// deadline with http.ResponseController. Half the
 // smallest of ReadHeaderTimeout, ReadTimeout and WriteTimeout that is set,
 // or 5s when none is, bounds the QUIC handshake. MaxHeaderBytes bounds a
 // request's headers. 0-RTT is never accepted.
