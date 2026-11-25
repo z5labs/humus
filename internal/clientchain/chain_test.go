@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -400,19 +401,21 @@ func TestNew_panics_on_a_Classification_no_classifier_may_return(t *testing.T) {
 		{Retry: retry.Success, Breaker: 0},
 		{Retry: retry.Retry, RetryAfter: -time.Second, Breaker: circuit.Failure},
 	} {
-		synctest.Test(t, func(t *testing.T) {
-			b := &bottom{answer: func(_ int, r *http.Request) (*http.Response, error) { return respond(r, http.StatusOK, ""), nil }}
-			s := settings()
-			s.Classify = func(*http.Response, error) clientchain.Classification { return c }
-			client := newClient(t, b, s)
-			var msg string
-			func() {
-				defer func() { msg, _ = recover().(string) }()
-				// Through the chain itself: a panic through http.Client
-				// would leave its Timeout's timer behind.
-				_, _ = client.Transport.RoundTrip(get(t, t.Context(), "https://payments:8443/"))
-			}()
-			require.True(t, strings.HasPrefix(msg, name+": Settings.Classify returned"), msg)
+		t.Run(fmt.Sprintf("%+v", c), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				b := &bottom{answer: func(_ int, r *http.Request) (*http.Response, error) { return respond(r, http.StatusOK, ""), nil }}
+				s := settings()
+				s.Classify = func(*http.Response, error) clientchain.Classification { return c }
+				client := newClient(t, b, s)
+				var msg string
+				func() {
+					defer func() { msg, _ = recover().(string) }()
+					// Through the chain itself: a panic through http.Client
+					// would leave its Timeout's timer behind.
+					_, _ = client.Transport.RoundTrip(get(t, t.Context(), "https://payments:8443/"))
+				}()
+				require.True(t, strings.HasPrefix(msg, name+": Settings.Classify returned"), msg)
+			})
 		})
 	}
 }

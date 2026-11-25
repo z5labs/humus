@@ -6,13 +6,16 @@
 package http3client_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
 	"io"
+	"log"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"slices"
 	"sync"
@@ -191,6 +194,9 @@ type socket struct {
 	net.Conn
 	closes      atomic.Int32
 	read, write atomic.Int64
+
+	mu      sync.Mutex
+	bufErrs []error
 }
 
 func (c *socket) Close() error {
@@ -199,13 +205,24 @@ func (c *socket) Close() error {
 }
 
 func (c *socket) SetReadBuffer(n int) error {
-	c.read.Store(int64(n))
-	return c.Conn.(interface{ SetReadBuffer(int) error }).SetReadBuffer(n)
+	err := c.Conn.(interface{ SetReadBuffer(int) error }).SetReadBuffer(n)
+	c.recordBuffer(&c.read, n, err)
+	return err
 }
 
 func (c *socket) SetWriteBuffer(n int) error {
-	c.write.Store(int64(n))
-	return c.Conn.(interface{ SetWriteBuffer(int) error }).SetWriteBuffer(n)
+	err := c.Conn.(interface{ SetWriteBuffer(int) error }).SetWriteBuffer(n)
+	c.recordBuffer(&c.write, n, err)
+	return err
+}
+
+// recordBuffer records a buffer size the socket was set to, and the error
+// setting it returned.
+func (c *socket) recordBuffer(size *atomic.Int64, n int, err error) {
+	size.Store(int64(n))
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.bufErrs = append(c.bufErrs, err)
 }
 
 // hello answers every request with hello and the request's path.
@@ -214,6 +231,13 @@ var hello = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 })
 
 func TestNewClient_speaks_HTTP3_through_the_network_it_is_given(t *testing.T) {
+	// quic-go writes its UDP-buffer warning with the log package, to the
+	// process's stderr, which the App's Process doesn't see. The test
+	// catches it in log's output instead, so it can't run in parallel.
+	var logged bytes.Buffer
+	defer log.SetOutput(log.Writer())
+	log.SetOutput(&logged)
+
 	synctest.Test(t, func(t *testing.T) {
 		ca := humustest.NewCA(t)
 		h := humustest.NewHost(t)
@@ -243,9 +267,15 @@ func TestNewClient_speaks_HTTP3_through_the_network_it_is_given(t *testing.T) {
 		socks.mu.Lock()
 		sock := socks.conns[0]
 		socks.mu.Unlock()
-		require.Positive(t, sock.read.Load(), "quic-go set the socket's receive buffer, so it doesn't warn")
-		require.Positive(t, sock.write.Load(), "quic-go set the socket's send buffer, so it doesn't warn")
+		require.Positive(t, sock.read.Load(), "quic-go set the socket's receive buffer through the Network's socket")
+		require.Positive(t, sock.write.Load(), "quic-go set the socket's send buffer through the Network's socket")
+		sock.mu.Lock()
+		for _, err := range sock.bufErrs {
+			require.NoError(t, err, "a buffer size the socket couldn't take makes quic-go warn")
+		}
+		sock.mu.Unlock()
 	})
+	require.Empty(t, logged.String(), "quic-go wrote nothing through the log package")
 }
 
 func TestNewClient_never_falls_back_to_TCP(t *testing.T) {
@@ -508,7 +538,10 @@ func TestClient_replays_a_request_quic_go_may_send_again_inside_one_attempt(t *t
 			host, socks := recordSockets(h)
 
 			tel := humustest.NewTelemetry()
-			var got []string
+			var (
+				got     []string
+				replays int32
+			)
 			st := runJob(t, host, tel.Builder(), paymentsSettings(t, ca), func(ctx context.Context, c *http.Client) error {
 				r, err := get(ctx, c, "https://payments:8443/")
 				if err != nil {
@@ -517,23 +550,32 @@ func TestClient_replays_a_request_quic_go_may_send_again_inside_one_attempt(t *t
 				got = append(got, r.body)
 
 				// The old server sends its GOAWAY, while the connection is
-				// idle in the client's pool.
+				// idle in the client's pool. quic-go keeps the connection
+				// pooled, so the next request is sent on it, can't open a
+				// stream there, and quic-go sends it again on a new
+				// connection, inside the one RoundTrip: httptrace sees it
+				// ask for a connection twice.
 				shutdown, cancel := context.WithTimeout(context.Background(), time.Minute)
 				defer cancel()
 				wg.Go(func() { _ = old.Shutdown(shutdown) })
 				synctest.Wait()
 
-				r, err = get(ctx, c, "https://payments:8443/")
+				var getConns atomic.Int32
+				traced := httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GetConn: func(string) { getConns.Add(1) }})
+				r, err = get(traced, c, "https://payments:8443/")
 				if err != nil {
 					return err
 				}
 				got = append(got, r.body)
+				replays = getConns.Load() - 1
 				return nil
 			})
 			requireExitZero(t, st)
 
 			require.Equal(t, []string{"old", "new"}, got)
+			require.EqualValues(t, 1, replays, "quic-go sent the second call again after the GOAWAY")
 			require.Len(t, socks.all(), 2, "the second call went over a connection of its own")
+			require.Len(t, clientSpans(tel), 2, "one attempt for each call")
 			requireCounts(t, tel, "humus.retry.decisions", "humus.retry.decision", map[string]int64{"succeeded": 2})
 			requireCounts(t, tel, "humus.circuit.calls", "humus.circuit.outcome", map[string]int64{"success": 2})
 		})

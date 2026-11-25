@@ -112,7 +112,10 @@ func NewClient(s *humus.Setup, n Network, settings Settings) (*http.Client, erro
 	s.OnStop(func(context.Context) error {
 		// The Transport closes the connections it still uses, and the Dialer
 		// every connection still open, those quic-go stopped using after a
-		// stream error included, with their sockets.
+		// stream error included, with their sockets. The Transport's error
+		// is dropped: it can only come from closing one of those
+		// connections, which the Dialer closes whatever it says, and the
+		// Transport owns no socket, since Dial is set.
 		_ = tr.Close()
 		d.Close()
 		return nil

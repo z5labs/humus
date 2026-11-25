@@ -62,6 +62,10 @@ func TestNewClient_the_client(t *testing.T) {
 	c, err := NewClient(s, n, settings)
 	require.NoError(t, err)
 	require.False(t, dialled, "NewClient dials nothing")
+	_, err = c.Get("https://payments:8443/")
+	require.ErrorIs(t, err, errDialled)
+	require.True(t, dialled, "the client NewClient returned dials through the Network")
+	dialled = false
 
 	require.Equal(t, 7*time.Second, c.Timeout)
 	require.Nil(t, c.Jar)
