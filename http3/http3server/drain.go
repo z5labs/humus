@@ -136,3 +136,22 @@ func (d *drain) scheduleLocked(t *tracked) {
 		_ = t.conn.CloseWithError(closeCode, "")
 	})
 }
+
+// closeAll closes every connection the drain tracks, with H3_NO_ERROR, at
+// once, and returns once each one has closed, which has cancelled the
+// context of each of its requests.
+func (d *drain) closeAll() {
+	d.mu.Lock()
+	conns := make([]*quic.Conn, 0, len(d.conns))
+	for c := range d.conns {
+		conns = append(conns, c)
+	}
+	d.mu.Unlock()
+
+	var wg sync.WaitGroup
+	for _, c := range conns {
+		// CloseWithError returns once the connection has closed.
+		wg.Go(func() { _ = c.CloseWithError(closeCode, "") })
+	}
+	wg.Wait()
+}

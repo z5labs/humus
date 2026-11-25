@@ -726,3 +726,94 @@ func TestService_records_a_panic_and_resets_its_stream(t *testing.T) {
 		require.Equal(t, []string{"handler panicked"}, panics, "recorded once, under the Service's scope, and not by quic-go")
 	})
 }
+
+func TestService_Shutdown_closes_every_connection_before_it_returns(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ctx  func(t *testing.T) context.Context
+	}{
+		{"a ctx already done", func(t *testing.T) context.Context {
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			return ctx
+		}},
+		{"a ctx done during the drain", func(t *testing.T) context.Context {
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			t.Cleanup(cancel)
+			return ctx
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ca := humustest.NewCA(t)
+				h := humustest.NewHost(t)
+				reqCtx := make(chan context.Context, 1)
+				handler := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+					reqCtx <- r.Context()
+					<-r.Context().Done()
+				})
+				// The Setup's OnStop functions never run here, so the test
+				// closes the socket the Service bound.
+				var sock net.PacketConn
+				n := hosttest.Seams{Network: h, OnListenUDP: func(ctx context.Context, network, address string) (net.PacketConn, error) {
+					pc, err := h.ListenUDP(ctx, network, address)
+					sock = pc
+					return pc, err
+				}}
+				svc, err := http3server.NewService(t.Context(), &humus.Setup{Telemetry: telemetry.Noop()}, n, settingsFor(t, ca), handler)
+				require.NoError(t, err)
+				served := make(chan error, 1)
+				go func() { served <- svc.Serve(t.Context()) }()
+				synctest.Wait()
+
+				got := get(t, http3servertest.NewClient(t, h, ca.Pool()), "https://localhost:8443/")
+				inFlight := <-reqCtx
+
+				ctx := tc.ctx(t)
+				err = svc.Shutdown(ctx)
+				require.ErrorIs(t, err, ctx.Err())
+				require.Error(t, inFlight.Err(), "the in-flight request's context is cancelled by the time Shutdown returns")
+				require.NoError(t, svc.Shutdown(t.Context()), "a second call returns nil")
+
+				require.Error(t, (<-got).err)
+				require.NoError(t, <-served)
+				synctest.Wait()
+				require.NoError(t, sock.Close())
+			})
+		})
+	}
+}
+
+// buffered is a socket that records the buffer sizes it is set to.
+type buffered struct {
+	net.PacketConn
+	read, write chan int
+}
+
+func (b *buffered) SetReadBuffer(n int) error  { b.read <- n; return nil }
+func (b *buffered) SetWriteBuffer(n int) error { b.write <- n; return nil }
+
+func TestService_sets_its_sockets_buffers_so_quic_go_doesnt_warn(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ca := humustest.NewCA(t)
+		h := humustest.NewHost(t)
+		sock := &buffered{read: make(chan int, 1), write: make(chan int, 1)}
+		n := hosttest.Seams{Network: h, OnListenUDP: func(ctx context.Context, network, address string) (net.PacketConn, error) {
+			pc, err := h.ListenUDP(ctx, network, address)
+			sock.PacketConn = pc
+			return sock, err
+		}}
+		svc, err := http3server.NewService(t.Context(), &humus.Setup{Telemetry: telemetry.Noop()}, n, settingsFor(t, ca), hello)
+		require.NoError(t, err)
+		served := make(chan error, 1)
+		go func() { served <- svc.Serve(t.Context()) }()
+
+		// quic-go writes its warning when it can't set either buffer.
+		require.Equal(t, 7<<20, <-sock.read)
+		require.Equal(t, 7<<20, <-sock.write)
+
+		require.NoError(t, svc.Shutdown(t.Context()))
+		require.NoError(t, <-served)
+		require.NoError(t, sock.Close())
+	})
+}

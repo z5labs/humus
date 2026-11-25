@@ -171,11 +171,16 @@ func (svc *Service) Shutdown(ctx context.Context) error {
 			}
 		case <-ctx.Done():
 		}
+		// quic-go's Close, on the goroutine above, closes every
+		// connection too, but nothing orders it before this return.
+		svc.drain.closeAll()
 		return fmt.Errorf("http3server: shutting down: %w", ctx.Err())
 	}
-	// Close closes every connection at once, then waits for every handler,
-	// so it runs on a goroutine of its own.
+	// Close stops the server, then waits for every handler, so it runs on
+	// a goroutine of its own. The drain closes every connection before
+	// Shutdown returns, so no request outlives it with its context live.
 	go func() { _ = svc.srv.Close() }()
+	svc.drain.closeAll()
 	return fmt.Errorf("http3server: shutting down: %w", ctx.Err())
 }
 
