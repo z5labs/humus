@@ -14,12 +14,12 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.45.0
 	github.com/twmb/franz-go v1.22.3
 	github.com/twmb/franz-go/pkg/kadm v1.20.0
-	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261124015931-df47e7aa0399
+	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261124225310-6c9261d4443a
 	github.com/twmb/franz-go/pkg/kmsg v1.15.1
-	github.com/z5labs/bedrock v0.27.0
-	github.com/z5labs/bedrock/fit v0.27.0
-	github.com/z5labs/bedrock/host v0.27.0
-	github.com/z5labs/bedrock/retry v0.27.0
+	github.com/z5labs/bedrock v0.28.0
+	github.com/z5labs/bedrock/fit v0.28.0
+	github.com/z5labs/bedrock/host v0.28.0
+	github.com/z5labs/bedrock/retry v0.28.0
 	github.com/z5labs/humus v0.18.0
 	github.com/z5labs/humus/queue/kafka v0.18.0
 	go.opentelemetry.io/otel v1.47.0
@@ -62,7 +62,7 @@ require (
 	github.com/moby/moby/client v0.6.3 // indirect
 	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/moby/sys/sequential v0.7.0 // indirect
-	github.com/moby/sys/user v0.5.0 // indirect
+	github.com/moby/sys/user v0.5.1 // indirect
 	github.com/moby/sys/userns v0.2.1 // indirect
 	github.com/moby/term v0.5.2 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
@@ -75,7 +75,7 @@ require (
 	github.com/tklauser/numcpus v0.12.0 // indirect
 	github.com/twmb/franz-go/plugin/kotel v1.7.1 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
-	github.com/z5labs/bedrock/circuit v0.27.0 // indirect
+	github.com/z5labs/bedrock/circuit v0.28.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.2 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.23.0 // indirect

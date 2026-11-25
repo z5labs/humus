@@ -12,7 +12,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.45.0
 	github.com/testcontainers/testcontainers-go/modules/k3s v0.45.0
-	github.com/z5labs/bedrock v0.27.0
+	github.com/z5labs/bedrock v0.28.0
 	github.com/z5labs/humus v0.18.0
 	github.com/z5labs/humus/example/kube/kubebuilder/cases v0.0.0-00010101000000-000000000000
 	github.com/z5labs/humus/kube v0.18.0
@@ -73,7 +73,7 @@ require (
 	github.com/moby/moby/client v0.6.3 // indirect
 	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/moby/sys/sequential v0.7.0 // indirect
-	github.com/moby/sys/user v0.5.0 // indirect
+	github.com/moby/sys/user v0.5.1 // indirect
 	github.com/moby/sys/userns v0.2.1 // indirect
 	github.com/moby/term v0.5.2 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
@@ -90,8 +90,8 @@ require (
 	github.com/tklauser/numcpus v0.12.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
-	github.com/z5labs/bedrock/fit v0.27.0 // indirect
-	github.com/z5labs/bedrock/host v0.27.0 // indirect
+	github.com/z5labs/bedrock/fit v0.28.0 // indirect
+	github.com/z5labs/bedrock/host v0.28.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.2 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0 // indirect
 	go.opentelemetry.io/otel v1.47.0 // indirect

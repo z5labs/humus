@@ -11,8 +11,8 @@ require (
 	github.com/go-playground/validator/v10 v10.30.6
 	github.com/gofiber/fiber/v3 v3.7.0
 	github.com/stretchr/testify v1.12.1
-	github.com/z5labs/bedrock v0.27.0
-	github.com/z5labs/bedrock/host v0.27.0
+	github.com/z5labs/bedrock v0.28.0
+	github.com/z5labs/bedrock/host v0.28.0
 	github.com/z5labs/humus v0.18.0
 	github.com/z5labs/humus/example/http/fiber/cases v0.0.0-00010101000000-000000000000
 )
@@ -27,7 +27,7 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-playground/locales v0.14.2 // indirect
 	github.com/go-playground/universal-translator v0.18.2 // indirect
-	github.com/gofiber/schema v1.10.0 // indirect
+	github.com/gofiber/schema v1.10.2 // indirect
 	github.com/gofiber/utils/v2 v2.6.5 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.34.0 // indirect
@@ -42,7 +42,7 @@ require (
 	github.com/tinylib/msgp v1.6.5 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.80.0 // indirect
-	github.com/z5labs/bedrock/fit v0.27.0 // indirect
+	github.com/z5labs/bedrock/fit v0.28.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.2 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0 // indirect
 	go.opentelemetry.io/otel v1.47.0 // indirect

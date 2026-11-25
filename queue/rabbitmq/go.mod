@@ -11,11 +11,11 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.45.0
 	github.com/testcontainers/testcontainers-go/modules/rabbitmq v0.45.0
-	github.com/z5labs/bedrock v0.27.0
-	github.com/z5labs/bedrock/circuit v0.27.0
-	github.com/z5labs/bedrock/fit v0.27.0
-	github.com/z5labs/bedrock/host v0.27.0
-	github.com/z5labs/bedrock/retry v0.27.0
+	github.com/z5labs/bedrock v0.28.0
+	github.com/z5labs/bedrock/circuit v0.28.0
+	github.com/z5labs/bedrock/fit v0.28.0
+	github.com/z5labs/bedrock/host v0.28.0
+	github.com/z5labs/bedrock/retry v0.28.0
 	github.com/z5labs/humus v0.18.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/log v1.47.0
@@ -58,7 +58,7 @@ require (
 	github.com/moby/moby/client v0.6.3 // indirect
 	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/moby/sys/sequential v0.7.0 // indirect
-	github.com/moby/sys/user v0.5.0 // indirect
+	github.com/moby/sys/user v0.5.1 // indirect
 	github.com/moby/sys/userns v0.2.1 // indirect
 	github.com/moby/term v0.5.2 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect

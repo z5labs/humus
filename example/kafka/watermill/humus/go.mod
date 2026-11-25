@@ -11,10 +11,10 @@ replace (
 require (
 	github.com/stretchr/testify v1.12.1
 	github.com/twmb/franz-go v1.22.3
-	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261124015931-df47e7aa0399
+	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261124225310-6c9261d4443a
 	github.com/twmb/franz-go/pkg/kmsg v1.15.1
-	github.com/z5labs/bedrock v0.27.0
-	github.com/z5labs/bedrock/host v0.27.0
+	github.com/z5labs/bedrock v0.28.0
+	github.com/z5labs/bedrock/host v0.28.0
 	github.com/z5labs/humus v0.18.0
 	github.com/z5labs/humus/example/kafka/watermill/cases v0.0.0-00010101000000-000000000000
 	github.com/z5labs/humus/queue/kafka v0.18.0
@@ -31,8 +31,8 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.34 // indirect
 	github.com/twmb/franz-go/pkg/kadm v1.20.0 // indirect
 	github.com/twmb/franz-go/plugin/kotel v1.7.1 // indirect
-	github.com/z5labs/bedrock/circuit v0.27.0 // indirect
-	github.com/z5labs/bedrock/fit v0.27.0 // indirect
+	github.com/z5labs/bedrock/circuit v0.28.0 // indirect
+	github.com/z5labs/bedrock/fit v0.28.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.2 // indirect
 	go.opentelemetry.io/otel v1.47.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.23.0 // indirect
