@@ -74,14 +74,17 @@ func TestDefaultSettings_are_httpclients(t *testing.T) {
 	for failures := range 25 {
 		for successes := range 25 {
 			for consecutive := range min(failures, successes) + 1 {
-				counts := circuit.Counts{
-					Successes:            successes,
-					Failures:             failures,
-					ConsecutiveFailures:  consecutive,
-					ConsecutiveSuccesses: consecutive,
+				for timedOut := range 3 {
+					counts := circuit.Counts{
+						Successes:            successes,
+						Failures:             failures,
+						ConsecutiveFailures:  consecutive,
+						ConsecutiveSuccesses: consecutive,
+						TimedOut:             timedOut,
+					}
+					require.Equal(t, h.BreakerPolicy.Trip(counts), h3.BreakerPolicy.Trip(counts), "Trip(%+v)", counts)
+					require.Equal(t, h.BreakerPolicy.Probe(counts), h3.BreakerPolicy.Probe(counts), "Probe(%+v)", counts)
 				}
-				require.Equal(t, h.BreakerPolicy.Trip(counts), h3.BreakerPolicy.Trip(counts), "Trip(%+v)", counts)
-				require.Equal(t, h.BreakerPolicy.Probe(counts), h3.BreakerPolicy.Probe(counts), "Probe(%+v)", counts)
 			}
 		}
 	}

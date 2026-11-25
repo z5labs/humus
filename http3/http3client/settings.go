@@ -97,12 +97,13 @@ type Settings struct {
 	// bytes it read.
 	//
 	// It is called on the goroutine that made the call, once for each
-	// attempt, so it must be safe for concurrent use. A Classification
-	// with a zero Outcome, or with retry.Retry and a negative RetryAfter,
-	// panics, as bedrock's classifiers do.
+	// attempt, so it must be safe for concurrent use. The client panics on
+	// a Classification with a zero Outcome, or with retry.Retry and a
+	// negative RetryAfter, as bedrock's classifiers do.
 	//
 	// Default: the classification the package doc's "How an attempt's
-	// result counts" describes. Valid: set. Check: none.
+	// result counts" describes. Valid: set, which the client checks, since
+	// a function can't be sourced. Check: none.
 	Classify func(resp *http.Response, err error) Classification
 
 	// Breaker configures the circuit breaker in front of the dependency,
@@ -127,8 +128,8 @@ type Settings struct {
 	//
 	// Default: open after 5 failures in a row, or once half of the last 20
 	// or more results failed; while half-open, reopen on a failed probe and
-	// close after 3 successful ones. Valid: Trip and Probe set. Check:
-	// none.
+	// close after 3 successful ones. Valid: Trip and Probe set, which the
+	// client checks. Check: none.
 	BreakerPolicy circuit.Policy
 
 	// ForwardScenario sends the failure scenario a call carries on to the
@@ -274,8 +275,9 @@ func CheckBackoffBase(d time.Duration) error {
 	return positive(d)
 }
 
-// CheckBackoffMax rejects a duration that is not positive. A BackoffMax
-// below BackoffBase is wrong too, which takes both fields to tell.
+// CheckBackoffMax rejects a duration that is not positive. The client also
+// rejects a BackoffMax below BackoffBase, which takes both fields to tell,
+// so no check of one field can.
 func CheckBackoffMax(d time.Duration) error {
 	return positive(d)
 }
