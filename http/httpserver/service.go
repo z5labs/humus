@@ -11,13 +11,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"time"
-
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/log"
 
 	"github.com/z5labs/humus"
+	"github.com/z5labs/humus/internal/httpchain"
 	"github.com/z5labs/humus/internal/server"
 )
 
@@ -80,23 +76,9 @@ func NewService(ctx context.Context, s *humus.Setup, n Network, settings Setting
 
 	logger := s.Telemetry.LoggerProvider.Logger(loggerName)
 
-	// The operation name is empty, so otelhttp names each span after the
-	// method and the request's route pattern, as the semantic conventions
-	// do. Every provider and the propagator are passed, so otelhttp never
-	// falls back to OpenTelemetry's globals. recordPanics runs inside it, so
-	// a panic is recorded on the request's span before the span ends.
-	// stripScenarios runs inside recordPanics, after otelhttp has extracted
-	// the baggage and before the handler, so a panic of TrustScenario is
-	// recorded as the handler's would be. nameRoute runs right below
-	// otelhttp, so the route reaches otelhttp's request however many
-	// handlers on the way pass on a copy of it.
-	stripped := stripScenarios{next: h, faults: s.Faults, trust: settings.TrustScenario}
-	named := nameRoute{next: recordPanics{next: stripped, logger: logger}}
-	instrumented := otelhttp.NewHandler(named, "",
-		otelhttp.WithTracerProvider(s.Telemetry.TracerProvider),
-		otelhttp.WithMeterProvider(s.Telemetry.MeterProvider),
-		otelhttp.WithPropagators(s.Telemetry.Propagator),
-	)
+	// The handler chain is the one every humus HTTP server serves through.
+	// Its records go through logger, so they keep this package's scope.
+	instrumented := httpchain.Wrap(s, logger, settings.TrustScenario, h)
 
 	hs := &http.Server{
 		Handler:           instrumented,
@@ -184,17 +166,4 @@ func (svc *Service) Shutdown(ctx context.Context) error {
 		svc.shuttingDown()
 	}
 	return svc.srv.Shutdown(ctx)
-}
-
-// emit emits one record at sev, with body and attrs, through logger. The
-// Service's own records are emitted by internal/server; recordPanics emits
-// through this.
-func emit(ctx context.Context, logger log.Logger, sev log.Severity, body string, attrs ...attribute.KeyValue) {
-	var r log.Record
-	r.SetTimestamp(time.Now())
-	r.SetSeverity(sev)
-	r.SetSeverityText(sev.String())
-	r.SetBody(attribute.StringValue(body))
-	r.AddAttributes(attrs...)
-	logger.Emit(ctx, r)
 }

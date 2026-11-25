@@ -71,6 +71,18 @@
       "groupSlug": "kubernetes"
     },
     {
+      "description": "quic-go is pre-1.0, and most of its minor versions have breaking notes, so its modules get a pull request of their own, with automerge off: a breaking minor stays red without holding back the automerged minor group, and a change of behaviour gets a review. This rule comes after the patch and minor rules so its group and its automerge win",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchPackageNames": [
+        "github.com/quic-go/**"
+      ],
+      "groupName": "quic-go",
+      "groupSlug": "quic-go",
+      "automerge": false
+    },
+    {
       "description": "The requirements between humus modules name the last release and are set only by the release workflow, so Renovate leaves them alone",
       "matchManagers": [
         "gomod"

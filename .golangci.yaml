@@ -87,6 +87,16 @@ linters:
         # NO_PROXY. See the outbound HTTP clients proposal, #762.
         - pattern: ^http\.(DefaultClient|DefaultTransport|Get|Head|Post|PostForm)$
           msg: http.DefaultClient, http.DefaultTransport and its helpers dial the real network and read the proxy variables; build a client with httpclient.NewClient, which dials through the Host
+        # quic-go's helpers that open real sockets, which no humus code calls:
+        # a server binds its socket through the Network it is given, and a
+        # client dials each connection through one. See the HTTP/3 proposal,
+        # #1438.
+        - pattern: ^http3\.(ListenAndServeQUIC|ListenAndServeTLS)$
+          pkg: ^github\.com/quic-go/quic-go/http3$
+          msg: http3.ListenAndServeQUIC and http3.ListenAndServeTLS open a real socket; serve HTTP/3 with http3server.NewService, which binds through the Network it is given
+        - pattern: ^quic\.(ListenAddr|ListenAddrEarly|DialAddr|DialAddrEarly)$
+          pkg: ^github\.com/quic-go/quic-go$
+          msg: quic.ListenAddr, quic.ListenAddrEarly, quic.DialAddr and quic.DialAddrEarly open a real socket; bind or dial through a Network's ListenUDP or DialUDP, and serve or dial QUIC on the socket it returns
         # client-go reaches around the process in ways humus never takes up.
         # rest.InClusterConfig reads KUBERNETES_SERVICE_HOST and the service
         # account's token with os.Getenv and os.ReadFile; the end user's Init

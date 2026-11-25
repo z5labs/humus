@@ -341,15 +341,16 @@ jobs:
 
   # telemetry's conformance test sets OTEL_* variables in the real
   # environment, so it is behind the conformance build tag and runs here
-  # rather than with the unit tests. humustest's Host is built on bedrock's
-  # hosttest, whose conformance tables hold its network and filesystem to
-  # the real machine's, and run in bedrock's CI.
+  # rather than with the unit tests. http3server's smoke test on
+  # humus.OSHost opens real sockets, so it is behind the tag too. humustest's
+  # Host is built on bedrock's hosttest, whose conformance tables hold its
+  # network and filesystem to the real machine's, and run in bedrock's CI.
   conformance:
     name: Conformance
-    # It runs when the change affects the root module, as Affected modules
-    # decides.
+    # It runs when the change affects the root module or the http3 module,
+    # as Affected modules decides, and each step runs for its own module.
     needs: affected
-    if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"."')) }}
+    if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"."') || contains(needs.affected.outputs.modules, '"http3"')) }}
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -369,7 +370,12 @@ jobs:
             name: conformance
 
         - name: Conformance
+          if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"."')) }}
           run: go test -exec="$GO_EXEC" -count=1 -race -tags conformance -run '^TestConformance_' ./telemetry/
+
+        - name: Conformance (http3)
+          if: ${{ !cancelled() && (needs.affected.result != 'success' || contains(needs.affected.outputs.modules, '"http3"')) }}
+          run: go -C http3 test -exec="$GO_EXEC" -count=1 -race -tags conformance -run '^TestConformance_' ./...
 
         - if: ${{ !cancelled() && steps.go-cache.outputs.key != '' }}
           uses: ./.github/actions/save-go-cache
