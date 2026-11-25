@@ -937,14 +937,17 @@ explicitly from `Setup`:
   in every humus module.
 - **quic-go's stderr warning.** quic-go, which the `http3` module serves
   and calls HTTP/3 with, writes a warning to the real standard error with
-  `log.Printf`, once per process, when it can't raise a UDP socket's receive
-  or send buffer to the 7 MiB it wants: on a real node whose
+  `log.Printf`, once per process, when it can't raise an `http3server`
+  socket's receive or send buffer to the 7 MiB it wants: on a real node whose
   `net.core.rmem_max` or `net.core.wmem_max` is below 3.5 MiB, in a process
   without `CAP_NET_ADMIN`. It also writes to the real standard error when
   `QUIC_GO_LOG_LEVEL` turns its own logger on, and when that level isn't one
-  it knows. Silencing them means `log.SetOutput`, which is process-wide
-  state, so humus never calls it. humustest's sockets set their buffers, so
-  a test on a humustest Host writes nothing.
+  it knows. `QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING=true` silences the
+  buffer warning, the receive and the send buffer's alike. Silencing the
+  rest means `log.SetOutput`, which is process-wide state, so humus never
+  calls it. An `http3client` socket can't tell quic-go its size, so it never
+  warns, and runs with whatever buffer the node allows. humustest's sockets
+  set their buffers, so a test on a humustest Host writes nothing.
 - **quic-go's `QUIC_GO_*` variables.** It reads `QUIC_GO_LOG_LEVEL`,
   `QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING`, `QUIC_GO_DISABLE_GSO`,
   `QUIC_GO_DISABLE_ECN` and `QUIC_GO_DISABLE_CLIENTHELLO_SCRAMBLING` from the

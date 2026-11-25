@@ -84,7 +84,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 - **One address binds both.** TCP and UDP have separate ports, so the two
   Services bind one port number without conflict. The two packages'
   `CheckAddr` have the same rules, so one check is enough.
-- **`NewService(ctx, s, n, settings, h)` binds the UDP socket in `Init`,**
+- **`NewService(ctx, s, n, settings, handler)` binds the UDP socket in `Init`,**
   through `n`, an `http3server.Network`, which lists one method, `ListenUDP`.
   `Init` passes its host. A UDP port that is taken fails `Init` with
   `EADDRINUSE`. The socket's close is registered with `s.OnStop`, and
@@ -166,10 +166,12 @@ Services drain in the same grace period.
 
 **humus has no API for Alt-Svc.** A client that speaks HTTP/3 by prior
 knowledge, such as an [`http3client`]({{< relref "/dependencies/http#calling-a-dependency-over-http3" >}})
-client, needs none. A browser learns of HTTP/3 only from an `Alt-Svc` header
-on a response it got over TCP, so an end user who serves browsers sets it in
-the handler `Init` passes to the `httpserver` Service, and not in the one
-the `http3server` Service serves:
+client, needs none. A browser learns of HTTP/3 from an `Alt-Svc` header on
+a response it got over TCP, or from a DNS HTTPS record with `alpn=h3`, which
+is the operator's. An end user who serves browsers sets the header on the
+responses `Init`'s handler writes, such as with a handler that wraps the mux
+both Services serve. On an HTTP/3 response it is harmless, and refreshes
+`ma`:
 
 ```
 Alt-Svc: h3=":443"; ma=86400

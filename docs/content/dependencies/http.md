@@ -681,7 +681,9 @@ drops UDP, looks like a dependency that is down:
 
 - A closed port fails the attempt at once, with `ECONNREFUSED`, since the
   client dials a connected UDP socket. A path that drops UDP silently fails
-  it once QUIC's 5s handshake idle timeout passes.
+  it at the sooner of `AttemptTimeout` and QUIC's 5s handshake idle timeout,
+  both 5s on the defaults. With `Timeout`'s 10s default, at most two such
+  attempts fit in one call, whatever `MaxAttempts` is.
 - The default `Classify` counts either as `Retry`, `Failure`, so the
   attempt is retried, within `MaxAttempts` and the retry budget, and the
   breaker counts every one.
@@ -702,8 +704,8 @@ The rest of what is particular to HTTP/3:
   does for TCP, and a test's network carries the connection. Its QUIC config
   sets a 5s handshake idle timeout, a 30s idle timeout, and a keep-alive
   every 10s on a connection no call is using.
-- **Calls past the 100 streams a server allows at once wait** on the same
-  connection for one to finish.
+- **Calls past the streams the server allows at once wait** on the same
+  connection for one to finish: 100 for an `http3server` Service.
 - **quic-go sends a request again, once, inside the same attempt,** when the
   server rejects its stream with `H3_REQUEST_REJECTED`, or the connection is
   going away after a GOAWAY, as a humus server's drain does. Neither the
@@ -717,10 +719,11 @@ The rest of what is particular to HTTP/3:
   over both transports matches both scopes.
 
 A test calls the dependency over humustest's network as it does over TCP:
-the fake dependency serves HTTP/3 with `http3server` on the same Host, and
-the test waits for its socket with `synctest.Wait()`.
-[Serving HTTP/3]({{< relref "/services/http/serving-http3#testing" >}}) shows
-how.
+the fake dependency serves HTTP/3 on a UDP socket of the same Host, from
+`h.ListenUDP`, and the test waits for its socket with `synctest.Wait()`.
+`TestInit_calls_payments_over_HTTP3`, in
+[`http3client`'s `app_test.go`](https://github.com/z5labs/humus/blob/main/http3/http3client/app_test.go),
+runs a whole App that calls one this way.
 
 ## Telemetry
 
