@@ -37,6 +37,7 @@ import (
 	"github.com/z5labs/humus/http/httpclient"
 	"github.com/z5labs/humus/http/httphealth"
 	"github.com/z5labs/humus/http/httpserver"
+	"github.com/z5labs/humus/http3/http3server"
 	"github.com/z5labs/humus/telemetry"
 )
 
@@ -126,15 +127,20 @@ func InitWith(ctx context.Context, s *humus.Setup, h humus.Host, open OpenStore)
 	}))
 	mux.Handle("/", http.MaxBytesHandler(api, maxBodyBytes))
 
-	svc, err := httpserver.NewService(ctx, s, h, settings.HTTP, mux)
+	tcp, err := httpserver.NewService(ctx, s, h, settings.HTTP, mux)
 	if err != nil {
 		return nil, err
 	}
-	return []humus.Service{svc}, nil
+	udp, err := http3server.NewService(ctx, s, h, settings.HTTP3, mux)
+	if err != nil {
+		return nil, err
+	}
+	return []humus.Service{tcp, udp}, nil
 }
 
 type settings struct {
 	HTTP     httpserver.Settings
+	HTTP3    http3server.Settings
 	Database *pgxpool.Config
 	KeySet   keySetSettings
 	JWT      jwt.Settings
@@ -169,29 +175,41 @@ func readSettings(ctx context.Context, s *humus.Setup, h humus.Host) (settings, 
 		tokens.MinRefreshInterval = r.Get(env("JWT_MIN_REFRESH_INTERVAL").Parse(time.ParseDuration).Default(tokens.MinRefreshInterval).Validate(jwt.CheckMinRefreshInterval))
 		tokens.MaxKeyAge = r.Get(env("JWT_MAX_KEY_AGE").Parse(time.ParseDuration).Default(tokens.MaxKeyAge).Validate(jwt.CheckMaxKeyAge))
 
+		tcp := httpserver.Settings{
+			Addr: r.Get(env("ADDR").Validate(httpserver.CheckAddr)),
+			TLS: &tls.Config{
+				GetCertificate: r.Get(env("TLS_CERT_FILE").Validate(holdsCertificate(h.Filesystem)).FlatMap(func(certFile string) config.Value[serverCertificate] {
+					return env("TLS_KEY_FILE").Parse(func(keyFile string) (serverCertificate, error) {
+						cfg, err := certfile.Config(h.Filesystem, certFile, keyFile)
+						if err != nil {
+							return nil, err
+						}
+						return cfg.GetCertificate, nil
+					})
+				})),
+				ClientAuth: tls.VerifyClientCertIfGiven,
+				ClientCAs:  r.Get(file("CLIENT_CA_FILE").Parse(certPool)),
+			},
+			HTTP2Only:         r.Get(env("HTTP2_ONLY").Parse(strconv.ParseBool).Default(d.HTTP2Only)),
+			ReadHeaderTimeout: r.Get(env("READ_HEADER_TIMEOUT").Parse(time.ParseDuration).Default(d.ReadHeaderTimeout).Validate(httpserver.CheckReadHeaderTimeout)),
+			ReadTimeout:       r.Get(env("READ_TIMEOUT").Parse(time.ParseDuration).Default(d.ReadTimeout).Validate(httpserver.CheckReadTimeout)),
+			WriteTimeout:      r.Get(env("WRITE_TIMEOUT").Parse(time.ParseDuration).Default(d.WriteTimeout).Validate(httpserver.CheckWriteTimeout)),
+			IdleTimeout:       r.Get(env("IDLE_TIMEOUT").Parse(time.ParseDuration).Default(d.IdleTimeout).Validate(httpserver.CheckIdleTimeout)),
+			MaxHeaderBytes:    r.Get(env("MAX_HEADER_BYTES").Parse(strconv.Atoi).Default(d.MaxHeaderBytes).Validate(httpserver.CheckMaxHeaderBytes)),
+			TrustScenario:     issuedByTheCA,
+		}
+
 		return settings{
-			HTTP: httpserver.Settings{
-				Addr: r.Get(env("ADDR").Validate(httpserver.CheckAddr)),
-				TLS: &tls.Config{
-					GetCertificate: r.Get(env("TLS_CERT_FILE").Validate(holdsCertificate(h.Filesystem)).FlatMap(func(certFile string) config.Value[serverCertificate] {
-						return env("TLS_KEY_FILE").Parse(func(keyFile string) (serverCertificate, error) {
-							cfg, err := certfile.Config(h.Filesystem, certFile, keyFile)
-							if err != nil {
-								return nil, err
-							}
-							return cfg.GetCertificate, nil
-						})
-					})),
-					ClientAuth: tls.VerifyClientCertIfGiven,
-					ClientCAs:  r.Get(file("CLIENT_CA_FILE").Parse(certPool)),
-				},
-				HTTP2Only:         r.Get(env("HTTP2_ONLY").Parse(strconv.ParseBool).Default(d.HTTP2Only)),
-				ReadHeaderTimeout: r.Get(env("READ_HEADER_TIMEOUT").Parse(time.ParseDuration).Default(d.ReadHeaderTimeout).Validate(httpserver.CheckReadHeaderTimeout)),
-				ReadTimeout:       r.Get(env("READ_TIMEOUT").Parse(time.ParseDuration).Default(d.ReadTimeout).Validate(httpserver.CheckReadTimeout)),
-				WriteTimeout:      r.Get(env("WRITE_TIMEOUT").Parse(time.ParseDuration).Default(d.WriteTimeout).Validate(httpserver.CheckWriteTimeout)),
-				IdleTimeout:       r.Get(env("IDLE_TIMEOUT").Parse(time.ParseDuration).Default(d.IdleTimeout).Validate(httpserver.CheckIdleTimeout)),
-				MaxHeaderBytes:    r.Get(env("MAX_HEADER_BYTES").Parse(strconv.Atoi).Default(d.MaxHeaderBytes).Validate(httpserver.CheckMaxHeaderBytes)),
-				TrustScenario:     issuedByTheCA,
+			HTTP: tcp,
+			HTTP3: http3server.Settings{
+				Addr:              tcp.Addr,
+				TLS:               tcp.TLS,
+				ReadHeaderTimeout: tcp.ReadHeaderTimeout,
+				ReadTimeout:       tcp.ReadTimeout,
+				WriteTimeout:      tcp.WriteTimeout,
+				IdleTimeout:       tcp.IdleTimeout,
+				MaxHeaderBytes:    tcp.MaxHeaderBytes,
+				TrustScenario:     tcp.TrustScenario,
 			},
 			Database: r.Get(file("DATABASE_URL_FILE").Parse(databaseURL)),
 			KeySet: keySetSettings{

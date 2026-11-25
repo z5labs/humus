@@ -22,7 +22,7 @@ func Init(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, e
 
 type openStore func(ctx context.Context, s *humus.Setup, h humus.Host, cfg *pgxpool.Config) (store endpoint.Store, ping func(context.Context) error, err error)
 
-type newCatalog func(s *humus.Setup, n httpclient.Network, settings httpclient.Settings) (catalog endpoint.Catalog, ready func(context.Context) error, err error)
+type newCatalog func(s *humus.Setup, n http3client.Network, settings http3client.Settings) (catalog endpoint.Catalog, ready func(context.Context) error, err error)
 ```
 
 So its unit tests give it a Store in memory and a fake catalog, which
@@ -108,8 +108,39 @@ func (f failingStore) CreateCart(context.Context, string) (endpoint.Cart, error)
 			require.NotContains(t, string(r.body), dbHost)
 ```
 
+The tests of the cart's catalog client serve a catalog of their own with
+`http3server` alone, on the Host, so the cart's calls have no TCP to fall
+back to:
+
+```go
+		settings := http3server.DefaultSettings()
+		settings.Addr = addr
+		settings.TLS = &tls.Config{
+			Certificates: []tls.Certificate{cert.TLS()},
+			ClientAuth:   tls.RequireAndVerifyClientCert,
+			ClientCAs:    clientCAs,
+		}
+		mux := http.NewServeMux()
+		mux.Handle("GET /products/{productId}", c)
+		mux.HandleFunc("GET /health/readiness", c.readiness)
+		svc, err := http3server.NewService(ctx, s, h, settings, mux)
+```
+
+`h.Listening` waits for TCP listeners only, so a test waits for the
+catalog's UDP socket with `synctest.Wait()`:
+
+```go
+		stopCatalog := catalog.serve(t, s.h.Host(), catalogHost, s.ca.Issue(t, "catalog.internal"), s.ca.Pool())
+		synctest.Wait()
+```
+
 The catalog's `InitWith` takes its Store the same way, and its tests give
-it a fake database.
+it a fake database. One asks it over each transport:
+
+```go
+		require.Equal(t, "HTTP/2.0", proto(c.anonymous))
+		require.Equal(t, "HTTP/3.0", proto(overHTTP3))
+```
 
 ## The catalog's client
 
@@ -328,7 +359,8 @@ their certificates and secrets as the Host's files:
 ```
 
 The catalog keeps its products in memory, and the cart its carts, and the
-cart calls the catalog with its real client, over mTLS:
+cart calls the catalog with its real client, over HTTP/3 and mTLS, on the
+Host's UDP:
 
 ```go
 	cart := run(t, "cart", h, func(ctx context.Context, s *humus.Setup, h humus.Host) ([]humus.Service, error) {
@@ -477,9 +509,13 @@ func TestShoppingcart_passes_the_shared_cases_on_kind(t *testing.T) {
 }
 ```
 
-The `Target` reaches both services through `kubectl port-forward`, and
-reads the rest from the cluster: the issuer, the audiences and the trust
-scope from the services' ConfigMaps, and the CA from its Secret:
+The `Target` reaches both services through `kubectl port-forward`, which
+carries TCP only, so the test's own calls are HTTP/2. The cart's calls to
+the catalog, in `CatalogDown`, `SlowCatalog` and every case that adds an
+item, are HTTP/3 between the pods, through the catalog's Service and
+kube-proxy. The `Target` reads the rest from the cluster: the issuer, the
+audiences and the trust scope from the services' ConfigMaps, and the CA
+from its Secret:
 
 ```go
 	client := newClient(t)
@@ -616,7 +652,7 @@ func TestInit_answers_503_without_calling_the_catalog_when_a_trusted_scenario_ab
 ```go
 		d := unavailable(t, s.addItem(t, cartID, token, abort(catalogdatabase.Point)))
 		require.Contains(t, d.Detail, "catalog")
-		require.Equal(t, httpclient.DefaultSettings().MaxAttempts, s.products.queried())
+		require.Equal(t, http3client.DefaultSettings().MaxAttempts, s.products.queried())
 ```
 
 A scenario the cart doesn't trust is stripped, and recorded on its span:

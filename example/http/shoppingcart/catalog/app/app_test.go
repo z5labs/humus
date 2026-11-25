@@ -35,6 +35,7 @@ import (
 	"github.com/z5labs/humus/example/http/shoppingcart/catalog/endpoint"
 	"github.com/z5labs/humus/fault"
 	"github.com/z5labs/humus/http/httpserver/httpservertest"
+	"github.com/z5labs/humus/http3/http3server/http3servertest"
 	"github.com/z5labs/humus/humustest"
 	"github.com/z5labs/humus/telemetry"
 )
@@ -303,6 +304,32 @@ func TestInit_serves_the_certificates_and_secrets_in_the_Hosts_files(t *testing.
 		}
 		r, err = do(t, stranger, http.MethodGet, "/products/sku-1", "", "")
 		require.Error(t, err, "%d %s", r.code, r.body)
+
+		c.stop(t)
+	})
+}
+
+func TestInit_serves_HTTP3_beside_HTTP2_on_the_same_port(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c := start(t, onFake(newFakeDatabase(false)))
+		synctest.Wait()
+		overHTTP3 := http3servertest.NewClient(t, c.f.h, c.f.ca.Pool())
+
+		r, err := do(t, overHTTP3, http.MethodPut, "/products/sku-1", c.idp.token(t, endpoint.ScopeWrite), `{"unitPrice":12.5}`)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, r.code, "%s", r.body)
+
+		proto := func(client *http.Client) string {
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, base+"/health/readiness", nil)
+			require.NoError(t, err)
+			resp, err := client.Do(req)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, resp.Body.Close()) }()
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			return resp.Proto
+		}
+		require.Equal(t, "HTTP/2.0", proto(c.anonymous))
+		require.Equal(t, "HTTP/3.0", proto(overHTTP3))
 
 		c.stop(t)
 	})

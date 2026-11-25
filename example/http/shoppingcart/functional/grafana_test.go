@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	clientScope = `otel_scope_name="github.com/z5labs/humus/http/httpclient"`
+	clientScope = `otel_scope_name=~"github.com/z5labs/humus/http/httpclient|github.com/z5labs/humus/http3/http3client"`
 	inNamespace = `k8s_namespace_name="shoppingcart"`
 )
 

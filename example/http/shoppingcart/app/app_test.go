@@ -635,7 +635,7 @@ func TestInit_gets_a_price_from_the_catalog_with_its_client_certificate(t *testi
 		})
 		catalog := &catalogServer{prices: map[string]float64{"sku-1": 12.5}}
 		stopCatalog := catalog.serve(t, s.h.Host(), catalogHost, s.ca.Issue(t, "catalog.internal"), s.ca.Pool())
-		<-s.h.Listening(catalogHost)
+		synctest.Wait()
 
 		cart := "/carts/" + decode[endpoint.Cart](t, s.do(t, http.MethodPost, "/carts", "", ""), http.StatusCreated, "application/json").CartID.String()
 		added := decode[endpoint.CartItem](t,
@@ -682,7 +682,7 @@ func TestInit_without_a_catalog_setting_exits_78(t *testing.T) {
 
 func TestInit_with_a_bad_catalog_setting_exits_78(t *testing.T) {
 	for _, tc := range []struct{ name, value, cause string }{
-		{"CATALOG_URL", "http://" + catalogHost, "must be an https URL"},
+		{"CATALOG_URL", "http://" + catalogHost, "not https"},
 		{"CATALOG_URL", "catalog.internal", "absolute"},
 		{"CATALOG_CA_FILE", "catalog/tls.key", "no PEM certificate in the file"},
 		{"CATALOG_CA_FILE", "missing.pem", "missing.pem"},
@@ -853,7 +853,7 @@ func TestInit_is_ready_once_the_database_and_the_catalog_answer_and_stays_ready(
 		})
 		catalog := &catalogServer{down: true}
 		stopCatalog := catalog.serve(t, s.h.Host(), catalogHost, s.ca.Issue(t, "catalog.internal"), s.ca.Pool())
-		<-s.h.Listening(catalogHost)
+		synctest.Wait()
 
 		for range 2 {
 			r := s.probe(t, "/health/readiness")
@@ -912,7 +912,7 @@ func TestInit_stays_unready_on_a_catalog_it_cant_trust_or_that_rejects_its_certi
 				})
 				catalog := &catalogServer{}
 				stopCatalog := catalog.serve(t, s.h.Host(), catalogHost, tc.cert(s), tc.clientCAs(s))
-				<-s.h.Listening(catalogHost)
+				synctest.Wait()
 
 				for range 2 {
 					r := s.probe(t, "/health/readiness")
