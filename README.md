@@ -84,8 +84,9 @@ the App lifecycle to every service type.
 
 humus is several Go modules: the root `github.com/z5labs/humus`, and the
 nested `grpc`, `http3`, `queue/kafka`, `queue/rabbitmq` and `kube`
-modules. Every humus module is released with the same version on every release, whether or
-not it changed, so one version names a set of modules that work together.
+modules. Every humus module is released with the same version on every
+release, whether or not it changed, so one version names a set of modules
+that work together.
 Each example, at `example/<type>/<name>` under its service type's folder,
 is a module of its own too, and is never released.
 Require the same version of every humus module you use:
