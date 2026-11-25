@@ -60,7 +60,12 @@ type Service struct {
 // ReadHeaderTimeout, or ReadTimeout when it is zero, bounds each request's
 // headers: a stream whose headers miss it is reset with
 // H3_REQUEST_INCOMPLETE, and no handler runs. IdleTimeout, or ReadTimeout
-// when it is zero, closes a connection with no request in flight. Half the
+// when it is zero, closes a connection with no request in flight.
+// ReadTimeout and WriteTimeout bound each request's stream from the end of
+// its headers: once ReadTimeout has passed, a read of the body fails, and
+// when WriteTimeout passes, the request's context is cancelled and its
+// stream is reset with H3_INTERNAL_ERROR once the handler returns. A
+// handler moves either deadline with http.ResponseController. Half the
 // smallest of ReadHeaderTimeout, ReadTimeout and WriteTimeout that is set,
 // or 5s when none is, bounds the QUIC handshake. MaxHeaderBytes bounds a
 // request's headers. 0-RTT is never accepted.
@@ -87,7 +92,7 @@ func NewService(ctx context.Context, s *humus.Setup, n Network, settings Setting
 
 	logger := s.Telemetry.LoggerProvider.Logger(loggerName)
 	d := newDrain()
-	srv := newServer(settings, d.track(httpchain.Wrap(s, logger, settings.TrustScenario, h)), logger)
+	srv := newServer(settings, d.track(bound(settings, httpchain.Wrap(s, logger, settings.TrustScenario, h))), logger)
 	srv.ConnContext = d.connContext
 	return &Service{sock: sock, srv: srv, drain: d, logger: logger}, nil
 }
