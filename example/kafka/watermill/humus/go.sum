@@ -95,8 +95,8 @@ github.com/twmb/franz-go/pkg/kadm v1.20.0 h1:Gx9q6UwA1QP0SXHutlT3iNpGC3dfm5DY5XD
 github.com/twmb/franz-go/pkg/kadm v1.20.0/go.mod h1:84WtODAAftpVi1KQIr+rrIaYMjk3TXBmZKv1w1pnD8Y=
 github.com/twmb/franz-go/pkg/kfake v0.0.0-20261124225310-6c9261d4443a h1:jcPyLJH833klG3nR4FJbYusa/MB36E0zrU6VkNA2WbI=
 github.com/twmb/franz-go/pkg/kfake v0.0.0-20261124225310-6c9261d4443a/go.mod h1:HMiZ0NoKeqBbmnF3BRM74siT8nEGqWejQYShFZq2sMk=
-github.com/twmb/franz-go/pkg/kmsg v1.15.1 h1:3sj7ekbH33t73nsBcHS0wtp/PyMIViHLNItZrE8V9zM=
-github.com/twmb/franz-go/pkg/kmsg v1.15.1/go.mod h1:sGkGxKexpRLBThFHJLjjywcyfkK09qB/g+X+wFWZQ/A=
+github.com/twmb/franz-go/pkg/kmsg v1.15.2 h1:uqpiNaTc2xbXNPXu1xFrOuUkQKwkwRmy43lOQINpqk0=
+github.com/twmb/franz-go/pkg/kmsg v1.15.2/go.mod h1:sGkGxKexpRLBThFHJLjjywcyfkK09qB/g+X+wFWZQ/A=
 github.com/twmb/franz-go/plugin/kotel v1.7.1 h1:bVJ/qai5rNIkAxMX+Em2fsMOe1v6n12N9c9Rm6upv0E=
 github.com/twmb/franz-go/plugin/kotel v1.7.1/go.mod h1:Cq5tsiazIWro0y/SNpYEwoVW0C6KK1dIYyhccDXV9bs=
 github.com/yusufpapurcu/wmi v1.2.4 h1:zFUKzehAFReQwLys1b/iSMl+JQGSCSjtVqQn9bBrPo0=
@@ -109,8 +109,8 @@ github.com/z5labs/bedrock/fit v0.28.0 h1:O0Vl6kMCQXmMrmrWI/ZdrH+nf6E2tVcu75aRvnn
 github.com/z5labs/bedrock/fit v0.28.0/go.mod h1:Dqxudo3OJdclbClZ1LlIZK7+/6uw+mi0X4k7VSQdDpo=
 github.com/z5labs/bedrock/host v0.28.0 h1:fu12ZxfnLQqI+74eaaYK9DI+8YGrbYk+xl2DIW5L9rA=
 github.com/z5labs/bedrock/host v0.28.0/go.mod h1:fWDfgwyPGqJVk6yqpne70l8cBDBWkgMHA6+7QdjaKls=
-github.com/z5labs/bedrock/retry v0.27.0 h1:K7Jw/fWq96OIaMS5G+wa7csofoEW+VZCF6GpSxoALms=
-github.com/z5labs/bedrock/retry v0.27.0/go.mod h1:DUVNu/RW+jSM5jUo5aHdpvizZtiof7LG97aUYuXxTyA=
+github.com/z5labs/bedrock/retry v0.28.0 h1:fHl8fCeWxodIy8FkL8eloYBolyMyWMRaxI1QiOU20O4=
+github.com/z5labs/bedrock/retry v0.28.0/go.mod h1:DUVNu/RW+jSM5jUo5aHdpvizZtiof7LG97aUYuXxTyA=
 go.opentelemetry.io/auto/sdk v1.2.2 h1:ErNn7NW2t1F9CFBLb9iyPMyLRbcEd07l5m/StCe9AEE=
 go.opentelemetry.io/auto/sdk v1.2.2/go.mod h1:Ca3X8ec6gdTYjAirla//dnp05ECtQPfN4Ut74OJLVsQ=
 go.opentelemetry.io/contrib/bridges/otelslog v0.21.0 h1:/CdgE52i1OEPHhsGUqrggYNRaZy4v4YgVenGd52dRBI=

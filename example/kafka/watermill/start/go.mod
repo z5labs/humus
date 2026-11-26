@@ -39,7 +39,7 @@ require (
 	github.com/rcrowley/go-metrics v0.0.0-20250401214520-65e299d6c5c9 // indirect
 	github.com/sony/gobreaker v1.0.0 // indirect
 	github.com/twmb/franz-go/pkg/kadm v1.20.0 // indirect
-	github.com/twmb/franz-go/pkg/kmsg v1.15.1 // indirect
+	github.com/twmb/franz-go/pkg/kmsg v1.15.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.2 // indirect
 	go.opentelemetry.io/otel v1.47.0 // indirect
 	go.opentelemetry.io/otel/log v1.47.0 // indirect
