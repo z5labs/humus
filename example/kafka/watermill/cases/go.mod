@@ -7,7 +7,7 @@ require (
 	github.com/twmb/franz-go v1.22.3
 	github.com/twmb/franz-go/pkg/kadm v1.20.0
 	github.com/twmb/franz-go/pkg/kfake v0.0.0-20261124225310-6c9261d4443a
-	github.com/twmb/franz-go/pkg/kmsg v1.15.1
+	github.com/twmb/franz-go/pkg/kmsg v1.15.2
 )
 
 require (
