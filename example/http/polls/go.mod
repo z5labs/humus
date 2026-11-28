@@ -5,7 +5,7 @@ go 1.27.0
 replace github.com/z5labs/humus => ../../..
 
 require (
-	github.com/chromedp/cdproto v0.160.11
+	github.com/chromedp/cdproto v0.160.12
 	github.com/chromedp/chromedp v0.24.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.13.0
